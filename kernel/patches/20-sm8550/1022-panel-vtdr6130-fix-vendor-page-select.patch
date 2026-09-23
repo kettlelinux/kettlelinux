@@ -1,0 +1,20 @@
+From: pocknix <pocknix@users.noreply.github.com>
+Subject: [PATCH] drm/panel: vtdr6130-cog: add the missing F0 byte to the page-select command
+
+The vendor page switch before the B1 write is sent as "AA 10" instead of
+"F0 AA 10", so the panel ignores it and B1 lands on the wrong page. Matches
+the Android init sequence. Fix by Jacob Pyke and spycat88 in armada-packages
+0104a (armada-os/armada#327), carried by ROCKNIX SM8250 patch 0105.
+
+---
+--- a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
++++ b/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
+@@ -143,7 +143,7 @@
+ 					0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
+ 	}
+ 
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xAA, 0x10);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xF0, 0xAA, 0x10);
+ 
+ 	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB1, 
+ 				0x02, 0x16, 0x00, 0x14, 0x00, 0x1C, 0x00, 0x02,

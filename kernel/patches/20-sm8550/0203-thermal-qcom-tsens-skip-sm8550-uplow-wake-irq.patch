@@ -1,0 +1,59 @@
+From: jaewun <jaewun@users.noreply.github.com>
+Date: Mon, 11 May 2026 01:20:00 +1200
+Subject: [PATCH] thermal: qcom: tsens: skip SM8550 uplow wake IRQs
+
+Native s2idle testing on SM8550 devices repeatedly resumes immediately with
+pm_wakeup_irq pointing at the SM8550 TSENS uplow/passive threshold IRQ.
+The IRQ wake state exposed under /sys/kernel/irq is read-only on the live
+kernel, so runtime testing cannot disable this wake source.
+
+Keep normal TSENS interrupt handling active and keep critical TSENS wake
+enabled. Only skip enable_irq_wake() for the ordinary "uplow" TSENS IRQ on
+qcom,sm8550. Scoped to the SoC-level compatible (not a specific board) so it
+covers every SM8550 board, not just the one it was first observed on.
+
+[pocknix: rebased onto 7.2, where the wake enable moved from
+ tsens_register_irq() into the tsens_suspend_common()/tsens_resume_common()
+ callbacks; the skip now guards those two sites.]
+---
+ drivers/thermal/qcom/tsens.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+--- a/drivers/thermal/qcom/tsens.c
++++ b/drivers/thermal/qcom/tsens.c
+@@ -1227,6 +1227,15 @@
+ 	.get_temp = tsens_get_temp,
+ 	.set_trips = tsens_set_trips,
+ };
++
++/*
++ * SM8550 s2idle wakes immediately from the TSENS uplow IRQ: skip only its
++ * wake, keep critical (SoC compatible, so every SM8550 board).
++ */
++static inline bool tsens_uplow_wake_enabled(void)
++{
++	return !of_machine_is_compatible("qcom,sm8550");
++}
+ 
+ static int tsens_register_irq(struct tsens_priv *priv, char *irqname,
+ 			      irq_handler_t thread_fn, int *irq_num)
+@@ -1297,7 +1307,8 @@
+ 	if (priv->feat->combo_int)
+ 		enable_irq_wake(priv->combined_irq);
+ 	else {
+-		enable_irq_wake(priv->uplow_irq);
++		if (tsens_uplow_wake_enabled())
++			enable_irq_wake(priv->uplow_irq);
+ 		if (priv->feat->crit_int)
+ 			enable_irq_wake(priv->crit_irq);
+ 	}
+@@ -1316,7 +1327,8 @@
+ 	if (priv->feat->combo_int)
+ 		disable_irq_wake(priv->combined_irq);
+ 	else {
+-		disable_irq_wake(priv->uplow_irq);
++		if (tsens_uplow_wake_enabled())
++			disable_irq_wake(priv->uplow_irq);
+ 		if (priv->feat->crit_int)
+ 			disable_irq_wake(priv->crit_irq);
+ 	}
