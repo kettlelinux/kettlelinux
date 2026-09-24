@@ -1,0 +1,55 @@
+Build Valve's deckard sources (msm GPU metrics, deckard power/temp,
+ftrace GPU memory) and link libtracefs, matching the shipped binaries.
+---
+diff --git a/meson.build b/meson.build
+index 9e495f7..1c50b07 100644
+--- a/meson.build
++++ b/meson.build
+@@ -119,6 +119,8 @@ inc_common = [
+ ]
+ 
+ dep_pthread = dependency('threads')
++# Steam Frame (deckard) msm GPU memory via the gpu_mem_total tracepoint
++dep_tracefs = dependency('libtracefs', required: is_unixy)
+ 
+ add_project_arguments(
+   cc.get_supported_arguments([
+diff --git a/src/meson.build b/src/meson.build
+index df7a164..9a8e7b4 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -95,6 +95,10 @@ if is_unixy
+     'net.cpp',
+     'shell.cpp',
+     'ftrace.cpp',
++    'msm.cpp',
++    'deckard_power.cpp',
++    'deckard_temp.cpp',
++    'ftrace_gpumem.c',
+   )
+ 
+   if get_option('with_fex')
+@@ -207,6 +211,7 @@ mangohud_static_lib = static_library(
+     dep_rt,
+     dep_pthread,
+     dep_vulkan,
++    dep_tracefs,
+     windows_deps,
+     implot_dep],
+   include_directories : [inc_common],
+@@ -248,6 +253,7 @@ mangohud_opengl_shared_lib = shared_library(
+     dep_rt,
+     dep_pthread,
+     dep_vulkan,
++    dep_tracefs,
+     windows_deps,
+     implot_dep],
+   include_directories : [inc_common],
+@@ -285,6 +291,7 @@ if get_option('mangoapp')
+       dep_x11,
+       dep_wayland_client,
+       glfw3_dep,
++      dep_tracefs,
+       implot_dep
+     ],
+     include_directories : [inc_common],

@@ -1,0 +1,7 @@
+[Desktop Entry]
+# Name is fixed by steamos-manager, which switches Game mode by writing this session to SDDM.
+Type=Application
+Name=SteamOS (Game Mode)
+Comment=Steam Big Picture in gamescope
+Exec=/usr/bin/start-gamescope-session
+DesktopNames=gamescope

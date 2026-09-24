@@ -1,0 +1,127 @@
+#!/bin/bash
+# Measure battery draw on the Odin 2 Portal, for A/B-testing power/performance settings.
+#
+#   steamportal-powertest [SECONDS] [LABEL]   sample for SECONDS (default 120), run on battery
+#   steamportal-powertest state               show the settings that matter for power
+#   steamportal-powertest results             show earlier runs
+#
+# Start the workload first (a game, a video, idle desktop with the panel on), unplug the
+# charger, then run this. Each run appends one line to ~/.local/state/steamportal-powertest.csv
+# with the settings in effect, so runs with lavd vs EAS, Wi-Fi power save on/off, 60 vs 120 Hz
+# can be compared side by side. Pass FPS=<n> to record the game's frame rate too.
+set -u
+CSV="${XDG_STATE_HOME:-$HOME/.local/state}/steamportal-powertest.csv"
+
+bat=
+for p in /sys/class/power_supply/*; do
+  [ "$(cat "$p/type" 2>/dev/null)" = Battery ] && { bat=$p; break; }
+done
+
+rd() { cat "$1" 2>/dev/null || echo 0; }
+
+# battery draw in mW, from |I| * V (qcom_battmgr's power_now is not in uW: it reads ~54 W
+# while charging at 2 W)
+draw_mw() {
+  awk -v i="$(rd "$bat/current_now")" -v u="$(rd "$bat/voltage_now")" \
+    'BEGIN { if (i < 0) i = -i; printf "%d\n", i * u / 1e9 }'
+}
+
+# battery capacity in mWh, for the runtime estimate. qcom_battmgr has no charge_full on the
+# Portal (ENODATA): scale the remaining charge_counter by the percentage, at 3.87 V nominal.
+capacity_mwh() {
+  awk -v c="$(rd "$bat/charge_counter")" -v p="$(rd "$bat/capacity")" \
+    'BEGIN { if (p > 0) printf "%d\n", c * 100 / p * 3.87 / 1000; else print 0 }'
+}
+
+scheduler() {
+  local s; s=$(cat /sys/kernel/sched_ext/state 2>/dev/null)
+  if [ "$s" = enabled ]; then cat /sys/kernel/sched_ext/root/ops 2>/dev/null || echo scx; else echo eas; fi
+}
+
+wifi_ps() {
+  local dev; dev=$(iw dev 2>/dev/null | awk '/Interface/ { print $2; exit }')
+  [ -n "$dev" ] && iw dev "$dev" get power_save 2>/dev/null | awk '{ print $NF }' || echo n/a
+}
+
+refresh() {
+  # the mode gamescope/KWin actually set, from the atomic state in debugfs (root only):
+  #   mode: "1080x1920": 120 263340 ...
+  local r; r=$(sudo -n cat /sys/kernel/debug/dri/*/state 2>/dev/null \
+    | grep -m1 -oE 'mode: "[0-9]+x[0-9]+": [0-9]+' | sed -E 's/mode: "(.*)": (.*)/\1@\2/')
+  echo "${r:-?}"
+}
+
+state() {
+  echo "scheduler:      $(scheduler)"
+  for p in /sys/devices/system/cpu/cpufreq/policy*; do
+    echo "cpufreq ${p##*/}: $(rd "$p/scaling_governor") $(( $(rd "$p/scaling_min_freq") / 1000 ))-$(( $(rd "$p/scaling_max_freq") / 1000 )) MHz (cpus $(rd "$p/related_cpus"))"
+  done
+  for d in /sys/class/devfreq/*; do
+    [ -e "$d/governor" ] && echo "devfreq ${d##*/}: $(rd "$d/governor") $(( $(rd "$d/min_freq") / 1000000 ))-$(( $(rd "$d/max_freq") / 1000000 )) MHz"
+  done
+  echo "cpuidle:        $(rd /sys/devices/system/cpu/cpuidle/current_governor)"
+  echo "wifi powersave: $(wifi_ps)"
+  echo "display mode:   $(refresh)"
+  echo "swap:           $(swapon --noheadings --show=NAME,SIZE 2>/dev/null | tr '\n' ' ')"
+  echo "battery:        ${bat##*/} $(rd "$bat/capacity")% $(rd "$bat/status"), $(capacity_mwh) mWh full"
+}
+
+case "${1:-}" in
+  state) state; exit ;;
+  results) column -s, -t "$CSV" 2>/dev/null || echo "no runs yet ($CSV)"; exit ;;
+esac
+
+[ -n "$bat" ] || { echo "no battery found in /sys/class/power_supply" >&2; exit 1; }
+secs="${1:-120}"; label="${2:-run}"
+if [ "$(rd "$bat/status")" != Discharging ]; then
+  echo "battery is '$(rd "$bat/status")': unplug the charger, otherwise this measures the charger" >&2
+  exit 1
+fi
+
+policies=(/sys/devices/system/cpu/cpufreq/policy*)
+gpu=$(ls -d /sys/class/devfreq/*gpu* 2>/dev/null | head -1)
+tz_cpu=; tz_gpu=
+for z in /sys/class/thermal/thermal_zone*; do
+  case "$(rd "$z/type")" in
+    cpu7-top-thermal) tz_cpu=$z/temp ;;
+    gpuss-0-thermal)  tz_gpu=$z/temp ;;
+  esac
+done
+
+state; echo
+echo "sampling ${secs}s ('$label') ..."
+samples=$(mktemp)
+trap 'rm -f "$samples"' EXIT
+for ((t = 0; t < secs; t++)); do
+  line="$(draw_mw)"
+  for p in "${policies[@]}"; do line+=" $(( $(rd "$p/scaling_cur_freq") / 1000 ))"; done
+  line+=" $(( $(rd "$gpu/cur_freq") / 1000000 )) $(( $(rd "$tz_cpu") / 1000 )) $(( $(rd "$tz_gpu") / 1000 ))"
+  echo "$line" >>"$samples"
+  (( t % 10 == 9 )) && printf '  %3ds  %s mW\n' $((t + 1)) "${line%% *}"
+  sleep 1
+done
+
+np=${#policies[@]}
+summary=$(awk -v np="$np" '
+  { for (i = 1; i <= NF; i++) s[i] += $i; if ($(np + 3) > tc) tc = $(np + 3); if ($(np + 4) > tg) tg = $(np + 4); n++ }
+  END {
+    printf "%d", s[1] / n
+    for (i = 2; i <= np + 1; i++) printf " %d", s[i] / n
+    printf " %d %d %d\n", s[np + 2] / n, tc, tg
+  }' "$samples")
+read -r mw rest <<<"$summary"
+cpu_mhz=$(echo "$rest" | cut -d' ' -f1-"$np" | tr ' ' '/')
+read -r gpu_mhz tmax_cpu tmax_gpu <<<"$(echo "$rest" | cut -d' ' -f$((np + 1))-)"
+cap=$(capacity_mwh)
+hours=$(awk -v c="$cap" -v w="$mw" 'BEGIN { if (w > 0 && c > 0) printf "%.1f", c / w; else print "?" }')
+
+echo
+echo "average draw:   $mw mW   (~$hours h on a full battery)"
+echo "avg CPU MHz:    $cpu_mhz (per cpufreq policy)"
+echo "avg GPU MHz:    $gpu_mhz"
+echo "peak temp:      CPU ${tmax_cpu} C, GPU ${tmax_gpu} C"
+
+mkdir -p "$(dirname "$CSV")"
+[ -f "$CSV" ] || echo "time,label,secs,mW,hours,fps,cpu_mhz,gpu_mhz,cpu_C,gpu_C,scheduler,wifi_ps,display" >"$CSV"
+echo "$(date +%F_%H:%M),$label,$secs,$mw,$hours,${FPS:-},$cpu_mhz,$gpu_mhz,$tmax_cpu,$tmax_gpu,$(scheduler),$(wifi_ps),$(refresh)" >>"$CSV"
+echo "recorded in $CSV"

@@ -1,0 +1,29 @@
+# Display Settings KCM + kscreen daemon, built for Valve's deckard Plasma 6.2.5 stack
+# (kscreen is the one piece of Plasma missing from every deckard snapshot).
+pkgname=kscreen
+pkgver=6.2.5
+pkgrel=1
+pkgdesc='KDE screen management software (Display Settings)'
+arch=(aarch64)
+url='https://kde.org/plasma-desktop/'
+license=(GPL-2.0-or-later LGPL-2.0-or-later)
+depends=(gcc-libs glibc kcmutils kconfig kcoreaddons kdbusaddons kdeclarative kglobalaccel
+         ki18n kirigami ksvg kwindowsystem kxmlgui layer-shell-qt libkscreen libplasma
+         qt6-base qt6-declarative qt6-sensors wayland)
+makedepends=(cmake ninja extra-cmake-modules qt6-tools plasma-wayland-protocols wayland-protocols)
+source=(https://download.kde.org/stable/plasma/$pkgver/$pkgname-$pkgver.tar.xz)
+sha256sums=('6237c47fe70384d10e6f20d7f058c6aacca51a493da928077fcec91b0ef69642')
+
+build() {
+  cmake -B build -S $pkgname-$pkgver -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_INSTALL_LIBEXECDIR=lib \
+    -DBUILD_TESTING=OFF \
+    -DWITH_X11=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}

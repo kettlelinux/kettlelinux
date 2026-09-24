@@ -13,7 +13,7 @@ Subject: [PATCH] input: add input-polldev driver
  create mode 100644 include/linux/input-polldev.h
 
 diff --git a/drivers/input/Kconfig b/drivers/input/Kconfig
-index 3bdbd34314b3..779daf5009c1 100644
+index 88ecdf5..d534064 100644
 --- a/drivers/input/Kconfig
 +++ b/drivers/input/Kconfig
 @@ -51,6 +51,19 @@ config INPUT_FF_MEMLESS
@@ -37,11 +37,11 @@ index 3bdbd34314b3..779daf5009c1 100644
  	tristate "Sparse keymap support library"
  	help
 diff --git a/drivers/input/Makefile b/drivers/input/Makefile
-index c78753274921..e92c29174c36 100644
+index 2cd6e1c..fb14d4f 100644
 --- a/drivers/input/Makefile
 +++ b/drivers/input/Makefile
 @@ -10,6 +10,7 @@ input-core-y := input.o input-compat.o input-mt.o input-poller.o ff-core.o
- input-core-y += touchscreen.o
+ input-core-y += touchscreen.o touch-overlay.o
  
  obj-$(CONFIG_INPUT_FF_MEMLESS)	+= ff-memless.o
 +obj-$(CONFIG_INPUT_POLLDEV)	+= input-polldev.o
@@ -50,7 +50,7 @@ index c78753274921..e92c29174c36 100644
  obj-$(CONFIG_INPUT_VIVALDIFMAP)	+= vivaldi-fmap.o
 diff --git a/drivers/input/input-polldev.c b/drivers/input/input-polldev.c
 new file mode 100644
-index 000000000000..9bf1c9aeb4c4
+index 0000000..9bf1c9a
 --- /dev/null
 +++ b/drivers/input/input-polldev.c
 @@ -0,0 +1,362 @@
@@ -418,7 +418,7 @@ index 000000000000..9bf1c9aeb4c4
 +EXPORT_SYMBOL(input_unregister_polled_device);
 diff --git a/include/linux/input-polldev.h b/include/linux/input-polldev.h
 new file mode 100644
-index 000000000000..14821fd231c0
+index 0000000..14821fd
 --- /dev/null
 +++ b/include/linux/input-polldev.h
 @@ -0,0 +1,58 @@
@@ -480,6 +480,3 @@ index 000000000000..14821fd231c0
 +void input_unregister_polled_device(struct input_polled_dev *dev);
 +
 +#endif
--- 
-2.34.1
-

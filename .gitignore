@@ -1,0 +1,5 @@
+cache/
+build/
+out/
+tools/qemu-aarch64-static
+local.env

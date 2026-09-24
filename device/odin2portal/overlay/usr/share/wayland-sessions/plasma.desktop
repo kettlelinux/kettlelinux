@@ -1,0 +1,10 @@
+[Desktop Entry]
+# Standard Plasma 6 Wayland session. Valve's deckard plasma-workspace drops this file
+# (their plasma.desktop, from deckard-steamvr-session, nests Plasma inside VR gamescope).
+Type=Application
+Exec=/usr/lib/plasma-dbus-run-session-if-needed /usr/bin/startplasma-wayland
+TryExec=/usr/bin/startplasma-wayland
+DesktopNames=KDE
+Name=Plasma (Wayland)
+Comment=Plasma by KDE
+X-KDE-PluginInfo-Version=6.2.5
