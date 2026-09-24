@@ -19,16 +19,19 @@ change only fixes the clk-scaling return value.
 Signed-off-by: jaewun <jaewun@users.noreply.github.com>
 ---
 diff --git a/drivers/ufs/host/ufs-qcom.c b/drivers/ufs/host/ufs-qcom.c
+index d8d6799..1bbd22d 100644
 --- a/drivers/ufs/host/ufs-qcom.c
 +++ b/drivers/ufs/host/ufs-qcom.c
-@@ -1779,8 +1779,8 @@
+@@ -1955,10 +1955,10 @@ static int ufs_qcom_clk_scale_notify(struct ufs_hba *hba, bool scale_up,
  		}
-
+ 
  		ufs_qcom_icc_update_bw(host);
 -		ufshcd_uic_hibern8_exit(hba);
 +		err = ufshcd_uic_hibern8_exit(hba);
  	}
-
+ 
 -	return 0;
 +	return err;
  }
+ 
+ static void ufs_qcom_enable_test_bus(struct ufs_qcom_host *host)

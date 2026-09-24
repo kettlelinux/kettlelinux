@@ -1,0 +1,1625 @@
+Valve's deckard (Steam Frame) changes to MangoHud, as shipped in
+mangohud 20260922.1-1 (deckard-arch-hotfixes). Recovered from the
+sources in mangohud-debug-20260922.1-1-aarch64.pkg.tar.zst, diffed
+against upstream 20700b4, the closest upstream commit.
+
+Build files are not in the debug package; 0002 adds the new sources.
+---
+diff --git a/src/app/main.cpp b/src/app/main.cpp
+index 81f4e7b..7a5d502 100644
+--- a/src/app/main.cpp
++++ b/src/app/main.cpp
+@@ -12,6 +12,8 @@
+ #include <stdio.h>
+ #include <thread>
+ #include <unistd.h>
++#include <stdint.h>
++#include <stdlib.h>
+ #include "../overlay.h"
+ #include "notify.h"
+ #include "mangoapp.h"
+@@ -35,6 +37,24 @@ static void glfw_error_callback(int error, const char* description)
+     fprintf(stderr, "Glfw Error %d: %s\n", error, description);
+ }
+ 
++static long mangoapp_msg_type(void)
++{
++    const char *env = getenv("MANGOAPP_MSG_TYPE");
++    if (env) {
++        long type = atol(env);
++        if (type > 0 && type <= INT32_MAX)
++            return type;
++    }
++    return 1;
++}
++
++// gamescope relays mangohudctl's messages onto the stream type plus one.
++static long mangoapp_ctrl_msg_type(void)
++{
++    long type = mangoapp_msg_type();
++    return type == 1 ? 2 : type + 1;
++}
++
+ swapchain_stats sw_stats {};
+ overlay_params params {};
+ static ImVec2 window_size;
+@@ -95,10 +115,13 @@ static unsigned int get_prop(const char* propName){
+ }
+ 
+ static void ctrl_thread(){
++    // Own buffer, msg_read_thread is reading into raw_msg at the same time.
++    static uint8_t ctrl_msg[1024] = {0};
++    const long ctrl_msg_type = mangoapp_ctrl_msg_type();
+     while (1){
+-        const struct mangoapp_ctrl_msgid1_v1 *mangoapp_ctrl_v1 = (const struct mangoapp_ctrl_msgid1_v1*) raw_msg;
+-        memset(raw_msg, 0, sizeof(raw_msg));
+-        msgrcv(msgid, (void *) raw_msg, sizeof(raw_msg), 2, 0);
++        const struct mangoapp_ctrl_msgid1_v1 *mangoapp_ctrl_v1 = (const struct mangoapp_ctrl_msgid1_v1*) ctrl_msg;
++        memset(ctrl_msg, 0, sizeof(ctrl_msg));
++        msgrcv(msgid, (void *) ctrl_msg, sizeof(ctrl_msg), ctrl_msg_type, 0);
+         switch (mangoapp_ctrl_v1->log_session) {
+             case 0:
+                 // Keep as-is
+@@ -168,6 +191,29 @@ static void gamescope_frametime(uint64_t app_frametime_ns, uint64_t latency_ns){
+         HUDElements.gamescope_debug_latency.erase(HUDElements.gamescope_debug_latency.begin());
+ }
+ 
++static EngineTypes engine_type_from_str(std::string engineName) {
++    if (engineName == "DXVK")
++        return DXVK;
++
++    else if (engineName == "vkd3d")
++        return VKD3D;
++
++    else if(engineName == "mesa zink")
++        return ZINK;
++
++    else if (engineName == "Damavand")
++        return DAMAVAND;
++
++    else if (engineName == "Feral3D")
++        return FERAL3D;
++
++    else if (engineName == "gamescope")
++        return GAMESCOPE;
++
++    else
++        return VULKAN;
++}
++
+ static void msg_read_thread(){
+     for (size_t i = 0; i < 200; i++){
+         HUDElements.gamescope_debug_app.push_back(0);
+@@ -180,15 +226,18 @@ static void msg_read_thread(){
+     const struct mangoapp_msg_v1 *mangoapp_v1 = (const struct mangoapp_msg_v1*) raw_msg;
+ 
+     uint32_t previous_game_pid = 0;
++    const long msg_type = mangoapp_msg_type();
+ 
+     while (1){
+         // make sure that the message recieved is compatible
+         // and that we're not trying to use variables that don't exist (yet)
+-        size_t msg_size = msgrcv(msgid, (void *) raw_msg, sizeof(raw_msg), 1, 0);
++        size_t msg_size = msgrcv(msgid, (void *) raw_msg, sizeof(raw_msg), msg_type, 0);
+         if (msg_size != size_t(-1))
+         {
+             if (hdr->version == 1){
+-                if (msg_size > offsetof(struct mangoapp_msg_v1, pid)) {
++                // msgrcv's size excludes msg_type, which offsetof counts.
++                const size_t msg_bytes = msg_size + sizeof(hdr->msg_type);
++                if (msg_bytes > offsetof(struct mangoapp_msg_v1, pid)) {
+                     HUDElements.g_gamescopePid = mangoapp_v1->pid;
+ 
+                     if (previous_game_pid != mangoapp_v1->pid) {
+@@ -197,7 +246,7 @@ static void msg_read_thread(){
+                     }
+                 }
+ 
+-                if (msg_size > offsetof(struct mangoapp_msg_v1, visible_frametime_ns)){
++                if (msg_bytes > offsetof(struct mangoapp_msg_v1, visible_frametime_ns)){
+                     auto real_params = get_params();
+                     bool should_new_frame = false;
+                     if (mangoapp_v1->visible_frametime_ns != ~(0lu) && (!real_params->no_display || logger->is_active())) {
+@@ -205,20 +254,28 @@ static void msg_read_thread(){
+                         should_new_frame = true;
+                     }
+ 
+-                    if (msg_size > offsetof(mangoapp_msg_v1, fsrUpscale)){
++                    if (msg_bytes > offsetof(mangoapp_msg_v1, fsrUpscale)){
+                         HUDElements.g_fsrUpscale = mangoapp_v1->fsrUpscale;
+                         if (real_params->fsr_steam_sharpness < 0)
+                             HUDElements.g_fsrSharpness = mangoapp_v1->fsrSharpness;
+                         else
+                         HUDElements.g_fsrSharpness = real_params->fsr_steam_sharpness - mangoapp_v1->fsrSharpness;
+                     }
++                    if (msg_bytes > offsetof(mangoapp_msg_v1, upscaler))
++                        HUDElements.g_upscaler = mangoapp_v1->upscaler;
++                    else
++                        HUDElements.g_upscaler = mangoapp_v1->fsrUpscale ? MANGOAPP_UPSCALER_FSR : MANGOAPP_UPSCALER_LINEAR;
++                    if (msg_bytes > offsetof(mangoapp_msg_v1, wantedUpscaler))
++                        HUDElements.g_wantedUpscaler = mangoapp_v1->wantedUpscaler;
++                    else
++                        HUDElements.g_wantedUpscaler = HUDElements.g_upscaler ? HUDElements.g_upscaler : MANGOAPP_UPSCALER_FSR;
+                     if (!HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_mangoapp_steam]){
+                         steam_focused = get_prop("GAMESCOPE_FOCUSED_APP_GFX") == 769;
+                     } else {
+                         steam_focused = false;
+                     }
+ 
+-                    if (msg_size > offsetof(mangoapp_msg_v1, latency_ns))
++                    if (msg_bytes > offsetof(mangoapp_msg_v1, latency_ns))
+                         gamescope_frametime(mangoapp_v1->app_frametime_ns, mangoapp_v1->latency_ns);
+ 
+                     if (should_new_frame)
+@@ -231,6 +288,13 @@ static void msg_read_thread(){
+                         screenWidth = mangoapp_v1->outputWidth;
+                         screenHeight = mangoapp_v1->outputHeight;
+                     }
++
++                    if (msg_bytes > offsetof(mangoapp_msg_v1, engineName)) {
++                        if (!steam_focused)
++                            sw_stats.engine = engine_type_from_str(std::string(mangoapp_v1->engineName));
++                    } else {
++                        sw_stats.engine = EngineTypes::GAMESCOPE;
++                    }
+                 }
+             } else {
+                 printf("Unsupported mangoapp struct version: %i\n", hdr->version);
+@@ -254,6 +318,14 @@ static GLFWwindow* init(const char* glsl_version){
+     if (x11_window && x11_display)
+     {
+         // Set atom for gamescope to render as an overlay.
++        long msg_type = mangoapp_msg_type();
++        if (msg_type != 1)
++        {
++            // Tag before the overlay property.
++            Atom msg_type_atom = XInternAtom(x11_display, "GAMESCOPE_MANGOAPP_MSG_TYPE", False);
++            XChangeProperty(x11_display, x11_window, msg_type_atom, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&msg_type, 1);
++        }
++
+         Atom overlay_atom = XInternAtom (x11_display, GamescopeOverlayProperty, False);
+         uint32_t value = 1;
+         XChangeProperty(x11_display, x11_window, overlay_atom, XA_CARDINAL, 32, PropertyNewValue, (unsigned char *)&value, 1);
+@@ -366,6 +438,7 @@ int main(int, char**)
+     uint32_t value = 1;
+     XChangeProperty(x11_display, x11_window, noFocusAtom, XA_CARDINAL, 32,
+                     PropModeReplace, (unsigned char *)&value, 1);
++
+     // Main loop
+     while (!glfwWindowShouldClose(window)){
+         check_keybinds(params);
+diff --git a/src/app/mangoapp_proto.h b/src/app/mangoapp_proto.h
+index 8bc9c90..ca58806 100644
+--- a/src/app/mangoapp_proto.h
++++ b/src/app/mangoapp_proto.h
+@@ -17,9 +17,26 @@ struct mangoapp_msg_v1 {
+     uint64_t latency_ns;
+     uint32_t outputWidth;
+     uint32_t outputHeight;
++    uint16_t displayRefresh;
++    bool bAppWantsHDR : 1;
++    bool bSteamFocused : 1;
++    char engineName[40];
++    uint8_t upscaler; // mangoapp_upscaler that produced the frame, LINEAR for none
++    uint8_t wantedUpscaler; // mangoapp_upscaler the user selected
++
+     // WARNING: Always ADD fields, never remove or repurpose fields
+ } __attribute__((packed));
+ 
++// gamescope's GamescopeUpscaleFilter values, as Steam writes them to the scaling atom.
++enum mangoapp_upscaler : uint8_t {
++    MANGOAPP_UPSCALER_LINEAR = 0,
++    MANGOAPP_UPSCALER_NEAREST = 1,
++    MANGOAPP_UPSCALER_FSR = 2,
++    MANGOAPP_UPSCALER_NIS = 3,
++    MANGOAPP_UPSCALER_PIXEL = 4,
++    MANGOAPP_UPSCALER_SGSR = 5,
++};
++
+ struct mangoapp_ctrl_header {
+     long msg_type;  // Message queue ID, never change
+     uint32_t ctrl_msg_type; /* This is a way to share the same thread between multiple types of messages */
+diff --git a/src/battery.cpp b/src/battery.cpp
+index e5d311b..f10ec5f 100644
+--- a/src/battery.cpp
++++ b/src/battery.cpp
+@@ -7,15 +7,17 @@ using namespace std;
+ 
+ void BatteryStats::numBattery() {
+     int batteryCount = 0;
+-    if (!fs::exists("/sys/class/power_supply/")) {
+-         batteryCount = 0;
+-    }
+-    fs::path path("/sys/class/power_supply/");
+-    for (auto& p : fs::directory_iterator(path)) {
+-        string fileName = p.path().filename();
+-        if (fileName.find("BAT") != std::string::npos) {
+-            battPath[batteryCount] = p.path();
+-            batteryCount += 1;
++
++    for (const auto& dir : { fs::path("/sys/class/power_supply/"), fs::path("/run/deckardcharger/") } )
++    {
++        if (!fs::exists(dir)) continue;
++
++        for (const auto& p : fs::directory_iterator(dir)) {
++            string fileName = p.path().filename();
++
++            if ( (fileName.find("BAT") != std::string::npos) && (batteryCount < BATTERY_COUNT_MAX) ) {
++                battPath[batteryCount++] = p.path();
++            }
+         }
+     }
+     batt_count = batteryCount;
+@@ -41,6 +43,13 @@ float BatteryStats::getPercent()
+ {
+     float charge_n = 0;
+     float charge_f = 0;
++
++    // deckardcharger publishes the percentage Steam displays, use it for parity
++    std::ifstream deckard_percent("/run/deckardcharger/battery_percent");
++    float percent;
++    if (deckard_percent >> percent)
++        return percent;
++
+     for(int i = 0; i < batt_count; i++) {
+         string syspath = battPath[i];
+         string charge_now = syspath + "/charge_now";
+@@ -88,53 +97,70 @@ float BatteryStats::getPercent()
+ }
+ 
+ float BatteryStats::getPower() {
+-    float current = 0;
+-    float voltage = 0;
+-    for(int i = 0; i < batt_count; i++) {
++    float power_w = 0.0f;
++
++    for (int i = 0; i < batt_count; i++) {
+         string syspath = battPath[i];
+-        string current_power = syspath + "/current_now";
+-        string current_voltage = syspath + "/voltage_now";
++        string current_now = syspath + "/current_now";
++        string voltage_now = syspath + "/voltage_now";
+         string power_now = syspath + "/power_now";
+         string status = syspath + "/status";
+ 
+-        std::ifstream input(status);
+-        std::string line;
+-        if(std::getline(input,line)) {
+-            current_status= line;
+-            state[i]=current_status;
++        {
++            std::ifstream input(status);
++            std::string line;
++            if (std::getline(input, line)) {
++                current_status = line;
++                state[i] = current_status;
++            }
+         }
+ 
+-        if (state[i] == "Charging" ||  state[i] == "Unknown" || state[i] == "Full") {
+-            return 0;
++        if (state[i] == "Charging" || state[i] == "Unknown" || state[i] == "Full") {
++            // TODO if we have multiple batteries, we will return 0 if just one of them is charging
++            return 0.0f;
+         }
+ 
+-        if (fs::exists(current_power)) {
+-            std::ifstream input(current_power);
++        // Prefer power_now (µW) when available.
++        if (fs::exists(power_now)) {
++            std::ifstream input(power_now);
+             std::string line;
+-            if(std::getline(input,line)) {
+-                current += (stof(line) / 1000000);
+-            }
+-            std::ifstream input2(current_voltage);
+-            if(std::getline(input2, line)) {
+-                voltage += (stof(line) / 1000000);
++            if (std::getline(input, line)) {
++                power_w += std::fabs(stof(line)) / 1000000.0f;
+             }
++            continue;
+         }
+-        else {
+-            std::ifstream input(power_now);
+-            std::string line;
+-            if(std::getline(input,line)) {
+-                current += (stof(line) / 1000000);
+-                voltage = 1;
++
++        if (fs::exists(current_now) && fs::exists(voltage_now)) {
++            float i_ua = 0.0f;
++            float v_uv = 0.0f;
++
++            {
++                std::ifstream input(current_now);
++                std::string line;
++                if (std::getline(input, line)) {
++                    i_ua = stof(line);
++                }
+             }
++            {
++                std::ifstream input(voltage_now);
++                std::string line;
++                if (std::getline(input, line)) {
++                    v_uv = stof(line);
++                }
++            }
++
++            power_w += (std::fabs(i_ua) * std::fabs(v_uv)) * 1e-12f;
+         }
+     }
+-    return current * voltage;
++
++    return power_w;
+ }
+ 
+-float BatteryStats::getTimeRemaining(){
+-    float current = 0;
+-    float charge = 0;
+-    for(int i = 0; i < batt_count; i++) {
++float BatteryStats::getTimeRemaining() {
++    float current = 0.0f;
++    float charge = 0.0f;
++
++    for (int i = 0; i < batt_count; i++) {
+         string syspath = battPath[i];
+         string current_now = syspath + "/current_now";
+         string charge_now = syspath + "/charge_now";
+@@ -145,52 +171,82 @@ float BatteryStats::getTimeRemaining(){
+         if (fs::exists(current_now)) {
+             std::ifstream input(current_now);
+             std::string line;
+-            if(std::getline(input, line)){
+-                current_now_vec.push_back(stof(line));
+-            }
+-        } else if (fs::exists(power_now)){
+-            float voltage = 0;
+-            float power = 0;
+-            std::ifstream input_power(power_now);
+-            std::ifstream input_voltage(voltage_now);
+-            std::string line;
+-            if(std::getline(input_voltage, line)){
+-                voltage = stof(line);
++            if (std::getline(input, line)) {
++                current_now_vec.push_back(std::fabs(stof(line)));
++            }
++        } else if (fs::exists(power_now) && fs::exists(voltage_now)) {
++            float voltage = 0.0f;
++            float power = 0.0f;
++
++            {
++                std::ifstream input_voltage(voltage_now);
++                std::string line;
++                if (std::getline(input_voltage, line)) {
++                    voltage = stof(line);
++                }
+             }
+-            if(std::getline(input_power, line)){
+-                power = stof(line);
++            {
++                std::ifstream input_power(power_now);
++                std::string line;
++                if (std::getline(input_power, line)) {
++                    power = stof(line);
++                }
++            }
++
++            if (voltage > 0.0f) {
++                // (µW / µV) = µA
++                current_now_vec.push_back(std::fabs(power) / voltage);
+             }
+-            current_now_vec.push_back(power / voltage);
+         }
+-        if (fs::exists(charge_now)){
+-            std::string line;
++
++        if (fs::exists(charge_now)) {
+             std::ifstream input(charge_now);
+-            if(std::getline(input, line)){
++            std::string line;
++            if (std::getline(input, line)) {
+                 charge += stof(line);
+             }
+-        }
+-        else if (fs::exists(energy_now)) {
+-            float energy = 0;
+-            float voltage = 0;
+-            std::string line;
+-            std::ifstream input_energy(energy_now);
+-            std::ifstream input_voltage(voltage_now);
+-            if(std::getline(input_energy, line)){
+-                energy = stof(line);
++        } else if (fs::exists(energy_now) && fs::exists(voltage_now)) {
++            float energy = 0.0f;
++            float voltage = 0.0f;
++
++            {
++                std::ifstream input_energy(energy_now);
++                std::string line;
++                if (std::getline(input_energy, line)) {
++                    energy = stof(line);
++                }
+             }
+-            if(std::getline(input_voltage, line)){
+-                voltage = stof(line);
++            {
++                std::ifstream input_voltage(voltage_now);
++                std::string line;
++                if (std::getline(input_voltage, line)) {
++                    voltage = stof(line);
++                }
++            }
++
++            if (voltage > 0.0f) {
++                // (µWh / µV) = µAh
++                charge += energy / voltage;
+             }
+-            charge += energy / voltage;
+         }
+-        if (current_now_vec.size() > 25)
++
++        if (current_now_vec.size() > 25) {
+             current_now_vec.erase(current_now_vec.begin());
++        }
++    }
++
++    if (current_now_vec.empty()) {
++        return 0.0f;
++    }
++
++    for (const auto& current_now_sample : current_now_vec) {
++        current += current_now_sample;
+     }
++    current /= static_cast<float>(current_now_vec.size());
+ 
+-    for(auto& current_now : current_now_vec){
+-        current += current_now;
++    if (current <= 0.0f) {
++        return 0.0f;
+     }
+-    current /= current_now_vec.size();
+ 
+     return charge / current;
+ }
+diff --git a/src/battery.h b/src/battery.h
+index 098f976..f40495b 100644
+--- a/src/battery.h
++++ b/src/battery.h
+@@ -1,6 +1,8 @@
+ #pragma once
+ #include <string>
+ 
++#define BATTERY_COUNT_MAX 2
++
+ class BatteryStats{
+     public:
+         void numBattery();
+@@ -8,12 +10,12 @@ class BatteryStats{
+         float getPower();
+         float getPercent();
+         float getTimeRemaining();
+-        std::string battPath[2];
++        std::string battPath[BATTERY_COUNT_MAX];
+         float current_watt = 0;
+         float current_percent = 0;
+         float remaining_time = 0;
+         std::string current_status;
+-        std::string state [2];
++        std::string state [BATTERY_COUNT_MAX];
+         int batt_count=0;
+         bool batt_check = false;
+         std::vector<float> current_now_vec = {};
+diff --git a/src/cpu.cpp b/src/cpu.cpp
+index 0d7970f..50cdbb3 100644
+--- a/src/cpu.cpp
++++ b/src/cpu.cpp
+@@ -1,4 +1,5 @@
+ #include "cpu.h"
++#include <cstdio>
+ #include <memory>
+ #include <string>
+ #include <iostream>
+@@ -10,6 +11,7 @@
+ #include <regex>
+ #include <inttypes.h>
+ #include <spdlog/spdlog.h>
++#include "logging.h"
+ #include "string_utils.h"
+ #include "gpu.h"
+ #include "hud_elements.h"
+@@ -35,6 +37,7 @@
+ #endif
+ 
+ #include "file_utils.h"
++#include "deckard_power.h"
+ 
+ static void calculateCPUData(CPUData& cpuData,
+     unsigned long long int usertime,
+@@ -302,6 +305,7 @@ bool CPUStats::UpdateCpuTemp() {
+ 
+     int temp = 0;
+     bool ret = ReadcpuTempFile(temp);
++    temp = deckard_temp.get_temp();
+     m_cpuDataTotal.temp = temp;
+ 
+     return ret;
+@@ -460,6 +464,11 @@ static bool get_cpu_power_xgene(CPUPowerData* cpuPowerData, float& power) {
+     return true;
+ }
+ 
++static bool get_cpu_power_deckard(float& power) {
++    // cores_total is the CPU core rails, what Steam Deck reports as CPU power
++    return DeckardPower::read(DeckardPower::cpu_cores, power);
++}
++
+ bool CPUStats::UpdateCpuPower() {
+     InitCpuPowerData();
+ 
+@@ -487,6 +496,9 @@ bool CPUStats::UpdateCpuPower() {
+         case CPU_POWER_XGENE:
+             if (!get_cpu_power_xgene(m_cpuPowerData.get(), power)) return false;
+             break;
++        case CPU_POWER_DECKARD:
++            if (!get_cpu_power_deckard(power)) return false;
++            break;
+         default:
+             return false;
+     }
+@@ -599,6 +611,10 @@ bool CPUStats::GetCpuFile() {
+         } else if (name == "l_pcs") {
+             // E2K (Elbrus 2000) CPU temperature module
+             find_input(path, "temp", input, "Node 0 Max");
++        }
++        else if (name == "cpu5_bottom_thermal") {
++            //todo figure out best choice here for representative cpu temp
++            find_input(path, "temp", input, "temp1");
+             break;
+         } else if (std::regex_match(name, match, std::regex("cpu\\d*_thermal"))) {
+             find_fallback_input(path, "temp1", input);
+@@ -755,6 +771,13 @@ bool CPUStats::InitCpuPowerData() {
+         }
+     }
+ 
++    // Steam Frame: deckard_power_monitor owns the max34417 power monitors,
++    // reading the hwmon chips directly races its accumulator updates
++    if (!cpuPowerData && DeckardPower::available()) {
++        auto powerData = std::make_unique<CPUPowerData_deckard>();
++        cpuPowerData = (CPUPowerData*)powerData.release();
++    }
++
+     if (!cpuPowerData) {
+         if (gpus) {
+             for (auto gpu : gpus->available_gpus) {
+@@ -779,7 +802,7 @@ bool CPUStats::InitCpuPowerData() {
+             }
+         }
+     }
+-    
++
+     if(cpuPowerData == nullptr) {
+         SPDLOG_ERROR("Failed to initialize CPU power data");
+         return false;
+diff --git a/src/cpu.h b/src/cpu.h
+index d27c788..a81824c 100644
+--- a/src/cpu.h
++++ b/src/cpu.h
+@@ -12,6 +12,7 @@
+ #endif
+ #include "timing.hpp"
+ #include "gpu.h"
++#include "deckard_temp.h"
+ 
+ typedef struct CPUData_ {
+    unsigned long long int totalTime;
+@@ -56,7 +57,8 @@ enum {
+    CPU_POWER_ZENERGY,
+    CPU_POWER_RAPL,
+    CPU_POWER_AMDGPU,
+-   CPU_POWER_XGENE
++   CPU_POWER_XGENE,
++   CPU_POWER_DECKARD
+ };
+ 
+ struct CPUPowerData {
+@@ -148,7 +150,6 @@ struct CPUPowerData_amdgpu : public CPUPowerData {
+    };
+ };
+ 
+-
+ struct CPUPowerData_xgene : public CPUPowerData {
+    CPUPowerData_xgene() {
+       this->source = CPU_POWER_XGENE;
+@@ -162,6 +163,13 @@ struct CPUPowerData_xgene : public CPUPowerData {
+    FILE* powerFile {nullptr};
+ };
+ 
++// Steam Frame: values published by deckard_power_monitor
++struct CPUPowerData_deckard : public CPUPowerData {
++   CPUPowerData_deckard() {
++      this->source = CPU_POWER_DECKARD;
++   };
++};
++
+ class CPUStats
+ {
+ public:
+@@ -234,6 +242,8 @@ private:
+       {"0xd04", "A35"},
+       {"0xd06", "A65"}
+    };
++
++   DeckardTemp deckard_temp;
+ };
+ 
+ extern CPUStats cpuStats;
+diff --git a/src/deckard_power.cpp b/src/deckard_power.cpp
+new file mode 100644
+index 0000000..016ddca
+--- /dev/null
++++ b/src/deckard_power.cpp
+@@ -0,0 +1,43 @@
++#include "deckard_power.h"
++
++#include <fstream>
++#include <string>
++
++static std::string power_path(const char* name) {
++	return std::string("/run/power-monitor/power/") + name;
++}
++
++bool DeckardPower::available() {
++	std::ifstream f(power_path(cpu_cores));
++	return f.is_open();
++}
++
++bool DeckardPower::read(const char* name, float& watts) {
++	std::ifstream f(power_path(name));
++	if (!f.is_open())
++		return false;
++
++	float value;
++	if (!(f >> value))
++		return false;
++
++	watts = value;
++	return true;
++}
++
++/*
++ * To compile as standalone tool run:
++ *  g++ -o deckard_power -D MAX_TEST=1 src/deckard_power.cpp */
++
++#ifdef MAX_TEST
++
++#include <cstdio>
++
++int main() {
++	float cpu = 0, gpu = 0;
++	bool have_cpu = DeckardPower::read(DeckardPower::cpu_cores, cpu);
++	bool have_gpu = DeckardPower::read(DeckardPower::gfx, gpu);
++	printf("available=%d cpu=%d:%f gfx=%d:%f\n", DeckardPower::available(), have_cpu, cpu, have_gpu, gpu);
++}
++
++#endif
+diff --git a/src/deckard_power.h b/src/deckard_power.h
+new file mode 100644
+index 0000000..05985ed
+--- /dev/null
++++ b/src/deckard_power.h
+@@ -0,0 +1,13 @@
++#pragma once
++
++/* Power values published by deckard_power_monitor (Steam Frame).
++ * Files under /run/power-monitor/power/ contain watts as text. */
++namespace DeckardPower {
++	constexpr const char* cpu_cores = "cores_total";
++	constexpr const char* gfx = "gfx";
++
++	/* true if deckard_power_monitor has published cores_total */
++	bool available();
++	/* read /run/power-monitor/power/<name> into watts, false if missing or unreadable */
++	bool read(const char* name, float& watts);
++}
+diff --git a/src/deckard_temp.cpp b/src/deckard_temp.cpp
+new file mode 100644
+index 0000000..8c507c6
+--- /dev/null
++++ b/src/deckard_temp.cpp
+@@ -0,0 +1,59 @@
++#include "deckard_temp.h"
++
++#include <vector>
++#include <algorithm>
++#include <filesystem>
++#include <fstream>
++#include <iostream>
++
++#ifndef MAX_TEST
++#include <filesystem.h>
++namespace fs = ghc::filesystem;
++#else
++namespace fs = std::filesystem;
++#endif
++
++DeckardTemp::DeckardTemp() {
++	/* find relevant hwmon path for metric */
++	for (auto const& dir_entry : fs::directory_iterator("/sys/class/thermal/")) {
++		auto name_path = dir_entry.path().string() + "/type";
++		try {
++			std::ifstream name_if(name_path);
++			std::string name;
++			name_if >> name;
++			if (name.substr(0, 3) != "cpu" || 
++				(name.substr(4, name.size()) != "-thermal" && 
++				 name.substr(4, name.size()) != "-top-thermal"))
++				continue;
++			paths.push_back(dir_entry.path().string());
++		} catch (std::exception &e) {
++			continue;
++		}
++	}
++}
++
++float DeckardTemp::get_temp() {
++	float avg = 0.0;
++	int count = 0;
++	for (auto const& path: paths) {
++		auto name_path = path + "/temp";
++		try {
++			std::ifstream temp_if(name_path);
++			int temp;
++			temp_if >> temp;
++			avg += (float)temp / 1000.0f;
++			count++;
++		} catch (std::exception &e) {
++			continue;
++		}
++	}
++
++	return avg / (float)count;
++}
++
++#ifdef MAX_TEST
++int main() {
++	DeckardTemp test;
++	std::cout << test.get_temp() << std::endl;
++}
++#endif
+diff --git a/src/deckard_temp.h b/src/deckard_temp.h
+new file mode 100644
+index 0000000..cb9d229
+--- /dev/null
++++ b/src/deckard_temp.h
+@@ -0,0 +1,11 @@
++#include <vector>
++#include <string>
++
++class DeckardTemp {
++	std::vector<std::string> paths;
++
++public:
++	DeckardTemp();
++
++	float get_temp();
++};
+diff --git a/src/file_utils.cpp b/src/file_utils.cpp
+index 80e3031..9adc237 100644
+--- a/src/file_utils.cpp
++++ b/src/file_utils.cpp
+@@ -190,17 +190,18 @@ bool lib_loaded(const std::string& lib, pid_t pid) {
+    std::string who = pid != -1 ? std::to_string(pid) : "self";
+    auto paths = { fs::path("/proc") / who / "map_files",
+             fs::path("/proc") / who / "fd" };
+-    for (auto& path : paths) {
+-        if (dir_exists(path.string())) {
+-            for (auto& p : fs::directory_iterator(path)) {
++    for (const auto& path : paths) {
++        try {
++            for (const auto& p : fs::directory_iterator(path)) {
+                 auto file = p.path().string();
+                 auto sym = read_symlink(file.c_str());
+                 if (to_lower(sym).find(lib) != std::string::npos) {
+                     return true;
+                 }
+             }
+-        } else {
+-            SPDLOG_DEBUG("tried to access path that doesn't exist {}", path.string());
++        }
++        catch (const fs::filesystem_error& e) {
++            SPDLOG_DEBUG("failed to iterate {}: {}", path.string(), e.what());
+         }
+     }
+     return false;
+diff --git a/src/ftrace_gpumem.c b/src/ftrace_gpumem.c
+new file mode 100644
+index 0000000..76fd5c7
+--- /dev/null
++++ b/src/ftrace_gpumem.c
+@@ -0,0 +1,91 @@
++#include <stdlib.h>
++#include <ctype.h>
++#include <tracefs.h>
++#include <errno.h>
++#include <string.h>
++#include "ftrace_gpumem.h"
++
++static struct tep_handle *tep;
++static struct tracefs_instance *inst;
++static unsigned long long mem = 0;
++
++static int records_walk(struct tep_event *_tep, struct tep_record *record, int cpu, void *context)
++{
++	struct tep_event *event = tep_find_event_by_record(tep, record);
++	if (!event)
++		return 0;
++	else {
++		struct tep_format_field *format;
++		format = event->format.fields;
++		for ( ; format; format = format->next )
++		{
++		    if ( !strcmp( format->name, "pid" ) ) {
++			unsigned long long val = tep_read_number( tep,
++				( char * )record->data + format->offset, format->size );
++			// pid = 0 -> total mem
++			if (val != 0)
++				return 0;
++		    } else if ( !strcmp( format->name, "size" ) ) {
++			unsigned long long val = tep_read_number( tep,
++				( char * )record->data + format->offset, format->size );
++			mem = val;
++		    }
++		}
++	}
++	/* Got recorded event on cpu */
++	return 0;
++}
++
++void ftrace_gpumem_init(void)
++{
++	int ret;
++	char * dir;
++
++	inst = tracefs_instance_create("mangohud");
++	if (!inst) {
++		/* Error creating a new trace instance */
++		printf("failed to create instance");
++		abort();
++	}
++
++	dir = tracefs_instance_get_dir(inst);
++	if (!dir) {
++		perror("tracefs_instance_get_dir");
++		exit(EXIT_FAILURE);
++	}
++
++	tep = tracefs_local_events(dir);
++	tracefs_put_tracing_file(dir);   /* frees dir */
++
++	if (!tep) {
++		perror("Reading trace event formats");
++		exit(EXIT_FAILURE);
++	}
++
++	/* Disable all events */
++	tracefs_event_disable(inst, NULL, NULL);
++	errno = 0;
++	ret = tracefs_event_enable(inst, "gpu_mem", "gpu_mem_total");
++	if (ret < 0 && !errno)
++		printf("Could not find 'sched' events\n");
++
++	printf("Successfully enabled ftrace instance and events\n");
++}
++
++unsigned long long ftrace_gpumem_get(void)
++{
++	tracefs_iterate_raw_events(tep, inst, NULL, 0, records_walk, NULL);
++
++	return mem;
++}
++
++void ftrace_gpumem_fini(void)
++{
++	/* Disable all events */
++	tracefs_event_disable(NULL, NULL, NULL);
++	tep_free(tep);
++
++	if (tracefs_instance_is_new(inst))
++		tracefs_instance_destroy(inst);
++	tracefs_instance_free(inst);
++}
+diff --git a/src/ftrace_gpumem.h b/src/ftrace_gpumem.h
+new file mode 100644
+index 0000000..5cef1a0
+--- /dev/null
++++ b/src/ftrace_gpumem.h
+@@ -0,0 +1,9 @@
++#ifdef __cplusplus
++extern "C" {
++#endif
++	void ftrace_gpumem_init(void);
++	unsigned long long ftrace_gpumem_get(void);
++	void ftrace_gpumem_fini(void);
++#ifdef __cplusplus
++}
++#endif
+diff --git a/src/gpu.cpp b/src/gpu.cpp
+index 6751064..4d82d18 100644
+--- a/src/gpu.cpp
++++ b/src/gpu.cpp
+@@ -4,8 +4,10 @@
+ 
+ namespace fs = ghc::filesystem;
+ 
+-GPUS::GPUS() {
++GPUS::GPUS(const overlay_params* early_params) {
+     std::set<std::string> gpu_entries;
++    // presets() may construct us before HUDElements.params is published
++    auto params = early_params ? early_params : this->params().get();
+ 
+     for (const auto& entry : fs::directory_iterator("/sys/class/drm")) {
+         if (!entry.is_directory())
+@@ -72,10 +74,10 @@ GPUS::GPUS() {
+         std::shared_ptr<GPU> ptr =
+             std::make_shared<GPU>(node_name, vendor_id, device_id, pci_dev, driver);
+ 
+-        if (params()->gpu_list.size() == 1 && params()->gpu_list[0] == idx++)
++        if (params->gpu_list.size() == 1 && params->gpu_list[0] == idx++)
+             ptr->is_active = true;
+ 
+-        if (!params()->pci_dev.empty() && pci_dev == params()->pci_dev)
++        if (!params->pci_dev.empty() && pci_dev == params->pci_dev)
+             ptr->is_active = true;
+ 
+         available_gpus.emplace_back(ptr);
+diff --git a/src/gpu.h b/src/gpu.h
+index d2ce7b5..febf941 100644
+--- a/src/gpu.h
++++ b/src/gpu.h
+@@ -16,6 +16,7 @@
+ #include "nvidia.h"
+ #include "gpu_metrics_util.h"
+ #include "gpu_fdinfo.h"
++#include "msm.h"
+ 
+ class GPU {
+     public:
+@@ -23,6 +24,7 @@ class GPU {
+         std::string drm_node;
+         std::unique_ptr<NVIDIA> nvidia = nullptr;
+         std::unique_ptr<AMDGPU> amdgpu = nullptr;
++        std::unique_ptr<MSM> msm = nullptr;
+         std::unique_ptr<GPU_fdinfo> fdinfo = nullptr;
+         bool is_active = false;
+         std::string pci_dev;
+@@ -47,6 +49,13 @@ class GPU {
+                     driver == "msm_dpu" || driver == "msm_drm"
+                 )
+                     fdinfo = std::make_unique<GPU_fdinfo>(driver, pci_dev, drm_node);
++
++                if (vendor_id == 0x5143 || true) {
++                    msm = std::make_unique<MSM>();
++#ifdef GPU_FDINFO					
++                    fdinfo = std::make_unique<GPU_fdinfo>("msm", pci_dev, drm_node);
++#endif					
++                }
+         }
+ 
+         gpu_metrics get_metrics() {
+@@ -59,6 +68,14 @@ class GPU {
+             if (fdinfo)
+                 this->metrics = fdinfo->copy_metrics();
+ 
++            if (msm) {
++                this->metrics = msm->copy_metrics();
++#ifdef GPU_FDINFO				
++                gpu_metrics fd_metrics = fdinfo->copy_metrics();
++                this->metrics.load = fd_metrics.load;
++#endif				
++            }
++
+             return metrics;
+         };
+ 
+@@ -124,7 +141,7 @@ class GPUS {
+         std::mutex mutex;
+         overlay_params* const* params_pointer;
+ 
+-        GPUS();
++        explicit GPUS(const overlay_params* early_params = nullptr);
+ 
+         std::shared_ptr<const overlay_params> params();
+ 
+diff --git a/src/gpu_fdinfo.cpp b/src/gpu_fdinfo.cpp
+index 84b5451..63cf6ac 100644
+--- a/src/gpu_fdinfo.cpp
++++ b/src/gpu_fdinfo.cpp
+@@ -8,8 +8,8 @@ namespace fs = ghc::filesystem;
+ 
+ void GPU_fdinfo::find_fd()
+ {
+-    fdinfo.clear();
+-    fdinfo_data.clear();
++    //fdinfo.clear();
++    //fdinfo_data.clear();
+ 
+     auto dir = std::string("/proc/") + std::to_string(pid) + "/fdinfo";
+     auto path = fs::path(dir);
+@@ -26,54 +26,57 @@ void GPU_fdinfo::find_fd()
+     std::set<std::string> client_ids;
+     int total = 0;
+ 
+-    for (const auto& entry : fs::directory_iterator(path)) {
+-        auto fd_path = entry.path().string();
+-        auto file = std::ifstream(fd_path);
++    try {
++        for (const auto& entry : fs::directory_iterator(path)) {
++            auto fd_path = entry.path().string();
++            auto file = std::ifstream(fd_path);
+ 
+-        if (!file.is_open())
+-            continue;
++            if (!file.is_open())
++                continue;
+ 
+-        std::string driver, pdev, client_id;
++            std::string driver, pdev, client_id;
+ 
+-        for (std::string line; std::getline(file, line);) {
+-            size_t colon = line.find(":");
++            for (std::string line; std::getline(file, line);) {
++                size_t colon = line.find(":");
+ 
+-            if (line[0] == ' ' || line[0] == '\t')
+-                continue;
++                if (line[0] == ' ' || line[0] == '\t')
++                    continue;
+ 
+-            if (colon == std::string::npos || colon + 2 >= line.length())
+-                continue;
++                if (colon == std::string::npos || colon + 2 >= line.length())
++                    continue;
+ 
+-            auto key = line.substr(0, colon);
+-            auto val = line.substr(key.length() + 2);
++                auto key = line.substr(0, colon);
++                auto val = line.substr(key.length() + 2);
+ 
+-            if (key == "drm-driver")
+-                driver = val;
+-            else if (key == "drm-pdev")
+-                pdev = val;
+-            else if (key == "drm-client-id")
+-                client_id = val;
+-        }
++                if (key == "drm-driver")
++                    driver = val;
++                else if (key == "drm-pdev")
++                    pdev = val;
++                else if (key == "drm-client-id")
++                    client_id = val;
++            }
+ 
+-        if (!driver.empty() && driver == module) {
+-            total++;
+-            SPDLOG_DEBUG(
+-                "driver = \"{}\", pdev = \"{}\", "
+-                "client_id = \"{}\", client_id_exists = \"{}\"",
+-                driver, pdev,
+-                client_id, client_ids.find(client_id) != client_ids.end()
+-            );
+-        }
++            if (!driver.empty() && driver == module) {
++                total++;
++                SPDLOG_DEBUG(
++                    "driver = \"{}\", pdev = \"{}\", "
++                    "client_id = \"{}\", client_id_exists = \"{}\"",
++                    driver, pdev,
++                    client_id, client_ids.find(client_id) != client_ids.end()
++                );
++            }
+ 
+-        if (
+-            driver.empty() || client_id.empty() ||
+-            driver != module || pdev != pci_dev ||
+-            client_ids.find(client_id) != client_ids.end()
+-        )
+-            continue;
++            if (
++                driver.empty() || client_id.empty() ||
++                driver != module || pdev != pci_dev ||
++                client_ids.find(client_id) != client_ids.end()
++            )
++                continue;
+ 
+-        client_ids.insert(client_id);
+-        open_fdinfo_fd(fd_path);
++            client_ids.insert(client_id);
++            open_fdinfo_fd(fd_path);
++        }
++    } catch (ghc::filesystem::filesystem_error e) {
+     }
+ 
+     SPDLOG_DEBUG(
+@@ -96,6 +99,12 @@ void GPU_fdinfo::gather_fdinfo_data() {
+         for (std::string line; std::getline(fdinfo[i], line);) {
+             size_t colon = line.find(":");
+ 
++            if (line[0] == ' ' || line[0] == '\t')
++                continue;
++
++            if (colon == std::string::npos || colon + 2 >= line.length())
++                continue;
++
+             if (line[0] == ' ' || line[0] == '\t')
+                 continue;
+ 
+@@ -700,6 +709,18 @@ void GPU_fdinfo::main_thread()
+         }
+ #endif
+ 
++#ifdef GPU_FDINFO
++        if (true)
++        {
++            fdinfo.clear();
++            fdinfo_data.clear();
++            for (const auto& entry : fs::directory_iterator("/proc")) {
++                pid = std::atoi(entry.path().stem().string().c_str());
++                find_fd();
++            }
++        }
++#endif
++		
+         // Recheck fds every 10secs, fixes Mass Effect 1, maybe some others too
+         {
+             auto t = os_time_get_nano() / 1'000'000;
+diff --git a/src/gpu_fdinfo.h b/src/gpu_fdinfo.h
+index 7d22703..7cfb222 100644
+--- a/src/gpu_fdinfo.h
++++ b/src/gpu_fdinfo.h
+@@ -150,6 +150,9 @@ public:
+         } else if (module == "panfrost") {
+             drm_engine_type = "drm-engine-fragment";
+             drm_memory_type = "drm-resident-memory";
++        } else if (module == "msm") {
++            // msm driver does not report vram usage
++            drm_engine_type = "drm-engine-gpu";
+         }
+ 
+         if (fdinfo_data.size() > 0 &&
+diff --git a/src/hud_elements.cpp b/src/hud_elements.cpp
+index 8e9ac4c..72b2eaa 100644
+--- a/src/hud_elements.cpp
++++ b/src/hud_elements.cpp
+@@ -17,6 +17,7 @@
+ #include "mesa/util/macros.h"
+ #include "string_utils.h"
+ #include "app/mangoapp.h"
++#include "app/mangoapp_proto.h"
+ #include <IconsForkAwesome.h>
+ #include "version.h"
+ #include "blacklist.h"
+@@ -1279,7 +1280,20 @@ void HudElements::gamescope_fsr(){
+         ImguiNextColumnFirstItem();
+         string FSR_TEXT;
+         ImVec4 FSR_COLOR;
+-        if (HUDElements.g_fsrUpscale){
++        // Named after the selected filter, so OFF says which one is not engaging.
++        const char* UPSCALER_NAME = "SCALING";
++        switch (HUDElements.g_wantedUpscaler) {
++            case MANGOAPP_UPSCALER_FSR:     UPSCALER_NAME = "FSR";     break;
++            case MANGOAPP_UPSCALER_NIS:     UPSCALER_NAME = "NIS";     break;
++            case MANGOAPP_UPSCALER_SGSR:    UPSCALER_NAME = "SGSR";    break;
++            case MANGOAPP_UPSCALER_NEAREST: UPSCALER_NAME = "NEAREST"; break;
++            case MANGOAPP_UPSCALER_PIXEL:   UPSCALER_NAME = "PIXEL";   break;
++        }
++        bool upscaling = HUDElements.g_upscaler != MANGOAPP_UPSCALER_LINEAR;
++        bool sharpens = HUDElements.g_upscaler == MANGOAPP_UPSCALER_FSR ||
++                        HUDElements.g_upscaler == MANGOAPP_UPSCALER_NIS ||
++                        HUDElements.g_upscaler == MANGOAPP_UPSCALER_SGSR;
++        if (upscaling){
+             FSR_TEXT = "ON";
+             FSR_COLOR = HUDElements.colors.fps_value_high;
+         } else {
+@@ -1287,10 +1301,10 @@ void HudElements::gamescope_fsr(){
+             FSR_COLOR = HUDElements.colors.fps_value_low;
+         }
+ 
+-        HUDElements.TextColored(HUDElements.colors.engine, "%s", "FSR");
++        HUDElements.TextColored(HUDElements.colors.engine, "%s", UPSCALER_NAME);
+         ImguiNextColumnOrNewRow();
+         right_aligned_text(FSR_COLOR, HUDElements.ralign_width, "%s", FSR_TEXT.c_str());
+-        if (HUDElements.g_fsrUpscale){
++        if (sharpens){
+             if (!HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_hide_fsr_sharpness]) {
+                 ImguiNextColumnOrNewRow();
+                 right_aligned_text(HUDElements.colors.text, HUDElements.ralign_width, "%i", HUDElements.g_fsrSharpness);
+@@ -1691,6 +1705,7 @@ void HudElements::present_mode() {
+ 
+ void HudElements::network() {
+ #ifdef __linux__
++    return;
+     if (HUDElements.net && HUDElements.net->should_reset)
+         HUDElements.net.reset(new Net);
+ 
+diff --git a/src/hud_elements.h b/src/hud_elements.h
+index ee2d801..90a8ec5 100644
+--- a/src/hud_elements.h
++++ b/src/hud_elements.h
+@@ -37,6 +37,8 @@ class HudElements{
+         int table_columns_count = 0;
+         pid_t g_gamescopePid = -1;
+         int g_fsrUpscale = -1;
++        int g_upscaler = 0;
++        int g_wantedUpscaler = 0;
+         int g_fsrSharpness = -1;
+         Clock::time_point last_exec;
+         std::vector<std::pair<std::string, std::string>> options;
+diff --git a/src/msm.cpp b/src/msm.cpp
+new file mode 100644
+index 0000000..1ab858d
+--- /dev/null
++++ b/src/msm.cpp
+@@ -0,0 +1,195 @@
++#include <cstdio>
++#include <cstring>
++#include <filesystem.h>
++#include <mesa/util/os_time.h>
++#include <inttypes.h>
++
++#include <string>
++#include <iostream>
++#include <sstream>
++#include <fstream>
++#include <thread>
++#include <chrono>
++#include <atomic>
++
++#include "msm.h"
++#include "deckard_power.h"
++#include "file_utils.h"
++#include "logging.h"
++#include <spdlog/spdlog.h>
++
++namespace fs = ghc::filesystem;
++
++unsigned gpu_bytes_memory();
++void perf_read_thread();
++double read_value(std::string path);
++double read_value_s(std::string path);
++
++unsigned gpu_bytes_memory()
++{
++    unsigned long long bytes = ftrace_gpumem_get();
++    SPDLOG_DEBUG("ftrace_gpumem_get() bytes: %llu\n", bytes);
++    return (unsigned)bytes;
++}
++
++static std::atomic<double> gpu_usage;
++void perf_read_thread()
++{
++    while (true) {
++        gpu_usage = 0.0;
++
++        {
++            std::ifstream perf_now("/sys/kernel/debug/dri/0/perf_now");
++            if (perf_now.is_open()) {
++                std::string line; 
++                std::getline(perf_now, line);
++
++                try {
++                    gpu_usage = std::stod(line);
++                } catch (...) {}
++            }
++        }
++
++        std::this_thread::sleep_for(std::chrono::milliseconds(100));
++	//printf("usage=%f\n",gpu_usage.load());
++    }
++}
++
++double read_value(std::string path)
++{
++    std::ifstream file(path, std::ios::binary);
++    double output = 0;
++
++    if (file.is_open()) {
++        file >> output;
++        return output;
++    }
++
++    return output;
++}
++
++static std::string find_hwmon(const std::string& name)
++{
++    for (auto const& entry : fs::directory_iterator("/sys/class/hwmon/")) {
++        auto path = entry.path().string();
++        if (read_line(path + "/name") == name)
++            return path;
++    }
++    return "";
++}
++
++double read_value_s(std::string path)
++{
++    std::ifstream file(path);
++    double output = 0;
++
++    if (file.is_open()) {
++        file >> output;
++        return output;
++    }
++
++    return output;
++}
++
++uint64_t MSM::getQcomGpuInfo(){
++    static std::thread perf_thread(perf_read_thread);
++    //printf("gpu_bytes_memory()=%d\n",gpu_bytes_memory());
++    gpu_info_msm.load = gpu_usage;
++    gpu_info_msm.temp = read_value("/sys/class/thermal/thermal_zone28/temp") / 1000.0; //gpuss-2-thermal
++    gpu_info_msm.junction_temp = read_value("/sys/class/thermal/thermal_zone26/temp") / 1000.0; //gpuss-0-thermal
++    gpu_info_msm.memory_temp = read_value("/sys/class/thermal/thermal_zone22/temp") / 1000.0; //ddr-thermal
++    // slg4ax46073v fan controller reports twice the actual rpm
++    static const std::string fan_hwmon = find_hwmon("slg4ax46073v");
++    gpu_info_msm.fan_speed = read_value(fan_hwmon + "/fan1_input") / 2;
++    gpu_info_msm.fan_rpm = true;
++    gpu_info_msm.sys_vram_used = float(gpu_bytes_memory()) / (1024 * 1024 * 1024);
++    gpu_info_msm.proc_vram_used = gpu_info_msm.sys_vram_used;
++    gpu_info_msm.CoreClock = read_value_s("/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu/cur_freq") / 1000000.0;
++    gpu_info_msm.MemClock = 4200; //MHz
++    gpu_info_msm.memoryTotal = 16000; 
++    return 0;
++}
++
++uint64_t MSM::get_gpu_time() {
++    char line[256];
++    uint64_t total_val = 0;
++    for (auto fd : fdinfo) {
++        rewind(fd);
++        fflush(fd);
++        uint64_t val = 0;
++        while (fgets(line, sizeof(line), fd)){
++            if (sscanf(line, "drm-engine-gpu: %" SCNu64 " ns", &val) == 1) {
++                total_val += val;
++                break;
++            }
++        }
++    }
++
++    return total_val;
++}
++
++void MSM::find_fd() {
++    DIR* dir = opendir("/proc/self/fdinfo");
++    if (!dir) {
++        perror("Failed to open directory");
++    }
++
++    for (const auto& entry : fs::directory_iterator("/proc/self/fdinfo")){
++        FILE* file = fopen(entry.path().string().c_str(), "r");
++
++        if (!file) continue;
++
++        char line[256];
++        bool found_driver = false;
++        while (fgets(line, sizeof(line), file)) {
++            if (strstr(line, "msm") != NULL)
++                found_driver = true;
++
++            if (found_driver) {
++                if(strstr(line, "drm-engine-gpu")) {
++                    fdinfo.push_back(file);
++                    break;
++                }
++            }
++        }
++
++        if (!found_driver)
++            fclose(file);
++    }
++
++    closedir(dir);
++}
++
++void MSM::get_fdinfo() {
++    static uint64_t previous_gpu_time, previous_time, now, gpu_time_now;
++    gpu_time_now = get_gpu_time();
++    now = os_time_get_nano();
++
++    if (previous_time && previous_gpu_time && gpu_time_now > previous_gpu_time){
++        float time_since_last = now - previous_time;
++        float gpu_since_last = gpu_time_now - previous_gpu_time;
++        auto result = int((gpu_since_last / time_since_last) * 100);
++        if (result > 100)
++            result = 100;
++
++        gpu_info_msm.load = result;
++        previous_gpu_time = gpu_time_now;
++        previous_time = now;
++    } else {
++        previous_gpu_time = gpu_time_now;
++        previous_time = now;
++    }
++}
++
++void MSM::update_power() {
++    while (true) {
++        // gfx rail from deckard_power_monitor, the equivalent of Steam Deck's GPU power
++        float gpupower = 0;
++        DeckardPower::read(DeckardPower::gfx, gpupower);
++        {
++            std::lock_guard<std::mutex> lock(metrics_mutex);
++            gpu_info_msm.powerUsage = gpupower;
++        }
++        usleep(100000);
++    }
++}
+diff --git a/src/msm.h b/src/msm.h
+new file mode 100644
+index 0000000..cc58ae4
+--- /dev/null
++++ b/src/msm.h
+@@ -0,0 +1,63 @@
++#include <cstdio>
++#include <memory>
++#include <mutex>
++#include <thread>
++#include <unistd.h>
++#include <vector>
++
++#include "gpu_metrics_util.h"
++
++#include "ftrace_gpumem.h"
++
++class MSM {
++    private:
++        struct gpu_metrics gpu_info_msm {};
++        std::vector<FILE*> fdinfo;
++        std::mutex metrics_mutex;
++        void find_fd();
++        uint64_t get_gpu_time();
++        void get_fdinfo();
++        uint64_t getQcomGpuInfo();
++
++        void update() {
++            while (1) {
++                usleep(100000);
++
++                std::lock_guard<std::mutex> lock(metrics_mutex);
++#ifdef GPU_FDINFO
++                if (!fdinfo.empty())
++                    get_fdinfo();
++#endif                    
++                getQcomGpuInfo();
++            }
++        }
++
++        void update_power();
++
++    public:
++        MSM() {
++            find_fd();
++
++            std::thread thread(&MSM::update, this);
++            thread.detach();
++            std::thread p_thread(&MSM::update_power, this);
++            p_thread.detach();
++
++	    ftrace_gpumem_init();
++        }
++
++        ~MSM() {
++            for (size_t i = 0; i < fdinfo.size(); i++) {
++                fclose(fdinfo[i]);
++            }
++            fdinfo.clear();
++
++	    ftrace_gpumem_fini();
++        }
++
++        gpu_metrics copy_metrics() {
++            std::lock_guard<std::mutex> lock(metrics_mutex);
++
++            return gpu_info_msm;
++        };
++};
+diff --git a/src/overlay.h b/src/overlay.h
+index 0fad8e6..72a8844 100644
+--- a/src/overlay.h
++++ b/src/overlay.h
+@@ -123,8 +123,8 @@ inline const char* engine_name(struct swapchain_stats& sw_stats) {
+     if (enabled[OVERLAY_PARAM_ENABLED_dx_api]) {
+         if (engine == EngineTypes::VKD3D) return "DX12";
+         if (engine == EngineTypes::DXVK) {
+-            if (sw_stats.applicationVersion == 1) return "DX9";
+-            if (sw_stats.applicationVersion == 2) return "DX11";
++            if (sw_stats.applicationVersion == 0) return "DX10,11";
++            if (sw_stats.applicationVersion == 1) return "DX3-9";
+             return "DX?";
+         }
+     }
+diff --git a/src/overlay_params.cpp b/src/overlay_params.cpp
+index e713dc6..4c865a6 100644
+--- a/src/overlay_params.cpp
++++ b/src/overlay_params.cpp
+@@ -31,6 +31,7 @@
+ #include "file_utils.h"
+ #include "fex.h"
+ #include "ftrace.h"
++#include "deckard_power.h"
+ 
+ #if defined(HAVE_X11) || defined(HAVE_WAYLAND)
+ #include <xkbcommon/xkbcommon.h>
+@@ -1158,7 +1159,7 @@ parse_overlay_config(struct overlay_params *params,
+       config_ready = true;
+       config_cv.notify_one();
+    }
+-   
++
+    auto snapshot = std::make_shared<overlay_params>(*params);
+    std::atomic_store_explicit(&g_params, std::move(snapshot), std::memory_order_release);
+    HUDElements.params = get_params();
+@@ -1316,24 +1317,48 @@ void presets(int preset, struct overlay_params *params, bool inherit) {
+          add_to_options(params, "frame_timing_detailed", "1");
+          add_to_options(params, "network", "1");
+          add_to_options(params, "present_mode", "0");
+-         
++
+          // Disable some options if steamdeck / other known handhelds
+-         for (auto gpu : gpus->available_gpus) {
+-            if (gpu->device_id == 0x1435 || gpu->device_id == 0x163f || gpu->device_id == 0x1681 || gpu->device_id == 0x15bf){
+-               add_to_options(params, "gpu_fan", "0");
+-               add_to_options(params, "gpu_junction_temp", "0");
+-               add_to_options(params, "gpu_voltage", "0");
+-               add_to_options(params, "gpu_mem_temp", "0");
+-               add_to_options(params, "gpu_efficiency", "0");
+-            }
+-            // Rembrandt and Phoenix APUs (Z1, Z1E, Z2 Go)
+-            if (gpu->device_id == 0x1681 || gpu->device_id == 0x15bf){
+-               add_to_options(params, "gpu_power_limit", "0");
++         if (gpus) {
++            for (auto gpu : gpus->available_gpus) {
++               if (gpu->device_id == 0x1435 || gpu->device_id == 0x163f || gpu->device_id == 0x1681 || gpu->device_id == 0x15bf){
++                  add_to_options(params, "gpu_fan", "0");
++                  add_to_options(params, "gpu_junction_temp", "0");
++                  add_to_options(params, "gpu_voltage", "0");
++                  add_to_options(params, "gpu_mem_temp", "0");
++                  add_to_options(params, "gpu_efficiency", "0");
++               }
++               // Rembrandt and Phoenix APUs (Z1, Z1E, Z2 Go)
++               if (gpu->device_id == 0x1681 || gpu->device_id == 0x15bf){
++                  add_to_options(params, "gpu_power_limit", "0");
++               }
+             }
+          }
++#ifdef HAVE_FEX
++         add_to_options(params, "fex_stats", "status+apptype+hotthreads+jitload+sigbus+smc+softfloat");
++#endif
++         break;
+ 
++   }
+ 
+-         break;
++   // Steam Frame (msm): no usable GPU voltage, and power only when
++   // deckard_power_monitor is publishing it
++   if (!gpus)
++      gpus = std::make_unique<GPUS>(params);
++
++   for (auto gpu : gpus->available_gpus) {
++      if (gpu->driver != "msm_drm" && gpu->driver != "msm_dpu")
++         continue;
++
++      add_to_options(params, "gpu_voltage", "0");
++      add_to_options(params, "gpu_power_limit", "0");
++      add_to_options(params, "gpu_efficiency", "0");
++      add_to_options(params, "cpu_efficiency", "0");
+ 
++      if (!DeckardPower::available()) {
++         add_to_options(params, "gpu_power", "0");
++         add_to_options(params, "cpu_power", "0");
++      }
++      break;
+    }
+ }

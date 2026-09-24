@@ -1,0 +1,2 @@
+# BFQ on SD/eMMC: keeps interactive reads responsive while a download saturates writes.
+ACTION=="add|change", KERNEL=="mmcblk[0-9]", ATTR{queue/scheduler}="bfq"

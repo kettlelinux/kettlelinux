@@ -1,0 +1,20 @@
+[Unit]
+Description=Gamescope Session (Game Mode)
+# steamos-manager reports "Game mode" while this unit is active
+Before=graphical-session.target
+PartOf=graphical-session.target
+Wants=graphical-session-pre.target
+After=graphical-session-pre.target
+Before=xdg-desktop-portal.service
+RefuseManualStart=yes
+
+[Service]
+Slice=session.slice
+Type=notify
+NotifyAccess=all
+TimeoutStartSec=30
+TimeoutStopSec=10
+ExecStart=/usr/lib/steamportal/gamescope-session
+# Xwayland runs with -core; don't SIGTERM it
+KillMode=mixed
+Environment=SRT_LOG_TO_JOURNAL=1

@@ -1,0 +1,65 @@
+#!/bin/bash
+# Write a steamportal-backup-ufs backup back to the internal UFS.
+#
+# By default only LUN 0 is restored: Android, its data and the partition table, i.e. everything
+# steamportal-install-internal changes. --all-luns also rewrites the firmware LUNs (bootloaders,
+# modem, calibration); the installer never touches those, and an interrupted write there can
+# leave the device unbootable, so only use it if they were damaged.
+#
+# Usage: sudo steamportal-restore-ufs [--all-luns] BACKUP_DIR
+set -euo pipefail
+
+die() { echo "error: $*" >&2; exit 1; }
+say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+
+ALL=0
+[ "${1:-}" = --all-luns ] && { ALL=1; shift; }
+DIR="${1:?usage: $0 [--all-luns] BACKUP_DIR}"
+[ -f "$DIR/manifest" ] || die "$DIR is not a steamportal-backup-ufs backup"
+
+[ "$(id -u)" = 0 ] || die "run as root (sudo $0)"
+case "$(findmnt -no SOURCE /)" in /dev/mmcblk*) ;; *) die "run this from the SD card system" ;; esac
+
+lun_dev() {   # UFS LUN number -> /dev/sdX
+  local d
+  for d in /sys/block/sd*; do
+    readlink -f "$d" | grep -q 'ufshc' || continue
+    [ "$(basename "$(readlink -f "$d/device")" | awk -F: '{print $4}')" = "$1" ] && { echo "/dev/${d##*/}"; return; }
+  done
+}
+
+if [ "$ALL" = 1 ]; then
+  mapfile -t luns < <(ls "$DIR" | sed -n 's/^lun\([0-9]*\)\.img\.zst$/\1/p' | sort -n)
+else
+  luns=(0)
+fi
+
+say "checking the backup"
+( cd "$DIR" && sha256sum -c --quiet SHA256SUMS ) || die "checksum mismatch in $DIR"
+plan=()
+for lun in "${luns[@]}"; do
+  img="$DIR/lun$lun.img.zst"; [ -f "$img" ] || die "missing $img"
+  dev=$(lun_dev "$lun"); [ -n "$dev" ] || die "LUN $lun not found on this device"
+  want=$(sed -n "s/^lun$lun=//p" "$DIR/manifest")
+  [ "$want" = "$(blockdev --getsize64 "$dev")" ] || die "LUN $lun size differs from the backup (different device?)"
+  findmnt -rno SOURCE | grep -q "^$dev" && die "$dev (or a partition of it) is mounted"
+  zstd -q -t "$img" || die "$img is corrupt"
+  plan+=("$lun $dev $img")
+done
+
+grep -E '^(date|model|machine)=' "$DIR/manifest" | sed 's/^/  /'
+for p in "${plan[@]}"; do set -- $p; echo "  LUN $1 -> $2  (overwritten)"; done
+echo
+echo "  Everything currently on these LUNs is replaced by the backup, including any"
+echo "  internal Steam Portal install. Do not power off until this finishes."
+read -rp "Type RESTORE to continue: " a
+[ "$a" = RESTORE ] || { echo "Aborted."; exit 1; }
+
+for p in "${plan[@]}"; do
+  set -- $p
+  say "writing LUN $1 ($2)"
+  zstd -q -dc "$3" | dd of="$2" bs=4M oflag=direct conv=fsync status=progress
+  blockdev --rereadpt "$2" 2>/dev/null || partx -u "$2" 2>/dev/null || true
+done
+sync
+say "restore complete; reboot to use it"

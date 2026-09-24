@@ -1,0 +1,48 @@
+#!/bin/bash
+# Collect a hardware bring-up report for the Odin 2 Portal.
+# Usage: sudo steamportal-hwcheck   -> prints a summary, writes /home/steamos/hwcheck-<time>.txt
+[ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+
+OUT="/home/steamos/hwcheck-$(date +%Y%m%d-%H%M%S).txt"
+exec > >(tee "$OUT") 2>&1
+
+pass() { printf '  [ OK ] %s\n' "$*"; }
+fail() { printf '  [FAIL] %s\n' "$*"; }
+chk()  { local name="$1"; shift; if out="$("$@" 2>/dev/null)" && [ -n "$out" ]; then pass "$name: $(echo "$out" | head -1)"; else fail "$name"; fi; }
+
+echo "== Steam Portal hardware check — $(date -Is)"
+echo "kernel:  $(uname -r)"
+echo "model:   $(tr -d '\0' </proc/device-tree/model)"
+echo "cmdline: $(cat /proc/cmdline)"
+[ -d /sys/firmware/efi ] && echo "boot:    UEFI (systemd-boot)" || echo "boot:    non-EFI (extlinux / ABL)"
+echo
+
+echo "== Summary"
+chk "display (DRM connector)"  bash -c 'for s in /sys/class/drm/card*-*/status; do [ "$(cat $s)" = connected ] && echo "${s%/status}" | xargs basename; done'
+chk "GPU (msm, Adreno)"        bash -c 'grep -l "^DRIVER=msm" /sys/class/drm/card*/device/uevent | head -1; dmesg | grep -m1 -iE "adreno|a7xx|gmu" '
+chk "gamepad (rsinput)"        bash -c 'grep -B1 -A4 -i rsinput /proc/bus/input/devices | grep -m1 "^N:"'
+chk "touchscreen"              bash -c 'grep -iE "^N:.*(ft5|edt|touch)" /proc/bus/input/devices | head -1'
+chk "power key"                bash -c 'grep -iE "^N:.*(pon|pwrkey|power)" /proc/bus/input/devices | head -1'
+chk "haptics"                  bash -c 'grep -iE "^N:.*hapt" /proc/bus/input/devices | head -1'
+chk "LEDs (htr3212)"           bash -c 'ls /sys/class/leds | grep -vE "mmc|input" | tr "\n" " "'
+chk "battery"                  bash -c 'for p in /sys/class/power_supply/*; do [ "$(cat $p/type)" = Battery ] && echo "$(basename $p) $(cat $p/capacity)% $(cat $p/status)"; done'
+chk "fan (pwm-fan)"            bash -c 'for h in /sys/class/hwmon/hwmon*; do [ "$(cat $h/name)" = pwmfan ] && echo "$(cat $h/fan1_input 2>/dev/null || echo ?) rpm, pwm $(cat $h/pwm1)"; done'
+chk "Wi-Fi (ath12k)"           bash -c 'iw dev | grep -m1 Interface'
+chk "Bluetooth"                bash -c 'ls /sys/class/bluetooth | head -1'
+chk "sound card"               bash -c 'grep -m1 . /proc/asound/cards'
+chk "ADSP remoteproc"          bash -c 'for r in /sys/class/remoteproc/*; do echo -n "$(cat $r/name)=$(cat $r/state) "; done'
+chk "Vulkan (turnip)"          bash -c 'vulkaninfo --summary 2>/dev/null | grep -m1 deviceName'
+chk "sleep state s2idle"       bash -c 'grep -o "\[s2idle\]" /sys/power/mem_sleep'
+chk "microSD speed"            bash -c 'for f in /sys/kernel/debug/mmc*/ios; do grep -m1 timing "$f"; done'
+echo
+
+echo "== Failed units";            systemctl --failed --no-legend --plain; echo
+echo "== Missing firmware";        dmesg | grep -iE "firmware|direct firmware load" | grep -iE "fail|error|not found" ; echo
+echo "== Kernel errors/warnings";  dmesg --level=err,warn | tail -60; echo
+echo "== Input devices";           grep -E "^N:|^H:" /proc/bus/input/devices; echo
+echo "== remoteprocs";             for r in /sys/class/remoteproc/*; do echo "$(cat $r/name): $(cat $r/state)"; done; echo
+echo "== Thermal";                 paste <(cat /sys/class/thermal/thermal_zone*/type) <(cat /sys/class/thermal/thermal_zone*/temp) | head -20; echo
+echo "== Loaded modules";          lsmod | sort | awk '{print $1}' | tr '\n' ' '; echo; echo
+
+echo "Report saved: $OUT"
+echo "Copy it off with: scp steamos@<ip>:$OUT ."

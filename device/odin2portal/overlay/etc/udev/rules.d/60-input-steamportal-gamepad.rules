@@ -1,0 +1,6 @@
+# The rsinput gamepad advertises BTN_BACK (0x116), which sits in the mouse-button range, so
+# udev's input_id classifies it as an absolute mouse: libinput/KWin then drive the pointer
+# from the sticks and Steam/SDL (which only open ID_INPUT_JOYSTICK devices) ignore it.
+# Sorted after 60-input-id.rules and before 60-persistent-input / 70-uaccess.
+ACTION!="remove", SUBSYSTEM=="input", ATTRS{name}=="AYN Odin2 Gamepad", \
+  ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_JOYSTICK}="1"

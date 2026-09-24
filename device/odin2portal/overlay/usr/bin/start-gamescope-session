@@ -1,0 +1,16 @@
+#!/bin/bash
+# SDDM session entry for Game Mode: hand over to the systemd user units and wait.
+# gamescope-session.service runs gamescope; gamescope-session.target pulls in steam.service.
+set -u
+systemctl --user stop graphical-session.target 2>/dev/null
+systemctl --user reset-failed
+
+# Steam and games in gamescope run on its Xwayland
+export XDG_SESSION_TYPE=x11
+dbus-update-activation-environment --systemd DESKTOP_SESSION $(env | grep -o '^XDG_[A-Z_]*')
+systemctl --user unset-environment DISPLAY XAUTHORITY WAYLAND_DISPLAY
+
+trap 'systemctl --user stop gamescope-session.target' HUP INT TERM
+systemctl --user --wait start gamescope-session.target &
+wait
+systemctl --user stop graphical-session-pre.target

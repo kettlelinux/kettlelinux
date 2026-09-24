@@ -1,0 +1,57 @@
+# Valve's deckard (Steam Frame) MangoHud, rebuilt with Portal sensor support.
+# Steam's performance overlay runs this as mangoapp. Valve's build reads Frame-specific
+# thermal zone numbers, fan chip and power monitor; 0003 makes those reads work on the Portal.
+# GPU load comes from debugfs dri/0/perf_now (kernel patch 40-steamportal/1110), made
+# reachable by steamportal-mangoapp-tracefs.service.
+#
+# 0001 is Valve's diff against upstream 20700b4, recovered from the sources in
+# mangohud-debug-20260922.1-1 (their fork isn't published). To follow a newer Valve
+# build, diff its debug-package sources against the closest upstream commit again.
+pkgname=mangohud
+pkgver=20260922.1
+pkgrel=1.1
+_commit=20700b433adbb1f77f3a52ffe329c70e22d37967
+pkgdesc='Vulkan and OpenGL overlay to display performance information (deckard + Steam Portal)'
+arch=(aarch64)
+url='https://github.com/flightlessmango/MangoHud'
+license=(MIT)
+depends=(bash dbus glew glfw-x11 libglvnd libx11 libxkbcommon spdlog libtracefs libtraceevent)
+makedepends=(git meson ninja glslang python-mako wayland libxrandr)
+source=("git+https://github.com/flightlessmango/MangoHud.git#commit=$_commit"
+        0001-deckard-valve-changes.patch
+        0002-deckard-build.patch
+        0003-steamportal-portal-sensors.patch)
+sha256sums=('SKIP'
+            '0e8e85d62b5a618cb3cdce3bc4ff5ba43abc7ce27e73ede25bdd5b324faaacc2'
+            '06ff912c0dc62b3a2546ad2dbc40bbe3c2e0c8f93287cdddf457a1d6814afa93'
+            '0545cb9dcc09f6d28c82f6eb0446640125c429d2a0d98fd147b1b84ca9e69ef5')
+
+prepare() {
+  cd MangoHud
+  for p in "$srcdir"/0*.patch; do
+    patch -p1 --fuzz=0 <"$p"
+  done
+  # bundled like Valve's build (arch-meson disables wrap downloads during setup)
+  meson subprojects download vulkan-headers imgui implot
+}
+
+build() {
+  # options match Valve's 20260922.1 binaries (fex.cpp built, no NVML/XNVCtrl, libs in /usr/lib)
+  arch-meson MangoHud build \
+    -Dappend_libdir_mangohud=false \
+    -Duse_system_spdlog=enabled \
+    -Dwith_nvml=disabled \
+    -Dwith_xnvctrl=disabled \
+    -Dwith_fex=true \
+    -Dmangoapp=true \
+    -Dmangohudctl=true \
+    -Dmangoplot=enabled \
+    -Dinclude_doc=true \
+    -Dtests=disabled
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+  install -Dm644 MangoHud/LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+}

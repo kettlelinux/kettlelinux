@@ -1,0 +1,2 @@
+# The Steam client (Game Mode brightness slider) writes the backlight via "sudo tee", as on SteamOS
+%wheel ALL=(root) NOPASSWD: /usr/bin/tee /sys/class/backlight/*/brightness

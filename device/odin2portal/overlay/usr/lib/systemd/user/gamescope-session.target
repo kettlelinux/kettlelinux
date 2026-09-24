@@ -1,0 +1,9 @@
+[Unit]
+Description=Game Mode (gamescope + Steam)
+Requires=graphical-session.target
+BindsTo=graphical-session.target
+After=graphical-session.target
+PropagatesStopTo=graphical-session.target
+Requires=gamescope-session.service
+BindsTo=gamescope-session.service
+Wants=steam.service

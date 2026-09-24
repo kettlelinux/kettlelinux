@@ -1,7 +1,8 @@
-diff -rupbN linux.orig/drivers/mmc/host/Kconfig linux/drivers/mmc/host/Kconfig
---- linux.orig/drivers/mmc/host/Kconfig	2025-02-24 14:16:42.671184204 +0000
-+++ linux/drivers/mmc/host/Kconfig	2025-02-26 03:36:15.919806258 +0000
-@@ -592,6 +592,22 @@ config MMC_SDHCI_MSM
+diff --git a/drivers/mmc/host/Kconfig b/drivers/mmc/host/Kconfig
+index 4f060d3..042439e 100644
+--- a/drivers/mmc/host/Kconfig
++++ b/drivers/mmc/host/Kconfig
+@@ -621,6 +621,22 @@ config MMC_SDHCI_MSM
  
  	  If unsure, say N.
  
@@ -23,11 +24,12 @@ diff -rupbN linux.orig/drivers/mmc/host/Kconfig linux/drivers/mmc/host/Kconfig
 +
  config MMC_MXC
  	tristate "Freescale i.MX21/27/31 or MPC512x Multimedia Card support"
- 	depends on ARCH_MXC || PPC_MPC512x
-diff -rupbN linux.orig/drivers/mmc/host/Makefile linux/drivers/mmc/host/Makefile
---- linux.orig/drivers/mmc/host/Makefile	2025-02-24 14:16:42.671184204 +0000
-+++ linux/drivers/mmc/host/Makefile	2025-02-26 03:36:15.919806258 +0000
-@@ -94,6 +94,7 @@ obj-$(CONFIG_MMC_SDHCI_BCM_KONA)	+= sdhc
+ 	depends on ARCH_MXC || PPC_MPC512x || COMPILE_TEST
+diff --git a/drivers/mmc/host/Makefile b/drivers/mmc/host/Makefile
+index ee412e6..fc4ba36 100644
+--- a/drivers/mmc/host/Makefile
++++ b/drivers/mmc/host/Makefile
+@@ -97,6 +97,7 @@ obj-$(CONFIG_MMC_SDHCI_BCM_KONA)	+= sdhci-bcm-kona.o
  obj-$(CONFIG_MMC_SDHCI_IPROC)		+= sdhci-iproc.o
  obj-$(CONFIG_MMC_SDHCI_NPCM)		+= sdhci-npcm.o
  obj-$(CONFIG_MMC_SDHCI_MSM)		+= sdhci-msm.o
@@ -35,10 +37,11 @@ diff -rupbN linux.orig/drivers/mmc/host/Makefile linux/drivers/mmc/host/Makefile
  obj-$(CONFIG_MMC_SDHCI_ST)		+= sdhci-st.o
  obj-$(CONFIG_MMC_SDHCI_MICROCHIP_PIC32)	+= sdhci-pic32.o
  obj-$(CONFIG_MMC_SDHCI_BRCMSTB)		+= sdhci-brcmstb.o
-diff -rupbN linux.orig/drivers/mmc/host/cqhci-core.c linux/drivers/mmc/host/cqhci-core.c
---- linux.orig/drivers/mmc/host/cqhci-core.c	2025-02-24 14:16:42.675184293 +0000
-+++ linux/drivers/mmc/host/cqhci-core.c	2025-02-26 03:36:15.919806258 +0000
-@@ -792,6 +792,11 @@ static void cqhci_finish_mrq(struct mmc_
+diff --git a/drivers/mmc/host/cqhci-core.c b/drivers/mmc/host/cqhci-core.c
+index 178277d..0a83252 100644
+--- a/drivers/mmc/host/cqhci-core.c
++++ b/drivers/mmc/host/cqhci-core.c
+@@ -792,6 +792,11 @@ static void cqhci_finish_mrq(struct mmc_host *mmc, unsigned int tag)
  	struct mmc_request *mrq = slot->mrq;
  	struct mmc_data *data;
  
@@ -50,7 +53,7 @@ diff -rupbN linux.orig/drivers/mmc/host/cqhci-core.c linux/drivers/mmc/host/cqhc
  	if (!mrq) {
  		WARN_ONCE(1, "%s: cqhci: spurious TCN for tag %d\n",
  			  mmc_hostname(mmc), tag);
-@@ -814,8 +819,14 @@ static void cqhci_finish_mrq(struct mmc_
+@@ -814,8 +819,14 @@ static void cqhci_finish_mrq(struct mmc_host *mmc, unsigned int tag)
  			data->bytes_xfered = 0;
  		else
  			data->bytes_xfered = data->blksz * data->blocks;
@@ -65,10 +68,11 @@ diff -rupbN linux.orig/drivers/mmc/host/cqhci-core.c linux/drivers/mmc/host/cqhc
  	mmc_cqe_request_done(mmc, mrq);
  }
  
-diff -rupbN linux.orig/drivers/mmc/host/cqhci.h linux/drivers/mmc/host/cqhci.h
---- linux.orig/drivers/mmc/host/cqhci.h	2025-02-24 14:16:42.675184293 +0000
-+++ linux/drivers/mmc/host/cqhci.h	2025-02-26 03:36:15.919806258 +0000
-@@ -119,6 +119,14 @@
+diff --git a/drivers/mmc/host/cqhci.h b/drivers/mmc/host/cqhci.h
+index 3668856..1c27486 100644
+--- a/drivers/mmc/host/cqhci.h
++++ b/drivers/mmc/host/cqhci.h
+@@ -120,6 +120,14 @@
  /* command response argument */
  #define CQHCI_CRA			0x5C
  
@@ -83,7 +87,7 @@ diff -rupbN linux.orig/drivers/mmc/host/cqhci.h linux/drivers/mmc/host/cqhci.h
  /* crypto capabilities */
  #define CQHCI_CCAP			0x100
  #define CQHCI_CRYPTOCAP			0x104
-@@ -246,6 +254,7 @@ struct cqhci_host {
+@@ -247,6 +255,7 @@ struct cqhci_host {
  	bool activated;
  	bool waiting_for_idle;
  	bool recovery_halt;
@@ -91,9 +95,11 @@ diff -rupbN linux.orig/drivers/mmc/host/cqhci.h linux/drivers/mmc/host/cqhci.h
  
  	size_t desc_size;
  	size_t data_size;
-diff -rupbN linux.orig/drivers/mmc/host/sdhci-msm-downstream.c linux/drivers/mmc/host/sdhci-msm-downstream.c
---- linux.orig/drivers/mmc/host/sdhci-msm-downstream.c	1970-01-01 00:00:00.000000000 +0000
-+++ linux/drivers/mmc/host/sdhci-msm-downstream.c	2025-02-26 03:37:55.830121175 +0000
+diff --git a/drivers/mmc/host/sdhci-msm-downstream.c b/drivers/mmc/host/sdhci-msm-downstream.c
+new file mode 100644
+index 0000000..41fd45f
+--- /dev/null
++++ b/drivers/mmc/host/sdhci-msm-downstream.c
 @@ -0,0 +1,5810 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
@@ -5905,9 +5911,11 @@ diff -rupbN linux.orig/drivers/mmc/host/sdhci-msm-downstream.c linux/drivers/mmc
 +
 +MODULE_DESCRIPTION("Qualcomm Secure Digital Host Controller Interface DOWNSTREAM driver");
 +MODULE_LICENSE("GPL v2");
-diff -rupbN linux.orig/drivers/mmc/host/sdhci-msm.h linux/drivers/mmc/host/sdhci-msm.h
---- linux.orig/drivers/mmc/host/sdhci-msm.h	1970-01-01 00:00:00.000000000 +0000
-+++ linux/drivers/mmc/host/sdhci-msm.h	2025-02-26 03:36:15.919806258 +0000
+diff --git a/drivers/mmc/host/sdhci-msm.h b/drivers/mmc/host/sdhci-msm.h
+new file mode 100644
+index 0000000..88aa1d3
+--- /dev/null
++++ b/drivers/mmc/host/sdhci-msm.h
 @@ -0,0 +1,272 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +/*

@@ -1,0 +1,17 @@
+#!/bin/bash
+# Called by the Steam client ("Switch to Desktop") and the desktop's "Return to Gaming Mode".
+# Session state lives in steamos-manager (steamosctl), which rewrites SDDM autologin.
+set -e
+case "${1:-gamescope}" in
+  plasma-persistent)
+    steamosctl set-default-login-mode desktop
+    steamosctl set-default-desktop-session plasma.desktop
+    steamosctl switch-to-desktop-mode ;;
+  plasma|desktop)
+    steamosctl set-default-desktop-session plasma.desktop
+    steamosctl switch-to-desktop-mode ;;
+  gamescope|game)
+    steamosctl set-default-login-mode game
+    steamosctl switch-to-game-mode ;;
+  *) echo "usage: $0 [gamescope|plasma|plasma-persistent]" >&2; exit 1 ;;
+esac

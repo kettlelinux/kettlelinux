@@ -1,0 +1,206 @@
+Portal (SM8550, mainline msm) sensors for Valve's Steam Frame metrics.
+
+- GPU/memory temperature: look thermal zones up by type instead of the
+  Frame's zone numbers (28/26/22 are aoss2/camera0/modem0 here);
+  junction temperature is the hottest gpuss zone.
+- Fan: pwmfan when the Frame's slg4ax46073v controller is absent.
+- GPU clock: first devfreq device named *.gpu.
+- Memory total: MemTotal (unified memory) instead of a fixed 16000.
+- ftrace GPU memory: without tracefs access, report 0 instead of
+  abort()ing the host process; disable events on our instance only.
+- Battery: also accept power supplies of type Battery (the Portal's
+  pmic_glink battery is named "battery", not BAT*).
+---
+diff --git a/src/battery.cpp b/src/battery.cpp
+index f10ec5f..3995f3e 100644
+--- a/src/battery.cpp
++++ b/src/battery.cpp
+@@ -1,6 +1,7 @@
+ #include <spdlog/spdlog.h>
+ #include <filesystem.h>
+ #include "battery.h"
++#include "file_utils.h"
+ 
+ namespace fs = ghc::filesystem;
+ using namespace std;
+@@ -15,7 +16,9 @@ void BatteryStats::numBattery() {
+         for (const auto& p : fs::directory_iterator(dir)) {
+             string fileName = p.path().filename();
+ 
+-            if ( (fileName.find("BAT") != std::string::npos) && (batteryCount < BATTERY_COUNT_MAX) ) {
++            bool is_battery = fileName.find("BAT") != std::string::npos ||
++                              read_line((p.path() / "type").string()) == "Battery";
++            if (is_battery && (batteryCount < BATTERY_COUNT_MAX) ) {
+                 battPath[batteryCount++] = p.path();
+             }
+         }
+diff --git a/src/ftrace_gpumem.c b/src/ftrace_gpumem.c
+index 76fd5c7..cea7139 100644
+--- a/src/ftrace_gpumem.c
++++ b/src/ftrace_gpumem.c
+@@ -43,15 +43,16 @@ void ftrace_gpumem_init(void)
+ 
+ 	inst = tracefs_instance_create("mangohud");
+ 	if (!inst) {
+-		/* Error creating a new trace instance */
+-		printf("failed to create instance");
+-		abort();
++		/* No access to tracefs: GPU memory stays at 0 */
++		fprintf(stderr, "ftrace_gpumem: failed to create instance, GPU memory unavailable\n");
++		return;
+ 	}
+ 
+ 	dir = tracefs_instance_get_dir(inst);
+ 	if (!dir) {
+ 		perror("tracefs_instance_get_dir");
+-		exit(EXIT_FAILURE);
++		ftrace_gpumem_fini();
++		return;
+ 	}
+ 
+ 	tep = tracefs_local_events(dir);
+@@ -59,7 +60,8 @@ void ftrace_gpumem_init(void)
+ 
+ 	if (!tep) {
+ 		perror("Reading trace event formats");
+-		exit(EXIT_FAILURE);
++		ftrace_gpumem_fini();
++		return;
+ 	}
+ 
+ 	/* Disable all events */
+@@ -74,6 +76,9 @@ void ftrace_gpumem_init(void)
+ 
+ unsigned long long ftrace_gpumem_get(void)
+ {
++	if (!tep)
++		return 0;
++
+ 	tracefs_iterate_raw_events(tep, inst, NULL, 0, records_walk, NULL);
+ 
+ 	return mem;
+@@ -81,11 +86,16 @@ unsigned long long ftrace_gpumem_get(void)
+ 
+ void ftrace_gpumem_fini(void)
+ {
++	if (!inst)
++		return;
++
+ 	/* Disable all events */
+-	tracefs_event_disable(NULL, NULL, NULL);
++	tracefs_event_disable(inst, NULL, NULL);
+ 	tep_free(tep);
++	tep = NULL;
+ 
+ 	if (tracefs_instance_is_new(inst))
+ 		tracefs_instance_destroy(inst);
+ 	tracefs_instance_free(inst);
++	inst = NULL;
+ }
+diff --git a/src/msm.cpp b/src/msm.cpp
+index 1ab858d..a616935 100644
+--- a/src/msm.cpp
++++ b/src/msm.cpp
+@@ -11,6 +11,10 @@
+ #include <thread>
+ #include <chrono>
+ #include <atomic>
++#include <algorithm>
++#include <initializer_list>
++#include <system_error>
++#include <vector>
+ 
+ #include "msm.h"
+ #include "deckard_power.h"
+@@ -91,22 +95,81 @@ double read_value_s(std::string path)
+     return output;
+ }
+ 
++// Thermal zone numbering differs between SoCs and device trees, so look zones up by type.
++static std::vector<std::string> find_thermal_zones(const std::string& prefix)
++{
++    std::vector<std::string> zones;
++    std::error_code ec;
++    for (auto const& entry : fs::directory_iterator("/sys/class/thermal/", ec)) {
++        auto path = entry.path().string();
++        if (read_line(path + "/type").rfind(prefix, 0) == 0)
++            zones.push_back(path + "/temp");
++    }
++    return zones;
++}
++
++static std::string find_thermal_zone(std::initializer_list<const char*> types)
++{
++    std::error_code ec;
++    for (auto type : types) {
++        for (auto const& entry : fs::directory_iterator("/sys/class/thermal/", ec)) {
++            auto path = entry.path().string();
++            if (read_line(path + "/type") == type)
++                return path + "/temp";
++        }
++    }
++    return "";
++}
++
++static std::string find_gpu_devfreq()
++{
++    std::error_code ec;
++    for (auto const& entry : fs::directory_iterator("/sys/class/devfreq/", ec)) {
++        auto name = entry.path().filename().string();
++        if (name.size() > 4 && name.compare(name.size() - 4, 4, ".gpu") == 0)
++            return entry.path().string() + "/cur_freq";
++    }
++    return "";
++}
++
++static float mem_total_gib()
++{
++    std::ifstream meminfo("/proc/meminfo");
++    std::string key;
++    unsigned long long kib = 0;
++    while (meminfo >> key >> kib) {
++        if (key == "MemTotal:")
++            return float(kib) / (1024 * 1024);
++        meminfo.ignore(64, '\n');
++    }
++    return 0;
++}
++
+ uint64_t MSM::getQcomGpuInfo(){
+     static std::thread perf_thread(perf_read_thread);
+-    //printf("gpu_bytes_memory()=%d\n",gpu_bytes_memory());
++    static const std::string temp_zone = find_thermal_zone({"gpuss-2-thermal", "gpuss-0-thermal"});
++    static const std::vector<std::string> gpu_zones = find_thermal_zones("gpuss-");
++    static const std::string mem_zone = find_thermal_zone({"ddr-thermal", "mem-thermal"});
++    static const std::string devfreq = find_gpu_devfreq();
++    static const float mem_total = mem_total_gib();
++    // Steam Frame: slg4ax46073v fan controller reports twice the actual rpm
++    static const std::string frame_fan = find_hwmon("slg4ax46073v");
++    static const std::string fan_hwmon = frame_fan.empty() ? find_hwmon("pwmfan") : frame_fan;
++
+     gpu_info_msm.load = gpu_usage;
+-    gpu_info_msm.temp = read_value("/sys/class/thermal/thermal_zone28/temp") / 1000.0; //gpuss-2-thermal
+-    gpu_info_msm.junction_temp = read_value("/sys/class/thermal/thermal_zone26/temp") / 1000.0; //gpuss-0-thermal
+-    gpu_info_msm.memory_temp = read_value("/sys/class/thermal/thermal_zone22/temp") / 1000.0; //ddr-thermal
+-    // slg4ax46073v fan controller reports twice the actual rpm
+-    static const std::string fan_hwmon = find_hwmon("slg4ax46073v");
+-    gpu_info_msm.fan_speed = read_value(fan_hwmon + "/fan1_input") / 2;
++    gpu_info_msm.temp = read_value(temp_zone) / 1000.0;
++    double hottest = 0;
++    for (auto const& zone : gpu_zones)
++        hottest = std::max(hottest, read_value(zone));
++    gpu_info_msm.junction_temp = hottest / 1000.0;
++    gpu_info_msm.memory_temp = read_value(mem_zone) / 1000.0;
++    gpu_info_msm.fan_speed = read_value(fan_hwmon + "/fan1_input") / (frame_fan.empty() ? 1 : 2);
+     gpu_info_msm.fan_rpm = true;
+     gpu_info_msm.sys_vram_used = float(gpu_bytes_memory()) / (1024 * 1024 * 1024);
+     gpu_info_msm.proc_vram_used = gpu_info_msm.sys_vram_used;
+-    gpu_info_msm.CoreClock = read_value_s("/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu/cur_freq") / 1000000.0;
+-    gpu_info_msm.MemClock = 4200; //MHz
+-    gpu_info_msm.memoryTotal = 16000; 
++    gpu_info_msm.CoreClock = read_value_s(devfreq) / 1000000.0;
++    gpu_info_msm.MemClock = 4200; //MHz, LPDDR5X max on SM8550/SM8650; no current-rate interface
++    gpu_info_msm.memoryTotal = mem_total; // GiB, unified memory
+     return 0;
+ }
+ 
