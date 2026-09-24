@@ -1,0 +1,85 @@
+#!/usr/bin/python3
+"""Game Mode: open Steam's Quick Access menu from the button below the right stick.
+
+That button reports BTN_BACK, which Steam leaves unmapped. Steam opens Quick Access on
+Guide+A, and has no steam:// URL for it, so on each press we inject that chord into the pad's
+own event stream: Steam then sees it from the same controller it already reads.
+"""
+import errno
+import sys
+import time
+
+import evdev
+from evdev import ecodes as e
+
+PAD_NAME = "AYN Odin2 Gamepad"
+QAM_BUTTON = e.BTN_BACK
+CHORD = (e.BTN_MODE, e.BTN_SOUTH)
+HOLD = 0.08  # s; Steam polls the pad, so a same-frame press/release can be missed
+
+
+def log(msg):
+    print(msg, file=sys.stderr, flush=True)
+
+
+def find_pad():
+    for path in evdev.list_devices():
+        try:
+            dev = evdev.InputDevice(path)
+        except OSError:
+            continue
+        if dev.name == PAD_NAME:
+            return dev
+        dev.close()
+    return None
+
+
+def send(pad, code, value):
+    pad.write(e.EV_KEY, code, value)
+    pad.write(e.EV_SYN, e.SYN_REPORT, 0)
+
+
+def open_qam(pad):
+    held = set(pad.active_keys())
+    for code in CHORD:  # Guide first, so Steam treats A as a chord and not a plain press
+        if code not in held:
+            send(pad, code, 1)
+            time.sleep(HOLD)
+    for code in reversed(CHORD):
+        if code not in held:
+            send(pad, code, 0)
+            time.sleep(HOLD)
+
+
+def run():
+    waiting = False
+    while True:
+        pad = find_pad()
+        if not pad:
+            if not waiting:
+                log(f"waiting for '{PAD_NAME}'")
+                waiting = True
+            time.sleep(2)
+            continue
+        waiting = False
+        log(f"attached {pad.path} ({pad.name})")
+        try:
+            for ev in pad.read_loop():
+                if ev.type == e.EV_KEY and ev.code == QAM_BUTTON and ev.value == 1:
+                    open_qam(pad)
+        except OSError as err:
+            if err.errno != errno.ENODEV:
+                raise
+            log("gamepad went away")
+        finally:
+            try:
+                pad.close()
+            except OSError:
+                pass
+
+
+if __name__ == "__main__":
+    try:
+        run()
+    except KeyboardInterrupt:
+        pass

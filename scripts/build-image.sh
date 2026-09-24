@@ -103,7 +103,10 @@ systemctl set-default graphical.target >/dev/null 2>&1
 # scheduler measured better -- Skyrim 9.0 W at 34.9 fps vs lavd 9.6-9.9 W at 33.6-34.3 fps,
 # idle 1.71 W vs 1.80 W (lavd holds the little cluster at max clock and sends ~5x the IPIs).
 systemctl enable steamos-manager steamportal-mangoapp-tracefs >/dev/null 2>&1
-systemctl --global enable steamos-manager.service steamportal-steam-bootstrap.service >/dev/null 2>&1
+# Decky Loader (Game Mode plugins); its unit name is fixed by the loader itself
+systemctl enable plugin_loader >/dev/null 2>&1
+systemctl --global enable steamos-manager.service steamportal-steam-bootstrap.service \
+  steamportal-desktop-controller.service steamportal-qam-button.service >/dev/null 2>&1
 systemctl mask systemd-firstboot.service >/dev/null 2>&1
 : >/etc/machine-id
 EOF
@@ -150,10 +153,12 @@ rm -rf "$RFS"/var/cache/pacman/pkg/* "$RFS"/tmp/* "$RFS"/var/log/pacman.log
 #   U-Boot extlinux  \extlinux\extlinux.conf -> \Image + Portal dtb
 #   UEFI (U-Boot EFI or ABL EFI chainload)  \EFI\BOOT\BOOTAA64.EFI = systemd-boot
 DTB=dtbs/qcom/qcs8550-ayn-odin2portal.dtb
+# msm.disable_acd=1: GPU ACD suspected of GMU HFI/OOB timeouts that end in an
+# unrecoverable GPU hang (display freeze); under test.
 CMDLINE="root=PARTUUID=$ROOT_PARTUUID rootfstype=ext4 rootwait rw console=tty0 \
 allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2 \
 nosoftlockup usbcore.interrupt_interval_override=045e:028e:2 \
-ufshcd_core.uic_cmd_timeout=3000 mem_sleep_default=s2idle"
+ufshcd_core.uic_cmd_timeout=3000 mem_sleep_default=s2idle msm.disable_acd=1"
 B="$WORK/boot"; F="$B/fat"
 mkdir -p "$F/dtbs/qcom" "$F/extlinux" "$F/EFI/BOOT" "$F/loader/entries"
 

@@ -1,0 +1,38 @@
+# lsfg-vk: Lossless Scaling frame generation as an implicit Vulkan layer, aarch64.
+# Proton ARM64 games (x86 code via FEX inside Wine) use the native aarch64 Vulkan loader,
+# so this one layer covers them and native arm64 games.
+#
+# License CC BY-NC-ND 4.0: sharing unmodified builds non-commercially is allowed, patched
+# ones are not. Keep this package patch-free; only build options differ from upstream.
+# The layer needs lsfg-vk.dll from the user's own copy of Lossless Scaling (Steam, beta
+# branch "lsfg-vk"); it finds it under ~/.local/share/Steam/steamapps/common by itself.
+pkgname=lsfg-vk
+pkgver=2.0.0
+pkgrel=1
+_commit=2333707d55b68ddd8066fd95404c3b7d07e00d3a
+pkgdesc='Lossless Scaling frame generation Vulkan layer'
+arch=(aarch64)
+url='https://lsfg-vk.dev'
+license=(LicenseRef-CC-BY-NC-ND-4.0)
+depends=(gcc-libs glibc vulkan-icd-loader)
+makedepends=(git cmake ninja clang lld)
+source=("git+https://git.lsfg-vk.dev/lsfg-vk.git#commit=$_commit")
+sha256sums=('SKIP')
+
+build() {
+  # Upstream recommends clang; its pipeline sets clang's constexpr step limit itself
+  CC=clang CXX=clang++ LDFLAGS="$LDFLAGS -fuse-ld=lld" \
+  cmake -B build -S lsfg-vk -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DLSFGVK_MANAGED=ON \
+    -DLSFGVK_BUILD_UI=OFF \
+    -DLSFGVK_BUILD_CLI=ON \
+    -DLSFGVK_LAYER_LIBRARY_PATH=/usr/lib/liblsfg-vk-layer.so
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm644 lsfg-vk/LICENSE.txt -t "$pkgdir/usr/share/licenses/$pkgname"
+}

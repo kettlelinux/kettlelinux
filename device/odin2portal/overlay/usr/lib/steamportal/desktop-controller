@@ -1,0 +1,308 @@
+#!/usr/bin/python3
+"""Desktop-mode controller: drive the Plasma pointer and keyboard from the Portal gamepad.
+
+Mouse mode grabs the rsinput pad (so desktop games don't also see it) and replays it through
+two uinput devices. Hold Select+Start to toggle mouse mode off for games run from the desktop.
+
+  left stick  pointer             right stick  scroll (vertical + horizontal)
+  A / R2      left click (drag)   B / L2       right click
+  R3          middle click        R1 (held)    precise pointer
+  X / Home    on-screen keyboard  Y            Enter
+  D-pad       arrow keys          L1           Escape
+  Start       application menu    Select       Overview
+"""
+import errno
+import os
+import select
+import subprocess
+import sys
+import time
+
+import evdev
+from evdev import ecodes as e
+
+PAD_NAME = "AYN Odin2 Gamepad"
+TICK = 1 / 125
+DEADZONE = 0.12
+POINTER_SPEED = 1400.0  # px/s at full deflection
+PRECISE_FACTOR = 0.3
+POINTER_CURVE = 2.0
+SCROLL_SPEED = 14.0  # wheel detents/s at full deflection
+TRIGGER_ON = 0.5
+TOGGLE_HOLD = 0.6  # s
+
+BUTTON_KEYS = {  # pad button -> key or mouse button, pressed while held
+    e.BTN_SOUTH: e.BTN_LEFT, e.BTN_EAST: e.BTN_RIGHT, e.BTN_THUMBR: e.BTN_MIDDLE,
+    e.BTN_NORTH: e.KEY_ENTER, e.BTN_TL: e.KEY_ESC,
+    e.BTN_DPAD_UP: e.KEY_UP, e.BTN_DPAD_DOWN: e.KEY_DOWN,
+    e.BTN_DPAD_LEFT: e.KEY_LEFT, e.BTN_DPAD_RIGHT: e.KEY_RIGHT,
+}
+TRIGGER_KEYS = {e.ABS_RZ: e.BTN_LEFT, e.ABS_Z: e.BTN_RIGHT}
+TAP_CHORDS = {  # tapped on release, unless the button was part of the toggle combo
+    e.BTN_START: [e.KEY_LEFTMETA],  # Plasma opens the launcher on a lone Meta tap
+    e.BTN_SELECT: [e.KEY_LEFTMETA, e.KEY_W],
+}
+COMBO = {e.BTN_SELECT, e.BTN_START}
+OSK_BUTTONS = (e.BTN_WEST, e.BTN_MODE)
+PRECISE_BUTTON = e.BTN_TR
+MOUSE_BUTTONS = [e.BTN_LEFT, e.BTN_RIGHT, e.BTN_MIDDLE]
+KEYS = sorted({k for k in BUTTON_KEYS.values() if k not in MOUSE_BUTTONS}
+              | {k for c in TAP_CHORDS.values() for k in c})
+
+
+def log(msg):
+    print(msg, file=sys.stderr, flush=True)
+
+
+def notify(text):
+    subprocess.Popen(["notify-send", "-a", "Controller", "-i", "input-gamepad", "-t", "2000",
+                      "Controller", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def kwin_vkbd(*args):
+    return subprocess.run(["busctl", "--user", *args[:1], "org.kde.KWin", "/VirtualKeyboard",
+                           "org.kde.kwin.VirtualKeyboard", *args[1:]],
+                          capture_output=True, text=True, timeout=3)
+
+
+def toggle_osk():
+    try:
+        if kwin_vkbd("get-property", "visible").stdout.split()[-1:] == ["true"]:
+            kwin_vkbd("set-property", "active", "b", "false")
+        else:
+            kwin_vkbd("call", "forceActivate")
+    except (OSError, subprocess.TimeoutExpired) as err:
+        log(f"on-screen keyboard: {err}")
+
+
+def find_pad():
+    for path in evdev.list_devices():
+        try:
+            dev = evdev.InputDevice(path)
+        except OSError:
+            continue
+        if dev.name == PAD_NAME:
+            return dev
+        dev.close()
+    return None
+
+
+class Axis:
+    def __init__(self, info, centered=True):
+        self.lo, self.hi = info.min, info.max
+        self.centered = centered
+        self.set(info.value)
+
+    def set(self, raw):
+        if self.centered:
+            mid, half = (self.lo + self.hi) / 2, (self.hi - self.lo) / 2 or 1
+            self.value = max(-1.0, min(1.0, (raw - mid) / half))
+        else:
+            self.value = (raw - self.lo) / ((self.hi - self.lo) or 1)
+
+
+def shaped(x, y, curve):
+    """Radial deadzone + response curve; returns the stick vector scaled to 0..1."""
+    mag = (x * x + y * y) ** 0.5
+    if mag <= DEADZONE:
+        return 0.0, 0.0
+    out = ((min(mag, 1.0) - DEADZONE) / (1 - DEADZONE)) ** curve
+    return x / mag * out, y / mag * out
+
+
+class Controller:
+    def __init__(self):
+        self.mouse = evdev.UInput(
+            {e.EV_KEY: MOUSE_BUTTONS,
+             e.EV_REL: [e.REL_X, e.REL_Y, e.REL_WHEEL, e.REL_HWHEEL,
+                        e.REL_WHEEL_HI_RES, e.REL_HWHEEL_HI_RES]},
+            name="Steam Portal Desktop Mouse")
+        self.kbd = evdev.UInput({e.EV_KEY: KEYS}, name="Steam Portal Desktop Keyboard")
+        self.enabled = True
+        self.pad = None
+        self.down = set()  # codes currently pressed on the uinput devices
+        self.sources = {}  # output code -> pad inputs holding it (A and R2 share left click)
+
+    # --- output ---------------------------------------------------------------------------
+    def out_for(self, code):
+        return self.mouse if code in MOUSE_BUTTONS else self.kbd
+
+    def press(self, code, down):
+        if (code in self.down) == down:
+            return
+        (self.down.add if down else self.down.discard)(code)
+        out = self.out_for(code)
+        out.write(e.EV_KEY, code, int(down))
+        out.syn()
+
+    def tap(self, chord):
+        for k in chord:
+            self.kbd.write(e.EV_KEY, k, 1)
+        self.kbd.syn()
+        for k in reversed(chord):
+            self.kbd.write(e.EV_KEY, k, 0)
+        self.kbd.syn()
+
+    def release_all(self):
+        self.sources.clear()
+        for code in list(self.down):
+            self.press(code, False)
+
+    # --- pad ------------------------------------------------------------------------------
+    def attach(self, pad):
+        self.pad = pad
+        abs_caps = dict(pad.capabilities().get(e.EV_ABS, []))
+        self.axes = {c: Axis(abs_caps[c]) for c in (e.ABS_X, e.ABS_Y, e.ABS_RX, e.ABS_RY)
+                     if c in abs_caps}
+        self.axes.update({c: Axis(abs_caps[c], centered=False) for c in TRIGGER_KEYS
+                          if c in abs_caps})
+        self.held = set(pad.active_keys())
+        self.combo_used = False  # Select+Start were held together: no taps on release
+        self.combo_since = None
+        self.rem = [0.0, 0.0, 0.0, 0.0]  # sub-unit remainders: x, y, wheel, hwheel
+        self.detents = [0, 0]  # hi-res wheel units not yet reported as a legacy detent
+        self.last_tick = time.monotonic()
+        if self.enabled:
+            self.apply_grab()
+        log(f"attached {pad.path} ({pad.name}), mouse mode {'on' if self.enabled else 'off'}")
+
+    def apply_grab(self):
+        try:
+            self.pad.grab() if self.enabled else self.pad.ungrab()
+        except OSError as err:
+            log(f"{'grab' if self.enabled else 'ungrab'}: {err}")
+
+    def set_source(self, src, code, active):
+        s = self.sources.setdefault(code, set())
+        (s.add if active else s.discard)(src)
+        self.press(code, bool(s))
+
+    def toggle_mode(self):
+        self.enabled = not self.enabled
+        self.release_all()
+        self.apply_grab()
+        notify("Mouse mode on" if self.enabled else "Mouse mode off (gamepad passthrough)")
+        log(f"mouse mode {'on' if self.enabled else 'off'}")
+
+    def on_key(self, code, value):
+        if value == 2:  # autorepeat; the compositor repeats keys itself
+            return
+        (self.held.add if value else self.held.discard)(code)
+        if code in COMBO:
+            if COMBO <= self.held:
+                self.combo_since, self.combo_used = time.monotonic(), True
+            else:
+                self.combo_since = None
+            if not value:
+                if self.enabled and not self.combo_used:
+                    self.tap(TAP_CHORDS[code])
+                if not self.held & COMBO:
+                    self.combo_used = False
+            return
+        if not self.enabled:
+            return
+        if code in BUTTON_KEYS:
+            self.set_source(code, BUTTON_KEYS[code], bool(value))
+        elif code in OSK_BUTTONS and value:
+            toggle_osk()
+
+    def on_abs(self, code, value):
+        axis = self.axes.get(code)
+        if not axis:
+            return
+        axis.set(value)
+        if code in TRIGGER_KEYS and self.enabled:
+            self.set_source(code, TRIGGER_KEYS[code], axis.value >= TRIGGER_ON)
+
+    def stick(self, xc, yc):
+        x, y = self.axes.get(xc), self.axes.get(yc)
+        return shaped(x.value if x else 0.0, y.value if y else 0.0, POINTER_CURVE)
+
+    def moving(self):
+        return self.enabled and (any(self.stick(e.ABS_X, e.ABS_Y))
+                                 or any(self.stick(e.ABS_RX, e.ABS_RY)))
+
+    def tick(self):
+        now = time.monotonic()
+        dt, self.last_tick = min(now - self.last_tick, 0.05), now
+        if self.combo_since is not None and now - self.combo_since >= TOGGLE_HOLD:
+            self.combo_since, self.combo_used = None, True
+            self.toggle_mode()
+        if not self.enabled:
+            return
+        px, py = self.stick(e.ABS_X, e.ABS_Y)
+        sx, sy = self.stick(e.ABS_RX, e.ABS_RY)
+        speed = POINTER_SPEED * (PRECISE_FACTOR if PRECISE_BUTTON in self.held else 1.0)
+        # hi-res wheel: 120 units per detent; up/right on the stick scrolls up/right
+        deltas = (px * speed * dt, py * speed * dt,
+                  -sy * SCROLL_SPEED * 120 * dt, sx * SCROLL_SPEED * 120 * dt)
+        out = []
+        for i, d in enumerate(deltas):
+            self.rem[i] += d
+            whole = int(self.rem[i])
+            self.rem[i] -= whole
+            out.append(whole)
+        x, y, wheel, hwheel = out
+        if not (x or y or wheel or hwheel):
+            return
+        if x:
+            self.mouse.write(e.EV_REL, e.REL_X, x)
+        if y:
+            self.mouse.write(e.EV_REL, e.REL_Y, y)
+        # legacy wheel clicks alongside hi-res, one each time the total crosses a detent
+        for i, units, hi, lo in ((0, wheel, e.REL_WHEEL_HI_RES, e.REL_WHEEL),
+                                 (1, hwheel, e.REL_HWHEEL_HI_RES, e.REL_HWHEEL)):
+            if units:
+                self.mouse.write(e.EV_REL, hi, units)
+                self.detents[i] += units
+                clicks = int(self.detents[i] / 120)
+                if clicks:
+                    self.mouse.write(e.EV_REL, lo, clicks)
+                    self.detents[i] -= clicks * 120
+        self.mouse.syn()
+
+    def run_pad(self):
+        while True:
+            busy = self.moving() or self.combo_since is not None
+            ready, _, _ = select.select([self.pad.fd], [], [], TICK if busy else None)
+            if ready:
+                for ev in self.pad.read():
+                    if ev.type == e.EV_KEY:
+                        self.on_key(ev.code, ev.value)
+                    elif ev.type == e.EV_ABS:
+                        self.on_abs(ev.code, ev.value)
+            if not busy:
+                self.last_tick = time.monotonic()
+            self.tick()
+
+    def run(self):
+        waiting = False
+        while True:
+            pad = find_pad()
+            if not pad:
+                if not waiting:
+                    log(f"waiting for '{PAD_NAME}'")
+                    waiting = True
+                time.sleep(2)
+                continue
+            waiting = False
+            self.attach(pad)
+            try:
+                self.run_pad()
+            except OSError as err:
+                if err.errno != errno.ENODEV:
+                    raise
+                log("gamepad went away")
+            finally:
+                self.release_all()
+                try:
+                    pad.close()
+                except OSError:
+                    pass
+
+
+if __name__ == "__main__":
+    try:
+        Controller().run()
+    except KeyboardInterrupt:
+        pass

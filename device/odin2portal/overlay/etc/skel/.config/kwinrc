@@ -1,0 +1,6 @@
+# On-screen keyboard: KWin runs plasma-keyboard as its Wayland input method. It pops up when a
+# text field is focused (usr/lib/environment.d/60-steamportal-osk.conf); the controller's
+# X / Home button toggles it (desktop-controller).
+[Wayland]
+InputMethod[$e]=/usr/share/applications/org.kde.plasma.keyboard.desktop
+VirtualKeyboardEnabled=true

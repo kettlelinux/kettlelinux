@@ -13,6 +13,9 @@ fi
 # Valve's steam-health-check (steam.service pre-start) treats a missing sentinel as a broken
 # install and re-unpacks the bootstrap over it; the client updates itself from there
 touch "$root/.install-complete"
+# Decky Loader injects through Steam's CEF devtools port, opened only when this file exists
+# at client start (decky-loader-start creates it too, but may run after the first Steam start)
+[ -x /usr/lib/decky-loader/decky-loader-start ] && touch "$root/.cef-enable-remote-debugging"
 # The links RUNSTEAM.sh maintains; /usr/bin/steam finds the install through ~/.steam/steam
 mkdir -p "$HOME/.steam"
 for l in steam:. root:. sdkarm64:linuxarm64 binarm64:steamrtarm64 bin32:ubuntu12_32 bin64:ubuntu12_64; do

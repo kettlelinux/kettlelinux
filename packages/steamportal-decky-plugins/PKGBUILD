@@ -1,0 +1,47 @@
+# Steam Portal's own Decky plugins, preinstalled (decky-loader-start links them into
+# ~/homebrew/plugins):
+#   framegen   per-game Lossless Scaling frame generation (lsfg-vk profiles)
+#   upscaling  per-game gamescope FSR 1 (render resolution + Sharp filter) and OptiScaler
+# Sources live next to this PKGBUILD; shared/ holds code both frontends use.
+pkgbase=steamportal-decky-plugins
+pkgname=(steamportal-decky-framegen steamportal-decky-upscaling)
+pkgver=1.1.0
+pkgrel=1
+pkgdesc='Steam Portal Decky plugins'
+arch=(any)
+license=(BSD-3-Clause)
+makedepends=(nodejs npm)
+
+prepare() {
+  rm -rf src-tree; mkdir src-tree
+  cp -r "$startdir"/{package.json,pnpm-lock.yaml,shared,framegen,upscaling} src-tree/
+  rm -rf src-tree/{framegen,upscaling}/dist
+}
+
+build() {
+  cd src-tree
+  npx --yes pnpm@10 install --frozen-lockfile
+  npx --yes pnpm@10 run typecheck
+  npx --yes pnpm@10 run build
+}
+
+_install_plugin() {
+  local d="$pkgdir/usr/share/decky/plugins/$1"
+  install -Dm644 "src-tree/$2"/{plugin.json,package.json,main.py} -t "$d"
+  install -Dm644 "src-tree/$2/dist/index.js" -t "$d/dist"
+  install -Dm644 src-tree/shared/steamlib.py -t "$d/py_modules"   # $2/py_modules has a symlink
+  install -Dm644 "$startdir/LICENSE" -t "$d"
+  install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}
+
+package_steamportal-decky-framegen() {
+  pkgdesc='Frame Generation Decky plugin (lsfg-vk per-game profiles)'
+  depends=(decky-loader lsfg-vk)
+  _install_plugin steamportal-framegen framegen
+}
+
+package_steamportal-decky-upscaling() {
+  pkgdesc='Upscaling Decky plugin (gamescope FSR 1, OptiScaler)'
+  depends=(decky-loader optiscaler)
+  _install_plugin steamportal-upscaling upscaling
+}
