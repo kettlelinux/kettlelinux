@@ -1,0 +1,16 @@
+# Decky's own name for its unit: the loader restarts/stops "plugin_loader" itself.
+[Unit]
+Description=Decky Loader (Game Mode plugins)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Restart=always
+KillMode=process
+TimeoutStopSec=15
+ExecStart=/usr/lib/decky-loader/decky-loader-start
+Environment=LOG_LEVEL=INFO
+
+[Install]
+WantedBy=multi-user.target

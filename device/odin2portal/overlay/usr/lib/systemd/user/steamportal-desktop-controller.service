@@ -1,0 +1,13 @@
+[Unit]
+Description=Gamepad mouse and keyboard for the Plasma desktop
+# Plasma only: Game Mode's Steam reads the pad itself
+PartOf=graphical-session.target
+After=plasma-kwin_wayland.service
+
+[Service]
+ExecStart=/usr/lib/steamportal/desktop-controller
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=plasma-workspace.target

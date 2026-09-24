@@ -33,7 +33,7 @@ pipewire-alsa
 pipewire-pulse
 wireplumber
 
-# graphics (Valve's Mesa build: freedreno + turnip)
+# graphics (Valve's Mesa build: turnip Vulkan; GL/GLES only through zink on turnip)
 deckard-mesa-linux-aarch64
 vulkan-tools
 mesa-utils
@@ -53,7 +53,7 @@ strace
 # KDE Plasma desktop (SteamOS desktop mode). Valve's hotfix repo supplies Plasma 6.2.5 /
 # KF6 6.14 / Qt 6.8; plasma-nm, plasma-pa, konsole, kinfocenter and plasma-systemmonitor
 # only exist as 6.0.4 in the base. Not in any deckard snapshot: kscreen, spectacle, ark,
-# an on-screen keyboard (to be built into our own repo).
+# an on-screen keyboard (kscreen and plasma-keyboard are built into our own repo).
 plasma-desktop
 plasma-workspace
 kwin
@@ -85,6 +85,11 @@ noto-fonts
 noto-fonts-emoji
 # built by us (packages/): Display Settings
 kscreen
+# on-screen keyboard (KWin input method, etc/skel/.config/kwinrc), built by us
+plasma-keyboard
+# desktop-controller: gamepad as mouse/keyboard in desktop mode
+python-evdev
+libnotify
 
 # Steam / Game Mode. Valve's arm64 client (bootstrap tarball + steam.service), gamescope,
 # and the x86_64 Mesa + gamescope layer that FEX-run games load. FEX itself and Proton
@@ -111,3 +116,12 @@ zenity
 gtk2
 at-spi2-core
 ibus
+
+# Game Mode plugins (built by us, packages/): Decky Loader (native aarch64, no self-update)
+# with our Frame Generation (lsfg-vk; needs the user's own Lossless Scaling, "lsfg-vk"
+# beta branch) and Upscaling (gamescope FSR 1 + OptiScaler) plugins preinstalled
+decky-loader
+lsfg-vk
+optiscaler
+steamportal-decky-framegen
+steamportal-decky-upscaling

@@ -1,0 +1,60 @@
+# Decky Loader (Game Mode plugin loader), built from source for aarch64.
+# Upstream only releases an x86_64 PyInstaller binary. Here the backend runs on the system
+# Python 3.11 with its dependencies pinned (requirements.txt, from upstream's poetry.lock)
+# in a private site dir, because deckard's python-aiohttp/watchdog/packaging are too old.
+# 0001 turns the self-updater off (it would install the x86_64 binary over this package).
+# Plugins shipped with the image live in /usr/share/decky/plugins; decky-loader-start
+# links them into ~/homebrew/plugins.
+pkgname=decky-loader
+pkgver=3.2.9
+pkgrel=1
+_commit=f75dc1df134daf53b1ec02c351b12313c1696a7e
+pkgdesc='Plugin loader for the Steam Deck UI (Steam Portal build)'
+arch=(aarch64)
+url='https://github.com/SteamDeckHomebrew/decky-loader'
+license=(GPL-2.0-only)
+depends=(python lsof)
+makedepends=(git nodejs npm python-pip)
+source=("git+https://github.com/SteamDeckHomebrew/decky-loader.git#commit=$_commit"
+        0001-steamportal-disable-self-update.patch
+        requirements.txt
+        decky-loader-start
+        plugin_loader.service)
+sha256sums=('SKIP'
+            '0699ffaca8d6c6ac45784100a48ec16386b66ce3f6cdf83e875ca3ff057f8e64'
+            '5792b3665dc21172f93faf6212f5a4e8fcefca1301356cd144a05d4fa335be79'
+            'af591f6cb3e9864f5860a162b6dc221ac2e3251687d6d0e1239b70e17b25237e'
+            'c4a08c48d8eb9150446042055c535e9a01357c6d8acddb75a0b2a7e43e6acf2a')
+
+_site=usr/lib/decky-loader
+
+prepare() {
+  cd decky-loader
+  patch -p1 --fuzz=0 <"$srcdir/0001-steamportal-disable-self-update.patch"
+}
+
+build() {
+  cd decky-loader/frontend
+  # pnpm-workspace.yaml uses pnpm 10 keys; husky's prepare script needs a git hook dir
+  npx --yes pnpm@10 install --frozen-lockfile --ignore-scripts
+  npx --yes pnpm@10 run build          # -> backend/decky_loader/static
+}
+
+package() {
+  local site="$pkgdir/$_site"
+  python -m pip install --no-cache-dir --no-compile --disable-pip-version-check \
+    --require-hashes --target "$site" -r "$srcdir/requirements.txt"
+  rm -rf "$site/bin"
+  cp -r decky-loader/backend/decky_loader "$site/"
+  # importlib.metadata.version("decky_loader") is DECKY_VERSION for plugins and the store
+  install -d "$site/decky_loader-$pkgver.dist-info"
+  printf 'Metadata-Version: 2.1\nName: decky-loader\nVersion: %s\n' "$pkgver" \
+    >"$site/decky_loader-$pkgver.dist-info/METADATA"
+  echo pacman >"$site/decky_loader-$pkgver.dist-info/INSTALLER"
+  python -m compileall -q -d "/$_site" "$site"
+
+  install -Dm755 decky-loader-start "$pkgdir/usr/lib/decky-loader/decky-loader-start"
+  install -Dm644 plugin_loader.service -t "$pkgdir/usr/lib/systemd/system"
+  install -d "$pkgdir/usr/share/decky/plugins"
+  install -Dm644 decky-loader/LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+}
