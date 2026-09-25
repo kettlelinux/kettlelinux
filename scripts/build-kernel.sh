@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Steam Portal kernel: pinned kernel.org source + kernel/patches/*/ (in
+# Build the Kettle Linux kernel: pinned kernel.org source + kernel/patches/*/ (in
 # order, --fuzz=0) + kernel/dts + base.config merged with steamos.config.
 # Cross-compiles with LLVM; no GCC cross toolchain needed.
 #
@@ -10,7 +10,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/kernel/kernel.conf"
 
 CACHE="$ROOT/cache"
-KSRC="$ROOT/build/linux-$KERNEL_VERSION-steamportal"
+KSRC="$ROOT/build/linux-$KERNEL_VERSION-kettle"
 OUT="$ROOT/out/kernel"
 JOBS="${JOBS:-$(nproc)}"
 KMAKE=(make -C "$KSRC" ARCH=arm64 LLVM=1 -j"$JOBS")

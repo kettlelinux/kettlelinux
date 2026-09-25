@@ -1,0 +1,96 @@
+#!/bin/bash
+# Remove the internal Kettle Linux install and give its space back to Android.
+#
+# Deletes (and trims) the kettle-esp and kettle-ufs-root partitions, then grows Android's
+# userdata over them. Android's apps and data are kept by default; Android's encrypted file
+# system is not resized from Linux, so the extra space shows up after Android's next factory
+# reset. --wipe-android asks Android's recovery to reset it now instead (fresh setup, full space).
+# Nothing else on the internal storage is touched. To put back the exact state from before the
+# install, use kettle-restore-ufs with the backup the installer made.
+#
+# Usage: sudo kettle-uninstall-internal [--wipe-android] [--progress --yes]
+set -euo pipefail
+. /usr/lib/kettle/ufs-lib.sh
+
+WIPE=0
+ARGS=("$@")
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --wipe-android) WIPE=1 ;;
+    --progress) PROGRESS=1 ;;
+    --yes) YES=1 ;;
+    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    *) die "unknown option $1" ;;
+  esac
+  shift
+done
+
+need_root
+need_sd_root
+inhibit "Removing Kettle Linux from the internal storage" "${ARGS[@]}"
+start_log uninstall-internal "${ARGS[@]}"
+need_power
+[ -b "$DISK" ] || die "$DISK not found"
+none_mounted "$DISK" || die "a partition of $DISK is mounted"
+
+UD=$(part_by_label userdata)
+[ -n "$UD" ] || die "Android userdata partition not found on $DISK"
+UD_N=$(partnum "$UD")
+[ "$(install_state)" != none ] || die "Kettle Linux is not installed on the internal storage"
+ESP=$(part_by_label $ESP_LABEL)
+ROOT=$(part_by_label $ROOT_LABEL); [ -n "$ROOT" ] || ROOT=$(part_by_label $PARTIAL_LABEL)
+kettle=(); for p in "$ESP" "$ROOT"; do [ -n "$p" ] && kettle+=("$p"); done
+
+# Only Kettle's partitions may follow userdata, or growing it would cover something else
+ud_start=$(part_start_b "$UD")
+for p in $(sfdisk -d "$DISK" | sed -n 's|^\(/dev/[^ ]*\) :.*|\1|p'); do
+  [ "$(part_start_b "$p")" -gt "$ud_start" ] || continue
+  printf '%s\n' "${kettle[@]}" | grep -qx "$p" || die "$p follows userdata and is not Kettle's; not a layout this tool knows"
+done
+
+cat <<EOF
+
+  Removing Kettle Linux from the internal storage:
+    ${kettle[*]}   deleted (the internal Kettle system and anything in it, games too)
+    $UD            Android userdata, grown to fill the space
+EOF
+if [ "$WIPE" = 1 ]; then
+  echo "  Android's apps and data are ERASED: it sets itself up again on its next start."
+else
+  echo "  Android's apps and data are kept; the space shows up after a factory reset in Android."
+fi
+echo
+ask "Remove Kettle Linux from the internal storage?" || exit 1
+
+bk=/var/lib/kettle/ufs-partition-table-$(date +%Y%m%d-%H%M%S).sfdisk
+mkdir -p /var/lib/kettle
+sfdisk -d "$DISK" >"$bk"
+say "saved partition table to $bk"
+
+say "clearing the Kettle partitions"
+for p in "${kettle[@]}"; do
+  blkdiscard -f "$p" 2>/dev/null || wipefs -aq "$p"
+done
+
+trap '' INT TERM HUP
+say "removing the Kettle partitions and growing Android userdata"
+nums=(); for p in "${kettle[@]}"; do nums+=("$(partnum "$p")"); done
+sfdisk -q --no-reread --delete "$DISK" "${nums[@]}"
+echo ", +" | sfdisk -q --no-reread -N "$UD_N" "$DISK"
+for n in "${nums[@]}"; do partx -d --nr "$n" "$DISK" 2>/dev/null || true; done
+partx -u "$DISK" 2>/dev/null || true
+udevadm settle
+excl=(-e "^$UD :"); for p in "${kettle[@]}"; do excl+=(-e "^$p :"); done
+if ! diff <(grep -v "${excl[@]}" "$bk") <(sfdisk -d "$DISK" | grep -v "${excl[@]}"); then
+  sfdisk -q --no-reread "$DISK" <"$bk"; partx -u "$DISK" || true
+  die "the new partition table changed more than expected; the old one was put back"
+fi
+if [ "$WIPE" = 1 ]; then
+  say "clearing Android userdata so Android sets itself up again"
+  blkdiscard -f "$UD" 2>/dev/null || true
+  dd if=/dev/zero of="$UD" bs=1M count=8 conv=fsync status=none
+  request_android_wipe
+fi
+trap - INT TERM HUP
+sync
+done_msg "Kettle Linux was removed from the internal storage; Android has $(( $(part_size_b "$UD") / 1024**3 )) GiB"

@@ -1,0 +1,48 @@
+# Kettle Linux's own Decky plugins, preinstalled (decky-loader-start links them into
+# ~/homebrew/plugins):
+#   framegen   per-game frame generation: our kettle-framegen layer, or lsfg-vk
+#   upscaling  per-game gamescope FSR 1 (render resolution + Sharp filter) and SGSR 2
+#              through OptiScaler (ARM64EC build, optiscaler-arm64ec)
+# Sources live next to this PKGBUILD; shared/ holds code both frontends use.
+pkgbase=kettle-decky-plugins
+pkgname=(kettle-decky-framegen kettle-decky-upscaling)
+pkgver=1.6.0
+pkgrel=1
+pkgdesc='Kettle Linux Decky plugins'
+arch=(any)
+license=(BSD-3-Clause)
+makedepends=(nodejs npm)
+
+prepare() {
+  rm -rf src-tree; mkdir src-tree
+  cp -r "$startdir"/{package.json,pnpm-lock.yaml,shared,framegen,upscaling} src-tree/
+  rm -rf src-tree/{framegen,upscaling}/dist
+}
+
+build() {
+  cd src-tree
+  npx --yes pnpm@10 install --frozen-lockfile
+  npx --yes pnpm@10 run typecheck
+  npx --yes pnpm@10 run build
+}
+
+_install_plugin() {
+  local d="$pkgdir/usr/share/decky/plugins/$1"
+  install -Dm644 "src-tree/$2"/{plugin.json,package.json,main.py} -t "$d"
+  install -Dm644 "src-tree/$2/dist/index.js" -t "$d/dist"
+  install -Dm644 "src-tree/$2"/py_modules/*.py -t "$d/py_modules"   # steamlib.py: symlink to shared/
+  install -Dm644 "$startdir/LICENSE" -t "$d"
+  install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}
+
+package_kettle-decky-framegen() {
+  pkgdesc='Frame Generation Decky plugin (kettle-framegen / lsfg-vk per game)'
+  depends=(decky-loader kettle-framegen lsfg-vk)
+  _install_plugin kettle-framegen framegen
+}
+
+package_kettle-decky-upscaling() {
+  pkgdesc='Upscaling Decky plugin (per-game gamescope FSR 1 and SGSR 2)'
+  depends=(decky-loader optiscaler-arm64ec)
+  _install_plugin kettle-upscaling upscaling
+}

@@ -1,0 +1,62 @@
+Battery draw and time remaining on the Portal (pmic_glink battmgr).
+
+- Draw: prefer current_now x voltage_now over power_now. The Portal's
+  battmgr power_now reads ~46 W at a ~3 W draw (checked against the
+  charge_counter drop over 60 s); current_now matches it.
+- Time remaining: use charge_counter (µAh) when there is no charge_now,
+  instead of computing 00:00.
+- Performance overlay level 3 also shows battery draw and time remaining
+  (levels 2 and 4 already did).
+---
+diff --git a/src/battery.cpp b/src/battery.cpp
+index 3995f3e..3775ecd 100644
+--- a/src/battery.cpp
++++ b/src/battery.cpp
+@@ -123,8 +123,10 @@ float BatteryStats::getPower() {
+             return 0.0f;
+         }
+ 
+-        // Prefer power_now (µW) when available.
+-        if (fs::exists(power_now)) {
++        // Prefer current_now × voltage_now: some fuel gauges report power_now in the wrong
++        // unit (the Portal's pmic_glink battmgr reads ~15x high), current and voltage are
++        // what the gauge measures.
++        if (fs::exists(power_now) && !(fs::exists(current_now) && fs::exists(voltage_now))) {
+             std::ifstream input(power_now);
+             std::string line;
+             if (std::getline(input, line)) {
+@@ -170,6 +172,8 @@ float BatteryStats::getTimeRemaining() {
+         string energy_now = syspath + "/energy_now";
+         string voltage_now = syspath + "/voltage_now";
+         string power_now = syspath + "/power_now";
++        // remaining charge in µAh on gauges without charge_now (pmic_glink battmgr)
++        string charge_counter = syspath + "/charge_counter";
+ 
+         if (fs::exists(current_now)) {
+             std::ifstream input(current_now);
+@@ -208,6 +212,12 @@ float BatteryStats::getTimeRemaining() {
+             if (std::getline(input, line)) {
+                 charge += stof(line);
+             }
++        } else if (fs::exists(charge_counter)) {
++            std::ifstream input(charge_counter);
++            std::string line;
++            if (std::getline(input, line)) {
++                charge += stof(line);
++            }
+         } else if (fs::exists(energy_now) && fs::exists(voltage_now)) {
+             float energy = 0.0f;
+             float voltage = 0.0f;
+diff --git a/src/overlay_params.cpp b/src/overlay_params.cpp
+index 4c865a6..651ba70 100644
+--- a/src/overlay_params.cpp
++++ b/src/overlay_params.cpp
+@@ -1287,6 +1287,8 @@ void presets(int preset, struct overlay_params *params, bool inherit) {
+          add_to_options(params, "gpu_mem_clock", "1");
+          add_to_options(params, "gpu_core_clock", "1");
+          add_to_options(params, "battery", "1");
++         add_to_options(params, "battery_watt", "1");
++         add_to_options(params, "battery_time", "1");
+          add_to_options(params, "hdr", "1");
+          add_to_options(params, "debug", "0");
+          break;

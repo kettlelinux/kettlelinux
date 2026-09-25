@@ -1,0 +1,292 @@
+#!/bin/bash
+# Install the running (SD card) Kettle Linux system to the internal UFS, next to Android.
+# The kettle-installer wizard (Kettle Installer in the application menu) drives this.
+#
+# Boot chain this relies on (stock AYN firmware): ABL starts either Android (boot_a/b) or
+# U-Boot (loader_a/b); U-Boot's EFI boot order is the SD card ("mmc 0") first, then the UFS
+# LUNs ("scsi 0".."scsi 7"), loading \EFI\BOOT\BOOTAA64.EFI (systemd-boot) from an ESP.
+# So: with an SD card inserted the SD system boots, without one the internal install does.
+#
+# Layout on /dev/sda (LUN 0) after install:
+#   ...Android partitions...   untouched (checked after partitioning; any change is undone)
+#   userdata (Android)         shrunk to --android-size (--android-minimal: 16 GiB)
+#   kettle-esp   512 MiB  FAT32: systemd-boot, kernel, dtbs
+#   kettle-ufs-root rest  ext4 root (copy of this system)
+#
+# Android's userdata is metadata-encrypted, so it cannot be shrunk in place: Android's apps
+# and data are wiped (Android itself stays and sets itself up again). Only a full backup
+# (kettle-backup-ufs) brings them back, so one is made first unless a backup matching the
+# current internal storage exists: full (Android's data too) or essentials (everything else).
+#
+# Safety: runs only from the SD card, with the charger or >= 50% battery, blocks sleep and
+# shutdown, keeps going on Ctrl-C while partitions are written, saves the partition table,
+# and leaves the new ESP empty until the root copy has been verified, so an interrupted
+# install never boots; rerun it (or --reinstall) to finish. Logs go to /var/log/kettle.
+#
+# Usage: sudo kettle-install-internal [--android-size GB | --android-minimal]
+#            [--backup full|essentials|DIR] [--no-games] [--progress --yes]
+#        sudo kettle-install-internal --reinstall [--no-games] [--yes]
+#            (recopy into an existing or interrupted internal install; Android is not touched)
+#        sudo kettle-install-internal --plan    (facts for the wizard, key=value; read only)
+set -euo pipefail
+. /usr/lib/kettle/ufs-lib.sh
+
+ANDROID_GB=64
+REINSTALL=0 NO_GAMES=0 PLAN=0 BACKUP=""
+ARGS=("$@")
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --android-size) ANDROID_GB="${2:?}"; shift ;;
+    --android-minimal) ANDROID_GB=$MIN_ANDROID_GB ;;
+    --backup) BACKUP="${2:?}"; shift ;;
+    --reinstall) REINSTALL=1 ;;
+    --no-games) NO_GAMES=1 ;;
+    --plan) PLAN=1 ;;
+    --progress) PROGRESS=1 ;;
+    --yes) YES=1 ;;
+    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
+    *) die "unknown option $1" ;;
+  esac
+  shift
+done
+
+need_root
+need_sd_root
+[ -b "$DISK" ] || die "$DISK not found"
+SS=$(blockdev --getss "$DISK")
+MIB=$((1048576 / SS))                         # sectors per MiB
+UD=$(part_by_label userdata)
+[ -n "$UD" ] || die "Android userdata partition not found on $DISK"
+UD_N=$(partnum "$UD")
+STATE=$(install_state)
+read -r sys_b games_b < <(copy_bytes)
+
+if [ "$PLAN" = 1 ]; then
+  echo "state=$STATE"
+  echo "disk=$(blockdev --getsize64 "$DISK")"
+  echo "userdata=$(part_size_b "$UD")"
+  echo "space=$(( $(disk_end_b) - $(part_start_b "$UD") ))"   # userdata start to disk end
+  echo "system=$sys_b"
+  echo "games=$games_b"
+  echo "free=$(df -B1 --output=avail "$(mkdir -p "$BACKUPS" && echo "$BACKUPS")" | tail -1)"
+  # what a backup (kettle-backup-ufs) of the storage as it is now would take
+  skip_off=$(part_start_b "$UD") skip_len=$(part_size_b "$UD") ess=0 ud_est=0
+  while read -r lun dev; do
+    if [ "$dev" = "$DISK" ]; then
+      ess=$(( ess + $(estimate_bytes "$dev" "$skip_off" "$skip_len") ))
+      ud_est=$(estimate_bytes "$UD")
+    else
+      ess=$(( ess + $(estimate_bytes "$dev") ))
+    fi
+  done < <(ufs_luns)
+  echo "est_essentials=$ess"
+  echo "est_full=$(( ess + ud_est ))"
+  matching_backups | sed 's/^/backup=/'
+  exit 0
+fi
+
+inhibit "Installing Kettle Linux to the internal storage" "${ARGS[@]}"
+start_log install-internal "${ARGS[@]}"
+need_power
+none_mounted "$DISK" || die "a partition of $DISK is mounted"
+if pgrep -x steam >/dev/null; then
+  ask "Steam is running; its files may change during the copy. Continue anyway?" || exit 1
+fi
+
+copy_b=$sys_b; [ "$NO_GAMES" = 1 ] || copy_b=$((sys_b + games_b))
+
+if [ "$REINSTALL" = 1 ]; then
+  [ "$STATE" != none ] || die "no existing internal install to --reinstall into"
+  ESP=$(part_by_label $ESP_LABEL)
+  ROOT=$(part_by_label $ROOT_LABEL); [ -n "$ROOT" ] || ROOT=$(part_by_label $PARTIAL_LABEL)
+  [ -n "$ESP" ] && [ -n "$ROOT" ] || die "the internal install is incomplete in a way --reinstall cannot fix; restore a backup (kettle-restore-ufs)"
+  [ "$(part_size_b "$ROOT")" -ge "$(kettle_min_bytes "$copy_b")" ] ||
+    die "the internal root partition is too small for this system (try --no-games)"
+  echo "Reinstalling into $ESP (boot) and $ROOT (root). Everything on them is erased; Android is untouched."
+  ask "Proceed?" || exit 1
+else
+  [ "$STATE" = none ] || die "Kettle is already (or partly) installed internally; use --reinstall"
+  [ "$(last_part)" = "$UD" ] || die "userdata is not the last partition on $DISK; not a layout this installer knows"
+  [[ $ANDROID_GB =~ ^[0-9]+$ ]] && [ "$ANDROID_GB" -ge "$MIN_ANDROID_GB" ] || die "--android-size must be >= $MIN_ANDROID_GB"
+  ud_start=$(( $(part_start_b "$UD") / SS ))
+  ud_size=$(( ANDROID_GB * 1024 * MIB ))
+  ud_end=$(( (ud_start + ud_size + MIB - 1) / MIB * MIB ))      # MiB-align what follows
+  ud_size=$(( ud_end - ud_start ))
+  [ $(( ud_size * SS )) -le "$(part_size_b "$UD")" ] || die "--android-size is larger than userdata is now"
+  root_b=$(( $(disk_end_b) - ud_end * SS - ESP_MIB * 1024**2 ))
+  [ "$root_b" -ge "$(kettle_min_bytes "$copy_b")" ] ||
+    die "--android-size $ANDROID_GB leaves $(( root_b / 1024**3 )) GiB for Kettle; it needs $(( $(kettle_min_bytes "$copy_b") / 1024**3 )) GiB (try a smaller Android or --no-games)"
+
+  # A backup that matches the internal storage as it is now, made first if needed
+  mapfile -t found < <(matching_backups)
+  case "$BACKUP" in
+    full|essentials) ;;
+    "")
+      if [ ${#found[@]} -gt 0 ]; then BACKUP=${found[0]% *}
+      elif [ "$PROGRESS" = 1 ]; then die "--backup is required with --progress"
+      else
+        echo
+        echo "  No backup of the internal storage as it is now. One is needed before installing:"
+        echo "    full        Android's apps and data too; restores Android exactly (large)"
+        echo "    essentials  partition tables, firmware, calibration and Android's system (small);"
+        echo "                Android's apps and data cannot be brought back"
+        read -rp "Which backup? [full/essentials]: " BACKUP
+        [[ $BACKUP =~ ^(full|essentials)$ ]] || die "no backup chosen; nothing was changed"
+      fi ;;
+    *)
+      printf '%s\n' "${found[@]}" | grep -q "^$(realpath "$BACKUP") " ||
+        die "$BACKUP is not a complete backup of the internal storage as it is now"
+      BACKUP=$(realpath "$BACKUP") ;;
+  esac
+
+  cat <<EOF
+
+  Internal storage: $DISK ($(( $(blockdev --getsize64 "$DISK") / 1024**3 )) GiB)
+    Android userdata  ${ANDROID_GB} GiB     (currently $(( $(part_size_b "$UD") / 1024**3 )) GiB)
+    Kettle Linux      $(( root_b / 1024**3 )) GiB  (copying $(( copy_b / 1024**3 )) GiB$([ "$NO_GAMES" = 1 ] && echo ", without games"))
+    Backup            $BACKUP
+
+  WARNING: this ERASES Android's apps and data on internal storage (Android itself and
+  its SD card data are kept; Android sets itself up again on its next boot).
+
+EOF
+  ask "Erase Android userdata and install Kettle Linux to internal storage?" || exit 1
+
+  if [[ $BACKUP =~ ^(full|essentials)$ ]]; then
+    kind=$BACKUP
+    BACKUP=$BACKUPS/$(date +%Y%m%d-%H%M%S)
+    bargs=(); [ "$kind" = essentials ] && bargs+=(--essentials)
+    [ "$PROGRESS" = 1 ] && bargs+=(--progress --yes)
+    tool="$(dirname "$0")/kettle-backup-ufs"; [ -x "$tool" ] || tool=kettle-backup-ufs
+    if [ "$PROGRESS" = 1 ]; then "$tool" "${bargs[@]}" "$BACKUP" >&3; else "$tool" "${bargs[@]}" "$BACKUP"; fi ||
+      die "backup failed; nothing was changed"
+    matching_backups | grep -q "^$BACKUP " || die "the new backup does not check out; nothing was changed"
+  fi
+  note "backup: $BACKUP"
+fi
+
+# Partition table backup (restore: sfdisk /dev/sda < file; Android then reformats userdata)
+bk=/var/lib/kettle/ufs-partition-table-$(date +%Y%m%d-%H%M%S).sfdisk
+mkdir -p /var/lib/kettle
+sfdisk -d "$DISK" >"$bk"
+mountpoint -q /flash && cp "$bk" /flash/ 2>/dev/null || true
+say "saved partition table to $bk (also on the SD boot partition)"
+
+relabel() {
+  trap '' INT TERM HUP
+  sfdisk -q --no-reread --part-label "$DISK" "$(partnum "$1")" "$2"
+  trap - INT TERM HUP
+  partx -u "$DISK"; udevadm settle
+}
+
+if [ "$REINSTALL" = 0 ]; then
+  # An interrupted partition table write is the one thing here that can break Android
+  trap '' INT TERM HUP
+  say "shrinking Android userdata to ${ANDROID_GB} GiB"
+  echo ",$ud_size" | sfdisk -q --no-reread -N "$UD_N" "$DISK"
+  say "creating Kettle Linux partitions"
+  printf 'size=%s, type=%s, name=%s\ntype=%s, name=%s\n' \
+    "$((ESP_MIB * MIB))" "$ESP_TYPE" "$ESP_LABEL" "$ROOT_TYPE" "$PARTIAL_LABEL" |
+    sfdisk -q --no-reread --append "$DISK"
+  partx -u "$DISK"; partx -a "$DISK" 2>/dev/null || true
+  udevadm settle
+  ESP=$(part_by_label $ESP_LABEL); ROOT=$(part_by_label $PARTIAL_LABEL)
+  if ! diff <(grep -v "^$UD :" "$bk") <(sfdisk -d "$DISK" | grep -v -e "^$UD :" -e "^${ESP:-none} :" -e "^${ROOT:-none} :"); then
+    sfdisk -q --no-reread "$DISK" <"$bk"; partx -u "$DISK" || true
+    die "the new partition table changed more than userdata; the old one was put back (nothing else was changed)"
+  fi
+  [ -b "$ESP" ] && [ -b "$ROOT" ] || die "new partitions did not appear (reboot and run --reinstall)"
+  say "clearing Android userdata so Android sets itself up again"
+  blkdiscard -f "$UD" 2>/dev/null || true
+  dd if=/dev/zero of="$UD" bs=1M count=8 conv=fsync status=none
+  request_android_wipe
+  trap - INT TERM HUP
+else
+  [ "$(blkid -s PARTLABEL -o value "$ROOT")" = "$PARTIAL_LABEL" ] || relabel "$ROOT" "$PARTIAL_LABEL"
+fi
+
+say "formatting $ESP and $ROOT"
+wipefs -aq "$ESP" "$ROOT"
+mkfs.vfat -F 32 -n SPINTERNAL "$ESP" >/dev/null
+mkfs.ext4 -F -q -L "$ROOT_LABEL" -E discard "$ROOT"
+ESP_PU=$(blkid -s PARTUUID -o value "$ESP"); ROOT_PU=$(blkid -s PARTUUID -o value "$ROOT")
+
+W=/run/kettle-install
+mkdir -p $W/src $W/root
+mount --bind / $W/src           # plain view of / (no /proc, /flash, ... submounts)
+cleanup() { umount -R $W/root 2>/dev/null || true; umount $W/src 2>/dev/null || true; }
+trap cleanup EXIT
+mount "$ROOT" $W/root
+
+say "copying the system ($(( copy_b / 1024**3 )) GiB, this takes a while)"
+excl=()
+if [ "$NO_GAMES" = 1 ]; then
+  for h in $W/src/home/*/.local/share/Steam/steamapps; do [ -d "$h" ] && excl+=("${h#$W/src}"); done
+fi
+# tar reports every 1000 records (10 KiB each) as "tar: @ckpt <records>"
+tar_pct() {
+  awk -v t="$1" -v p="$PROGRESS" '
+    /^tar: @ckpt / { n = int($3 * 10240 * 100 / t); if (n > 99) n = 99
+                     if (p == 1 && n != last) { print "@pct " n > "/dev/fd/3"; fflush("/dev/fd/3"); last = n }
+                     else if (p == 0 && n >= last + 5) { print "    " n "%" > "/dev/stderr"; last = n }
+                     next }
+    { print > "/dev/stderr" }'
+}
+rc=0
+( cd $W/src && tar --one-file-system --xattrs --xattrs-include='*' --acls --warning=no-file-changed \
+    --checkpoint=1000 --checkpoint-action='echo=@ckpt %u' -cf - \
+    --exclude=./var/lib/kettle/ufs-partition-table-\* --exclude=.$BACKUPS \
+    $(for e in "${excl[@]}"; do printf -- '--exclude=.%s/common --exclude=.%s/downloading ' "$e" "$e"; done) . \
+    2> >(tar_pct "$copy_b") ) |
+  tar -C $W/root --xattrs --xattrs-include='*' --acls --numeric-owner -xpf - || rc=$?
+[ "$rc" -le 1 ] || die "copy failed (tar exit $rc); rerun with --reinstall to try again"   # 1 = a file changed while being read
+mkdir -p $W/root/{proc,sys,dev,run,tmp,flash}
+chmod 1777 $W/root/tmp
+
+say "configuring the internal system"
+cat >$W/root/etc/fstab <<EOF
+# <device>                                    <dir>   <type> <options>                       <dump> <fsck>
+PARTUUID=$ROOT_PU  /       ext4   rw,noatime                      0 1
+PARTUUID=$ESP_PU  /flash  vfat   rw,noatime,nofail,umask=0077    0 2
+EOF
+# growing the root is an SD-image first-boot job; never let repart near the Android disk
+rm -f $W/root/etc/repart.d/50-root.conf
+for f in usr/lib/systemd/systemd etc/os-release usr/bin/steam; do
+  [ -e "$W/root/$f" ] || die "copy incomplete ($f missing); rerun with --reinstall"
+done
+umount $W/root
+say "checking the internal root file system"
+e2fsck -fn "$ROOT" >/dev/null || die "file system check of $ROOT failed; rerun with --reinstall"
+
+# Boot files last: until they are in place the internal install cannot be booted half-done
+say "copying boot files"
+mount "$ESP" $W/root
+cp -r --no-preserve=ownership /flash/. $W/root/
+rm -f $W/root/KERNEL $W/root/KERNEL.md5 $W/root/*.sfdisk   # ABL image carries the SD cmdline
+old_pu=$(findmnt -no PARTUUID /)
+sed -i "s/root=PARTUUID=$old_pu/root=PARTUUID=$ROOT_PU/" \
+  $W/root/loader/entries/*.conf $W/root/extlinux/extlinux.conf
+sed -i 's/^title .*/title      Kettle Linux (internal)/' $W/root/loader/entries/kettle.conf
+sed -i 's/^\(title .*previous kernel\).*/title      Kettle Linux (internal, previous kernel)/' \
+  $W/root/loader/entries/kettle-prev.conf 2>/dev/null || true
+grep -q "root=PARTUUID=$ROOT_PU" $W/root/loader/entries/kettle.conf || die "boot entry not updated; rerun with --reinstall"
+diff -rq -x KERNEL -x KERNEL.md5 -x '*.sfdisk' -x entries -x extlinux.conf /flash $W/root ||
+  die "boot files did not copy correctly; rerun with --reinstall"
+umount $W/root
+fsck.fat -n "$ESP" >/dev/null || die "file system check of $ESP failed; rerun with --reinstall"
+
+relabel "$ROOT" "$ROOT_LABEL"
+sync
+
+done_msg "Kettle Linux is installed to internal storage"
+cat <<EOF
+
+  Kettle Linux is installed to internal storage ($ROOT).
+  Boot it by powering off, removing the SD card and starting Linux as usual.
+  With the SD card inserted, the SD system boots instead (U-Boot tries the SD first).
+  Android: boot it as before; its first start resets its data and runs the setup
+  (if it shows "Cannot load Android system", choose Factory data reset).
+
+  Undo: sudo kettle-uninstall-internal              (Android gets its space back)
+     or sudo kettle-restore-ufs ${BACKUP:-<backup>}   (internal storage back as it was)
+EOF

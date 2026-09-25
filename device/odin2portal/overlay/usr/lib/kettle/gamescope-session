@@ -1,0 +1,49 @@
+#!/bin/bash
+# gamescope on the Portal's DSI panel (DRM backend), SteamOS-style.
+set -u
+tmpdir="$(mktemp -p "$XDG_RUNTIME_DIR" -d -t gamescope.XXXXXXX)"
+stats="$tmpdir/stats.pipe"; mkfifo "$stats"
+export GAMESCOPE_STATS="$stats"
+ln -sfn "$tmpdir" "$XDG_RUNTIME_DIR/gamescope-stats"
+
+# Performance overlay config shared by Steam and mangoapp: Steam writes the level chosen in
+# Quick Access (preset=N) here and mangoapp reloads it. Without it in Steam's environment,
+# gamescope gives mangoapp a private file and the level never changes. Start hidden, as
+# SteamOS does, until Steam writes the user's setting.
+export MANGOHUD_CONFIGFILE="$tmpdir/mangohud.conf"
+echo no_display >"$MANGOHUD_CONFIGFILE"
+
+# gamescope-onready reports readiness to systemd; Xwayland must not
+export GAMESCOPE_READY_NOTIFY_SOCKET="${NOTIFY_SOCKET:-}"
+unset NOTIFY_SOCKET
+
+# Environment Steam reads to enable gamescope integrations (as on Steam Deck)
+export XCURSOR_THEME=steam XCURSOR_SIZE=32
+export SRT_URLOPEN_PREFER_STEAM=1
+export STEAM_MULTIPLE_XWAYLANDS=1
+export STEAM_USE_MANGOAPP=1 STEAM_MANGOAPP_PRESETS_SUPPORTED=1 STEAM_MANGOAPP_HORIZONTAL_SUPPORTED=1
+export STEAM_DISABLE_MANGOAPP_ATOM_WORKAROUND=1
+export STEAM_GAMESCOPE_FANCY_SCALING_SUPPORT=1 STEAM_GAMESCOPE_DYNAMIC_FPSLIMITER=1
+export STEAM_GAMESCOPE_HAS_TEARING_SUPPORT=1 STEAM_GAMESCOPE_TEARING_SUPPORTED=1
+export STEAM_GAMESCOPE_NIS_SUPPORTED=1
+export vk_xwayland_wait_ready=false
+export QT_IM_MODULE=xim GTK_IM_MODULE=xim QT_QPA_PLATFORMTHEME=kde
+
+# Per-device/user overrides (e.g. GAMESCOPE_EXTRA_ARGS="--force-orientation normal")
+for f in /etc/kettle/gamescope.conf "$HOME/.config/kettle/gamescope.conf"; do
+  [ -r "$f" ] && . "$f"
+done
+
+args=(
+  --steam --mangoapp
+  --xwayland-count 2
+  -T "$stats"
+  --force-orientation "${GAMESCOPE_ORIENTATION:-left}"   # 1080x1920 portrait panel -> 1920x1080
+  --default-touch-mode 4
+  --hide-cursor-delay 3000
+  --fade-out-duration 200
+  --cursor-scale-height 720
+  --max-scale 2
+  ${GAMESCOPE_EXTRA_ARGS:-}
+)
+exec gamescope "${args[@]}" -- /usr/lib/kettle/gamescope-onready

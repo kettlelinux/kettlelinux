@@ -1,0 +1,294 @@
+#!/bin/bash
+# Kettle Installer: guided install of Kettle Linux to the internal storage next to Android,
+# and backup, restore and removal of it. Desktop mode, gamepad-friendly (zenity dialogs).
+#
+# Runs as the desktop user and only asks and explains; the work is done as root by
+# kettle-install-internal, kettle-backup-ufs, kettle-restore-ufs and kettle-uninstall-internal
+# through pkexec (/usr/lib/kettle/ufs-helper), which report progress back with --progress.
+set -uo pipefail
+. /usr/lib/kettle/ufs-lib.sh
+
+HELPER=/usr/lib/kettle/ufs-helper
+Z=(zenity --title="Kettle Installer" --width=620)
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+
+gib() { echo $(( ($1 + 512 * 1024**2) / 1024**3 )); }
+info() { "${Z[@]}" --info --text="$1" 2>/dev/null; }
+error() { "${Z[@]}" --error --text="$1" 2>/dev/null; }
+# ask <text> [ok label] [cancel label]
+ask_gui() { "${Z[@]}" --question --text="$1" --ok-label="${2:-Continue}" --cancel-label="${3:-Back}" 2>/dev/null; }
+# risky <text> <ok label>: like ask_gui, with Back focused
+risky() { "${Z[@]}" --question --default-cancel --text="$1" --ok-label="$2" --cancel-label=Back 2>/dev/null; }
+# choose <text> <id> <label> <details> ...: radio list, first entry selected; prints the id
+choose() {
+  local text=$1 rows=() first=TRUE; shift
+  while [ $# -gt 0 ]; do rows+=("$first" "$1" "$2" "$3"); first=FALSE; shift 3; done
+  "${Z[@]}" --list --radiolist --height=360 --text="$text" --hide-header \
+    --column=" " --column=id --column=Option --column=Details --hide-column=2 --print-column=2 \
+    "${rows[@]}" 2>/dev/null
+}
+
+# Space a backup needs on the SD card, as kettle-backup-ufs checks it
+backup_need() { echo $(( $1 + $1 / 10 + 2 * 1024**3 )); }
+
+load_plan() {
+  { pkexec "$HELPER" plan >"$TMP/plan" 2>"$TMP/plan.err"; echo $? >"$TMP/plan.rc"; echo 100; } |
+    "${Z[@]}" --progress --pulsate --auto-close --no-cancel --text="Checking the internal storage..." 2>/dev/null
+  case "$(cat "$TMP/plan.rc")" in
+    0) ;;
+    126|127) exit 0 ;;   # password dialog dismissed
+    *) error "Could not read the internal storage:\n\n$(tail -3 "$TMP/plan.err")"; exit 1 ;;
+  esac
+  p() { sed -n "s/^$1=//p" "$TMP/plan" | head -1; }
+  STATE=$(p state) DISK_B=$(p disk) UD_B=$(p userdata) SPACE_B=$(p space)
+  SYS_B=$(p system) GAMES_B=$(p games) FREE_B=$(p free)
+  EST_FULL=$(p est_full) EST_ESS=$(p est_essentials)
+  mapfile -t MATCHING < <(sed -n 's/^backup=//p' "$TMP/plan")
+}
+
+# run <what> <helper command and options>: run a tool with a progress window.
+# Sets RESULT (its last @done or @error text); returns its exit status.
+run() {
+  local what=$1; shift
+  rm -f "$TMP/done" "$TMP/error"
+  pkexec "$HELPER" "$@" --progress --yes 2>"$TMP/run.err" | (
+    trap '' PIPE   # keep reading even if the window goes away, so the tool never blocks
+    out() { printf '%s\n' "$1" 2>/dev/null || true; }
+    while IFS= read -r l; do
+      case "$l" in
+        "@step "*) out "# ${l#@step }"; out 0 ;;
+        "@pct "*) out "${l#@pct }" ;;
+        "@done "*) printf '%s\n' "${l#@done }" >"$TMP/done" ;;
+        "@error "*) printf '%s\n' "${l#@error }" >"$TMP/error" ;;
+      esac
+    done
+    if [ -s "$TMP/error" ]; then out "# Failed: $(cat "$TMP/error")"; else out "# Finished"; out 100; fi
+  ) | "${Z[@]}" --progress --no-cancel --percentage=0 --text="$what..." 2>/dev/null
+  local rc=${PIPESTATUS[0]}
+  if [ "$rc" = 0 ]; then RESULT=$(cat "$TMP/done" 2>/dev/null)
+  elif [ -s "$TMP/error" ]; then RESULT=$(cat "$TMP/error")
+  elif [ "$rc" = 126 ] || [ "$rc" = 127 ]; then RESULT="Cancelled at the password prompt; nothing was changed."
+  else RESULT=$(tail -3 "$TMP/run.err"); fi
+  return "$rc"
+}
+failed() {
+  error "$1 failed:\n\n$RESULT\n\nThe details are in the newest log in /var/log/kettle."
+}
+
+check_power() {
+  power_ok && return 0
+  error "The battery is at ${BATTERY}%.\n\nConnect the charger (or charge above ${MIN_BATTERY}%) first: losing power while the internal storage is being written can leave the device unable to start."
+  return 1
+}
+check_steam() {
+  pgrep -x steam >/dev/null || return 0
+  ask_gui "Steam is running, so its files may change while they are copied.\n\nQuit Steam first for a clean copy, or continue anyway?" "Continue anyway"
+}
+
+# Pick a backup kind for the space on the SD card; prints full | essentials | <dir>
+pick_backup() {
+  local opts=() d kind date text
+  for m in "${MATCHING[@]}"; do
+    d=${m% *} kind=${m##* }
+    date=$(sed -n 's/^date=//p' "$d/manifest" 2>/dev/null | cut -c1-16 | tr T ' ')
+    opts+=("$d" "Use the $kind backup from $date" "Already on the SD card and matches the internal storage")
+  done
+  text="Before anything is changed, the internal storage is backed up to the SD card ($(gib "$FREE_B") GiB free)."
+  if [ "$(backup_need "$EST_FULL")" -le "$FREE_B" ]; then
+    opts+=(full "Full backup (about $(gib "$EST_FULL") GiB)" "Everything, including Android's apps and data: puts the device back exactly as it is now")
+  else
+    text+="\n\nA full backup (about $(gib "$EST_FULL") GiB, including Android's apps and data) does not fit on the SD card."
+  fi
+  if [ "$(backup_need "$EST_ESS")" -le "$FREE_B" ]; then
+    opts+=(essentials "Essentials backup (about $(gib "$EST_ESS") GiB)" "Partition tables, firmware, calibration and Android itself, but NOT Android's apps and data")
+  fi
+  if [ ${#opts[@]} = 0 ]; then
+    error "There is not enough space on the SD card for a backup (the essentials need about $(gib "$(backup_need "$EST_ESS")") GiB, $(gib "$FREE_B") GiB is free).\n\nFree up space on the SD card, or use a bigger card, and try again."
+    return 1
+  fi
+  choose "$text" "${opts[@]}"
+}
+
+do_backup() {
+  local kind args=()
+  kind=$(pick_backup) || return 0
+  [ -n "$kind" ] || return 0
+  if [ -d "$kind" ]; then info "That backup is already on the SD card:\n$kind"; return 0; fi
+  [ "$kind" = essentials ] && args+=(--essentials)
+  check_power || return 0
+  if run "Backing up the internal storage" backup "${args[@]}"; then
+    info "$RESULT\n\nThe backup is on this SD card only. Copy the folder to a computer as well: it is gone if the card is lost or reflashed."
+  else
+    failed "The backup"
+  fi
+}
+
+do_install() {
+  local layout android nogames=() copy max kind games_txt=""
+  ask_gui "<b>Install Kettle Linux to the internal storage, next to Android</b>
+
+This copies the Kettle Linux system on this SD card to the internal storage. Afterwards:
+  • without the SD card, the device starts Kettle Linux from the internal storage
+  • with the SD card inserted, it starts from the card as it does now
+  • Android stays installed and starts as before
+
+<b>Android's apps and data on the internal storage are erased</b> (its encrypted storage cannot be shrunk while keeping them); Android sets itself up again on its next start. Photos and files on the SD card are not touched.
+
+A backup of the internal storage is made first. Keep the charger connected: it takes 20 to 60 minutes." || return 0
+
+  copy=$SYS_B
+  if [ "$GAMES_B" -gt $(( 1024**3 )) ]; then
+    if ask_gui "Copy your installed Steam games ($(gib "$GAMES_B") GiB) to the internal storage too?\n\nIf not, Steam downloads them again on the internal install." "Copy games" "Skip games"; then
+      copy=$((SYS_B + GAMES_B))
+    else
+      nogames=(--no-games) games_txt=" (without games)"
+    fi
+  fi
+
+  # Largest Android share that still leaves Kettle enough room
+  max=$(( (SPACE_B - ESP_MIB * 1024**2 - $(kettle_min_bytes "$copy")) / 1024**3 ))
+  if [ "$max" -lt "$MIN_ANDROID_GB" ]; then
+    error "The internal storage is too small for this system$games_txt: Kettle needs $(gib "$(kettle_min_bytes "$copy")") GiB next to the minimum Android."
+    return 0
+  fi
+  layout=$(choose "How should the internal storage ($(gib "$DISK_B") GiB) be shared?" \
+    dual "Dual boot" "Choose how much space Android keeps; Kettle Linux gets the rest" \
+    minimal "Kettle Linux first" "Android keeps ${MIN_ANDROID_GB} GiB (enough to start and set up), Kettle Linux gets about $(( SPACE_B / 1024**3 - MIN_ANDROID_GB )) GiB") ||
+    return 0
+  case "$layout" in
+    minimal) android=$MIN_ANDROID_GB ;;
+    dual)
+      local def=64; [ "$def" -le "$max" ] || def=$max
+      android=$("${Z[@]}" --scale --text="Space for Android, in GiB (${MIN_ANDROID_GB} to ${max}).\nKettle Linux gets the rest of the $(gib "$SPACE_B") GiB." \
+        --min-value="$MIN_ANDROID_GB" --max-value="$max" --value="$def" --step=4 2>/dev/null) || return 0 ;;
+    *) return 0 ;;
+  esac
+  local kettle_gb=$(( SPACE_B / 1024**3 - android ))
+
+  kind=$(pick_backup) || return 0
+  [ -n "$kind" ] || return 0
+  if [ "$kind" = essentials ] || { [ -d "$kind" ] && grep -qx kind=essentials "$kind/manifest"; }; then
+    risky "<b>Android's apps and data cannot be brought back</b> with an essentials backup: app data, game saves and anything stored only inside Android are lost.\n\nSave what you need first (Google backup in Android's settings, or copy files to the SD card or a computer)." "I understand" || return 0
+  fi
+
+  check_power || return 0
+  check_steam || return 0
+  local btxt=$kind
+  case "$kind" in full) btxt="a new full backup" ;; essentials) btxt="a new essentials backup" ;; *) btxt="the existing backup ${kind##*/}" ;; esac
+  risky "<b>Ready to install</b>
+
+  Android:        ${android} GiB, <b>apps and data erased</b>
+  Kettle Linux:  about ${kettle_gb} GiB$games_txt
+  Backup:         $btxt
+
+Do not power off or remove the SD card until it has finished." "Erase Android data and install" || return 0
+
+  if run "Installing Kettle Linux" install --android-size "$android" --backup "$kind" "${nogames[@]}"; then
+    info "<b>Kettle Linux is installed on the internal storage.</b>
+
+  • To start it: power off, remove the SD card and start Linux as usual.
+  • With the SD card inserted, the card's system starts instead.
+  • Android's next start resets its data and runs its setup. If it shows \"Cannot load Android system\", choose <i>Factory data reset</i>.
+  • The backup is in /var/lib/kettle/ufs-backup on this SD card: copy it to a computer as well.
+  • To undo, run the Kettle Installer from the SD card again."
+    exit 0
+  else
+    failed "The installation"
+  fi
+}
+
+do_reinstall() {
+  local nogames=()
+  ask_gui "<b>Copy this SD card's system to the internal install again</b>\n\nThe internal Kettle Linux is replaced by the system on this SD card: its settings, files and games are overwritten. Android is not touched." || return 0
+  if [ "$GAMES_B" -gt $(( 1024**3 )) ]; then
+    ask_gui "Copy your installed Steam games ($(gib "$GAMES_B") GiB) too?" "Copy games" "Skip games" || nogames=(--no-games)
+  fi
+  check_power || return 0
+  check_steam || return 0
+  risky "Replace the internal Kettle Linux with this SD card's system?" "Replace internal system" || return 0
+  if run "Copying Kettle Linux to the internal storage" install --reinstall "${nogames[@]}"; then
+    info "$RESULT.\n\nPower off and remove the SD card to start it."
+    exit 0
+  else
+    failed "The installation"
+  fi
+}
+
+do_uninstall() {
+  local mode args=()
+  mode=$(choose "<b>Remove Kettle Linux from the internal storage</b>\n\nThe internal Kettle system and everything in it (games too) is deleted and its space goes back to Android. The SD card is not touched." \
+    keep "Keep Android's apps and data" "Android keeps working as it is; it can use the extra space after a factory reset in Android's settings" \
+    wipe "Reset Android" "Android's apps and data are erased and it sets itself up again with all the space") || return 0
+  [ -n "$mode" ] || return 0
+  [ "$mode" = wipe ] && args+=(--wipe-android)
+  check_power || return 0
+  risky "Delete the internal Kettle Linux$([ "$mode" = wipe ] && echo " and reset Android")?" "Remove Kettle Linux" || return 0
+  if run "Removing Kettle Linux" uninstall "${args[@]}"; then
+    info "$RESULT."
+    exit 0
+  else
+    failed "Removing Kettle Linux"
+  fi
+}
+
+do_restore() {
+  local opts=() d kind date dir what
+  for d in $(ls -d "$BACKUPS"/*/ 2>/dev/null | sort -r); do
+    d=${d%/}
+    [ -f "$d/SHA256SUMS" ] || continue
+    kind=$(sed -n 's/^kind=//p' "$d/manifest"); kind=${kind:-full}
+    date=$(sed -n 's/^date=//p' "$d/manifest" | cut -c1-16 | tr T ' ')
+    opts+=("$d" "$date, $kind" "$(du -sh "$d" 2>/dev/null | cut -f1) in ${d##*/}")
+  done
+  if [ ${#opts[@]} = 0 ]; then info "There are no backups on this SD card."; return 0; fi
+  dir=$(choose "Which backup should be written back to the internal storage?" "${opts[@]}") || return 0
+  [ -n "$dir" ] || return 0
+  if grep -qx kind=essentials "$dir/manifest"; then
+    what="Android and the partition table go back to how they were then, and any internal Kettle Linux is removed. This is an essentials backup, so <b>Android's apps and data are erased</b> and it sets itself up again."
+  else
+    what="The internal storage goes back exactly to how it was then: Android with its apps and data as they were at the time. Any internal Kettle Linux, and anything Android stored since, is lost."
+  fi
+  check_power || return 0
+  risky "<b>Restore the backup from $(sed -n 's/^date=//p' "$dir/manifest" | cut -c1-16 | tr T ' ')?</b>\n\n$what\n\nDo not power off until it has finished." "Restore" || return 0
+  if run "Restoring the internal storage" restore "$dir"; then
+    info "$RESULT."
+    exit 0
+  else
+    failed "The restore"
+  fi
+}
+
+case "$(findmnt -no SOURCE /)" in
+  /dev/mmcblk*) ;;
+  *) info "Kettle Linux is running from the internal storage.\n\nTo reinstall, remove or restore it, start Kettle Linux from the SD card and run the Kettle Installer there."
+     exit 0 ;;
+esac
+[ -b "$DISK" ] || { error "No internal storage found ($DISK)."; exit 1; }
+
+load_plan
+while :; do
+  case "$STATE" in
+    none) action=$(choose "Kettle Linux is running from the SD card. What would you like to do?" \
+            install "Install to internal storage" "Next to Android: dual boot, or Kettle Linux first" \
+            backup "Back up the internal storage" "To this SD card, without installing anything" \
+            restore "Restore a backup" "Put the internal storage back to an earlier backup") ;;
+    installed) action=$(choose "Kettle Linux is installed on the internal storage. What would you like to do?" \
+            reinstall "Update the internal install" "Copy this SD card's system to it again" \
+            uninstall "Remove from internal storage" "Give the space back to Android" \
+            backup "Back up the internal storage" "To this SD card" \
+            restore "Restore a backup" "Put the internal storage back to an earlier backup") ;;
+    *) action=$(choose "An installation to the internal storage did not finish (it cannot start yet). What would you like to do?" \
+            reinstall "Finish the installation" "Copy this SD card's system to it again" \
+            uninstall "Remove it" "Give the space back to Android" \
+            restore "Restore a backup" "Put the internal storage back to an earlier backup") ;;
+  esac || exit 0
+  case "$action" in
+    install) do_install ;;
+    reinstall) do_reinstall ;;
+    uninstall) do_uninstall ;;
+    backup) do_backup ;;
+    restore) do_restore ;;
+    *) exit 0 ;;
+  esac
+  load_plan   # the storage (or the backups) may have changed
+done

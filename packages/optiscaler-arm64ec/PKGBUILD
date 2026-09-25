@@ -1,0 +1,112 @@
+# OptiScaler built as an ARM64EC PE DLL (Sloptiscaler's arm64ec-port fork), for the Kettle
+# Upscaling plugin, which copies it into a game's folder when the user turns it on.
+#
+# Upstream OptiScaler is x86-64 and its Detours hooks fault on Proton ARM64's ARM64EC
+# dxgi/DXVK/winevulkan. Built as ARM64EC it runs natively inside the FEX-emulated game and
+# hooks those DLLs correctly. The fork adds Qualcomm's Snapdragon Game Super Resolution 2
+# (temporal, tuned for Adreno) as a backend for DX12, DX11 (via 11-on-12) and Vulkan.
+# Only SGSR2 works here: FSR 2/3 links against stubs (the FidelityFX libraries are x86-64
+# only, and building FSR 2 from source needs AMD's Windows shader compiler under Wine), and
+# XeSS/DLSS runtimes are x86-64 vendor binaries.
+#
+# Ships OptiScaler.dll/.ini only (GPL-3.0, source: the pinned fork commit below; SGSR2
+# shaders BSD-3-Clause). Statically linked: Detours (MIT), FreeType (FTL), spdlog, simpleini,
+# unordered_dense, magic_enum, Dear ImGui (MIT); nvapi, XeSS, FidelityFX and Vulkan are
+# headers only. The toolchain is llvm-mingw's aarch64 Linux build, since build-packages.sh
+# runs makepkg in the aarch64 chroot.
+pkgname=optiscaler-arm64ec
+pkgver=10.0.0.20260923
+pkgrel=1
+_commit=f80e4da339cd4624212fd0546922571fe01205c1
+_llvm_mingw=20260908
+_ffx=c6efa6bf7f2027b3ec94f28578bb5965eabb9e55   # FidelityFX-SDK: only ffx-api/include is used
+pkgdesc='OptiScaler (ARM64EC) with Snapdragon GSR 2 for Proton ARM64 games'
+arch=(any)
+url='https://github.com/justradical/Sloptiscaler'
+license=(GPL-3.0-only BSD-3-Clause MIT FTL)
+makedepends=(git cmake ninja python)
+options=(!strip !buildflags !lto)  # a Windows PE cross build: no host (ELF) flags
+_llvm="llvm-mingw-$_llvm_mingw-ucrt-ubuntu-22.04-aarch64"
+source=("Sloptiscaler::git+$url.git#commit=$_commit"
+        # submodules the build uses (the FidelityFX SDKs are 670 MB; the headers are below)
+        "simpleini::git+https://github.com/brofield/simpleini.git#commit=6048871ea9ee0ec24be5bd099d161a10567d7dc2"
+        "unordered_dense::git+https://github.com/martinus/unordered_dense.git#commit=73f3cbb237e84d483afafc743f1f14ec53e12314"
+        "xess::git+https://github.com/intel/xess.git#commit=8fe81bdbbaf00b3c1b733fd0d830c333dc84e6f0"
+        "vulkan::git+https://github.com/KhronosGroup/Vulkan-Headers.git#commit=d64e9e156ac818c19b722ca142230b68e3daafe3"
+        "spdlog::git+https://github.com/gabime/spdlog.git#commit=faa0a7a9c5a3550ed5461fab7d8e31c37fd1a2ef"
+        "magic_enum::git+https://github.com/Neargye/magic_enum.git#commit=a733a2ea665ca5d72b7270f0334bf2e7b82bd0cc"
+        "nvapi::git+https://github.com/NVIDIA/nvapi.git#commit=9b181ea572f680327fe01a14a0f1f41c78034104"
+        # arm64ec/build.sh clones these at HEAD; pinned here
+        "DirectXMath::git+https://github.com/microsoft/DirectXMath.git#commit=b758b4a5669aca3542b4bf2b0cbc334696edd302"
+        "Detours::git+https://github.com/microsoft/Detours.git#commit=adb07604aa56508448b95bf037c2a6d0d3b6831a"
+        "freetype::git+https://gitlab.freedesktop.org/freetype/freetype.git#commit=42608f77f20749dd6ddc9e0536788eaad70ea4b5"  # VER-2-13-3
+        "https://github.com/mstorsjo/llvm-mingw/releases/download/$_llvm_mingw/$_llvm.tar.xz")
+_ffx_headers=(ffx_api.h ffx_api.hpp ffx_api_loader.h ffx_api_types.h ffx_framegeneration.h
+              ffx_framegeneration.hpp ffx_upscale.h ffx_upscale.hpp dx12/ffx_api_dx12.h
+              dx12/ffx_api_dx12.hpp vk/ffx_api_vk.h vk/ffx_api_vk.hpp)
+for _h in "${_ffx_headers[@]}"; do
+  source+=("ffx-${_h//\//-}::https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/$_ffx/ffx-api/include/ffx_api/$_h")
+done
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
+            'c907dd2302a292b663add18752a55ce9d544ca0fd19cf33c086ca242d5994ea6'
+            '408b4203545e8299ed188fbb1d9ddfe0932b73ea6e8b14fe10edcf1f45771561'
+            '42470189c0241feca12eed959cf90ade15806bb9ecc578b65f8c20ca9365c34d'
+            '7be51b7bf1e640b84c0c7f22a9db50a6816debce3755b51224e56c89501659c3'
+            'dee2782813d22047c068e0fb27d1347324f8ce79d280a4672848b3b294cb12fe'
+            '344936dccf49267d4421d1d74dc6db617d0a83c5a9f5991841325e812a38f127'
+            '30225b7c0596cff734b7c1fc5217d5ac39ccc629bcccb3bcdeeadbcac317fbcd'
+            '1155bcdcea9c10e6a95507bc9422ca062a853ac84250f0b09a637a66836b3ac1'
+            '6451754c2539a7e991429a7bd8365bb848f51abebad1982715f345989cc0a234'
+            '215804fba316acb81d2c463b6bbce36c53cc63465c15b8c9858554c8111fae24'
+            'ab1cef2b97d2e3fb3294ed59d1e26ecf45d4d0483aa001ced37e7ddbd1be9dd6'
+            'a50a8d5ff5689a10a6ce378f2df5569fd880c89ec46e8356aaf35eb40512edd9'
+            'b4eab5ed043de7590c786c1904eba7064449ee8a8c9e302eb6363ccc7035172e')
+
+_submodules=(simpleini unordered_dense xess vulkan spdlog magic_enum nvapi)
+
+prepare() {
+  cd Sloptiscaler
+  git submodule init "${_submodules[@]/#/external/}"
+  for s in "${_submodules[@]}"; do
+    git config "submodule.external/$s.url" "$srcdir/$s"
+  done
+  git -c protocol.file.allow=always submodule update "${_submodules[@]/#/external/}"
+
+  local ffx=external/FidelityFX-SDK/ffx-api/include/ffx_api
+  for h in "${_ffx_headers[@]}"; do
+    install -Dm644 "$srcdir/ffx-${h//\//-}" "$ffx/$h"
+  done
+
+  # build.sh expects the x86-64 llvm-mingw and fetches missing deps; hand it ours
+  sed -i 's|^LLVM_MINGW=.*|LLVM_MINGW="${LLVM_MINGW:?}"|' arm64ec/build.sh
+  rm -rf "$srcdir/deps"; mkdir "$srcdir/deps"
+  for d in DirectXMath Detours freetype; do
+    ln -s "$srcdir/$d" "$srcdir/deps/$d"
+  done
+}
+
+build() {
+  cd Sloptiscaler
+  LLVM_MINGW="$srcdir/$_llvm" ./arm64ec/build.sh "$srcdir/deps"
+}
+
+package() {
+  cd Sloptiscaler
+  local d="$pkgdir/usr/share/optiscaler"
+  install -Dm644 "$srcdir/deps/build/OptiScaler.dll" OptiScaler.ini -t "$d"
+  echo "$pkgver-$pkgrel" >"$d/VERSION"
+  printf 'OptiScaler (ARM64EC, Sloptiscaler fork) is free software under the GPL-3.0.\nCorresponding source: %s/tree/%s\n' \
+    "$url" "$_commit" >"$d/SOURCE"
+
+  local l="$pkgdir/usr/share/licenses/$pkgname"
+  install -Dm644 LICENSE "$l/OptiScaler_LICENSE"
+  install -Dm644 LICENSES/BSD-3-Clause-Qualcomm.txt "$l/SGSR_LICENSE"
+  install -Dm644 OptiScaler/include/imgui/LICENSE.txt "$l/imgui_LICENSE"
+  install -Dm644 "$srcdir/Detours/LICENSE" "$l/Detours_LICENSE"
+  install -Dm644 "$srcdir/freetype/docs/FTL.TXT" "$l/FreeType_FTL.TXT"
+  install -Dm644 external/simpleini/LICENCE.txt "$l/simpleini_LICENSE"
+  install -Dm644 external/unordered_dense/LICENSE "$l/unordered_dense_LICENSE"
+  install -Dm644 external/spdlog/LICENSE "$l/spdlog_LICENSE"
+  install -Dm644 external/magic_enum/LICENSE "$l/magic_enum_LICENSE"
+  install -Dm644 external/nvapi/License.txt "$l/nvapi_LICENSE"
+}

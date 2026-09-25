@@ -1,0 +1,11 @@
+{
+  "name": "Frame Generation",
+  "author": "Kettle Linux",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["frame generation", "lsfg"],
+    "description": "Per-game frame generation: Kettle's own, or Lossless Scaling (lsfg-vk).",
+    "image": ""
+  }
+}

@@ -14,7 +14,7 @@ Type=notify
 NotifyAccess=all
 TimeoutStartSec=30
 TimeoutStopSec=10
-ExecStart=/usr/lib/steamportal/gamescope-session
+ExecStart=/usr/lib/kettle/gamescope-session
 # Xwayland runs with -core; don't SIGTERM it
 KillMode=mixed
 Environment=SRT_LOG_TO_JOURNAL=1
