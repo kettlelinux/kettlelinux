@@ -35,7 +35,7 @@ DEFAULTS = {
     "engine": "kettle",         # ENGINES
 
     "multiplier": 2,
-    "flow_scale": 0.8,
+    "flow_scale": 0.5,          # 0.8 costs twice the motion time on the Adreno 740, no visible gain
     "performance_mode": True,
     "fifo": True,               # lsfg override_present_mode: pace generated frames with FIFO
     "preserve_images": False,   # lsfg preserve_swapchain_image_count
