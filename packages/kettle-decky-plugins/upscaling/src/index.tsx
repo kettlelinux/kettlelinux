@@ -2,7 +2,7 @@ import { ButtonItem, DropdownItem, PanelSection, PanelSectionRow, SliderField, T
 import { callable, definePlugin, toaster } from "@decky/api";
 import { useEffect, useState } from "react";
 import { FaExpandArrowsAlt } from "react-icons/fa";
-import { editLaunchOptions, getAppDetails, getPerfStore, withDllOverride } from "../../shared/launchOptions";
+import { editLaunchOptions, getAppDetails, getFreshAppDetails, getPerfStore, withDllOverride } from "../../shared/launchOptions";
 import { GamePicker, InstalledGame, gameName, runningAppId, useSelectedGame } from "../../shared/GamePicker";
 
 const small = { fontSize: "12px", lineHeight: "16px" };
@@ -28,6 +28,9 @@ const FILTERS = [
 
 function GamescopeFsr({ appid }: { appid: number }) {
   const [res, setRes] = useState(getAppDetails(appid)?.strResolutionOverride || "Default");
+  useEffect(() => {
+    getFreshAppDetails(appid).then((d) => d && setRes(d.strResolutionOverride || "Default"));
+  }, [appid]);
   // Steam's filter and sharpness are per game, but only settable for the running one
   const running = runningAppId() === appid;
   const perf = running ? getPerfStore() : null;
@@ -42,12 +45,13 @@ function GamescopeFsr({ appid }: { appid: number }) {
           description="The game renders at this size; gamescope upscales it. Applies on next launch."
           rgOptions={RESOLUTIONS}
           selectedOption={res}
-          onChange={(o) => {
-            SteamClient.Apps.SetAppResolutionOverride(appid, o.data);
-            // on the built-in screen Steam only honours the override with this flag set
-            if (o.data !== "Default" && o.data !== "Native" && !getAppDetails(appid)?.bOverrideInternalResolution)
-              SteamClient.Apps.ToggleOverrideResolutionForInternalDisplay(appid);
+          onChange={async (o) => {
             setRes(o.data);
+            SteamClient.Apps.SetAppResolutionOverride(appid, o.data);
+            // on the built-in screen Steam only honours the override with this flag set; it's a
+            // toggle, so it has to be read fresh (the cached copy isn't updated by the toggle)
+            if (o.data !== "Default" && o.data !== "Native" && !(await getFreshAppDetails(appid))?.bOverrideInternalResolution)
+              SteamClient.Apps.ToggleOverrideResolutionForInternalDisplay(appid);
           }}
         />
       </PanelSectionRow>
