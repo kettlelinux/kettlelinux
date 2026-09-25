@@ -16,7 +16,7 @@ type Status = {
 type Engine = "kettle" | "lsfg";
 type Game = {
   enabled: boolean;
-  engine: "auto" | Engine;
+  engine: Engine;
   multiplier: number;
   flow_scale: number;
   performance_mode: boolean;
@@ -25,8 +25,7 @@ type Game = {
   bypass_wsi: boolean;
   noubwc: boolean;
   fps_cap: string;
-  // from the backend: the engine "auto" resolves to, automatic cap and what it's based on
-  active_engine: Engine;
+  // from the backend: automatic cap and what it's based on
   auto_cap: number;
   refresh: number;
   measure: Measure | null;
@@ -46,7 +45,6 @@ const setFp16 = callable<[allow: boolean], void>("set_fp16");
 const KETTLE = "KETTLE_FG";
 const OFF = "DISABLE_LSFGVK";
 const ENGINES = [
-  { data: "auto", label: "Auto" },
   { data: "kettle", label: "Kettle (built in)" },
   { data: "lsfg", label: "Lossless Scaling" },
 ];
@@ -92,8 +90,8 @@ const usable = (s: Status, e: Engine) => (e === "kettle" ? s.kettle_layer : s.la
 // Launch options follow the stored settings: on -> KETTLE_FG=1 or `env -u DISABLE_LSFGVK`
 // (+ WSI bypass and the base frame cap)
 const applyLaunchOptions = (appid: number, g: Game, s: Status) => {
-  const on = g.enabled && usable(s, g.active_engine);
-  const lsfg = on && g.active_engine === "lsfg";
+  const on = g.enabled && usable(s, g.engine);
+  const lsfg = on && g.engine === "lsfg";
   const cap = on ? baseCap(g) : null;
   return editLaunchOptions(appid, (o) => {
     o = withEnv(o, WSI, on && g.bypass_wsi ? "0" : null);
@@ -107,7 +105,7 @@ const applyLaunchOptions = (appid: number, g: Game, s: Status) => {
 };
 
 // Bring every game that's on in line with what's installed now (Lossless Scaling installed,
-// uninstalled or moved off the lsfg-vk branch since the options were written: "auto" follows)
+// uninstalled or moved off the lsfg-vk branch since the options were written)
 async function syncAll() {
   const s = await status();
   for (const appid of s.enabled_games) await applyLaunchOptions(appid, await getGame(appid), s);
@@ -140,8 +138,8 @@ function GameSettings({ appid, name, s, onChanged }: { appid: number; name: stri
     });
   }, [appid]);
   if (!g) return null;
-  const lsfg = g.active_engine === "lsfg";
-  const ok = usable(s, g.active_engine);
+  const lsfg = g.engine === "lsfg";
+  const ok = usable(s, g.engine);
 
   const update = async (patch: Partial<Game>) => {
     setG({ ...g, ...patch });
@@ -158,11 +156,7 @@ function GameSettings({ appid, name, s, onChanged }: { appid: number; name: stri
       <PanelSectionRow>
         <DropdownItem
           label="Engine"
-          description={
-            g.engine === "auto"
-              ? `${lsfg ? "Lossless Scaling" : "Kettle"}: Lossless Scaling when it's installed, else Kettle's own`
-              : undefined
-          }
+          description={lsfg ? "Needs your own Lossless Scaling (Steam)" : "Kettle Linux's own frame generation"}
           rgOptions={ENGINES}
           selectedOption={g.engine}
           onChange={(o) => update({ engine: o.data })}
