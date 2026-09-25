@@ -1,0 +1,119 @@
+#!/bin/bash
+# Image the internal UFS to the SD card, so it can be put back with kettle-restore-ufs.
+#
+#   full        every LUN whole: Android with its apps and data, firmware, partition tables.
+#               Android's userdata is saved raw (still encrypted, with the device-bound keys
+#               that decrypt it), which restores Android exactly as it was on this same device.
+#   essentials  the same without Android's userdata (apps and data): partition tables,
+#               bootloaders, firmware, device-unique calibration (persist, modem), Android's
+#               system. Small, and enough to put the device back to a working state; Android
+#               then starts with a fresh setup.
+#
+# Each LUN is saved as lun<N>.img.zst (zstd, with frame checksums); in an essentials backup
+# LUN 0 is split around userdata into lun0.img.zst and lun0-tail.img.zst. Unused space reads
+# back as zeros and compresses to almost nothing, so a backup is about the size of the data.
+# Backups are tied to this device (SoC serial in the manifest).
+#
+# Usage: sudo kettle-backup-ufs [--essentials] [--progress --yes] [DEST_DIR]
+#   default DEST_DIR: /var/lib/kettle/ufs-backup/<date> on the SD card system
+set -euo pipefail
+. /usr/lib/kettle/ufs-lib.sh
+
+KIND=full DEST=""
+ARGS=("$@")
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --essentials) KIND=essentials ;;
+    --progress) PROGRESS=1 ;;
+    --yes) YES=1 ;;
+    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+    -*) die "unknown option $1" ;;
+    *) DEST=$1 ;;
+  esac
+  shift
+done
+
+need_root
+need_sd_root
+inhibit "Backing up the internal storage" "${ARGS[@]}"
+start_log backup-ufs "${ARGS[@]}"
+
+mapfile -t LUNS < <(ufs_luns)
+[ ${#LUNS[@]} -gt 0 ] || die "no internal UFS found"
+for l in "${LUNS[@]}"; do none_mounted "${l#* }" || die "${l#* } (or a partition of it) is mounted"; done
+
+# The userdata byte range skipped by an essentials backup
+skip_lun="" skip_off=0 skip_len=0
+if [ "$KIND" = essentials ]; then
+  UD=$(part_by_label userdata)
+  [ -n "$UD" ] || die "Android userdata partition not found on $DISK"
+  skip_lun=$(ufs_luns | awk -v d="$DISK" '$2 == d { print $1 }')
+  skip_off=$(part_start_b "$UD") skip_len=$(part_size_b "$UD")
+fi
+
+DEST="${DEST:-$BACKUPS/$(date +%Y%m%d-%H%M%S)}"
+mkdir -p "$DEST"
+[ -z "$(ls -A "$DEST")" ] || die "$DEST is not empty"
+complete=0
+# a backup that did not finish is removed, so it can never be mistaken for a good one
+trap '[ "$complete" = 1 ] || rm -rf "$DEST"' EXIT
+
+say "estimating the size of the $KIND backup"
+est=0
+for l in "${LUNS[@]}"; do
+  lun=${l% *} dev=${l#* }
+  if [ "$lun" = "$skip_lun" ]; then b=$(estimate_bytes "$dev" "$skip_off" "$skip_len")
+  else b=$(estimate_bytes "$dev"); fi
+  est=$((est + b))
+done
+avail=$(df -B1 --output=avail "$DEST" | tail -1)
+need=$(( est + est / 10 + 2 * 1024**3 ))   # +10% and 2 GiB left for the system
+note "about $(( est / 1024**3 )) GiB needed, $(( avail / 1024**3 )) GiB free on the SD card"
+[ "$avail" -ge "$need" ] ||
+  die "not enough space on the SD card for a $KIND backup (about $(( need / 1024**3 )) GiB needed, $(( avail / 1024**3 )) GiB free)"
+
+{
+  echo "kind=$KIND"
+  echo "date=$(date -Is)"
+  echo "model=$(cat /sys/block/sda/device/vendor 2>/dev/null | xargs) $(cat /sys/block/sda/device/model 2>/dev/null | xargs)"
+  echo "machine=$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null)"
+  echo "serial=$(device_serial)"
+  for l in "${LUNS[@]}"; do echo "lun${l% *}=$(blockdev --getsize64 "${l#* }")"; done
+  [ -z "$skip_lun" ] || echo "skip=$skip_lun:$skip_off:$skip_len"
+} >"$DEST/manifest"
+for l in "${LUNS[@]}"; do sfdisk -d "${l#* }" >"$DEST/lun${l% *}.sfdisk" 2>/dev/null || true; done
+
+# save <dev> <file> <bytes> [dd options]: image a byte range of a device
+save() {
+  local dev=$1 out=$2 bytes=$3; shift 3
+  dd if="$dev" bs=4M iflag=direct "$@" status=progress 2> >(dd_pct "$bytes") |
+    zstd -q -T0 -3 --check -o "$out"
+}
+
+n=0
+for l in "${LUNS[@]}"; do
+  lun=${l% *} dev=${l#* } n=$((n + 1))
+  size=$(blockdev --getsize64 "$dev")
+  say "saving LUN $lun ($n of ${#LUNS[@]}, $(( size / 1024**2 )) MiB)"
+  if [ "$lun" = "$skip_lun" ]; then
+    save "$dev" "$DEST/lun$lun.img.zst" "$skip_off" iflag=count_bytes count="$skip_off"
+    end=$((skip_off + skip_len))
+    save "$dev" "$DEST/lun$lun-tail.img.zst" "$((size - end))" iflag=skip_bytes skip="$end"
+  else
+    save "$dev" "$DEST/lun$lun.img.zst" "$size"
+  fi
+done
+
+say "verifying the backup"
+files=("$DEST"/lun*.img.zst) n=0
+for f in "${files[@]}"; do
+  zstd -q -t "$f" || die "$(basename "$f") failed verification"
+  n=$((n + 1)); pct $((n * 100 / ${#files[@]}))
+done
+( cd "$DEST" && sha256sum lun*.img.zst >SHA256SUMS )
+sync
+complete=1
+cp "$LOG" "$DEST/backup.log" 2>/dev/null || true
+done_msg "backup complete: $(du -sh "$DEST" | cut -f1) in $DEST"
+note "Restore with: sudo kettle-restore-ufs $DEST"
+note "Copy that folder to another computer too: it is lost if this SD card is reflashed."

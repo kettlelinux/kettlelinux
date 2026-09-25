@@ -1,0 +1,10 @@
+[Unit]
+Description=Unpack the Steam client on first login
+Before=graphical-session-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/kettle/run-steam --bootstrap
+
+[Install]
+WantedBy=graphical-session-pre.target

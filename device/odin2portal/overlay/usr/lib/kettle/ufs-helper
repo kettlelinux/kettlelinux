@@ -1,0 +1,17 @@
+#!/bin/bash
+# Root side of the Kettle Installer wizard, run through pkexec (polkit action org.kettle.ufs):
+# runs one of the internal-storage tools. Anything that writes runs as a transient system unit,
+# so closing the wizard or losing the desktop session cannot stop it half way; the unit name
+# also keeps two of them from running at once.
+set -euo pipefail
+cmd=${1:?}; shift
+case "$cmd" in
+  plan) exec /usr/bin/kettle-install-internal --plan ;;
+  install) tool=kettle-install-internal ;;
+  backup) tool=kettle-backup-ufs ;;
+  restore) tool=kettle-restore-ufs ;;
+  uninstall) tool=kettle-uninstall-internal ;;
+  *) echo "unknown command $cmd" >&2; exit 2 ;;
+esac
+exec systemd-run --quiet --wait --pipe --collect --unit=kettle-ufs \
+  --description="Kettle Installer: $cmd" /usr/bin/$tool "$@"

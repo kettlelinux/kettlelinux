@@ -9,14 +9,14 @@ pkgname=decky-loader
 pkgver=3.2.9
 pkgrel=1
 _commit=f75dc1df134daf53b1ec02c351b12313c1696a7e
-pkgdesc='Plugin loader for the Steam Deck UI (Steam Portal build)'
+pkgdesc='Plugin loader for the Steam Deck UI (Kettle Linux build)'
 arch=(aarch64)
 url='https://github.com/SteamDeckHomebrew/decky-loader'
 license=(GPL-2.0-only)
 depends=(python lsof)
 makedepends=(git nodejs npm python-pip)
 source=("git+https://github.com/SteamDeckHomebrew/decky-loader.git#commit=$_commit"
-        0001-steamportal-disable-self-update.patch
+        0001-kettle-disable-self-update.patch
         requirements.txt
         decky-loader-start
         plugin_loader.service)
@@ -30,7 +30,7 @@ _site=usr/lib/decky-loader
 
 prepare() {
   cd decky-loader
-  patch -p1 --fuzz=0 <"$srcdir/0001-steamportal-disable-self-update.patch"
+  patch -p1 --fuzz=0 <"$srcdir/0001-kettle-disable-self-update.patch"
 }
 
 build() {

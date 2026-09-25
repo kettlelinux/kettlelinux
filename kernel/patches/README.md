@@ -8,7 +8,7 @@ Applied in directory order, then file order, with `patch -p1 --fuzz=0` by
 | `10-mainline` | ROCKNIX `projects/ROCKNIX/packages/linux/patches/mainline` | input-polldev, pwm_set_period, adc-keys, RTL8733BU |
 | `20-sm8550` | ROCKNIX `projects/ROCKNIX/devices/SM8550/patches/linux` + pocknix-os suspend/UFS/SD additions | Portal: 0057 ICNA35XX panel, 0031/1003/1004/1009 rsinput gamepad, 0033 HTR3212 LEDs, 1000-1005 haptics, 0066 DPU inline rotation |
 | `30-version` | ROCKNIX `packages/linux/patches/7.2` via pocknix-os | 0010 carries pocknix's `cstate` uninitialized fix; ROCKNIX 9999 (perf/rust build fix) dropped |
-| `40-steamportal` | ours | 1060: pcie-qcom `#iommu-cells` SID fix (Manivannan Sadhasivam, via NovaDeck) — 7.2.6+ breaks WCN7850 Wi-Fi without it; 1100: rsinput UART frame reassembly (Armada 0515, rebased) — fixes "Checksum mismatch" and dead pad after resume; 1110: drm/msm debugfs `perf_now` (devfreq GPU load %) — what Valve's mangoapp reads for the overlay's GPU usage |
+| `40-kettle` | ours | 1060: pcie-qcom `#iommu-cells` SID fix (Manivannan Sadhasivam, via NovaDeck) — 7.2.6+ breaks WCN7850 Wi-Fi without it; 1100: rsinput UART frame reassembly (Armada 0515, rebased) — fixes "Checksum mismatch" and dead pad after resume; 1110: drm/msm debugfs `perf_now` (devfreq GPU load %) — what Valve's mangoapp reads for the overlay's GPU usage; 1120: ICNA3512 backlight floor (slider 0..4096 scaled onto DCS 1330..4096) — lower levels shift colours and go black |
 
 Pinned upstreams:
 - pocknix-os `kernel/sm8550` @ `70bd590350f662865dfd8868be15bc731993a6f0` (github.com/shuuri-labs/pocknix-os)
@@ -22,6 +22,12 @@ series (v9, not merged); the Portal panel driver lands upstream in 7.3 as
 
 20 patches were refreshed for 7.2.7 context with `scripts/refresh-patches.sh`
 (context/offsets only; +/- content verified identical to upstream).
+
+## Dropped
+- ROCKNIX `20-sm8550/0004-drm-msm-a6xx-Enable-IFPC-on-Adreno-740` (enables IFPC on A740
+  with the A750 IFPC reglist). Under test as the cause of GMU `GX_BW_PERF_VOTE` HFI and
+  `OOB GPU_SET` timeouts that end in a CP fault at iova 0 and a hangcheck recovery that
+  deadlocks in `a6xx_gmu_stop` (frozen display, minutes after boot).
 
 ## Candidates not yet applied
 - Valve `linux-neptune-72` (7.2.4-valve1): `HID: steam` 2026 Steam Controller series

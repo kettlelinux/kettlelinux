@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build packages/<name>/PKGBUILD for aarch64 into our local repo (out/repo/aarch64,
-# repo "steamportal"), rootless: makepkg runs in an aarch64 chroot via qemu binfmt.
+# repo "kettle"), rootless: makepkg runs in an aarch64 chroot via qemu binfmt.
 #
 # Usage: scripts/build-packages.sh [name...]     (default: every dir under packages/)
 # The build chroot (build/pkgroot) is created once and reused; delete it to start clean.
@@ -49,7 +49,7 @@ for name in "${names[@]}"; do
   chroot "$CHROOT" runuser -u builder -- bash -c "cd /build/$name && makepkg --nodeps --noconfirm --clean -f"
   for p in "$CHROOT/build/$name"/*.pkg.tar.zst; do
     cp "$p" "$LOCAL_REPO/"
-    repo-add -q -R "$LOCAL_REPO/steamportal.db.tar.zst" "$LOCAL_REPO/$(basename "$p")"
+    repo-add -q -R "$LOCAL_REPO/kettle.db.tar.zst" "$LOCAL_REPO/$(basename "$p")"
     log "added $(basename "$p")"
   done
 done

@@ -1,0 +1,84 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] drm/panel: icna35xx: keep the Portal backlight above its usable floor
+
+On the Odin2 Portal's ICNA3512 panel, DCS brightness below about 1330
+(of 4096) shifts the panel's colours, and values near zero turn the
+screen black. The Steam brightness slider reaches those values.
+
+Add a per-panel bl_min and scale the backlight range 0..max_brightness
+onto bl_min..max_brightness, so the bottom of the slider is the dimmest
+usable level and the full slider still does something. Blanking still
+sends 0. actual_brightness is mapped back to the same scale.
+---
+--- a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
++++ b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
+@@ -48,6 +48,12 @@
+ 	int (*init_sequence)(struct panel_info *pinfo);
+ 
+ 	struct drm_dsc_config dsc;
++
++	/*
++	 * Lowest usable DCS brightness: below it the panel's colours shift,
++	 * and near zero it goes black. 0 means the full range is usable.
++	 */
++	u16 bl_min;
+ };
+ 
+ static const struct regulator_bulk_data panel_supplies[] = {
+@@ -267,6 +273,7 @@
+ 	.format = MIPI_DSI_FMT_RGB888,
+ 	.mode_flags = MIPI_DSI_MODE_NO_EOT_PACKET | MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
+ 	.init_sequence = icna3512_init_sequence,
++	.bl_min = 1330,
+ 	.dsc = {
+ 		.dsc_version_major = 0x1,
+ 		.dsc_version_minor = 0x1,
+@@ -419,10 +426,38 @@
+ 	.get_orientation = icna35xx_get_orientation,
+ };
+ 
++/*
++ * Userspace sees 0..max_brightness; the panel gets bl_min..max_brightness,
++ * so the whole slider stays usable. Blanking still sends 0.
++ */
++static u16 icna35xx_bl_to_panel(struct backlight_device *bl, u16 level)
++{
++	struct panel_info *pinfo = mipi_dsi_get_drvdata(bl_get_data(bl));
++	u32 min = pinfo->desc->bl_min, max = bl->props.max_brightness;
++
++	if (!min || backlight_is_blank(bl))
++		return level;
++
++	return min + (u32)level * (max - min) / max;
++}
++
++static u16 icna35xx_bl_from_panel(struct backlight_device *bl, u16 level)
++{
++	struct panel_info *pinfo = mipi_dsi_get_drvdata(bl_get_data(bl));
++	u32 min = pinfo->desc->bl_min, max = bl->props.max_brightness;
++
++	if (!min)
++		return level;
++	if (level <= min)
++		return 0;
++
++	return min_t(u32, DIV_ROUND_UP((level - min) * max, max - min), max);
++}
++
+ static int icna35xx_bl_update_status(struct backlight_device *bl)
+ {
+ 	struct mipi_dsi_device *dsi = bl_get_data(bl);
+-	u16 brightness = backlight_get_brightness(bl);
++	u16 brightness = icna35xx_bl_to_panel(bl, backlight_get_brightness(bl));
+ 	int ret;
+ 
+ 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+@@ -450,7 +485,7 @@
+ 
+ 	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+ 
+-	return brightness;
++	return icna35xx_bl_from_panel(bl, brightness);
+ }
+ 
+ static const struct backlight_ops icna35xx_bl_ops = {

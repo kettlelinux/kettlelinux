@@ -10,10 +10,10 @@ die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 # Re-exec the calling script inside a user+mount+pid namespace (subuid-mapped fake root).
 enter_ns() {
-  [ "${STEAMPORTAL_IN_NS:-}" = 1 ] && return 0
+  [ "${KETTLE_IN_NS:-}" = 1 ] && return 0
   [ -x "$QEMU" ] || die "missing $QEMU (extract usr/bin/qemu-aarch64-static from Arch's qemu-user-static package)"
   if [ -f "$ROOT/local.env" ]; then set -a; . "$ROOT/local.env"; set +a; fi
-  exec env STEAMPORTAL_IN_NS=1 unshare --map-auto --map-root-user --mount --pid --fork \
+  exec env KETTLE_IN_NS=1 unshare --map-auto --map-root-user --mount --pid --fork \
     --mount-proc "$0" "$@"
 }
 
@@ -46,9 +46,9 @@ chroot_umount() {
 # pacman.conf for build time: image/pacman.conf plus our local repo (if built) ahead of Valve's.
 build_pacman_conf() {
   local out="$1"
-  if [ -f "$LOCAL_REPO/steamportal.db" ]; then
+  if [ -f "$LOCAL_REPO/kettle.db" ]; then
     awk -v repo="$LOCAL_REPO" '
-      /^\[deckard-arch-hotfixes/ && !done { print "[steamportal]\nSigLevel = Never\nServer = file://" repo "\n"; done=1 }
+      /^\[deckard-arch-hotfixes/ && !done { print "[kettle]\nSigLevel = Never\nServer = file://" repo "\n"; done=1 }
       { print }' "$ROOT/image/pacman.conf" >"$out"
   else
     cp "$ROOT/image/pacman.conf" "$out"

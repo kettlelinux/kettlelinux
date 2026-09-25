@@ -1,13 +1,13 @@
 # Testing on an Odin 2 Portal
 
-The SD card's first partition (FAT, `STEAMPORTAL`) carries every boot path, so it works
+The SD card's first partition (FAT, `KETTLE`) carries every boot path, so it works
 with whichever loader the device runs:
 
 | Loader | Uses |
 |---|---|
 | ROCKNIX ABL | `\KERNEL` + `\KERNEL.md5` (boot.img v0, all SM8550 DTBs; ABL picks by Device model) |
 | U-Boot (standard boot / distro_bootcmd) | `\extlinux\extlinux.conf` → `\Image` + `\dtbs\qcom\qcs8550-ayn-odin2portal.dtb` |
-| Any UEFI (U-Boot EFI, ABL EFI chainload) | `\EFI\BOOT\BOOTAA64.EFI` = systemd-boot → `\loader\entries\steamportal.conf` |
+| Any UEFI (U-Boot EFI, ABL EFI chainload) | `\EFI\BOOT\BOOTAA64.EFI` = systemd-boot → `\loader\entries\kettle.conf` |
 
 Partition 1 also has the GPT *LegacyBIOSBootable* attribute, which older U-Boot
 `distro_bootcmd` scripts use to choose the partition. From a U-Boot prompt you can boot by hand:
@@ -41,13 +41,13 @@ Boot controls with the ROCKNIX ABL:
 ```sh
 scripts/build-kernel.sh && scripts/build-firmware.sh
 WIFI_SSID='MyNetwork' WIFI_PSK='secret' scripts/build-image.sh   # Wi-Fi optional but needed for SSH
-sudo dd if=out/steamportal-YYYYMMDD.img of=/dev/sdX bs=4M conv=fsync status=progress
+sudo dd if=out/kettle-YYYYMMDD.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
 Check `/dev/sdX` with `lsblk` first — dd overwrites the whole target.
 The root partition grows to fill the card on first boot.
 
-Login: `steamos` / `steamos` (sudo via wheel), on the panel console or `ssh steamos@steamportal.local`
+Login: `steamos` / `steamos` (sudo via wheel), on the panel console or `ssh steamos@kettle.local`
 (or the IP from your router). Root login is disabled.
 
 ## 3. Checklist (report back with `dmesg` + `journalctl -b` for anything that fails)
@@ -55,7 +55,7 @@ Login: `steamos` / `steamos` (sudo via wheel), on the panel console or `ssh stea
 | Area | Command | Expect |
 |---|---|---|
 | Boot / panel | — | console on the OLED, rotated upright |
-| Kernel | `uname -r` | `7.2.7-steamportal` |
+| Kernel | `uname -r` | `7.2.7-kettle` |
 | Wi-Fi | `nmcli dev wifi list` | WCN7850 (`ath12k_pci`) sees networks |
 | Bluetooth | `bluetoothctl show` | controller present |
 | Gamepad | `sudo evtest` | "RSInput Gamepad"-like device; sticks/triggers/buttons move |
@@ -71,21 +71,21 @@ Login: `steamos` / `steamos` (sudo via wheel), on the panel console or `ssh stea
 | Wake source | `cat /sys/power/pm_wakeup_irq` after a spurious wake | which IRQ woke it |
 | Power key | short press | suspends (long press powers off) |
 | Swap | `swapon --show` | `/dev/zram0`, half of RAM (max 8 GB) |
-| Power draw | `steamportal-powertest state`; on battery: `steamportal-powertest 120 idle` | per-run mW + settings in `~/.local/state/steamportal-powertest.csv` |
+| Power draw | `kettle-powertest state`; on battery: `kettle-powertest 120 idle` | per-run mW + settings in `~/.local/state/kettle-powertest.csv` |
 
 Suspend is the least proven area: nobody has validated s2idle on a Portal yet. After a
 resume check `dmesg | tail -50`, that the gamepad still reports input, and Wi-Fi reconnects.
 
 ## 4. Power/performance A/B runs
 
-`steamportal-powertest [SECONDS] [LABEL]` averages battery draw (plus CPU/GPU clocks and peak
+`kettle-powertest [SECONDS] [LABEL]` averages battery draw (plus CPU/GPU clocks and peak
 temperatures) over a run and logs it with the scheduler, Wi-Fi power-save and display mode in
 effect. Same workload, charger unplugged, change one thing at a time:
 
 ```sh
-steamportal-powertest 120 idle-lavd                     # panel on, desktop idle
-sudo systemctl stop scx; steamportal-powertest 120 idle-eas
-FPS=60 steamportal-powertest 300 game-lavd              # FPS: read off the overlay
-sudo iw dev wlan0 set power_save on; steamportal-powertest 120 idle-wifips
-steamportal-powertest results
+kettle-powertest 120 idle-lavd                     # panel on, desktop idle
+sudo systemctl stop scx; kettle-powertest 120 idle-eas
+FPS=60 kettle-powertest 300 game-lavd              # FPS: read off the overlay
+sudo iw dev wlan0 set power_save on; kettle-powertest 120 idle-wifips
+kettle-powertest results
 ```

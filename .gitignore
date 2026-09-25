@@ -3,3 +3,5 @@ build/
 out/
 tools/qemu-aarch64-static
 local.env
+__pycache__/
+*.pyc

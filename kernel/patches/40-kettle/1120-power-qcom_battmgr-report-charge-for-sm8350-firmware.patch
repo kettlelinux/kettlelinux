@@ -1,0 +1,60 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] power: supply: qcom_battmgr: report charge for SM8350-style firmware
+
+The battery unit is only set from the SC8280XP-style info response, so
+on SM8350/SM8550 it stays at mWh and charge_full / charge_full_design
+return -ENODATA. With no charge or energy values UPower reports 0 Wh and
+cannot estimate time remaining (KDE's battery applet shows none).
+
+SM8350-style firmware reports charge in uAh: set the unit accordingly,
+and expose charge_now on SM8550 backed by the charge counter (the
+remaining charge in uAh).
+---
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -439,6 +439,7 @@
+ 	[POWER_SUPPLY_PROP_TEMP] = BATT_TEMP,
+ 	[POWER_SUPPLY_PROP_TECHNOLOGY] = BATT_TECHNOLOGY,
+ 	[POWER_SUPPLY_PROP_CHARGE_COUNTER] =  BATT_CHG_COUNTER,
++	[POWER_SUPPLY_PROP_CHARGE_NOW] =  BATT_CHG_COUNTER,
+ 	[POWER_SUPPLY_PROP_CYCLE_COUNT] = BATT_CYCLE_COUNT,
+ 	[POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN] =  BATT_CHG_FULL_DESIGN,
+ 	[POWER_SUPPLY_PROP_CHARGE_FULL] = BATT_CHG_FULL,
+@@ -583,7 +584,12 @@
+ 	case POWER_SUPPLY_PROP_CHARGE_NOW:
+ 		if (unit != QCOM_BATTMGR_UNIT_mAh)
+ 			return -ENODATA;
+-		val->intval = battmgr->status.capacity;
++		/* SM8350-style firmware: remaining charge is the charge counter */
++		if (battmgr->variant == QCOM_BATTMGR_SM8350 ||
++		    battmgr->variant == QCOM_BATTMGR_SM8550)
++			val->intval = battmgr->info.charge_count;
++		else
++			val->intval = battmgr->status.capacity;
+ 		break;
+ 	case POWER_SUPPLY_PROP_CHARGE_COUNTER:
+ 		val->intval = battmgr->info.charge_count;
+@@ -911,6 +917,7 @@
+ 	POWER_SUPPLY_PROP_CYCLE_COUNT,
+ 	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
+ 	POWER_SUPPLY_PROP_CHARGE_FULL,
++	POWER_SUPPLY_PROP_CHARGE_NOW,
+ 	POWER_SUPPLY_PROP_MODEL_NAME,
+ 	POWER_SUPPLY_PROP_TIME_TO_FULL_AVG,
+ 	POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG,
+@@ -1658,6 +1665,15 @@
+ 	else
+ 		battmgr->variant = QCOM_BATTMGR_SM8350;
+ 
++	/*
++	 * Only the SC8280XP-style info message carries a power unit. SM8350-style
++	 * firmware reports charge properties in uAh; without this the unit stays
++	 * mWh and charge_full/charge_full_design read as -ENODATA.
++	 */
++	if (battmgr->variant == QCOM_BATTMGR_SM8350 ||
++	    battmgr->variant == QCOM_BATTMGR_SM8550)
++		battmgr->unit = QCOM_BATTMGR_UNIT_mAh;
++
+ 	ret = qcom_battmgr_charge_control_thresholds_init(battmgr);
+ 	if (ret < 0)
+ 		return dev_err_probe(dev, ret,

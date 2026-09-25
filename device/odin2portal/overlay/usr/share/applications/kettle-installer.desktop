@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Kettle Installer
+GenericName=Install to Internal Storage
+Comment=Install Kettle Linux next to Android, or back up, restore or remove it
+Exec=kettle-installer
+Icon=drive-harddisk
+Terminal=false
+Categories=System;
+Keywords=install;internal;ufs;android;backup;restore;dual boot;
