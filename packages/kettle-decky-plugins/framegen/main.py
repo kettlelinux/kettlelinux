@@ -79,17 +79,6 @@ def _view(appid: int, s: dict) -> dict:
             "auto_cap": autocap.decide(s.get("measure"), _refresh, s["multiplier"], s.get("failed_caps", []))}
 
 
-def _find_dll() -> dict:
-    for lib in steamlib.libraries():
-        d = os.path.join(lib, "steamapps", "common", "Lossless Scaling")
-        if os.path.isfile(os.path.join(d, "lsfg-vk.dll")):
-            return {"path": os.path.join(d, "lsfg-vk.dll"), "lib": lib}
-        if os.path.isdir(d):
-            # installed, but not the "lsfg-vk" beta branch that carries lsfg-vk.dll
-            return {"path": None, "installed": d}
-    return {"path": None, "installed": None}
-
-
 # ---------- lsfg-vk conf.toml ----------
 
 def _load_conf() -> dict:
@@ -206,9 +195,9 @@ def _sync(games: dict[int, dict]):
     conf["profile"] = [p for p in conf["profile"] if not ours(p)] + \
         [_profile(a, s) for a, s in sorted(games.items()) if s["enabled"] and s["engine"] == "lsfg"]
     # lsfg-vk searches only the main Steam library itself; point it at other libraries
-    dll = _find_dll()
-    if dll["path"] and os.path.realpath(dll["lib"]) != os.path.realpath(steamlib.STEAM):
-        conf["global"]["dll"] = dll["path"]
+    ls = steamlib.lossless_scaling()
+    if ls["dll"] and os.path.realpath(ls["lib"]) != os.path.realpath(steamlib.STEAM):
+        conf["global"]["dll"] = ls["dll"]
     elif conf["global"].get("dll") and not os.path.isfile(os.path.expanduser(conf["global"]["dll"])):
         del conf["global"]["dll"]
     _save_conf(conf)
@@ -304,12 +293,12 @@ async def _sampler():
 
 class Plugin:
     async def status(self) -> dict:
-        dll = _find_dll()
+        ls = steamlib.lossless_scaling()
         return {
             "layer": os.path.isfile(LAYER),
             "kettle_layer": os.path.isfile(KETTLE_LAYER),
-            "dll": dll["path"],
-            "lossless_installed": dll.get("installed") is not None or dll["path"] is not None,
+            "dll": ls["dll"],
+            "lossless_installed": ls["installed"] is not None,
             "allow_fp16": _load_conf()["global"].get("allow_fp16", True),
             "enabled_games": sorted(a for a, s in _load_games().items() if s["enabled"]),
         }
@@ -323,7 +312,7 @@ class Plugin:
     async def set_game(self, appid: int, settings: dict) -> dict:
         games = _load_games()
         new = _clamp({**games.get(appid, DEFAULTS), **settings})
-        if new["enabled"] and new["engine"] == "lsfg" and not _find_dll()["path"]:
+        if new["enabled"] and new["engine"] == "lsfg" and not steamlib.lossless_scaling()["dll"]:
             raise ValueError("lsfg-vk.dll not found: install Lossless Scaling on its lsfg-vk branch")
         games[appid] = new
         _save_games(games)
@@ -350,7 +339,7 @@ class Plugin:
             _save_games(games)
         _sync(games)  # conf files for games set up by an older plugin version
         decky.logger.info("frame generation: kettle layer %s, lsfg-vk layer %s, dll %s, %d games on",
-                          os.path.isfile(KETTLE_LAYER), os.path.isfile(LAYER), _find_dll()["path"],
+                          os.path.isfile(KETTLE_LAYER), os.path.isfile(LAYER), steamlib.lossless_scaling()["dll"],
                           sum(s["enabled"] for s in games.values()))
         await _sampler()
 

@@ -153,10 +153,15 @@ rm -rf "$RFS"/var/cache/pacman/pkg/* "$RFS"/tmp/* "$RFS"/var/log/pacman.log
 #   U-Boot extlinux  \extlinux\extlinux.conf -> \Image + Portal dtb
 #   UEFI (U-Boot EFI or ABL EFI chainload)  \EFI\BOOT\BOOTAA64.EFI = systemd-boot
 DTB=dtbs/qcom/qcs8550-ayn-odin2portal.dtb
-CMDLINE="root=PARTUUID=$ROOT_PARTUUID rootfstype=ext4 rootwait rw console=tty0 \
+BASE_CMDLINE="root=PARTUUID=$ROOT_PARTUUID rootfstype=ext4 rootwait rw console=tty0 \
 allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2 \
 nosoftlockup usbcore.interrupt_interval_override=045e:028e:2 \
 ufshcd_core.uic_cmd_timeout=3000 mem_sleep_default=s2idle"
+# Boot splash (plymouth, kettle theme) instead of kernel and systemd messages. The
+# "verbose boot" entries (extlinux, systemd-boot) keep the messages and skip plymouth;
+# the ABL's \KERNEL has room for one cmdline only and gets the splash.
+CMDLINE="$BASE_CMDLINE quiet splash loglevel=3 vt.global_cursor_default=0 logo.nologo"
+VERBOSE_CMDLINE="$BASE_CMDLINE plymouth.enable=0"
 B="$WORK/boot"; F="$B/fat"
 mkdir -p "$F/dtbs/qcom" "$F/extlinux" "$F/EFI/BOOT" "$F/loader/entries"
 
@@ -181,6 +186,12 @@ label kettle
     linux /Image
     fdt /$DTB
     append $CMDLINE
+
+label kettle-verbose
+    menu label Kettle Linux (verbose boot)
+    linux /Image
+    fdt /$DTB
+    append $VERBOSE_CMDLINE
 EOF
 cp "$RFS/usr/lib/systemd/boot/efi/systemd-bootaa64.efi" "$F/EFI/BOOT/BOOTAA64.EFI"
 printf 'default kettle.conf\ntimeout 3\nconsole-mode keep\n' >"$F/loader/loader.conf"
@@ -191,6 +202,8 @@ linux      /Image
 devicetree /$DTB
 options    $CMDLINE
 EOF
+sed -e 's/^title .*/title      Kettle Linux (verbose boot)/' -e "s|^options .*|options    $VERBOSE_CMDLINE|" \
+  "$F/loader/entries/kettle.conf" >"$F/loader/entries/kettle-verbose.conf"
 
 # ---------------------------------------------------------------- filesystems + disk
 BOOT_MB=256

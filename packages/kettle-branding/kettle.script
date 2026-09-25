@@ -1,0 +1,119 @@
+# Kettle Linux boot splash: a copper kettle on true black (the Portal's AMOLED stays dark
+# around it), steam rising from the spout, and a heat-coloured progress line under the name.
+# The art is drawn for a 1920x1080 screen and scaled from there on anything else.
+
+Window.SetBackgroundTopColor(0, 0, 0);
+Window.SetBackgroundBottomColor(0, 0, 0);
+
+screen.x = Window.GetX();
+screen.y = Window.GetY();
+screen.w = Window.GetWidth();
+screen.h = Window.GetHeight();
+scale = Math.Min(screen.w / 1920, screen.h / 1080);
+
+fun load(name) {
+  local.img = Image(name);
+  if (scale < 0.99 || scale > 1.01)
+    local.img = local.img.Scale(Math.Int(local.img.GetWidth() * scale + 0.5),
+                                Math.Int(local.img.GetHeight() * scale + 0.5));
+  return local.img;
+}
+
+# ---------------------------------------------------------------- layout
+# kettle, 36 gap, wordmark, 44 gap, progress line; centred as one group
+kettle.image = load("kettle.png");
+word.image = load("wordmark.png");
+track.image = load("progress-track.png");
+fill.image = load("progress-fill.png");
+
+group.h = kettle.image.GetHeight() + 36 * scale + word.image.GetHeight() + 44 * scale + track.image.GetHeight();
+group.y = screen.y + (screen.h - group.h) / 2 + 24 * scale;   # a little low: the steam needs headroom
+
+kettle.x = screen.x + (screen.w - kettle.image.GetWidth()) / 2;
+kettle.y = group.y;
+kettle.sprite = Sprite(kettle.image);
+kettle.sprite.SetPosition(kettle.x, kettle.y, 10);
+
+word.sprite = Sprite(word.image);
+word.sprite.SetPosition(screen.x + (screen.w - word.image.GetWidth()) / 2,
+                        kettle.y + kettle.image.GetHeight() + 36 * scale, 10);
+
+bar.x = screen.x + (screen.w - track.image.GetWidth()) / 2;
+bar.y = kettle.y + kettle.image.GetHeight() + 36 * scale + word.image.GetHeight() + 44 * scale;
+track.sprite = Sprite(track.image);
+track.sprite.SetPosition(bar.x, bar.y, 10);
+fill.sprite = Sprite();
+fill.sprite.SetPosition(bar.x, bar.y, 11);
+
+# Shutdown and reboot keep the kettle and steam; there is no progress to show.
+mode = Plymouth.GetMode();
+if (mode != "boot" && mode != "updates" && mode != "system-upgrade" && mode != "firmware-upgrade") {
+  track.sprite.SetOpacity(0);
+  fill.sprite.SetOpacity(0);
+}
+
+# ---------------------------------------------------------------- steam
+# Spout tip in kettle.png pixels (kettle.svg's (234,110) at the 320 px render size) and the
+# base of the wisp in steam.png (its (24,136) at the 60 px render size).
+spout.x = kettle.x + 292 * scale;
+spout.y = kettle.y + 138 * scale;
+steam.image = load("steam.png");
+steam.base_x = 30 * scale;
+steam.base_y = 170 * scale;
+
+WISPS = 3;
+PERIOD = 150;   # frames per wisp (the refresh function runs at 50 Hz)
+for (i = 0; i < WISPS; i++) {
+  wisp[i].sprite = Sprite(steam.image);
+  wisp[i].sprite.SetOpacity(0);
+  wisp[i].sprite.SetZ(5);
+}
+
+frame = 0;
+shown_progress = 0;
+target_progress = 0;
+
+fun refresh_callback() {
+  global.frame++;
+
+  # fade the whole splash in over the first half second
+  local.fade = Math.Min(global.frame / 25, 1);
+  kettle.sprite.SetOpacity(local.fade);
+  word.sprite.SetOpacity(local.fade);
+
+  for (local.i = 0; local.i < WISPS; local.i++) {
+    local.t = ((global.frame + local.i * PERIOD / WISPS) % PERIOD) / PERIOD;
+    local.sway = Math.Sin(local.t * Math.Pi * 2 + local.i * 2.1) * 7 * scale;
+    wisp[local.i].sprite.SetX(spout.x - steam.base_x + local.sway + local.i * 6 * scale);
+    wisp[local.i].sprite.SetY(spout.y - steam.base_y - local.t * 90 * scale);
+    wisp[local.i].sprite.SetOpacity(Math.Sin(local.t * Math.Pi) * 0.7 * local.fade);
+  }
+
+  # ease the progress line towards plymouth's estimate instead of jumping
+  if (global.shown_progress < global.target_progress - 0.001) {
+    global.shown_progress += (global.target_progress - global.shown_progress) * 0.08;
+    local.w = Math.Int(fill.image.GetWidth() * global.shown_progress);
+    if (local.w >= 1)
+      fill.sprite.SetImage(fill.image.Scale(local.w, fill.image.GetHeight()));
+  }
+}
+Plymouth.SetRefreshFunction(refresh_callback);
+
+fun progress_callback(duration, progress) {
+  if (progress > global.target_progress)
+    global.target_progress = progress;
+}
+Plymouth.SetBootProgressFunction(progress_callback);
+
+# ---------------------------------------------------------------- messages
+# e.g. a file system check; shown quietly under the splash
+message.sprite = Sprite();
+message.sprite.SetZ(10);
+
+fun message_callback(text) {
+  local.img = Image.Text(text, 0.96, 0.94, 0.91, 0.7, "Sans " + Math.Int(16 * scale + 0.5));
+  message.sprite.SetImage(local.img);
+  message.sprite.SetPosition(screen.x + (screen.w - local.img.GetWidth()) / 2,
+                             screen.y + screen.h - 72 * scale, 10);
+}
+Plymouth.SetMessageFunction(message_callback);

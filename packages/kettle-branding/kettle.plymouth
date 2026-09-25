@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Kettle
+Description=Kettle Linux boot splash: a copper kettle with steam rising from the spout
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/kettle
+ScriptFile=/usr/share/plymouth/themes/kettle/kettle.script

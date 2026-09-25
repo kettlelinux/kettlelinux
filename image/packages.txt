@@ -117,13 +117,21 @@ gtk2
 at-spi2-core
 ibus
 
+# boot splash and Steam startup movie (built by us, packages/): plymouth with the Kettle theme
+# as its default; the movie is put in place by run-steam
+plymouth
+kettle-plymouth-theme
+kettle-steam-startup
+
 # Game Mode plugins (built by us, packages/): Decky Loader (native aarch64, no self-update)
 # with our Frame Generation (our own kettle-framegen layer, or lsfg-vk with the user's own
 # Lossless Scaling, "lsfg-vk" beta branch) and Upscaling (per-game gamescope FSR 1, and
-# SGSR 2 through our ARM64EC OptiScaler build) plugins preinstalled
+# SGSR 2 through our ARM64EC OptiScaler build) plugins preinstalled, and Welcome (first-boot
+# tour, setup checklist, optional components downloaded from upstream on request)
 decky-loader
 kettle-framegen
 lsfg-vk
 kettle-decky-framegen
 optiscaler-arm64ec
 kettle-decky-upscaling
+kettle-decky-welcome

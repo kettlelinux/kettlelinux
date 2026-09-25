@@ -1,0 +1,279 @@
+import { ButtonItem, Field, Navigation, PanelSection, PanelSectionRow, ProgressBarWithInfo, SidebarNavigation, staticClasses } from "@decky/ui";
+import { callable, definePlugin, routerHook, toaster } from "@decky/api";
+import { FC, ReactNode, useEffect, useState } from "react";
+import { FaDesktop, FaDownload, FaGamepad, FaHandSparkles, FaMugHot } from "react-icons/fa";
+
+type Component = {
+  id: string;
+  name: string;
+  description: string;
+  license: string;
+  homepage: string;
+  version: string;
+  host: string;
+  installed: string | null;
+  busy: boolean;
+  progress: number | null;
+  error: string | null;
+};
+type Status = { lossless: { installed: boolean; dll: boolean }; components: Component[] };
+
+const status = callable<[], Status>("status");
+const firstRun = callable<[], boolean>("first_run");
+const install = callable<[id: string], void>("install");
+const uninstall = callable<[id: string], void>("uninstall");
+
+const ROUTE = "/kettle-welcome";
+const LOSSLESS = 993090;
+const small = { fontSize: "12px", lineHeight: "16px" };
+
+const openWelcome = () => {
+  Navigation.CloseSideMenus();
+  Navigation.Navigate(`${ROUTE}/welcome`);
+};
+
+// Backend status, polled while shown: downloads and Steam installs finish in the background
+function useStatus(): Status | null {
+  const [s, setS] = useState<Status | null>(null);
+  useEffect(() => {
+    let live = true;
+    const tick = () => status().then((v) => live && setS(v)).catch(() => {});
+    tick();
+    const t = setInterval(tick, 2000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, []);
+  return s;
+}
+
+// SteamClient.URL: the typings' URL clashes with the DOM's global URL type
+const steamUrl = (url: string) => (SteamClient as any).URL.ExecuteSteamURL(url);
+
+const owned = (appid: number): boolean => {
+  try {
+    return !!(window as any).appStore?.GetAppOverviewByAppID(appid);
+  } catch {
+    return false;
+  }
+};
+
+// Lossless Scaling: optional, for the lsfg-vk frame generation engine. Kettle's own engine
+// needs nothing. Steps: buy -> install with Proton -> switch to the lsfg-vk beta branch.
+function LosslessStep({ s }: { s: Status }) {
+  const l = s.lossless;
+  let text: string, button: ReactNode = null;
+  if (l.dll) {
+    text = "Ready. Pick Lossless Scaling as the engine in Quick Access › Frame Generation.";
+  } else if (l.installed) {
+    text = "Installed, but not on the lsfg-vk branch. In its Properties › Betas, choose lsfg-vk.";
+    button = <ButtonItem layout="below" onClick={() => Navigation.Navigate(`/library/app/${LOSSLESS}`)}>Open Lossless Scaling</ButtonItem>;
+  } else if (owned(LOSSLESS)) {
+    text = "In your library. Install it (Properties › Compatibility › force Proton), then choose the lsfg-vk branch in Properties › Betas.";
+    button = <ButtonItem layout="below" onClick={() => steamUrl(`steam://install/${LOSSLESS}`)}>Install Lossless Scaling</ButtonItem>;
+  } else {
+    text = "Optional, paid (Steam). A second frame generation engine; Kettle's own one needs nothing.";
+    button = <ButtonItem layout="below" onClick={() => steamUrl(`steam://store/${LOSSLESS}`)}>View in Steam store</ButtonItem>;
+  }
+  return (
+    <>
+      <Field label={`Lossless Scaling${l.dll ? " ✓" : ""}`} description={text} focusable={!button} />
+      {button}
+    </>
+  );
+}
+
+function ComponentRow({ c }: { c: Component }) {
+  const run = async (f: () => Promise<void>, fail: string) => {
+    try {
+      await f();
+    } catch (e) {
+      toaster.toast({ title: "Welcome", body: `${fail}: ${e}` });
+    }
+  };
+  const upgrade = c.installed !== null && c.installed !== c.version;
+  const state = c.installed === null ? "" : upgrade ? ` (${c.installed} installed)` : " ✓";
+  return (
+    <>
+      <Field
+        label={`${c.name} ${c.version}${state}`}
+        description={
+          <div style={small}>
+            {c.description}
+            <br />
+            {c.license} · downloaded from {c.host}
+            {c.error && <div style={{ color: "#ff6b6b" }}>{c.error}</div>}
+          </div>
+        }
+        focusable={false}
+      />
+      {c.busy ? (
+        <ProgressBarWithInfo nProgress={(c.progress ?? 0) * 100} indeterminate={!c.progress} sOperationText="Downloading" />
+      ) : (
+        <>
+          {(c.installed === null || upgrade) && (
+            <ButtonItem layout="below" onClick={() => run(() => install(c.id), "Install failed")}>
+              {upgrade ? "Update" : "Download and install"}
+            </ButtonItem>
+          )}
+          {c.installed !== null && (
+            <ButtonItem layout="below" onClick={() => run(() => uninstall(c.id), "Remove failed")}>
+              Remove
+            </ButtonItem>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+// The checklist, both on the welcome page and in the Quick Access panel (Row: PanelSectionRow)
+type Row = FC<{ children: ReactNode }>;
+const Plain: Row = ({ children }) => <>{children}</>;
+
+function Setup({ s, Row }: { s: Status; Row: Row }) {
+  return (
+    <>
+      <Row>
+        <LosslessStep s={s} />
+      </Row>
+      {s.components.map((c) => (
+        <Row key={c.id}>
+          <ComponentRow c={c} />
+        </Row>
+      ))}
+    </>
+  );
+}
+
+const Text = ({ children }: { children: ReactNode }) => <div style={{ lineHeight: "22px", maxWidth: "720px" }}>{children}</div>;
+
+function SetupPage() {
+  const s = useStatus();
+  if (!s) return null;
+  return (
+    <>
+      <Text>
+        <p>
+          Optional extras Kettle can't include itself. Anything downloaded here comes from its own project's servers
+          and is checked against a pinned checksum before it is installed.
+        </p>
+      </Text>
+      <Setup s={s} Row={Plain} />
+    </>
+  );
+}
+
+// Fixed, so the sidebar isn't rebuilt on every render. SidebarNavigation reports each tab as a
+// route under ROUTE (as Decky's own settings do), which is why that route isn't exact.
+const PAGES = [
+  {
+    title: "Welcome",
+    route: `${ROUTE}/welcome`,
+    icon: <FaMugHot />,
+    content: (
+      <Text>
+        <h2>Welcome to Kettle Linux</h2>
+        <p>
+          Kettle is a SteamOS-style system for the AYN Odin 2 Portal: Valve's arm64 Steam client with Game Mode, a
+          Plasma desktop, and Windows games through Proton ARM64.
+        </p>
+        <p>
+          Kettle's own tools live in the Quick Access menu (the <b>…</b> button), under the plug icon: Frame
+          Generation, Upscaling, and this Welcome page. Everything is off until you turn it on for a game.
+        </p>
+        <p>The last page, Setup, lists optional extras. You can come back here from Quick Access at any time.</p>
+      </Text>
+    ),
+  },
+  {
+    title: "Game Mode",
+    route: `${ROUTE}/game-mode`,
+    icon: <FaGamepad />,
+    content: (
+      <Text>
+        <h2>Per-game enhancements</h2>
+        <p>
+          Both panels open on the running game, and can set up any installed game before you launch it. Settings are
+          kept when you turn a game off.
+        </p>
+        <p>
+          <b>Frame Generation</b> shows extra frames between the ones the game renders (2–4×). Kettle's own engine is
+          built in; Lossless Scaling is a second engine if you own it. The base frame rate is capped automatically:
+          leave Steam's frame limit off for these games.
+        </p>
+        <p>
+          <b>Upscaling</b> renders the game at a lower resolution and scales it up: FSR 1 through gamescope for any
+          game, or Snapdragon GSR 2 for games that offer DLSS, FSR 2+ or XeSS.
+        </p>
+      </Text>
+    ),
+  },
+  {
+    title: "Desktop mode",
+    route: `${ROUTE}/desktop`,
+    icon: <FaDesktop />,
+    content: (
+      <Text>
+        <h2>Desktop mode</h2>
+        <p>
+          Switch from the power menu. The gamepad drives the mouse and keyboard there; hold <b>Select + Start</b> to
+          hand it to a game started from the desktop, and again to take it back.
+        </p>
+        <p>
+          Left stick: pointer · Right stick: scroll · A / R2: click · B / L2: right click · R1 (held): precise pointer
+          · R3: middle click · X / Home: on-screen keyboard · Y: Enter · D-pad: arrow keys · L1: Escape · Start:
+          application menu · Select: Overview
+        </p>
+      </Text>
+    ),
+  },
+  {
+    title: "Setup",
+    route: `${ROUTE}/setup`,
+    icon: <FaDownload />,
+    content: <SetupPage />,
+  },
+];
+
+const Page = () => (
+  <div style={{ marginTop: "40px", height: "calc(100% - 40px)" }}>
+    <SidebarNavigation title="Welcome" showTitle pages={PAGES} />
+  </div>
+);
+
+function Content() {
+  const s = useStatus();
+  return (
+    <>
+      <PanelSection>
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={openWelcome}>
+            Open Welcome
+          </ButtonItem>
+        </PanelSectionRow>
+      </PanelSection>
+      {s && (
+        <PanelSection title="Setup">
+          <Setup s={s} Row={PanelSectionRow} />
+        </PanelSection>
+      )}
+    </>
+  );
+}
+
+export default definePlugin(() => {
+  routerHook.addRoute(ROUTE, Page);
+  // Steam's UI is up once plugins load, but give Game Mode's home screen a moment
+  firstRun()
+    .then((first) => first && setTimeout(openWelcome, 3000))
+    .catch(() => {});
+  return {
+    name: "Welcome",
+    titleView: <div className={staticClasses.Title}>Welcome</div>,
+    content: <Content />,
+    icon: <FaHandSparkles />,
+    onDismount: () => routerHook.removeRoute(ROUTE),
+  };
+});

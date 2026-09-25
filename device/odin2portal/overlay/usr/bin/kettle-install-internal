@@ -267,6 +267,8 @@ old_pu=$(findmnt -no PARTUUID /)
 sed -i "s/root=PARTUUID=$old_pu/root=PARTUUID=$ROOT_PU/" \
   $W/root/loader/entries/*.conf $W/root/extlinux/extlinux.conf
 sed -i 's/^title .*/title      Kettle Linux (internal)/' $W/root/loader/entries/kettle.conf
+sed -i 's/^title .*/title      Kettle Linux (internal, verbose boot)/' \
+  $W/root/loader/entries/kettle-verbose.conf 2>/dev/null || true
 sed -i 's/^\(title .*previous kernel\).*/title      Kettle Linux (internal, previous kernel)/' \
   $W/root/loader/entries/kettle-prev.conf 2>/dev/null || true
 grep -q "root=PARTUUID=$ROOT_PU" $W/root/loader/entries/kettle.conf || die "boot entry not updated; rerun with --reinstall"
