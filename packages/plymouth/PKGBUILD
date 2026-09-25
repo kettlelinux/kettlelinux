@@ -1,0 +1,48 @@
+# Plymouth boot splash, which no deckard snapshot ships. Based on Arch's PKGBUILD for the same
+# release; 24.004.60 matches the era of deckard's libraries (Arch has moved to 26.x).
+# There is no initramfs (the boot.img ramdisk is empty), so plymouthd starts from the root
+# file system (plymouth-start.service, sysinit) and the mkinitcpio hooks are left out; it
+# quits before SDDM starts Game Mode (sddm.service is After=plymouth-quit.service). The DRM
+# renderer follows the panel's "panel orientation" property, so the Portal's 270 degree
+# panel shows the splash in landscape. Default theme: kettle (packages/kettle-plymouth-theme).
+pkgname=plymouth
+pkgver=24.004.60
+pkgrel=2
+pkgdesc='Graphical boot splash screen'
+arch=(aarch64)
+url='https://www.freedesktop.org/wiki/Software/Plymouth/'
+license=(GPL-2.0-or-later)
+depends=(bash cairo fontconfig freetype2 glibc libdrm libevdev libpng libxkbcommon pango
+         systemd-libs xkeyboard-config)
+makedepends=(meson)
+backup=(etc/plymouth/plymouthd.conf)
+source=(https://www.freedesktop.org/software/plymouth/releases/$pkgname-$pkgver.tar.xz
+        0001-drm-leave-gamma-alone.patch)
+sha256sums=('f3f7841358c98f5e7b06a9eedbdd5e6882fd9f38bbd14a767fb083e3b55b1c34'
+            'e1a002317c02dbebad6717454b6443a08c735d85d7b70e15777759bd0792e228')
+
+prepare() {
+  cd $pkgname-$pkgver
+  # the gamma table plymouth loads outlives it on the msm DPU and stalls KWin's page flips
+  patch -Np1 -i ../0001-drm-leave-gamma-alone.patch
+  sed -i 's/^Theme=spinner$/Theme=kettle/' src/plymouthd.defaults
+  grep -qx 'Theme=kettle' src/plymouthd.defaults
+}
+
+build() {
+  # no GTK (X11 preview renderer) and no man pages; black behind the fallback themes too
+  arch-meson $pkgname-$pkgver build \
+    -D gtk=disabled \
+    -D docs=false \
+    -D udev=enabled \
+    -D release-file=/etc/os-release \
+    -D background-color=0x000000 \
+    -D background-start-color-stop=0x000000 \
+    -D background-end-color-stop=0x000000
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+  rm -r "$pkgdir/run"
+}

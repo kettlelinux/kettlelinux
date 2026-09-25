@@ -1,0 +1,11 @@
+{
+  "name": "Welcome",
+  "author": "Kettle Linux",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["welcome", "setup"],
+    "description": "Kettle Linux's welcome page: a tour of its features, a setup checklist, and optional software downloaded from its upstream source.",
+    "image": ""
+  }
+}

@@ -1,0 +1,40 @@
+# Kettle Linux branding, all built from the SVG art in art/ (our own, BSD-3-Clause):
+#   kettle-plymouth-theme  the boot splash (Plymouth script theme); plymouth defaults to it.
+#                          The wordmark is plain strokes: neither build nor boot needs a font.
+#   kettle-steam-startup   the Steam startup movie: the splash's picture building up again with
+#                          a boil and a chime, rendered frame by frame (render-startup.py) and
+#                          encoded like Valve's own movies (VP9 + Opus, 1920x1080 at 60 fps).
+#                          run-steam puts it where Steam looks for overrides.
+pkgbase=kettle-branding
+pkgname=(kettle-plymouth-theme kettle-steam-startup)
+pkgver=1.0.0
+pkgrel=1
+arch=(any)
+license=(BSD-3-Clause)
+makedepends=(librsvg ffmpeg python)
+
+build() {
+  # splash art sized for a 1920x1080 screen (the Portal); kettle.script scales for others
+  rsvg-convert -w 320 "$startdir/art/kettle.svg" -o kettle.png
+  rsvg-convert -w 60 "$startdir/art/steam.svg" -o steam.png
+  rsvg-convert "$startdir/art/wordmark.svg" -o wordmark.png
+  rsvg-convert "$startdir/art/progress-track.svg" -o progress-track.png
+  rsvg-convert "$startdir/art/progress-fill.svg" -o progress-fill.png
+
+  python "$startdir/render-startup.py" "$startdir/art" startup.webm
+}
+
+package_kettle-plymouth-theme() {
+  pkgdesc='Kettle Linux boot splash'
+  depends=(plymouth)
+  local dir="$pkgdir/usr/share/plymouth/themes/kettle"
+  install -Dm644 "$startdir/kettle.plymouth" "$startdir/kettle.script" -t "$dir"
+  install -Dm644 kettle.png steam.png wordmark.png progress-track.png progress-fill.png -t "$dir"
+  install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}
+
+package_kettle-steam-startup() {
+  pkgdesc='Kettle Linux Steam startup movie'
+  install -Dm644 startup.webm "$pkgdir/usr/share/kettle/steam/startup.webm"
+  install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}

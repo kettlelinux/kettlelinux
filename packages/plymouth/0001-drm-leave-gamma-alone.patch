@@ -1,0 +1,15 @@
+--- a/src/plugins/renderers/drm/plugin.c	2024-01-04 15:08:14.000000000 -0600
++++ b/src/plugins/renderers/drm/plugin.c	2026-09-25 11:48:33.658836641 -0500
+@@ -613,7 +613,11 @@
+         head->area.width = output->mode.hdisplay;
+         head->area.height = output->mode.vdisplay;
+ 
+-        if (gamma_size) {
++        /* Kettle: leave the CRTC's GAMMA_LUT alone. On the Portal (msm DPU) the linear table
++         * plymouth loads here stays set after it quits, and the compositor's page flips
++         * then never complete (black screen, KWin "Pageflip timed out"). Nothing before
++         * plymouth sets a gamma table, so there is nothing to reset. */
++        if (false && gamma_size) {
+                 head->gamma_size = gamma_size;
+                 head->gamma = malloc (gamma_size * 3 * sizeof(uint16_t));
+ 

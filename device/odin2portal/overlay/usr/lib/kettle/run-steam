@@ -34,6 +34,14 @@ EOF
 # threads by default; use every core. Added to existing files too, unless already set.
 grep -q '^unShaderBackgroundProcessingThreads' "$root/steam_dev.cfg" ||
   echo "unShaderBackgroundProcessingThreads $(nproc)" >>"$root/steam_dev.cfg"
+# Kettle's startup movie (kettle-steam-startup). With -steamos3 Steam plays
+# steam_os_startup.webm, preferring config/uioverrides/movies/steam_os_startup.webm when that
+# exists; a movie picked in Settings > Customization > Startup Movie still comes first.
+movie=/usr/share/kettle/steam/startup.webm
+if [ -f "$movie" ]; then
+  mkdir -p "$root/config/uioverrides/movies"
+  cp -u "$movie" "$root/config/uioverrides/movies/steam_os_startup.webm"
+fi
 [ "${1:-}" = --bootstrap ] && exit 0
 
 cp -u /usr/share/deckard/RUNSTEAM.sh "$root/RUNSTEAM.sh"

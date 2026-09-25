@@ -38,9 +38,10 @@ for name in "${names[@]}"; do
   src="$ROOT/packages/$name"
   [ -f "$src/PKGBUILD" ] || die "no PKGBUILD in packages/$name"
   log "building $name"
-  # dependencies as root (makepkg -s would need sudo in the chroot)
+  # dependencies as root (makepkg -s would need sudo in the chroot); -y also picks up
+  # packages built earlier in this run
   deps="$(bash -c ". '$src/PKGBUILD'; echo \${depends[@]} \${makedepends[@]}")"
-  pacman_root "$CHROOT" -S --needed $deps
+  pacman_root "$CHROOT" -Sy --needed $deps
   rm -rf "$CHROOT/build/$name"; mkdir -p "$CHROOT/build"
   cp -r "$src" "$CHROOT/build/$name"
   # reuse downloaded sources

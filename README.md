@@ -19,7 +19,7 @@ a patched mainline kernel plus Valve's SteamOS "deckard" (Steam Frame) aarch64 u
 | `device/odin2portal/` | rootfs overlay (s2idle, power key, first-boot grow, sshd) + ALSA UCM patches |
 | `scripts/build-packages.sh` | rootless makepkg in an aarch64 chroot → local `[kettle]` repo (installed ahead of Valve's) |
 | `scripts/push-kernel.sh` | install out/kernel on a running Portal over SSH (keeps previous kernel as a boot entry) |
-| `packages/` | our PKGBUILDs: `kscreen` (Display Settings, absent from all deckard snapshots), `mangohud` (Valve's deckard build + Portal sensors for the Steam performance overlay), `plasma-keyboard` (desktop on-screen keyboard), `decky-loader` + `kettle-decky-plugins` + `kettle-framegen` + `lsfg-vk` + `optiscaler-arm64ec` (Game Mode plugins, below) |
+| `packages/` | our PKGBUILDs: `kscreen` (Display Settings, absent from all deckard snapshots), `mangohud` (Valve's deckard build + Portal sensors for the Steam performance overlay), `plasma-keyboard` (desktop on-screen keyboard), `plymouth` + `kettle-branding` (boot splash, Steam startup movie), `decky-loader` + `kettle-decky-plugins` + `kettle-framegen` + `lsfg-vk` + `optiscaler-arm64ec` (Game Mode plugins, below) |
 | `tools/` | `bc` shim; `qemu-aarch64-static` (extracted from Arch's package, not installed) |
 
 Build (x86_64 host, no root needed):
@@ -49,6 +49,21 @@ restore: [docs/INTERNAL-INSTALL.md](docs/INTERNAL-INSTALL.md).
       ALSA UCM for `AYN-Odin2`, fan curve, steamos-manager device TOML, powerbuttond hwdb
 - [ ] Suspend: s2idle validation on hardware (wake sources, rsinput/Wi-Fi/panel resume, drain)
 - [ ] Image: A/B btrfs rootfs + RAUC with our own keyring/compatible (`kettle-aarch64`)
+
+## Boot splash and startup movie
+`plymouth` (built by us; no deckard snapshot has it) shows `kettle-plymouth-theme` from early
+boot until SDDM starts the session, and again at shutdown: a copper kettle on black with steam
+rising from the spout and a progress line under the name. There is no initramfs, so it starts
+from the root file system (`plymouth-start.service`). The art is SVG in
+`packages/kettle-branding/art`, rendered at build time. The default boot entry uses
+`quiet splash`; the **verbose boot** entry (extlinux and systemd-boot menus) shows kernel and
+systemd messages instead. The ABL's `\KERNEL` always boots with the splash.
+
+Steam then plays `kettle-steam-startup` in place of its own startup movie: the same picture
+building up again, with a boil and a chime, then a fade into Game Mode. It is rendered from
+the same art at build time (`render-startup.py`: SVG frames, VP9 + Opus like Valve's movies),
+and `run-steam` copies it to `config/uioverrides/movies/steam_os_startup.webm`, the override
+Steam checks first. A movie chosen in Settings > Customization > Startup Movie still wins.
 
 ## Desktop mode controls
 `kettle-desktop-controller` (user service, Plasma session only) grabs the gamepad and
@@ -128,6 +143,14 @@ it is launched. Settings are kept when a game is turned off.
   while off, since Proton sets dxgi/d3d12 to native and would load it. The game's
   `OptiScaler.ini` (render scale, RCAS sharpening, NVIDIA spoofing so games offer DLSS,
   overlay key) is parked in the plugin's settings while the game is off.
+- **Welcome**: a full-screen page that opens once, on the first Game Mode boot (a tour of
+  Kettle, Game Mode and the desktop mode controls), then stays reachable from its Quick
+  Access panel. Its setup checklist walks through getting Lossless Scaling onto the lsfg-vk
+  branch, and offers optional components: software that can't be shipped in the image, listed
+  in `welcome/components.json` with its upstream URL and a pinned sha256, downloaded only when
+  the user asks, verified, and unpacked to `~/.local/share/kettle/components/<id>`. The list is
+  empty for now; an entry belongs there only when the component can't be built and shipped
+  cleanly and a legitimate upstream download exists.
 
 Licensing: kettle-framegen is ours (BSD-3-Clause). lsfg-vk is CC BY-NC-ND 4.0, so
 `packages/lsfg-vk` must stay patch-free and the image non-commercial while it ships.

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="332" height="48" viewBox="-4 -4 332 48">
+  <!-- K E T T L E as straight strokes: no font needed at build or boot time -->
+  <g fill="none" stroke="#f4efe9" stroke-width="6" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M0 0 V40 M26 0 L5 20 L26 40"/>
+    <path transform="translate(56 0)" d="M24 0 H0 V40 H24 M0 20 H19"/>
+    <path transform="translate(110 0)" d="M0 0 H28 M14 0 V40"/>
+    <path transform="translate(168 0)" d="M0 0 H28 M14 0 V40"/>
+    <path transform="translate(226 0)" d="M0 0 V40 H22"/>
+    <path transform="translate(280 0)" d="M24 0 H0 V40 H24 M0 20 H19"/>
+  </g>
+</svg>

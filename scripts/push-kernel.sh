@@ -23,7 +23,7 @@ ssh -t "$HOST" "sudo bash -euc '
   # fallback boot entries for the previous kernel (systemd-boot menu / extlinux menu)
   sed -e \"s|^title .*|title      Kettle Linux (previous kernel)|\" -e \"s|^linux .*|linux      /Image.prev|\" \\
     /flash/loader/entries/kettle.conf >/flash/loader/entries/kettle-prev.conf
-  grep -q \"label kettle-prev\" /flash/extlinux/extlinux.conf || awk \"/^label kettle\$/{p=1} p\" /flash/extlinux/extlinux.conf \\
+  grep -q \"label kettle-prev\" /flash/extlinux/extlinux.conf || awk \"/^label /{p=0} /^label kettle\$/{p=1} p\" /flash/extlinux/extlinux.conf \\
     | sed -e \"s/^label kettle/label kettle-prev/\" -e \"s|menu label .*|menu label Kettle Linux (previous kernel)|\" -e \"s|linux /Image|linux /Image.prev|\" \\
     >>/flash/extlinux/extlinux.conf
   rm -rf /usr/lib/modules/$REL && cp -a spk/usr/lib/modules/$REL /usr/lib/modules/

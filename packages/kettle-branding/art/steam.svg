@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="144" viewBox="0 0 48 144">
+  <defs>
+    <linearGradient id="fade" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-50%" y="-10%" width="200%" height="120%">
+      <feGaussianBlur stdDeviation="1.6"/>
+    </filter>
+  </defs>
+  <path d="M24 136 C6 112 42 94 24 68 C10 48 36 34 24 10" fill="none" stroke="url(#fade)" stroke-width="9" stroke-linecap="round" filter="url(#soft)"/>
+</svg>
