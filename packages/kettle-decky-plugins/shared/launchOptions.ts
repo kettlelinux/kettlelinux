@@ -5,9 +5,8 @@ import { findModuleChild } from "@decky/ui";
 
 const CMD = "%command%";
 
-declare const appDetailsStore: {
-  GetAppDetails(appid: number): { strLaunchOptions?: string; strResolutionOverride?: string; bOverrideInternalResolution?: boolean } | null;
-};
+type AppDetails = { strLaunchOptions?: string; strResolutionOverride?: string; bOverrideInternalResolution?: boolean };
+declare const appDetailsStore: { GetAppDetails(appid: number): AppDetails | null };
 
 export function getAppDetails(appid: number) {
   try {
@@ -17,16 +16,27 @@ export function getAppDetails(appid: number) {
   }
 }
 
-// Current launch options; loads the app's details first if Steam hasn't yet.
-export function getLaunchOptions(appid: number): Promise<string> {
-  const d = getAppDetails(appid);
-  if (d && d.strLaunchOptions !== undefined) return Promise.resolve(d.strLaunchOptions);
+// The app's details straight from Steam. appDetailsStore's copy (getAppDetails) isn't updated
+// by SetAppLaunchOptions and friends (checked on the Portal's client): reading it after a write
+// returns what was there before, and an edit built on that puts the old options back.
+export function getFreshAppDetails(appid: number): Promise<AppDetails | null> {
   return new Promise((resolve) => {
-    const reg = SteamClient.Apps.RegisterForAppDetails(appid, (details: any) => {
-      reg.unregister();
-      resolve(details?.strLaunchOptions ?? "");
-    });
+    let reg: { unregister(): void } | null = null;
+    let done = false;
+    const finish = (d: AppDetails | null) => {
+      if (done) return;
+      done = true;
+      reg?.unregister();
+      resolve(d);
+    };
+    reg = SteamClient.Apps.RegisterForAppDetails(appid, (d: AppDetails) => finish(d ?? null));
+    if (done) reg.unregister(); // the callback ran before reg was assigned
+    setTimeout(() => finish(getAppDetails(appid)), 2000);
   });
+}
+
+export async function getLaunchOptions(appid: number): Promise<string> {
+  return (await getFreshAppDetails(appid))?.strLaunchOptions ?? "";
 }
 
 function split(opts: string): { prefix: string[]; rest: string } {
@@ -105,10 +115,16 @@ export function hasDllOverride(opts: string, dll: string): boolean {
   return !!tok && tok.slice("WINEDLLOVERRIDES=".length).replace(/^"|"$/g, "").split(";").some((e) => e.split("=")[0] === dll);
 }
 
-export async function editLaunchOptions(appid: number, edit: (opts: string) => string) {
-  const before = await getLaunchOptions(appid);
-  const after = edit(before);
-  if (after !== before) SteamClient.Apps.SetAppLaunchOptions(appid, after);
+// Edits run one at a time, so two in flight can't both start from the same options.
+let editQueue: Promise<unknown> = Promise.resolve();
+export function editLaunchOptions(appid: number, edit: (opts: string) => string): Promise<void> {
+  const run = editQueue.then(async () => {
+    const before = await getLaunchOptions(appid);
+    const after = edit(before);
+    if (after !== before) SteamClient.Apps.SetAppLaunchOptions(appid, after);
+  });
+  editQueue = run.catch(() => {});
+  return run;
 }
 
 // The Steam UI's performance-settings store (Quick Access > Performance). Located by shape,

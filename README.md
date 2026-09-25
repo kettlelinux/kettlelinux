@@ -119,7 +119,9 @@ it is launched. Settings are kept when a game is turned off.
   the [Sloptiscaler](https://github.com/justradical/Sloptiscaler) fork as an ARM64EC DLL
   (llvm-mingw), which runs natively inside the FEX-emulated game and adds the SGSR 2 backend.
   SGSR 2 is the only backend there: FSR 2/3 links against stubs, and XeSS/DLSS and the frame
-  generation runtimes are x86-64 vendor binaries. Vulkan games are untested. Turning it on
+  generation runtimes are x86-64 vendor binaries. Tested with Deep Rock Galactic (DX12, DLSS
+  through Streamline, NVIDIA spoofing on): SGSR 2 1279×720 → 1920×1080 at DLSS Quality, image
+  good. Vulkan games are untested. Turning it on
   copies OptiScaler into the game's folder (game folder and proxy DLL name are chosen in the
   panel, `dxgi.dll` by default) and adds `WINEDLLOVERRIDES=<proxy>=n,b` to its launch options;
   turning it off removes both and restores any file it moved aside. It can't stay in the folder
