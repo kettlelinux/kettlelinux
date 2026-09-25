@@ -12,7 +12,7 @@
 # build, diff its debug-package sources against the closest upstream commit again.
 pkgname=mangohud
 pkgver=20260922.1
-pkgrel=1.3
+pkgrel=1.4
 _commit=20700b433adbb1f77f3a52ffe329c70e22d37967
 pkgdesc='Vulkan and OpenGL overlay to display performance information (deckard + Kettle Linux)'
 arch=(aarch64)
@@ -31,7 +31,7 @@ sha256sums=('SKIP'
             '06ff912c0dc62b3a2546ad2dbc40bbe3c2e0c8f93287cdddf457a1d6814afa93'
             '0545cb9dcc09f6d28c82f6eb0446640125c429d2a0d98fd147b1b84ca9e69ef5'
             'ca8bf32684aae67abab9e304fc296cb1e34a7d6cf59a6101a9df5d8117247592'
-            '8e42e118b23dc9b307db29297c03f653a4919d1ae655ea1cf813632ff490401a')
+            '102a65f1d3620de0c471683c245e295b8f54ec5ec7325e193d126f7d668044dd')
 
 prepare() {
   cd MangoHud
