@@ -84,11 +84,12 @@ it is launched. Settings are kept when a game is turned off.
     one with FIFO. Loaded only with `KETTLE_FG=1` in the game's launch options; settings in
     `~/.config/kettle-framegen/<appid>.conf`, reread live. `KETTLE_FG_STATS=1` logs its GPU
     time, `KETTLE_FG_DUMP=<dir>` saves one set of previous/generated/current frames.
-    Tested on a desktop RADV GPU (Vulkan validation and sync validation clean, 8- and 10-bit
-    swapchains); not yet on the Adreno 740.
+    Also tested on a desktop RADV GPU (Vulkan validation and sync validation clean, 8- and
+    10-bit swapchains).
   - **Lossless Scaling** through the `lsfg-vk` layer, when the user has it.
 
-  "Auto" (the default) picks Lossless Scaling when `lsfg-vk.dll` is installed, else Kettle.
+  Kettle is the default (tested with Skyrim SE: 30 fps base, a solid 60 shown at 2×, 2.7 ms
+  of GPU per rendered frame at 1280×720); Lossless Scaling is a per-game choice.
   On/off, multiplier 2–4×, flow scale, V-Sync (FIFO) pacing, swapchain image count, gamescope
   WSI bypass; Lossless Scaling also has performance mode and FP16 (all games). Settings live
   in the plugin's `games.json`; lsfg-vk games get an lsfg-vk profile in

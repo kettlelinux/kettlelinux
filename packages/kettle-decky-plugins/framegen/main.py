@@ -1,12 +1,11 @@
 # Frame Generation: per-game settings for two engines.
-#   kettle  our own layer (packages/kettle-framegen), always there. Loaded only with
+#   kettle  our own layer (packages/kettle-framegen), the default. Loaded only with
 #           KETTLE_FG=1 in the game's launch options; its settings are in
 #           ~/.config/kettle-framegen/<appid>.conf, which it rereads while the game runs.
 #   lsfg    lsfg-vk, with the user's own Lossless Scaling (lsfg-vk.dll). Games that are on get a
 #           profile in ~/.config/lsfg-vk/conf.toml, matched by SteamAppId. The layer stays off
 #           (DISABLE_LSFGVK=1, environment.d) except in games whose launch options unset it.
 #           It watches conf.toml: multiplier, flow scale and performance mode change live.
-# "auto" (the default) is lsfg-vk when lsfg-vk.dll is installed, else ours.
 # Each game's settings live in the plugin's games.json and are kept while the game is off;
 # the frontend edits the launch options.
 #
@@ -33,7 +32,7 @@ PREFIX = "steam-"  # names of the profiles this plugin owns: steam-<appid>
 
 DEFAULTS = {
     "enabled": False,
-    "engine": "auto",           # ENGINES
+    "engine": "kettle",         # ENGINES
 
     "multiplier": 2,
     "flow_scale": 0.8,
@@ -47,7 +46,7 @@ DEFAULTS = {
     "fps_cap": "auto",
 }
 FPS_CAPS = ("auto", "off", "30", "40", "60")
-ENGINES = ("auto", "kettle", "lsfg")
+ENGINES = ("kettle", "lsfg")
 # kept alongside the settings: measurement state for the automatic cap
 STATE = ("measure", "failed_caps")
 
@@ -66,23 +65,16 @@ def _clamp(s: dict) -> dict:
         out[k] = bool(out[k])
     if out["fps_cap"] not in FPS_CAPS:
         out["fps_cap"] = DEFAULTS["fps_cap"]
-    if out["engine"] not in ENGINES:
+    if out["engine"] not in ENGINES:  # incl. "auto" from 1.6 (lsfg-vk when its DLL was there)
         out["engine"] = DEFAULTS["engine"]
     out.update({k: s[k] for k in STATE if k in s})
     return out
 
 
-def _engine(s: dict, dll: dict | None = None) -> str:
-    """The engine a game's settings resolve to: "kettle" or "lsfg"."""
-    if s["engine"] != "auto":
-        return s["engine"]
-    return "lsfg" if (dll or _find_dll())["path"] else "kettle"
-
-
 def _view(appid: int, s: dict) -> dict:
     """Settings plus what the frontend shows and needs for the launch options."""
     live = _session.summary() if _session and _session.appid == appid else None
-    return {**{k: s[k] for k in DEFAULTS}, "refresh": _refresh, "live": live, "active_engine": _engine(s),
+    return {**{k: s[k] for k in DEFAULTS}, "refresh": _refresh, "live": live,
             "measure": s.get("measure"),
             "auto_cap": autocap.decide(s.get("measure"), _refresh, s["multiplier"], s.get("failed_caps", []))}
 
@@ -182,12 +174,12 @@ def _save_games(games: dict[int, dict]):
 
 # ---------- kettle-framegen <appid>.conf ----------
 
-def _sync_kettle(games: dict[int, dict], dll: dict):
+def _sync_kettle(games: dict[int, dict]):
     """One settings file per game on our engine; the layer rereads it while the game runs."""
     os.makedirs(KETTLE_CONF, exist_ok=True)
     for appid, s in games.items():
         path = os.path.join(KETTLE_CONF, f"{appid}.conf")
-        if not (s["enabled"] and _engine(s, dll) == "kettle"):
+        if not (s["enabled"] and s["engine"] == "kettle"):
             if os.path.exists(path):
                 os.remove(path)
             continue
@@ -208,13 +200,13 @@ def _sync_kettle(games: dict[int, dict], dll: dict):
 
 def _sync(games: dict[int, dict]):
     """Rewrite both engines' settings from the store (enabled games only)."""
-    dll = _find_dll()
-    _sync_kettle(games, dll)
+    _sync_kettle(games)
     conf = _load_conf()
     ours = lambda p: str(p.get("name", "")).startswith(PREFIX)
     conf["profile"] = [p for p in conf["profile"] if not ours(p)] + \
-        [_profile(a, s) for a, s in sorted(games.items()) if s["enabled"] and _engine(s, dll) == "lsfg"]
+        [_profile(a, s) for a, s in sorted(games.items()) if s["enabled"] and s["engine"] == "lsfg"]
     # lsfg-vk searches only the main Steam library itself; point it at other libraries
+    dll = _find_dll()
     if dll["path"] and os.path.realpath(dll["lib"]) != os.path.realpath(steamlib.STEAM):
         conf["global"]["dll"] = dll["path"]
     elif conf["global"].get("dll") and not os.path.isfile(os.path.expanduser(conf["global"]["dll"])):
@@ -331,7 +323,7 @@ class Plugin:
     async def set_game(self, appid: int, settings: dict) -> dict:
         games = _load_games()
         new = _clamp({**games.get(appid, DEFAULTS), **settings})
-        if new["enabled"] and _engine(new) == "lsfg" and not _find_dll()["path"]:
+        if new["enabled"] and new["engine"] == "lsfg" and not _find_dll()["path"]:
             raise ValueError("lsfg-vk.dll not found: install Lossless Scaling on its lsfg-vk branch")
         games[appid] = new
         _save_games(games)
