@@ -1,0 +1,24 @@
+# Power: the desktop's system tray applet for kettle-powerd (our own Plasma applet, sources next
+# to this PKGBUILD): performance profile, power limit (Steam's TDP slider) and GPU clock as in
+# Quick Access > Performance, and fan and CPU core settings as in the Power plugin, kept for
+# Desktop Mode apart from Game Mode's. In the tray by default (EnabledByDefault).
+pkgname=kettle-power-applet
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Kettle Linux power, fan and clock controls in the desktop system tray'
+arch=(aarch64)
+license=(BSD-3-Clause)
+depends=(qt6-base qt6-declarative kconfig libplasma plasma-workspace kirigami kettle-power)
+makedepends=(cmake ninja extra-cmake-modules)
+
+build() {
+  cmake -B build -S "$startdir" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}

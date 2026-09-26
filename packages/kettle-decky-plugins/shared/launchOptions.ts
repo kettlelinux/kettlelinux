@@ -101,6 +101,14 @@ export function withUnset(opts: string, name: string, on: boolean): string {
   return join(kept, rest);
 }
 
+// Add a wrapper command (such as `bash -c '...' --`) just before %command%, after the env
+// prefix. The edits above keep it as it is, provided its words are single-spaced and none is
+// VAR=value or `env`; VAR=value tokens they add go before it, `env -u` after it.
+export function withWrapper(opts: string, wrapper: string): string {
+  const { prefix, rest } = split(opts);
+  return join([...prefix, wrapper], rest);
+}
+
 export function hasEnv(opts: string, name: string): boolean {
   return split(opts).prefix.some((t) => t.startsWith(`${name}=`));
 }

@@ -1,0 +1,28 @@
+# ALSA UCM profile for the AYN Odin 2 family (card "AYN-Odin2"), from ROCKNIX's alsa-ucm-conf
+# patches. Only new files: Valve's alsa-ucm-conf stays untouched.
+pkgname=kettle-ucm-odin2portal
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='ALSA UCM profile for the AYN Odin 2 Portal'
+arch=(any)
+license=(BSD-3-Clause)
+depends=(alsa-ucm-conf)
+makedepends=(git)
+source=(0001_Add-AYN-Odin2.patch
+        0002_AYN-Odin2---Add-EFI-boot-compatibility.patch)
+sha256sums=('6424dbaf259d0ccd073e010e48e3b69157aa859059e39842a8178fbf202f9efc'
+            'ef394db0e834afb55ef20c315c15d3b4c452f951954cf61e1469f2c0c4650dbe')
+
+build() {
+  rm -rf ucm && git init -q ucm
+  local p
+  for p in "${source[@]}"; do git -C ucm apply "$srcdir/$p"; done
+  # alsa-lib looks up conf.d/<driver>/<card longname>.conf. Booted via EFI the longname is
+  # "ayn-AYNOdin2" (DMI vendor-product); the patches only alias "AYN-Odin2" and "ayn-AYNOdin2-".
+  ln -sf ../../AYN/Odin2/AYN-Odin2.conf ucm/ucm2/conf.d/sm8550/ayn-AYNOdin2.conf
+}
+
+package() {
+  install -d "$pkgdir/usr/share/alsa"
+  cp -a --no-preserve=ownership "$srcdir/ucm/ucm2" "$pkgdir/usr/share/alsa/"
+}

@@ -6,11 +6,12 @@
 #   power      per-game fan curve / fixed speed and CPU core parking and caps, a live power and
 #              temperature readout, the battery charge limit (all through kettle-powerd)
 #   welcome    opens once on first boot: a tour, a setup checklist, and optional components
-#              (components.json) downloaded from their upstream source on request
+#              (components.json) downloaded from their upstream source on request; also applies
+#              game fixes (welcome/src/fixes.ts): launch options a game needs to run at all
 # Sources live next to this PKGBUILD; shared/ holds code both frontends use.
 pkgbase=kettle-decky-plugins
 pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome kettle-decky-power)
-pkgver=1.11.0
+pkgver=1.12.0
 pkgrel=1
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)

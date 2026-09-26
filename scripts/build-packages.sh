@@ -45,11 +45,22 @@ for name in "${names[@]}"; do
   pacman_root "$CHROOT" -Sy --needed $deps
   rm -rf "$CHROOT/build/$name"; mkdir -p "$CHROOT/build"
   cp -r "$src" "$CHROOT/build/$name"
-  # reuse downloaded sources
-  [ -d "$ROOT/cache/src" ] && cp "$ROOT"/cache/src/* "$CHROOT/build/$name/" 2>/dev/null || true
+  # reuse the sources a previous build downloaded (cache/src/<name>), so a build doesn't
+  # depend on upstream still having them
+  [ -d "$ROOT/cache/src/$name" ] && cp -a "$ROOT/cache/src/$name/." "$CHROOT/build/$name/"
   chown -R 1000:1000 "$CHROOT/build/$name"
-  chroot "$CHROOT" runuser -u builder -- bash -c "cd /build/$name && makepkg --nodeps --noconfirm --clean -f"
-  for p in "$CHROOT/build/$name"/*.pkg.tar.zst; do
+  # PKGDEST apart from the sources, so a package used as a source isn't taken for ours
+  chroot "$CHROOT" runuser -u builder -- bash -c "cd /build/$name && mkdir -p .out && PKGDEST=/build/$name/.out makepkg --nodeps --noconfirm --clean -f"
+  # ... and keep what this one downloaded: the PKGBUILD's remote sources, by local name
+  # ("name::url", else the URL's last part; git sources are bare clones without .git)
+  mkdir -p "$ROOT/cache/src/$name"
+  bash -c ". '$src/PKGBUILD'; for s in \"\${source[@]}\" \"\${source_aarch64[@]}\"; do
+      case \"\$s\" in *://*) ;; *) continue ;; esac
+      n=\"\${s%%::*}\"; [ \"\$n\" = \"\$s\" ] && { n=\"\${s%%[#?]*}\"; n=\"\${n##*/}\"; n=\"\${n%.git}\"; }
+      echo \"\$n\"; done" | while read -r b; do
+    [ -e "$CHROOT/build/$name/$b" ] && cp -a --no-preserve=ownership "$CHROOT/build/$name/$b" "$ROOT/cache/src/$name/"
+  done
+  for p in "$CHROOT/build/$name"/.out/*.pkg.tar.zst; do
     cp "$p" "$LOCAL_REPO/"
     repo-add -q -R "$LOCAL_REPO/kettle.db.tar.zst" "$LOCAL_REPO/$(basename "$p")"
     log "added $(basename "$p")"

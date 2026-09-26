@@ -7,3 +7,7 @@ PropagatesStopTo=graphical-session.target
 Requires=gamescope-session.service
 BindsTo=gamescope-session.service
 Wants=steam.service
+# The pad as a Steam Deck controller (InputPlumber), started before Steam
+Wants=kettle-inputplumber.service
+# The power button goes to Steam (sleep / power menu) while Game Mode runs; logind otherwise
+Wants=steamos-powerbuttond.service

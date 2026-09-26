@@ -12,12 +12,16 @@
 #    The pinned sha256 is what makes a download trustworthy: a mismatch is never installed.
 #    Components land in ~/.local/share/kettle/components/<id>; what's installed (and which
 #    version) is recorded in the plugin's installed.json.
+#
+# Welcome also sets what the device starts up in, Game Mode or the desktop: steamos-manager's
+#    default login mode, through steamosctl on the user's session bus.
 import asyncio
 import hashlib
 import json
 import os
 import re
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import threading
@@ -30,10 +34,24 @@ MANIFEST = os.path.join(decky.DECKY_PLUGIN_DIR, "components.json")
 COMPONENTS = os.path.join(decky.DECKY_USER_HOME, ".local", "share", "kettle", "components")
 INSTALLED = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "installed.json")
 WELCOME = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "welcome.json")
+FIXES = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "fixes.json")  # game fixes applied (src/fixes.ts)
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _ARCHIVES = ("zip", "tar", "file", "files")
 _NAME = re.compile(r"[\w.-]+")
 _SHA = re.compile(r"[0-9a-f]{64}")
+
+
+_MODES = ("game", "desktop")
+
+
+def _steamosctl(*args: str) -> str:
+    # Decky starts this backend as the user but without the session's environment
+    run = f"/run/user/{os.getuid()}"
+    env = {**os.environ, "XDG_RUNTIME_DIR": run, "DBUS_SESSION_BUS_ADDRESS": f"unix:path={run}/bus"}
+    r = subprocess.run(["steamosctl", *args], env=env, capture_output=True, text=True, timeout=10)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip() or f"steamosctl {args[0]} failed")
+    return r.stdout.strip()
 
 
 def _valid_download(d) -> bool:
@@ -176,6 +194,30 @@ class Plugin:
             return False
         _write_json(WELCOME, {"seen": True})
         return True
+
+    async def applied_fixes(self) -> list[str]:
+        return _read_json(FIXES, [])
+
+    async def mark_fix_applied(self, fid: str):
+        applied = _read_json(FIXES, [])
+        if fid not in applied:
+            _write_json(FIXES, applied + [fid])
+        decky.logger.info("applied game fix %s", fid)
+
+    async def boot_mode(self) -> str | None:
+        """What the device starts up in: "game", "desktop", or None if steamos-manager can't say."""
+        try:
+            out = await asyncio.to_thread(_steamosctl, "get-default-login-mode")
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as e:
+            decky.logger.warning("reading the start-up mode: %s", e)
+            return None
+        return next((m for m in _MODES if m in out.lower()), None)
+
+    async def set_boot_mode(self, mode: str):
+        if mode not in _MODES:
+            raise ValueError(f"unknown start-up mode {mode!r}")
+        await asyncio.to_thread(_steamosctl, "set-default-login-mode", mode)
+        decky.logger.info("start-up mode set to %s", mode)
 
     async def install(self, cid: str):
         c = _component(cid)

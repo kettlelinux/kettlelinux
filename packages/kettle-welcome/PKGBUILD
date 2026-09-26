@@ -1,28 +1,34 @@
-# Kettle Linux's Desktop Mode welcome: our pages and intro for KDE's Welcome Center
-# (plasma-welcome), which opens on a user's first desktop login and stays in the application
-# menu as Welcome Center.
-#   intro-customization.desktop  the first page's intro text and picture (the Plasma splash's
-#                                kettle), in place of "Welcome to SteamOS" from os-release
-#   pages/01-Desktop.qml         controller-as-mouse controls, on-screen keyboard, Game Mode,
-#                                and a button for the Kettle Installer (internal storage)
-#   pages/02-Games.qml           games outside Steam: Lutris, Heroic, Windows games via Wine
-#   pages/03-Extras.qml          Gaming Extras: optional apps (emulators, streaming, Steam
-#                                helpers) installed per user from Flathub by welcome-flatpak;
-#                                also in the menu on its own (org.kettle.gaming-extras.desktop)
+# Kettle Welcome: the desktop's welcome window and hub (our own Kirigami app, src/). Opens on a
+# user's first desktop login (/etc/xdg/autostart, --autostart; "Show this window every time the
+# desktop starts" makes that every login), and from the application menu as Kettle Welcome.
+# Pages: Welcome (get-started checklist), Setup (System Settings modules in their own windows:
+# password and account, Wi-Fi, display, sound, ...), Controls (the controller as mouse and
+# keyboard, Return to Game Mode), Games (Heroic, Lutris, Steam; Windows games), Gaming Extras,
+# System (Kettle Installer, Discover, System Monitor, battery, about).
+#
+# Gaming Extras: optional apps (emulators, streaming, Steam helpers) with aarch64 builds on
+# Flathub, installed per user by welcome-flatpak, which runs as a transient systemd user unit so
+# installs finish even if the window is closed. Also in the menu on its own
+# (org.kettle.GamingExtras.desktop: kettle-welcome --page extras).
 pkgname=kettle-welcome
-pkgver=1.0.0
-pkgrel=2
-pkgdesc='Kettle Linux pages for the Plasma Welcome Center'
-arch=(any)
+pkgver=2.0.0
+pkgrel=1
+pkgdesc='Kettle Linux welcome and setup hub for the desktop'
+arch=(aarch64)
 license=(BSD-3-Clause)
-depends=(plasma-welcome kirigami-addons plasma5support flatpak systemd kettle-plasma-splash)
+depends=(qt6-base qt6-declarative kirigami kirigami-addons kcoreaddons kconfig kdbusaddons kio
+         kservice kwindowsystem qqc2-desktop-style kde-cli-tools flatpak systemd
+         kettle-plasma-splash)
+makedepends=(cmake ninja extra-cmake-modules)
+
+build() {
+  cmake -B build -S "$startdir" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build build
+}
 
 package() {
-  local share="$pkgdir/usr/share/plasma/plasma-welcome"
-  install -Dm644 "$startdir/intro-customization.desktop" -t "$share"
-  # every file in extra-pages is loaded as a page, in name order
-  install -Dm644 "$startdir"/pages/*.qml -t "$share/extra-pages"
-  install -Dm755 "$startdir/welcome-flatpak" -t "$pkgdir/usr/lib/kettle"
-  install -Dm644 "$startdir/org.kettle.gaming-extras.desktop" -t "$pkgdir/usr/share/applications"
+  DESTDIR="$pkgdir" cmake --install build
   install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
 }

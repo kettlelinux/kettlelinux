@@ -7,7 +7,7 @@
 # It also reads GPU load from debugfs dri/0/perf_now (kernel patch 1110), so let the user
 # traverse the debugfs root (0711: no listing; world-readable files become reachable).
 set -eu
-user="${1:-steamos}"
+user="${1:-kettle}"
 t=/sys/kernel/tracing
 chmod 755 "$t" "$t/instances" "$t/events"
 chmod 644 "$t/events/header_page" "$t/events/header_event"

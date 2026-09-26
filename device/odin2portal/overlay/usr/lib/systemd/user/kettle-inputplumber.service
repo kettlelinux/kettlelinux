@@ -1,0 +1,15 @@
+[Unit]
+Description=Steam Deck controller emulation for Game Mode (InputPlumber)
+# InputPlumber is a system service; it runs only while Game Mode does, so the Plasma desktop
+# controller (kettle-desktop-controller) gets the raw pad. polkit lets the session start and
+# stop it (usr/share/polkit-1/rules.d/50-kettle-inputplumber.rules).
+PartOf=gamescope-session.target
+After=gamescope-session.service
+# before Steam enumerates controllers, so it finds the Deck controller, not the raw pad
+Before=steam.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/systemctl start inputplumber.service
+ExecStop=/usr/bin/systemctl stop inputplumber.service

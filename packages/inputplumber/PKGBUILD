@@ -1,0 +1,49 @@
+# InputPlumber: presents the Portal's gamepad (rsinput, "AYN Odin2 Gamepad") to Steam as a Steam
+# Deck controller in Game Mode: Deck button glyphs and layouts, Steam Input, and the button below
+# the right stick as Quick Access. Upstream's Odin 2 config gives the Portal an Xbox Elite
+# controller; 40-kettle-odin2portal.yaml sorts first and claims the pad for the Deck target.
+# Runs with Game Mode only (kettle-inputplumber.service, device overlay): the desktop's own
+# controller (kettle-desktop-controller) needs the raw pad.
+#
+# Built with upstream Rust (build time only): InputPlumber's crates need a newer compiler than
+# the snapshot's 1.78.
+pkgname=inputplumber
+pkgver=0.81.0
+pkgrel=1
+_rust=1.98.1
+_rustdate=2026-09-03
+pkgdesc='Input router and remapper daemon (Steam Deck controller emulation for the Portal)'
+arch=(aarch64)
+url='https://github.com/ShadowBlip/InputPlumber'
+license=(GPL-3.0-or-later)
+depends=(dbus libevdev libiio systemd-libs)
+makedepends=(clang make pkgconf)
+options=(!lto)  # upstream's release profile does its own (Rust) LTO
+source=("InputPlumber-$pkgver.tar.gz::https://github.com/ShadowBlip/InputPlumber/archive/refs/tags/v$pkgver.tar.gz"
+        "https://static.rust-lang.org/dist/$_rustdate/rust-$_rust-aarch64-unknown-linux-gnu.tar.xz"
+        40-kettle-odin2portal.yaml)
+noextract=("rust-$_rust-aarch64-unknown-linux-gnu.tar.xz")
+sha256sums=('804ff31b6b67efe266f21cc752282b1defe14b34916261d0600da1b6094a21a7'
+            '0b514a8cc1cbcd939bff0f151661fe58b6ea5c7a7f645a5098c69e32e8c1e0a2'
+            'a92862ed5f5d344754d2766b981245e6abf64b01e7eddf5b971d194723d855d6')
+
+prepare() {
+  rm -rf rust-dist rust && mkdir rust-dist
+  bsdtar -xf "rust-$_rust-aarch64-unknown-linux-gnu.tar.xz" -C rust-dist --strip-components 1
+  rust-dist/install.sh --prefix="$srcdir/rust" --disable-ldconfig \
+    --components=rustc,cargo,rust-std-aarch64-unknown-linux-gnu >/dev/null
+}
+
+build() {
+  cd "InputPlumber-$pkgver"
+  export PATH="$srcdir/rust/bin:$PATH" CARGO_HOME="$srcdir/cargo-home"
+  cargo build --release --locked --target aarch64-unknown-linux-gnu
+}
+
+package() {
+  cd "InputPlumber-$pkgver"
+  export PATH="$srcdir/rust/bin:$PATH" CARGO_HOME="$srcdir/cargo-home"
+  make install PREFIX="$pkgdir/usr" NO_RELOAD=true TARGET_ARCH=aarch64-unknown-linux-gnu
+  install -Dm644 "$srcdir/40-kettle-odin2portal.yaml" -t "$pkgdir/usr/share/inputplumber/devices"
+  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+}

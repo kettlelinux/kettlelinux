@@ -1,7 +1,8 @@
-import { ButtonItem, Field, Navigation, PanelSection, PanelSectionRow, ProgressBarWithInfo, SidebarNavigation, staticClasses } from "@decky/ui";
+import { ButtonItem, DropdownItem, Field, Navigation, PanelSection, PanelSectionRow, ProgressBarWithInfo, SidebarNavigation, staticClasses } from "@decky/ui";
 import { callable, definePlugin, routerHook, toaster } from "@decky/api";
 import { FC, ReactNode, useEffect, useState } from "react";
 import { FaDesktop, FaDownload, FaGamepad, FaHandSparkles, FaMugHot } from "react-icons/fa";
+import { applyGameFixes } from "./fixes";
 
 type Component = {
   id: string;
@@ -17,10 +18,13 @@ type Component = {
   error: string | null;
 };
 type Status = { components: Component[] };
+type BootMode = "game" | "desktop";
 
 const status = callable<[], Status>("status");
 const firstRun = callable<[], boolean>("first_run");
 const install = callable<[id: string], void>("install");
+const bootMode = callable<[], BootMode | null>("boot_mode");
+const setBootMode = callable<[mode: BootMode], void>("set_boot_mode");
 const uninstall = callable<[id: string], void>("uninstall");
 
 const ROUTE = "/kettle-welcome";
@@ -107,6 +111,41 @@ function Setup({ s, Row }: { s: Status; Row: Row }) {
   );
 }
 
+// steamos-manager's default login mode; switching from the power menu only lasts until a reboot
+const BOOT_MODES = [
+  { data: "game" as BootMode, label: "Game Mode (Steam)" },
+  { data: "desktop" as BootMode, label: "Desktop" },
+];
+
+function BootModeSetting() {
+  const [mode, setMode] = useState<BootMode | null>(null);
+  useEffect(() => {
+    bootMode().then(setMode).catch(() => {});
+  }, []);
+  const choose = async (m: BootMode) => {
+    const was = mode;
+    setMode(m);
+    try {
+      await setBootMode(m);
+    } catch (e) {
+      setMode(was);
+      toaster.toast({ title: "Welcome", body: `Couldn't change the start-up mode: ${e}` });
+    }
+  };
+  return (
+    <div style={{ maxWidth: "720px" }}>
+      <DropdownItem
+        label="Start up in"
+        description="What Kettle opens when it turns on. Switching from the power menu lasts until the next restart."
+        rgOptions={BOOT_MODES}
+        selectedOption={mode}
+        disabled={mode === null}
+        onChange={(o) => choose(o.data)}
+      />
+    </div>
+  );
+}
+
 const Text = ({ children }: { children: ReactNode }) => <div style={{ lineHeight: "22px", maxWidth: "720px" }}>{children}</div>;
 
 function SetupPage() {
@@ -133,18 +172,21 @@ const PAGES = [
     route: `${ROUTE}/welcome`,
     icon: <FaMugHot />,
     content: (
-      <Text>
-        <h2>Welcome to Kettle Linux</h2>
-        <p>
-          Kettle is a SteamOS-style system for the AYN Odin 2 Portal: Valve's arm64 Steam client with Game Mode, a
-          Plasma desktop, and Windows games through Proton ARM64.
-        </p>
-        <p>
-          Kettle's own tools live in the Quick Access menu (the <b>…</b> button), under the plug icon: Frame
-          Generation, Upscaling, and this Welcome page. Everything is off until you turn it on for a game.
-        </p>
-        <p>The last page, Setup, lists optional extras. You can come back here from Quick Access at any time.</p>
-      </Text>
+      <>
+        <Text>
+          <h2>Welcome to Kettle Linux</h2>
+          <p>
+            Kettle is a SteamOS-style system for the AYN Odin 2 Portal: Valve's arm64 Steam client with Game Mode, a
+            Plasma desktop, and Windows games through Proton ARM64.
+          </p>
+          <p>
+            Kettle's own tools live in the Quick Access menu (the <b>…</b> button), under the plug icon: Frame
+            Generation, Upscaling, and this Welcome page. Everything is off until you turn it on for a game.
+          </p>
+          <p>The last page, Setup, lists optional extras. You can come back here from Quick Access at any time.</p>
+        </Text>
+        <BootModeSetting />
+      </>
     ),
   },
   {
@@ -229,6 +271,7 @@ export default definePlugin(() => {
   firstRun()
     .then((first) => first && setTimeout(openWelcome, 3000))
     .catch(() => {});
+  applyGameFixes().catch((e) => console.error("Welcome: game fixes failed", e));
   return {
     name: "Welcome",
     titleView: <div className={staticClasses.Title}>Welcome</div>,

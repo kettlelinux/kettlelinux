@@ -12,21 +12,21 @@ a patched mainline kernel plus Valve's SteamOS "deckard" (Steam Frame) aarch64 u
 | `kernel/config/` | `base.config` (ROCKNIX SM8550) + `steamos.config` fragment; `generated.config` is the result |
 | `scripts/build-kernel.sh` | fetch, patch (`--fuzz=0`), config (asserts every fragment option survived), LLVM cross-build → `out/kernel/` |
 | `scripts/refresh-patches.sh` | rebase the stack's context onto a new pinned kernel |
-| `scripts/build-firmware.sh` | Portal firmware: ROCKNIX extra-firmware (DSPs, amp, topology, WCN7850) + linux-firmware GPU/BT → `out/firmware/` |
+| `scripts/mirror-repos.sh` | freeze Valve's deckard repos into `cache/mirror/` (what our builds use, or `--full`); builds install from it once it exists, or from `KETTLE_MIRROR=<url>` |
 | `scripts/build-image.sh` | rootless SD image: deckard packages via pacman in a user namespace (qemu binfmt), \KERNEL boot.img → `out/kettle-DATE.img` |
 | `scripts/mkbootimg.py` | Android boot.img v0 writer (byte-identical to AOSP mkbootimg for our args) |
 | `image/` | `pacman.conf` (deckard `mash-20240428.1` + `release-0.4` hotfixes), `packages.txt` |
-| `device/odin2portal/` | rootfs overlay (s2idle, power key, first-boot grow, sshd) + ALSA UCM patches |
-| `scripts/build-packages.sh` | rootless makepkg in an aarch64 chroot → local `[kettle]` repo (installed ahead of Valve's) |
+| `device/odin2portal/` | rootfs overlay (s2idle, power key, first-boot grow, sshd) |
+| `scripts/build-packages.sh` | rootless makepkg in an aarch64 chroot → local `[kettle]` repo (installed ahead of Valve's); downloaded sources are kept in `cache/src/<name>/` and reused |
 | `scripts/push-kernel.sh` | install out/kernel on a running Portal over SSH (keeps previous kernel as a boot entry) |
-| `packages/` | our PKGBUILDs: `kscreen` (Display Settings, absent from all deckard snapshots), `mangohud` (Valve's deckard build + Portal sensors for the Steam performance overlay), `plasma-keyboard` (desktop on-screen keyboard), `plymouth` + `kettle-branding` (boot splash, Steam startup movie, Plasma splash), `decky-loader` + `kettle-decky-plugins` + `kettle-framegen` + `optiscaler-arm64ec` (+ build-only `directx-shader-compiler`) + `gamescope` (SGSR 1) (Game Mode plugins, below), `kettle-power` (power, clocks and fan behind Steam's Performance panel and the Power plugin, below), `plasma-welcome` + `kettle-welcome` (Desktop Mode welcome), `wine` + `fex-emu-wine` + `dxvk` + `vkd3d-proton` + `winetricks` + `cabextract` + `lutris` + `heroic-games-launcher` (games outside Steam, below) |
+| `packages/` | our PKGBUILDs: `kettle-firmware-odin2portal` (ROCKNIX extra-firmware DSPs, amp, topology, WCN7850 + linux-firmware GPU/BT, pinned), `kettle-ucm-odin2portal` (ALSA UCM for `AYN-Odin2`), `kscreen` (Display Settings, absent from all deckard snapshots), `mangohud` (Valve's deckard build + Portal sensors for the Steam performance overlay), `plasma-keyboard` (desktop on-screen keyboard), `plymouth` + `kettle-branding` (boot splash, Steam startup movie, Plasma splash), `decky-loader` + `kettle-decky-plugins` + `kettle-framegen` + `optiscaler-arm64ec` (+ build-only `directx-shader-compiler`) + `gamescope` (SGSR 1) (Game Mode plugins, below), `kettle-power` + `kettle-power-applet` (power, clocks and fan behind Steam's Performance panel, the Power plugin and the desktop's Power applet, below), `kettle-welcome` (Desktop Mode welcome and hub), `kettle-firefox-desktop` (menu entry, icons and default-browser setting for Valve's bare `firefox`; the taskbar's "Install Chromium" placeholder is left out via `NoExtract`), `wine` + `fex-emu-wine` + `dxvk` + `vkd3d-proton` + `winetricks` + `cabextract` + `lutris` + `heroic-games-launcher` (games outside Steam, below) |
 | `tools/` | `bc` shim; `qemu-aarch64-static` (extracted from Arch's package, not installed) |
 
 Build (x86_64 host, no root needed):
 ```sh
 scripts/build-kernel.sh      # ~3 min on 32 cores
-scripts/build-firmware.sh
 scripts/build-packages.sh    # our own packages (packages/*/PKGBUILD) -> out/repo/aarch64
+scripts/mirror-repos.sh      # once: freeze Valve's repos locally (~2 GB); later builds use it
 scripts/build-image.sh       # reads WIFI_SSID/WIFI_PSK/SSH_PUBKEY from local.env (gitignored)
 ```
 Flashing and the hardware checklist: [docs/TESTING.md](docs/TESTING.md).
@@ -39,20 +39,28 @@ restore: [docs/INTERNAL-INSTALL.md](docs/INTERNAL-INSTALL.md).
 - [x] Boots on hardware via U-Boot (systemd-boot/extlinux) and the ROCKNIX ABL path
 - [x] Plasma 6.2.5 desktop (SteamOS desktop mode), audio (UCM alias fix), display scale 1.5
 - [x] Steam: Valve's arm64 client + own handheld Game Mode session (gamescope DRM), steamos-manager switching
+- [ ] Boots straight into Game Mode (`/etc/sddm.conf.d/zz-holo-autologin.conf`); "Start up in" (Game
+      Mode or Desktop) on both Welcome pages sets steamos-manager's default login mode — untested on hardware
 - [x] Desktop mode: plasma-keyboard on-screen keyboard (KWin input method) and gamepad mouse mode (below)
-- [ ] Desktop welcome (Welcome Center with Kettle pages, Gaming Extras from Flathub) and games outside Steam (ARM64EC Wine + FEX + DXVK/vkd3d-proton, Lutris, Heroic) — built, untested on hardware
+- [ ] Desktop welcome (Kettle Welcome hub, Gaming Extras from Flathub) and games outside Steam (ARM64EC Wine + FEX + DXVK/vkd3d-proton, Lutris, Heroic) — built, untested on hardware
 - [ ] Game Mode plugins: Decky Loader with Frame Generation (kettle-framegen) and Upscaling (gamescope FSR 1/SGSR 1; SGSR 2, Arm ASR, FSR 2.2 via OptiScaler) — SGSR 2 validated in Deep Rock Galactic, the rest built
-- [ ] InputPlumber (Steam Deck controller emulation for the rsinput pad)
+- [ ] InputPlumber (Steam Deck controller emulation for the rsinput pad): `packages/inputplumber` (0.81.0 from
+      source) with `40-kettle-odin2portal.yaml` (Deck target; the button below the right stick is Quick Access),
+      run by Game Mode only (`kettle-inputplumber.service`) so the desktop controller keeps the raw pad;
+      `kettle-qam-button` remains as a fallback — built, untested on hardware
 - [ ] Boot chain: ESP with `BOOTAA64.EFI` (steamcl/GRUB, A/B) — or boot.img v0 `KERNEL` for first bring-up
-- [ ] Firmware package: linux-firmware-qcom (a740/gmu/zap) + Portal ADSP/CDSP/topology blobs
-- [ ] Mirror the pinned deckard repos locally (Valve prunes snapshots)
-- [ ] Own packages: kernel, firmware, handheld gamescope session (DRM backend), inputplumber + AYN mapping,
-      ALSA UCM for `AYN-Odin2`, powerbuttond hwdb
+- [x] Firmware package: linux-firmware-qcom (a740/gmu/zap) + Portal ADSP/CDSP/topology blobs (`kettle-firmware-odin2portal`)
+- [x] Mirror the pinned deckard repos locally (Valve prunes snapshots; the hotfix repo isn't a snapshot at all): `scripts/mirror-repos.sh`
+- [ ] Own packages: kernel. Done: inputplumber + AYN mapping, firmware, gamescope, ALSA UCM for `AYN-Odin2`
+      (`kettle-ucm-odin2portal`), Game Mode power button (Valve's `steamos-powerbuttond`: its hwdb already
+      matches `pmic_pwrkey`; runs with Game Mode, untested on hardware)
 - [ ] Power: kettle-powerd (TDP budget, profiles, GPU clock, charge limit, fan control via
       steamos-manager remotes.d) + Power plugin (per-game fan curve, core parking). On hardware:
       profiles, GPU clock, fan modes, core parking and the TDP budget (stress-ng 9.2 W held at
       5 W on the charger) work through steamos-manager; not yet checked in Steam's own UI or on
       battery. No charge limit: the charger firmware doesn't support it
+- [ ] Desktop Mode Power applet (system tray: profile, TDP, GPU clock, fan, CPU cores) — built,
+      tested against kettle-powerd on a fake sysfs, untested on hardware
 - [ ] Suspend: s2idle validation on hardware (wake sources, rsinput/Wi-Fi/panel resume, drain)
 - [ ] Image: A/B btrfs rootfs + RAUC with our own keyring/compatible (`kettle-aarch64`)
 
@@ -99,18 +107,29 @@ The on-screen keyboard also pops up by itself whenever a text field gets focus
 (`KWIN_IM_SHOW_ALWAYS=1`), and from the keyboard icon in the system tray.
 
 ## Desktop welcome and Gaming Extras
-The first desktop login opens KDE's Welcome Center (`plasma-welcome`, built by us at 6.2.5 to
-match Plasma; the deckard base has 6.0.4). Its first page carries Kettle's intro
-(`intro-customization.desktop`) instead of "Welcome to SteamOS" from os-release, and
-`kettle-welcome` adds three pages after KDE's own (Welcome, Simple by Default, Powerful When
-Needed, Discover):
-1. **Desktop Mode**: the gamepad controls above, the on-screen keyboard, the way back to Game
-   Mode, and a button that opens the Kettle Installer (internal storage, [docs/INTERNAL-INSTALL.md](docs/INTERNAL-INSTALL.md))
-2. **Games Outside Steam**: Heroic and Lutris (below), and adding their games to Steam
-3. **Gaming Extras**: optional apps, ticked and installed from Flathub for the user only
-   (`flatpak --user`, no password). `welcome-flatpak` runs the installs as a transient
-   systemd user unit, so they finish even if the window is closed. The page is also in the
-   application menu as **Gaming Extras** (`plasma-welcome --pages 03-Extras`).
+`kettle-welcome` is our own Kirigami app (`packages/kettle-welcome/src`), the desktop's welcome
+window and a hub to come back to: it opens on a user's first desktop login
+(`/etc/xdg/autostart`, `--autostart`; the "Show this window every time the desktop starts"
+switch makes that every login, `~/.config/kettle-welcomerc`), and from the application menu as
+**Kettle Welcome**. A second start raises the open window (`--page <name>` picks the page).
+Pages, in a sidebar:
+- **Welcome**: get started (Wi-Fi, change the password, gaming apps, install to internal
+  storage), then the other pages and Return to Game Mode, and **Start up in**: Game Mode or
+  Desktop (`steamosctl set-default-login-mode`)
+- **Setup**: System Settings modules in their own windows (`kcmshell6`): password and account
+  (`kcm_users`; the password starts as `kettle`, which also guards SSH and sudo), Wi-Fi,
+  display, sound, power, game controllers, on-screen keyboard, language, date and time,
+  appearance, all settings
+- **Controls**: the gamepad controls above, the on-screen keyboard, Return to Game Mode
+- **Games**: Heroic, Lutris and Steam; adding their games to Game Mode; how Windows games run
+- **Gaming Extras**: optional apps, ticked and installed from Flathub for the user only
+  (`flatpak --user`, no password). `welcome-flatpak` runs the installs as a transient systemd
+  user unit, so they finish even if the window is closed. Also in the menu as **Gaming Extras**
+  (`kettle-welcome --page extras`).
+- **System**: Kettle Installer (internal storage), Discover, System Monitor, battery, about
+
+`kettle-welcome --screenshot DIR` saves every page as `DIR/<page>.png` and quits (for checking
+layouts, e.g. offscreen in the build chroot).
 
 Gaming Extras lists only apps with an aarch64 build on Flathub. RetroArch, Moonlight, BoilR
 and Ludusavi start ticked:
@@ -122,8 +141,7 @@ and Ludusavi start ticked:
 | Streaming and more | Moonlight, Chiaki4deck, Prism Launcher, Vesktop |
 
 x86-only on Flathub, so left out: PCSX2, DuckStation, Cemu, shadPS4, RetroDECK, Bottles,
-Protontricks, Discord, OBS, Parsec. The Welcome Center opens again from the menu (Welcome
-Center); it only opens by itself once per user (`LastSeenVersion` in `plasma-welcomerc`).
+Protontricks, Discord, OBS, Parsec.
 
 ## Games outside Steam
 Windows games outside Steam run the way Proton ARM64 runs them inside Steam: an ARM64EC Wine
@@ -238,12 +256,18 @@ it is launched. Settings are kept when a game is turned off.
     the recommended way to generate frames.
 - **Welcome**: a full-screen page that opens once, on the first Game Mode boot (a tour of
   Kettle, Game Mode and the desktop mode controls), then stays reachable from its Quick
-  Access panel. Its setup checklist offers optional components: software that can't be
+  Access panel. Its Welcome tab has **Start up in**: Game Mode (the default) or Desktop,
+  steamos-manager's default login mode (`steamosctl`, on the user's session bus). Its setup checklist offers optional components: software that can't be
   shipped in the image, listed
   in `welcome/components.json` with its upstream URL and a pinned sha256, downloaded only when
   the user asks, verified, and unpacked to `~/.local/share/kettle/components/<id>`. The list is
   empty for now; an entry belongs there only when the component can't be built and shipped
   cleanly and a legitimate upstream download exists.
+  It also applies game fixes (`welcome/src/fixes.ts`): launch options a game needs to run here
+  at all, added once to a game in the library (recorded in the plugin's `fixes.json`, so
+  removing one keeps it off). **DOOM Eternal**: its idTechLauncher refuses non-NVIDIA/AMD/Intel
+  GPUs ("GPU Validation Failed"), so a `bash -c` wrapper swaps it for `DOOMEternalx64vk.exe`
+  in `%command%`; the game itself runs on the Adreno.
 
 Licensing: kettle-framegen and the plugins are ours (BSD-3-Clause).
 
@@ -287,6 +311,22 @@ applied while the game runs (the plugin reports the running game to kettle-power
 - the prime core on/off, 1–4 performance cores online, and a max clock per cluster;
 - a live readout (draw, battery, hottest fan zone, fan RPM, clocks, GPU busy, what Steam has
   set), and the charge limit where the firmware has one.
+
+**Power applet** (`kettle-power-applet`, Desktop Mode): Power (a speedometer) in Plasma's
+system tray, in by default, with a readout, the profile, TDP limit and GPU clock Steam has
+in Quick Access > Performance, and the Power plugin's fan and CPU core settings. Desktop Mode
+has settings of its own, as a game has in Game Mode:
+- fan and CPU: the applet makes `desktop` kettle-powerd's active game, so what is set here is
+  kept under that key; until something is, Game Mode's all-games settings apply, and **Use
+  Game Mode's Settings** goes back to them. When the desktop ends, the Power plugin sets the
+  active game again as Game Mode starts;
+- profile, TDP limit, GPU clock: device-wide in kettle-powerd, and Steam sets its own again in
+  Game Mode, so the applet keeps the desktop's in `~/.config/kettle-powerrc` and sets them
+  again when the desktop starts.
+
+It's our own Plasma applet (`package/`, QML) with a small C++ backend (`src/`, QML module
+`org.kettle.private.power`) that talks to kettle-powerd over D-Bus; `KETTLE_POWER_BUS=session`
+points it at a kettle-powerd on the session bus, as the daemon itself has for testing.
 
 Debugging: `busctl introspect org.kettlelinux.Power1 /org/kettlelinux/Power1`,
 `busctl call org.kettlelinux.Power1 /org/kettlelinux/Power1 org.kettlelinux.Power1 GetStatus`,

@@ -28,6 +28,12 @@ series (v9, not merged); the Portal panel driver lands upstream in 7.3 as
   with the A750 IFPC reglist). Under test as the cause of GMU `GX_BW_PERF_VOTE` HFI and
   `OOB GPU_SET` timeouts that end in a CP fault at iova 0 and a hangcheck recovery that
   deadlocks in `a6xx_gmu_stop` (frozen display, minutes after boot).
+  Dropping it did not stop the hangs (seen again on the IFPC-free build).
+- `20-sm8550/1051-arm64-dts-qcom-sm8550-add-lowest-gpu-opp` (Thorch; 124.8 MHz A740 OPP from
+  the AYN Thor Android DT, no `qcom,opp-acd-level`). Under test as the cause of the same GMU
+  `OOB GPU_SET` / `GX_BW_PERF_VOTE` timeouts: the GPU idles at this level ~75% of the time, so
+  nearly every wake from slumber starts from it. It shares LOW_SVS_D2 and the bus vote with
+  220 MHz, so dropping it costs no measurable power.
 
 ## Candidates not yet applied
 - Valve `linux-neptune-72` (7.2.4-valve1): `HID: steam` 2026 Steam Controller series

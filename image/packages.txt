@@ -25,9 +25,13 @@ openssh
 bluez
 bluez-utils
 
-# audio
+# Portal firmware (DSPs, audio topology, GPU, Wi-Fi, Bluetooth), built by us (packages/)
+kettle-firmware-odin2portal
+
+# audio; the Portal's UCM profile is ours (packages/kettle-ucm-odin2portal)
 alsa-utils
 alsa-ucm-conf
+kettle-ucm-odin2portal
 pipewire
 pipewire-alsa
 pipewire-pulse
@@ -81,6 +85,10 @@ konsole
 kate
 discover
 flatpak
+# web browser: Valve's firefox (Mozilla's build, no menu entry of its own) + our menu entry,
+# icons and default-browser setting (packages/kettle-firefox-desktop)
+firefox
+kettle-firefox-desktop
 noto-fonts
 noto-fonts-emoji
 # built by us (packages/): Display Settings
@@ -109,6 +117,12 @@ deckard-gamescope-layer-x86_64
 deckard-vulkan-layers-linux-aarch64
 xdg-desktop-portal-gamescope
 steamos-manager
+# The Portal's pad as a Steam Deck controller in Game Mode (built by us, packages/inputplumber;
+# started and stopped with Game Mode by kettle-inputplumber.service)
+inputplumber
+# Game Mode power button: short press = Steam's sleep, long press = Steam's power menu
+# (its hwdb already tags the Portal's pmic_pwrkey; Game Mode only, see its kettle.conf drop-in)
+steamos-powerbuttond
 scx-scheds
 holo-cursors
 zenity
@@ -136,14 +150,14 @@ kettle-decky-upscaling
 kettle-decky-welcome
 # Power (built by us, packages/): kettle-powerd behind Steam's TDP limit, performance profiles,
 # GPU clock, charge limit and fan control, and the Power plugin for per-game fan curves and
-# CPU core/clock limits
+# CPU core/clock limits; in Desktop Mode, the Power applet in the system tray
 kettle-power
 kettle-decky-power
+kettle-power-applet
 
-# Desktop Mode welcome (built by us, packages/): KDE's Welcome Center (6.2.5, matching Plasma)
-# opens on the first desktop login with Kettle's pages: desktop controls, games outside Steam,
-# and Gaming Extras (optional ARM Flathub apps, installed per user on request)
-plasma-welcome
+# Desktop Mode welcome (built by us, packages/kettle-welcome): Kettle Welcome, our own hub app.
+# Opens on the first desktop login; setup shortcuts (password, Wi-Fi, ...), controls, games
+# outside Steam, Gaming Extras (optional ARM Flathub apps, installed per user on request), system
 kettle-welcome
 
 # Games outside Steam (built by us, packages/): Wine for ARM64EC with FEX's emulator DLLs (x86

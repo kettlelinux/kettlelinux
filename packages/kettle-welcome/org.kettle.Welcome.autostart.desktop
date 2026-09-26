@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Kettle Welcome
+Exec=kettle-welcome --autostart
+Icon=/usr/share/plasma/look-and-feel/org.kettle.splash/contents/splash/images/kettle.png
+Terminal=false
+NoDisplay=true
+OnlyShowIn=KDE;
+X-KDE-autostart-phase=2

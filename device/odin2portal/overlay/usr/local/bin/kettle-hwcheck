@@ -1,9 +1,9 @@
 #!/bin/bash
 # Collect a hardware bring-up report for the Odin 2 Portal.
-# Usage: sudo kettle-hwcheck   -> prints a summary, writes /home/steamos/hwcheck-<time>.txt
+# Usage: sudo kettle-hwcheck   -> prints a summary, writes /home/kettle/hwcheck-<time>.txt
 [ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
 
-OUT="/home/steamos/hwcheck-$(date +%Y%m%d-%H%M%S).txt"
+OUT="/home/kettle/hwcheck-$(date +%Y%m%d-%H%M%S).txt"
 exec > >(tee "$OUT") 2>&1
 
 pass() { printf '  [ OK ] %s\n' "$*"; }
@@ -40,7 +40,7 @@ echo
 # fossilize_replay (Steam's Vulkan shader pre-caching) running as x86_64 under FEX is several
 # times slower than a native arm64 build
 echo "== fossilize_replay binaries"
-find /home/steamos/.local/share/Steam -name fossilize_replay -type f 2>/dev/null | while read -r f; do
+find /home/kettle/.local/share/Steam -name fossilize_replay -type f 2>/dev/null | while read -r f; do
   case "$(od -An -tu2 -j18 -N2 "$f" | tr -d ' ')" in
     183) a="arm64 (native)" ;; 62) a="x86_64 (FEX)" ;; 3) a="i386 (FEX)" ;; *) a="unknown" ;;
   esac
@@ -58,4 +58,4 @@ echo "== Thermal";                 paste <(cat /sys/class/thermal/thermal_zone*/
 echo "== Loaded modules";          lsmod | sort | awk '{print $1}' | tr '\n' ' '; echo; echo
 
 echo "Report saved: $OUT"
-echo "Copy it off with: scp steamos@<ip>:$OUT ."
+echo "Copy it off with: scp kettle@<ip>:$OUT ."

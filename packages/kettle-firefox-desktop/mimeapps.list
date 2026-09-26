@@ -1,0 +1,6 @@
+# Kettle Linux: Firefox is the default browser (the taskbar's browser launcher follows this)
+[Default Applications]
+text/html=firefox.desktop
+application/xhtml+xml=firefox.desktop
+x-scheme-handler/http=firefox.desktop
+x-scheme-handler/https=firefox.desktop

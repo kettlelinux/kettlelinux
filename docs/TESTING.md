@@ -39,7 +39,7 @@ Boot controls with the ROCKNIX ABL:
 ## 2. Write the image
 
 ```sh
-scripts/build-kernel.sh && scripts/build-firmware.sh
+scripts/build-kernel.sh && scripts/build-packages.sh
 WIFI_SSID='MyNetwork' WIFI_PSK='secret' scripts/build-image.sh   # Wi-Fi optional but needed for SSH
 sudo dd if=out/kettle-YYYYMMDD.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
@@ -47,7 +47,7 @@ sudo dd if=out/kettle-YYYYMMDD.img of=/dev/sdX bs=4M conv=fsync status=progress
 Check `/dev/sdX` with `lsblk` first — dd overwrites the whole target.
 The root partition grows to fill the card on first boot.
 
-Login: `steamos` / `steamos` (sudo via wheel), on the panel console or `ssh steamos@kettle.local`
+Login: `kettle` / `kettle` (sudo via wheel), on the panel console or `ssh kettle@kettle.local`
 (or the IP from your router). Root login is disabled.
 
 ## 3. Checklist (report back with `dmesg` + `journalctl -b` for anything that fails)
@@ -72,6 +72,7 @@ Login: `steamos` / `steamos` (sudo via wheel), on the panel console or `ssh stea
 | Power key | short press | suspends (long press powers off) |
 | Swap | `swapon --show` | `/dev/zram0`, half of RAM (max 8 GB) |
 | Power draw | `kettle-powertest state`; on battery: `kettle-powertest 120 idle` | per-run mW + settings in `~/.local/state/kettle-powertest.csv` |
+| Desktop power | Desktop Mode: Power (speedometer) in the system tray; Powersave, 6 W, fixed GPU clock, a fixed fan speed; then Return to Game Mode and back | readout moves; `GetStatus` (below) shows the caps and `active_game` `desktop`; Game Mode has Steam's own values and its fan/CPU settings; the desktop's come back with it |
 
 Suspend is the least proven area: nobody has validated s2idle on a Portal yet. After a
 resume check `dmesg | tail -50`, that the gamepad still reports input, and Wi-Fi reconnects.

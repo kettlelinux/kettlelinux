@@ -1,0 +1,26 @@
+# Desktop integration for Valve's firefox package, which ships Mozilla's official build with no
+# menu entry and no system icons (deckard uses it from Steam). Adds:
+#   firefox.desktop       menu entry and URL/file handler (Arch's, English only)
+#   hicolor icons         links to the icons inside the build (/usr/lib/firefox/browser/...)
+#   /etc/xdg/mimeapps.list  Firefox as the default browser, so the taskbar's preferred://browser
+#                         launcher is Firefox (it was Valve's "Install Chromium" placeholder,
+#                         which image/pacman.conf now leaves out)
+pkgname=kettle-firefox-desktop
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Menu entry, icons and default-browser setting for Firefox'
+arch=(any)
+license=(BSD-3-Clause)
+depends=(firefox)
+
+package() {
+  install -Dm644 "$startdir/firefox.desktop" -t "$pkgdir/usr/share/applications"
+  install -Dm644 "$startdir/mimeapps.list" -t "$pkgdir/etc/xdg"
+  local s
+  for s in 16 32 48 64 128; do
+    install -d "$pkgdir/usr/share/icons/hicolor/${s}x$s/apps"
+    ln -s /usr/lib/firefox/browser/chrome/icons/default/default$s.png \
+      "$pkgdir/usr/share/icons/hicolor/${s}x$s/apps/firefox.png"
+  done
+  install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}
