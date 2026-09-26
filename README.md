@@ -19,7 +19,7 @@ a patched mainline kernel plus Valve's SteamOS "deckard" (Steam Frame) aarch64 u
 | `device/odin2portal/` | rootfs overlay (s2idle, power key, first-boot grow, sshd) + ALSA UCM patches |
 | `scripts/build-packages.sh` | rootless makepkg in an aarch64 chroot → local `[kettle]` repo (installed ahead of Valve's) |
 | `scripts/push-kernel.sh` | install out/kernel on a running Portal over SSH (keeps previous kernel as a boot entry) |
-| `packages/` | our PKGBUILDs: `kscreen` (Display Settings, absent from all deckard snapshots), `mangohud` (Valve's deckard build + Portal sensors for the Steam performance overlay), `plasma-keyboard` (desktop on-screen keyboard), `plymouth` + `kettle-branding` (boot splash, Steam startup movie, Plasma splash), `decky-loader` + `kettle-decky-plugins` + `kettle-framegen` + `lsfg-vk` + `optiscaler-arm64ec` (+ build-only `directx-shader-compiler`) + `gamescope` (SGSR 1) (Game Mode plugins, below), `kettle-power` (power, clocks and fan behind Steam's Performance panel and the Power plugin, below), `plasma-welcome` + `kettle-welcome` (Desktop Mode welcome), `wine` + `fex-emu-wine` + `dxvk` + `vkd3d-proton` + `winetricks` + `cabextract` + `lutris` + `heroic-games-launcher` (games outside Steam, below) |
+| `packages/` | our PKGBUILDs: `kscreen` (Display Settings, absent from all deckard snapshots), `mangohud` (Valve's deckard build + Portal sensors for the Steam performance overlay), `plasma-keyboard` (desktop on-screen keyboard), `plymouth` + `kettle-branding` (boot splash, Steam startup movie, Plasma splash), `decky-loader` + `kettle-decky-plugins` + `kettle-framegen` + `optiscaler-arm64ec` (+ build-only `directx-shader-compiler`) + `gamescope` (SGSR 1) (Game Mode plugins, below), `kettle-power` (power, clocks and fan behind Steam's Performance panel and the Power plugin, below), `plasma-welcome` + `kettle-welcome` (Desktop Mode welcome), `wine` + `fex-emu-wine` + `dxvk` + `vkd3d-proton` + `winetricks` + `cabextract` + `lutris` + `heroic-games-launcher` (games outside Steam, below) |
 | `tools/` | `bc` shim; `qemu-aarch64-static` (extracted from Arch's package, not installed) |
 
 Build (x86_64 host, no root needed):
@@ -41,7 +41,7 @@ restore: [docs/INTERNAL-INSTALL.md](docs/INTERNAL-INSTALL.md).
 - [x] Steam: Valve's arm64 client + own handheld Game Mode session (gamescope DRM), steamos-manager switching
 - [x] Desktop mode: plasma-keyboard on-screen keyboard (KWin input method) and gamepad mouse mode (below)
 - [ ] Desktop welcome (Welcome Center with Kettle pages, Gaming Extras from Flathub) and games outside Steam (ARM64EC Wine + FEX + DXVK/vkd3d-proton, Lutris, Heroic) — built, untested on hardware
-- [ ] Game Mode plugins: Decky Loader with Frame Generation (kettle-framegen, lsfg-vk) and Upscaling (gamescope FSR 1/SGSR 1; SGSR 2, Arm ASR, FSR 2.2 via OptiScaler) — SGSR 2 validated in Deep Rock Galactic, the rest built
+- [ ] Game Mode plugins: Decky Loader with Frame Generation (kettle-framegen) and Upscaling (gamescope FSR 1/SGSR 1; SGSR 2, Arm ASR, FSR 2.2 via OptiScaler) — SGSR 2 validated in Deep Rock Galactic, the rest built
 - [ ] InputPlumber (Steam Deck controller emulation for the rsinput pad)
 - [ ] Boot chain: ESP with `BOOTAA64.EFI` (steamcl/GRUB, A/B) — or boot.img v0 `KERNEL` for first bring-up
 - [ ] Firmware package: linux-firmware-qcom (a740/gmu/zap) + Portal ADSP/CDSP/topology blobs
@@ -164,42 +164,37 @@ patched out; our plugins sit in `/usr/share/decky/plugins` and are linked into
 starts on the running game and lists every installed game, so a game can be set up before
 it is launched. Settings are kept when a game is turned off.
 
-- **Frame Generation**, per game with one of two engines (Proton ARM64 games use the native
-  Vulkan loader, so both are aarch64 Vulkan layers):
-  - **Kettle** (`packages/kettle-framegen`, ours): runs on the game's own VkDevice. Each
-    presented frame is copied to a history, a luma pyramid gives block motion between it and
-    the previous frame (coarse to fine, vectors centred between the two frames), and 1–3
-    in-between frames are warped from both, each pixel choosing between neighbouring block
-    vectors and zero (keeps motion edges and HUDs clean), then presented ahead of the real
-    one with FIFO. Loaded only with `KETTLE_FG=1` in the game's launch options; settings in
-    `~/.config/kettle-framegen/<appid>.conf`, reread live. `KETTLE_FG_STATS=1` logs its GPU
-    time, `KETTLE_FG_DUMP=<dir>` saves one set of previous/generated/current frames.
-    Also tested on a desktop RADV GPU (Vulkan validation and sync validation clean, 8- and
-    10-bit swapchains).
-  - **Lossless Scaling** through the `lsfg-vk` layer, when the user has it.
+- **Frame Generation** (`packages/kettle-framegen`, ours; Proton ARM64 games use the native
+  Vulkan loader, so an aarch64 Vulkan layer covers them). It runs on the game's own VkDevice.
+  Each presented frame is copied to a history, a luma pyramid gives block motion between it
+  and the previous frame (coarse to fine, vectors centred between the two frames), and 1–3
+  in-between frames are warped from both, each pixel choosing between neighbouring block
+  vectors and zero by how well a three-pixel strip matches (keeps motion edges and HUDs
+  clean), then presented ahead of the real one with FIFO. On a scene cut (most blocks
+  unmatched) the generated frames are the nearer real frame instead of a blend. Loaded only
+  with `KETTLE_FG=1` in the game's launch options; settings in
+  `~/.config/kettle-framegen/<appid>.conf`, reread live, including `stats = 1` (GPU time per
+  stage in the game's log) and `dump = <dir>` (saves the next previous/generated/current
+  frames; `KETTLE_FG_STATS=1` and `KETTLE_FG_DUMP=<dir>` do the same at launch). Tested with
+  Skyrim SE (60 fps base, 120 shown at 2×, 1.95 ms of GPU per rendered frame at 1280×720 with
+  flow scale 0.5) and Deep Rock Galactic, and on a desktop RADV GPU (Vulkan validation and
+  sync validation clean, 8- and 10-bit swapchains).
 
-  Kettle is the default (tested with Skyrim SE: 30 fps base, a solid 60 shown at 2×, 2.7 ms
-  of GPU per rendered frame at 1280×720); Lossless Scaling is a per-game choice.
-  On/off, multiplier 2–4×, flow scale, V-Sync (FIFO) pacing, swapchain image count, gamescope
-  WSI bypass; Lossless Scaling also has performance mode and FP16 (all games). Settings live
-  in the plugin's `games.json`; lsfg-vk games get an lsfg-vk profile in
-  `~/.config/lsfg-vk/conf.toml` matched by `SteamAppId`, and `env -u DISABLE_LSFGVK` in their
-  launch options (the session disables that layer everywhere else).
-  Multiplier and flow scale apply live (and performance mode with lsfg-vk). Turnip's UBWC tile
-  compression on the images lsfg-vk shares with the game gives blocky generated frames on the
-  Adreno 740, so lsfg-vk games also get `TU_DEBUG=noubwc` (per-game "Artifact fix" toggle, on by default;
-  tested with Skyrim SE: artifacts gone, 40–50 fps shown at 2×). The base frame rate is capped
+  On/off, multiplier 2–4×, flow scale (0.5 by default: 0.8 doubles the motion cost on the
+  Adreno 740 for no visible gain), V-Sync (FIFO) pacing, swapchain image count, gamescope WSI
+  bypass. Settings live in the plugin's `games.json`. Multiplier and flow scale apply live.
+  The base frame rate is capped
   per game inside the renderer (`DXVK_CONFIG` `dxgi/d3d9.maxFrameRate`, `VKD3D_FRAME_RATE`):
   Steam's own limiter is enforced by gamescope on every presented frame, generated ones
   included, so it halves the real frame rate. The default, **Auto**, measures each game: our
   mangoapp (`packages/mangohud` 0005) writes the focused app's frame rate to
-  `$XDG_RUNTIME_DIR/kettle-fps`, the plugin divides it by the multiplier while lsfg-vk is
+  `$XDG_RUNTIME_DIR/kettle-fps`, the plugin divides it by the multiplier while the layer is
   loaded, and after each session picks the highest evenly paced cap the game held (refresh a
   multiple of cap × multiplier: 60/30/20/15 at 2× on 120 Hz), probing one step up when it sat
   at its cap and not retrying steps it couldn't hold. 3×/4× from a ~30 fps base warp visibly,
-  so the multiplier stays the user's choice. The Lossless Scaling engine needs Lossless
-  Scaling from Steam, installed with Proton and switched to the **lsfg-vk** beta branch (it
-  provides `lsfg-vk.dll`); nothing of it is shipped.
+  so the multiplier stays the user's choice. (An lsfg-vk engine, needing the user's own
+  Lossless Scaling, was dropped once this one outdid it; the plugin clears the launch options
+  it wrote.)
 - **Upscaling**: two layers, both per game.
   - **gamescope (any game)**: render resolution (Steam's per-game resolution override) plus
     Steam's scaling filter and sharpness for the running game. Our `packages/gamescope`
@@ -243,15 +238,14 @@ it is launched. Settings are kept when a game is turned off.
     the recommended way to generate frames.
 - **Welcome**: a full-screen page that opens once, on the first Game Mode boot (a tour of
   Kettle, Game Mode and the desktop mode controls), then stays reachable from its Quick
-  Access panel. Its setup checklist walks through getting Lossless Scaling onto the lsfg-vk
-  branch, and offers optional components: software that can't be shipped in the image, listed
+  Access panel. Its setup checklist offers optional components: software that can't be
+  shipped in the image, listed
   in `welcome/components.json` with its upstream URL and a pinned sha256, downloaded only when
   the user asks, verified, and unpacked to `~/.local/share/kettle/components/<id>`. The list is
   empty for now; an entry belongs there only when the component can't be built and shipped
   cleanly and a legitimate upstream download exists.
 
-Licensing: kettle-framegen is ours (BSD-3-Clause). lsfg-vk is CC BY-NC-ND 4.0, so
-`packages/lsfg-vk` must stay patch-free and the image non-commercial while it ships.
+Licensing: kettle-framegen and the plugins are ours (BSD-3-Clause).
 
 ## Power, clocks and fan
 `kettle-powerd` (`packages/kettle-power`, root, system bus `org.kettlelinux.Power1`) is the

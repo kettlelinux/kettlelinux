@@ -5,25 +5,14 @@ import { FaLayerGroup } from "react-icons/fa";
 import { editLaunchOptions, withDxvkOption, withEnv, withEnvFlag, withUnset } from "../../shared/launchOptions";
 import { GamePicker, InstalledGame, gameName, runningAppId, useSelectedGame } from "../../shared/GamePicker";
 
-type Status = {
-  layer: boolean;
-  kettle_layer: boolean;
-  dll: string | null;
-  lossless_installed: boolean;
-  allow_fp16: boolean;
-  enabled_games: number[];
-};
-type Engine = "kettle" | "lsfg";
+type Status = { layer: boolean; enabled_games: number[] };
 type Game = {
   enabled: boolean;
-  engine: Engine;
   multiplier: number;
   flow_scale: number;
-  performance_mode: boolean;
   fifo: boolean;
   preserve_images: boolean;
   bypass_wsi: boolean;
-  noubwc: boolean;
   fps_cap: string;
   // from the backend: automatic cap and what it's based on
   auto_cap: number;
@@ -38,25 +27,18 @@ const installedGames = callable<[], InstalledGame[]>("installed_games");
 const getGame = callable<[appid: number], Game>("get_game");
 const setGame = callable<[appid: number, settings: Partial<Game>], Game>("set_game");
 const resetGame = callable<[appid: number], Game>("reset_game");
-const setFp16 = callable<[allow: boolean], void>("set_fp16");
 
-// Our layer loads only with KETTLE_FG=1; the session disables lsfg-vk everywhere (environment.d)
-// and games on it unset that
+// The layer loads only with KETTLE_FG=1
 const KETTLE = "KETTLE_FG";
-const OFF = "DISABLE_LSFGVK";
-const ENGINES = [
-  { data: "kettle", label: "Kettle (built in)" },
-  { data: "lsfg", label: "Lossless Scaling" },
-];
-// lsfg-vk paces with FIFO; gamescope's WSI layer then shows a black screen or stutters
+// Generated frames are paced with FIFO; through gamescope's WSI layer that can show a black
+// screen or stutter
 const WSI = "ENABLE_GAMESCOPE_WSI";
-// Turnip's UBWC (tile compression) on the images lsfg-vk shares with the game gives blocky
-// generated frames on the Adreno 740; TU_DEBUG=noubwc fixes it (tested with Skyrim SE).
-// Our layer shares no images between devices, so it doesn't need it.
+// Launch options older versions wrote for the lsfg-vk engine (removed); cleared from games
+// that still have them: `env -u DISABLE_LSFGVK`, TU_DEBUG=noubwc, KETTLE_LSFG_NOUBWC=1
+const LSFG_OFF = "DISABLE_LSFGVK";
 const TU = "TU_DEBUG";
-// Written by a short-lived build (layer that disabled UBWC on the shared images only); removed
-const NOUBWC = "KETTLE_LSFG_NOUBWC";
-// The base frame rate has to be capped inside the game's renderer, before lsfg-vk: Steam's
+const LSFG_NOUBWC = "KETTLE_LSFG_NOUBWC";
+// The base frame rate has to be capped inside the game's renderer, before frame generation: Steam's
 // limiter (gamescope) paces every presented frame, generated ones included, so it halves the
 // real frame rate. DXVK (DX9-11) and vkd3d-proton (DX12) limit at present time instead.
 const FPS_CAPS = [
@@ -78,51 +60,32 @@ function capDescription(g: Game): string {
     return `${cap} fps${shown} (${seen}). Adjusts after each session; applies at launch.`;
   return `${cap ? `${cap} fps` : "No cap"}${shown} (${seen}). Leave Steam's frame limit off.`;
 }
-// Settings the layers only read at game start (the others they reload live)
-const ON_RESTART: (keyof Game)[] = ["enabled", "engine", "fifo", "preserve_images", "bypass_wsi", "noubwc", "fps_cap"];
+// Settings the layer only reads at game start (the others it reloads live)
+const ON_RESTART: (keyof Game)[] = ["enabled", "fifo", "preserve_images", "bypass_wsi", "fps_cap"];
 // Settings that live in the launch options
-const IN_LAUNCH_OPTIONS: (keyof Game)[] = ["enabled", "engine", "bypass_wsi", "noubwc", "fps_cap", "multiplier"];
+const IN_LAUNCH_OPTIONS: (keyof Game)[] = ["enabled", "bypass_wsi", "fps_cap", "multiplier"];
 
-// Whether a game's engine can run: ours needs its layer; lsfg-vk needs lsfg-vk.dll as well,
-// without it the layer fails swapchain creation (black screen)
-const usable = (s: Status, e: Engine) => (e === "kettle" ? s.kettle_layer : s.layer && !!s.dll);
-
-// Launch options follow the stored settings: on -> KETTLE_FG=1 or `env -u DISABLE_LSFGVK`
-// (+ WSI bypass and the base frame cap)
+// Launch options follow the stored settings: on -> KETTLE_FG=1 (+ WSI bypass and the base
+// frame cap)
 const applyLaunchOptions = (appid: number, g: Game, s: Status) => {
-  const on = g.enabled && usable(s, g.engine);
-  const lsfg = on && g.engine === "lsfg";
+  const on = g.enabled && s.layer;
   const cap = on ? baseCap(g) : null;
   return editLaunchOptions(appid, (o) => {
     o = withEnv(o, WSI, on && g.bypass_wsi ? "0" : null);
-    o = withEnvFlag(o, TU, "noubwc", lsfg && g.noubwc);
-    o = withEnv(o, NOUBWC, null);
     o = withDxvkOption(withDxvkOption(o, "dxgi.maxFrameRate", cap), "d3d9.maxFrameRate", cap);
     o = withEnv(o, "VKD3D_FRAME_RATE", cap);
-    o = withEnv(o, KETTLE, on && !lsfg ? "1" : null);
-    return withUnset(o, OFF, lsfg);
+    o = withEnv(o, KETTLE, on ? "1" : null);
+    o = withEnvFlag(o, TU, "noubwc", false);
+    o = withEnv(o, LSFG_NOUBWC, null);
+    return withUnset(o, LSFG_OFF, false);
   });
 };
 
-// Bring every game that's on in line with what's installed now (Lossless Scaling installed,
-// uninstalled or moved off the lsfg-vk branch since the options were written)
+// Bring every game that's on in line with the stored settings (also clears what older
+// versions wrote for lsfg-vk)
 async function syncAll() {
   const s = await status();
   for (const appid of s.enabled_games) await applyLaunchOptions(appid, await getGame(appid), s);
-}
-
-function DllNotice({ s }: { s: Status }) {
-  if (!s.layer) return <PanelSectionRow><div>lsfg-vk isn't installed on this system.</div></PanelSectionRow>;
-  if (s.dll) return null;
-  return (
-    <PanelSectionRow>
-      <div style={{ fontSize: "12px", lineHeight: "16px" }}>
-        {s.lossless_installed
-          ? "Lossless Scaling is installed, but not on the lsfg-vk branch. In Steam: Lossless Scaling › Properties › Betas › lsfg-vk."
-          : "Frame generation needs Lossless Scaling (Steam). Install it with Proton, then switch it to the lsfg-vk beta branch in Properties › Betas."}
-      </div>
-    </PanelSectionRow>
-  );
 }
 
 function GameSettings({ appid, name, s, onChanged }: { appid: number; name: string; s: Status; onChanged: () => void }) {
@@ -138,8 +101,7 @@ function GameSettings({ appid, name, s, onChanged }: { appid: number; name: stri
     });
   }, [appid]);
   if (!g) return null;
-  const lsfg = g.engine === "lsfg";
-  const ok = usable(s, g.engine);
+  const ok = s.layer;
 
   const update = async (patch: Partial<Game>) => {
     setG({ ...g, ...patch });
@@ -154,19 +116,9 @@ function GameSettings({ appid, name, s, onChanged }: { appid: number; name: stri
   return (
     <>
       <PanelSectionRow>
-        <DropdownItem
-          label="Engine"
-          description={lsfg ? "Needs your own Lossless Scaling (Steam)" : "Kettle Linux's own frame generation"}
-          rgOptions={ENGINES}
-          selectedOption={g.engine}
-          onChange={(o) => update({ engine: o.data })}
-        />
-      </PanelSectionRow>
-      {lsfg && <DllNotice s={s} />}
-      <PanelSectionRow>
         <ToggleField
           label="Frame generation"
-          description={ok ? undefined : lsfg ? "Needs Lossless Scaling's lsfg-vk.dll (see above)" : "The Kettle frame generation layer isn't installed"}
+          description={ok ? undefined : "The Kettle frame generation layer isn't installed"}
           checked={g.enabled && ok}
           disabled={!ok}
           onChange={(enabled) => update({ enabled })}
@@ -208,16 +160,6 @@ function GameSettings({ appid, name, s, onChanged }: { appid: number; name: stri
           onChange={(v) => update({ flow_scale: v / 100 })}
         />
       </PanelSectionRow>
-      {lsfg && (
-        <PanelSectionRow>
-          <ToggleField
-            label="Performance mode"
-            description="Lighter frame generation model; recommended on this GPU"
-            checked={g.performance_mode}
-            onChange={(performance_mode) => update({ performance_mode })}
-          />
-        </PanelSectionRow>
-      )}
       <PanelSectionRow>
         <ToggleField
           label="V-Sync pacing"
@@ -242,16 +184,6 @@ function GameSettings({ appid, name, s, onChanged }: { appid: number; name: stri
           onChange={(bypass_wsi) => update({ bypass_wsi })}
         />
       </PanelSectionRow>
-      {lsfg && (
-        <PanelSectionRow>
-          <ToggleField
-            label="Artifact fix (no GPU compression)"
-            description="TU_DEBUG=noubwc; fixes blocky generated frames on this GPU, costs a little performance"
-            checked={g.noubwc}
-            onChange={(noubwc) => update({ noubwc })}
-          />
-        </PanelSectionRow>
-      )}
       <PanelSectionRow>
         <ButtonItem
           layout="below"
@@ -287,19 +219,6 @@ function Content() {
         {appid !== null && <GameSettings key={appid} appid={appid} name={name} s={s} onChanged={refresh} />}
       </PanelSection>
       <PanelSection title="All games">
-        {s.dll && (
-          <PanelSectionRow>
-            <ToggleField
-              label="FP16 (Lossless Scaling)"
-              description="Half-precision shaders (faster on Adreno). Applies on game start."
-              checked={s.allow_fp16}
-              onChange={async (v) => {
-                await setFp16(v);
-                refresh();
-              }}
-            />
-          </PanelSectionRow>
-        )}
         {s.enabled_games.length > 0 && (
           <PanelSectionRow>
             <div style={{ fontSize: "12px", lineHeight: "16px" }}>

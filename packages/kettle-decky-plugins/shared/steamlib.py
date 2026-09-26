@@ -59,17 +59,3 @@ def install_dir(appid: int) -> str | None:
                 return d
     return None
 
-
-LOSSLESS_APPID = 993090
-
-
-def lossless_scaling() -> dict:
-    """Lossless Scaling's install: lsfg-vk.dll's path (only the "lsfg-vk" beta branch has it),
-    the install folder and its Steam library, each None when absent."""
-    for lib in libraries():
-        d = os.path.join(lib, "steamapps", "common", "Lossless Scaling")
-        if os.path.isfile(os.path.join(d, "lsfg-vk.dll")):
-            return {"dll": os.path.join(d, "lsfg-vk.dll"), "installed": d, "lib": lib}
-        if os.path.isdir(d):
-            return {"dll": None, "installed": d, "lib": lib}
-    return {"dll": None, "installed": None, "lib": None}

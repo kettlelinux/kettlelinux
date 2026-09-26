@@ -16,7 +16,7 @@ type Component = {
   progress: number | null;
   error: string | null;
 };
-type Status = { lossless: { installed: boolean; dll: boolean }; components: Component[] };
+type Status = { components: Component[] };
 
 const status = callable<[], Status>("status");
 const firstRun = callable<[], boolean>("first_run");
@@ -24,7 +24,6 @@ const install = callable<[id: string], void>("install");
 const uninstall = callable<[id: string], void>("uninstall");
 
 const ROUTE = "/kettle-welcome";
-const LOSSLESS = 993090;
 const small = { fontSize: "12px", lineHeight: "16px" };
 
 const openWelcome = () => {
@@ -46,42 +45,6 @@ function useStatus(): Status | null {
     };
   }, []);
   return s;
-}
-
-// SteamClient.URL: the typings' URL clashes with the DOM's global URL type
-const steamUrl = (url: string) => (SteamClient as any).URL.ExecuteSteamURL(url);
-
-const owned = (appid: number): boolean => {
-  try {
-    return !!(window as any).appStore?.GetAppOverviewByAppID(appid);
-  } catch {
-    return false;
-  }
-};
-
-// Lossless Scaling: optional, for the lsfg-vk frame generation engine. Kettle's own engine
-// needs nothing. Steps: buy -> install with Proton -> switch to the lsfg-vk beta branch.
-function LosslessStep({ s }: { s: Status }) {
-  const l = s.lossless;
-  let text: string, button: ReactNode = null;
-  if (l.dll) {
-    text = "Ready. Pick Lossless Scaling as the engine in Quick Access › Frame Generation.";
-  } else if (l.installed) {
-    text = "Installed, but not on the lsfg-vk branch. In its Properties › Betas, choose lsfg-vk.";
-    button = <ButtonItem layout="below" onClick={() => Navigation.Navigate(`/library/app/${LOSSLESS}`)}>Open Lossless Scaling</ButtonItem>;
-  } else if (owned(LOSSLESS)) {
-    text = "In your library. Install it (Properties › Compatibility › force Proton), then choose the lsfg-vk branch in Properties › Betas.";
-    button = <ButtonItem layout="below" onClick={() => steamUrl(`steam://install/${LOSSLESS}`)}>Install Lossless Scaling</ButtonItem>;
-  } else {
-    text = "Optional, paid (Steam). A second frame generation engine; Kettle's own one needs nothing.";
-    button = <ButtonItem layout="below" onClick={() => steamUrl(`steam://store/${LOSSLESS}`)}>View in Steam store</ButtonItem>;
-  }
-  return (
-    <>
-      <Field label={`Lossless Scaling${l.dll ? " ✓" : ""}`} description={text} focusable={!button} />
-      {button}
-    </>
-  );
 }
 
 function ComponentRow({ c }: { c: Component }) {
@@ -135,9 +98,6 @@ const Plain: Row = ({ children }) => <>{children}</>;
 function Setup({ s, Row }: { s: Status; Row: Row }) {
   return (
     <>
-      <Row>
-        <LosslessStep s={s} />
-      </Row>
       {s.components.map((c) => (
         <Row key={c.id}>
           <ComponentRow c={c} />
@@ -199,9 +159,9 @@ const PAGES = [
           kept when you turn a game off.
         </p>
         <p>
-          <b>Frame Generation</b> shows extra frames between the ones the game renders (2–4×). Kettle's own engine is
-          built in; Lossless Scaling is a second engine if you own it. The base frame rate is capped automatically:
-          leave Steam's frame limit off for these games.
+          <b>Frame Generation</b> shows extra frames between the ones the game renders (2–4×), with Kettle's own
+          engine: nothing to buy or install. The base frame rate is capped automatically: leave Steam's frame limit
+          off for these games.
         </p>
         <p>
           <b>Upscaling</b> renders the game at a lower resolution and scales it up: FSR 1 through gamescope for any

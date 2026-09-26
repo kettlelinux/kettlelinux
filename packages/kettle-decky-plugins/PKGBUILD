@@ -1,6 +1,6 @@
 # Kettle Linux's own Decky plugins, preinstalled (decky-loader-start links them into
 # ~/homebrew/plugins):
-#   framegen   per-game frame generation: our kettle-framegen layer, or lsfg-vk
+#   framegen   per-game frame generation (our kettle-framegen layer)
 #   upscaling  per-game gamescope FSR 1 (render resolution + Sharp filter) and SGSR 2 / Arm ASR / FSR 2.2
 #              through OptiScaler (ARM64EC build, optiscaler-arm64ec)
 #   power      per-game fan curve / fixed speed and CPU core parking and caps, a live power and
@@ -10,8 +10,8 @@
 # Sources live next to this PKGBUILD; shared/ holds code both frontends use.
 pkgbase=kettle-decky-plugins
 pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome kettle-decky-power)
-pkgver=1.10.0
-pkgrel=2
+pkgver=1.11.0
+pkgrel=1
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
@@ -40,8 +40,8 @@ _install_plugin() {
 }
 
 package_kettle-decky-framegen() {
-  pkgdesc='Frame Generation Decky plugin (kettle-framegen / lsfg-vk per game)'
-  depends=(decky-loader kettle-framegen lsfg-vk)
+  pkgdesc='Frame Generation Decky plugin (kettle-framegen per game)'
+  depends=(decky-loader kettle-framegen)
   _install_plugin kettle-framegen framegen
 }
 
