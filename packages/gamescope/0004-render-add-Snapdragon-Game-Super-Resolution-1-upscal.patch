@@ -1,0 +1,648 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Matthew Schwartz <matthew.schwartz@linux.dev>
+Date: Thu, 10 Sep 2026 17:23:19 -0700
+Subject: [PATCH 4/9] =?UTF-8?q?render:=20add=20Snapdragon=E2=84=A2=20Game?=
+ =?UTF-8?q?=20Super=20Resolution=201=20upscaling?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Steam Frame's Sharp option is remapped to FSR, which costs 925 us of
+GPU per 720p to 1080p frame in NieR Replicant, 600 in EASU and 325 in
+RCAS. Snapdragon™ Game Super Resolution 1 is a single twelve tap pass
+sized for this GPU class, but the reference rebuilds green alone and
+adds that delta to every channel, which tints color edges and lets a
+lone dark texel in a sprite be outvoted by its neighbors where EASU
+keeps it.
+
+Take filter value 5 for SGSR, which is what Steam Frame already writes
+for Sharp, so the remap goes away. Reconstruct every channel with the
+weights green computes and fade the outlier term in with tap distance,
+without the reference edge gain since RCAS sharpens. One pixel per
+thread, and red and blue gathered only once green's weights exist,
+each measured faster than EASU's layout. With RCAS that is 680 us in
+NieR, 26 percent under FSR, and 530 against 900 in Dave the Diver,
+with lone texels and color edges holding up against FSR in both. SGSR
+reads SDR RGB only, so HDR keeps the FSR that Sharp ran before and
+YCbCr scales linearly.
+---
+ README.md                       |   1 +
+ protocol/gamescope-control.xml  |   1 +
+ src/Apps/gamescopectl.cpp       |   2 +
+ src/Backends/DRMBackend.cpp     |   1 +
+ src/Backends/OpenVRBackend.cpp  |   1 +
+ src/Backends/WaylandBackend.cpp |   1 +
+ src/commit.cpp                  |  11 +++
+ src/main.cpp                    |   5 +-
+ src/main.hpp                    |  21 ++++-
+ src/meson.build                 |   1 +
+ src/rendervulkan.cpp            |  34 ++++++--
+ src/rendervulkan.hpp            |   2 +
+ src/shaders/cs_sgsr.comp        |  34 ++++++++
+ src/shaders/sgsr1.h             | 139 ++++++++++++++++++++++++++++++++
+ src/steamcompmgr.cpp            |  25 +++---
+ src/wlserver.cpp                |   1 +
+ tests/test_upscale.cpp          |  20 +++++
+ 17 files changed, 276 insertions(+), 24 deletions(-)
+ create mode 100644 src/shaders/cs_sgsr.comp
+ create mode 100644 src/shaders/sgsr1.h
+
+diff --git a/README.md b/README.md
+index 28e2239f..0f53c608 100644
+--- a/README.md
++++ b/README.md
+@@ -73,6 +73,7 @@ See `gamescope --help` for a full list of options.
+ * `-o`: set a frame-rate limit for the game when unfocused. Specified in frames per second. Defaults to unlimited.
+ * `-F fsr`: use AMD FidelityFX™ Super Resolution 1.0 for upscaling
+ * `-F nis`: use NVIDIA Image Scaling v1.0.3 for upscaling
++* `-F sgsr`: use Snapdragon™ Game Super Resolution 1 with RCAS sharpening for upscaling
+ * `-S integer`: use integer scaling.
+ * `-S stretch`: use stretch scaling, the game will fill the window. (e.g. 4:3 to 16:9)
+ * `-b`: create a border-less window.
+diff --git a/protocol/gamescope-control.xml b/protocol/gamescope-control.xml
+index 42fc9666..cd770721 100644
+--- a/protocol/gamescope-control.xml
++++ b/protocol/gamescope-control.xml
+@@ -44,6 +44,7 @@
+       <entry name="mura_correction" value="5"/>
+       <entry name="look" value="6"/>
+       <entry name="perf_query" value="7"/>
++      <entry name="sgsr_filter" value="9"/>
+     </enum>
+ 
+     <event name="feature_support">
+diff --git a/src/Apps/gamescopectl.cpp b/src/Apps/gamescopectl.cpp
+index e3103035..ad3af15b 100644
+--- a/src/Apps/gamescopectl.cpp
++++ b/src/Apps/gamescopectl.cpp
+@@ -231,6 +231,8 @@ namespace gamescope
+                 return "Look";
+             case GAMESCOPE_CONTROL_FEATURE_PERF_QUERY:
+                 return "Performance Query";
++            case GAMESCOPE_CONTROL_FEATURE_SGSR_FILTER:
++                return "SGSR Filter";
+             default:
+                 return "Unknown";
+         }
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 0416b749..fefef79e 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -3656,6 +3656,7 @@ namespace gamescope
+ 			bNeedsFullComposite |= bWasFirstFrame;
+ 			bNeedsFullComposite |= pFrameInfo->useFSRLayer0;
+ 			bNeedsFullComposite |= pFrameInfo->useNISLayer0;
++			bNeedsFullComposite |= pFrameInfo->useSGSRLayer0;
+ 			bNeedsFullComposite |= pFrameInfo->blurLayer0;
+ 			bNeedsFullComposite |= bNeedsCompositeFromFilter;
+ 			bNeedsFullComposite |= !cv_drm_cursor_plane && bDrewCursor;
+diff --git a/src/Backends/OpenVRBackend.cpp b/src/Backends/OpenVRBackend.cpp
+index 9f50209e..b278693c 100644
+--- a/src/Backends/OpenVRBackend.cpp
++++ b/src/Backends/OpenVRBackend.cpp
+@@ -1775,6 +1775,7 @@ namespace gamescope
+         bNeedsFullComposite |= cv_composite_force;
+         bNeedsFullComposite |= pFrameInfo->useFSRLayer0;
+         bNeedsFullComposite |= pFrameInfo->useNISLayer0;
++        bNeedsFullComposite |= pFrameInfo->useSGSRLayer0;
+         bNeedsFullComposite |= pFrameInfo->blurLayer0;
+         bNeedsFullComposite |= bNeedsCompositeFromFilter;
+         bNeedsFullComposite |= g_bColorSliderInUse;
+diff --git a/src/Backends/WaylandBackend.cpp b/src/Backends/WaylandBackend.cpp
+index 63522410..128a4a65 100644
+--- a/src/Backends/WaylandBackend.cpp
++++ b/src/Backends/WaylandBackend.cpp
+@@ -1074,6 +1074,7 @@ namespace gamescope
+             bNeedsFullComposite |= cv_composite_force;
+             bNeedsFullComposite |= pFrameInfo->useFSRLayer0;
+             bNeedsFullComposite |= pFrameInfo->useNISLayer0;
++            bNeedsFullComposite |= pFrameInfo->useSGSRLayer0;
+             bNeedsFullComposite |= pFrameInfo->blurLayer0;
+             bNeedsFullComposite |= bNeedsCompositeFromFilter;
+             bNeedsFullComposite |= g_bColorSliderInUse;
+diff --git a/src/commit.cpp b/src/commit.cpp
+index 3b69c8fc..c9d0001b 100644
+--- a/src/commit.cpp
++++ b/src/commit.cpp
+@@ -124,6 +124,7 @@ void commit_t::SetFence( int nFence, bool bMangoNudge, uint32_t uMangoMsgType, C
+ }
+ 
+ void calc_scale_factor(GamescopeUpscaleScaler eScaler, float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight);
++void calc_scale_factor_scaler(GamescopeUpscaleScaler eScaler, float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight);
+ 
+ bool commit_t::ShouldPreemptivelyUpscale( GamescopeUpscaleFilter eFilter, GamescopeUpscaleScaler eScaler )
+ {
+@@ -146,5 +147,15 @@ bool commit_t::ShouldPreemptivelyUpscale( GamescopeUpscaleFilter eFilter, Gamesc
+     // It should also return a std::pair or a glm uvec
+     calc_scale_factor( eScaler, flScaleX, flScaleY, vulkanTex->width(), vulkanTex->height() );
+ 
++    // The pre-emptive paint forces the global scale to one, so judge magnification without it and on both axes like the paint path.
++    if ( ResolveUpscaleFilter( eFilter, colorspace(), vulkanTex->isYcbcr() ) == GamescopeUpscaleFilter::SGSR )
++    {
++        float flUpscaleX = 1.0f;
++        float flUpscaleY = 1.0f;
++        calc_scale_factor_scaler( eScaler, flUpscaleX, flUpscaleY, vulkanTex->width(), vulkanTex->height() );
++        if ( flUpscaleX <= 1.0f || flUpscaleY <= 1.0f )
++            return false;
++    }
++
+     return !close_enough( flScaleX, 1.0f ) || !close_enough( flScaleY, 1.0f );
+ }
+diff --git a/src/main.cpp b/src/main.cpp
+index fa367f72..1c8e8327 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -176,9 +176,10 @@ const char usage[] =
+ 	"  -r, --nested-refresh           game refresh rate (frames per second)\n"
+ 	"  -m, --max-scale                maximum scale factor\n"
+ 	"  -S, --scaler                   upscaler type (auto, integer, fit, fill, stretch)\n"
+-	"  -F, --filter                   upscaler filter (linear, nearest, fsr, nis, pixel)\n"
++	"  -F, --filter                   upscaler filter (linear, nearest, fsr, nis, pixel, sgsr)\n"
+ 	"                                     fsr => AMD FidelityFX™ Super Resolution 1.0\n"
+ 	"                                     nis => NVIDIA Image Scaling v1.0.3\n"
++	"                                     sgsr => Snapdragon™ Game Super Resolution 1 with RCAS\n"
+ 	"  --sharpness, --fsr-sharpness   upscaler sharpness from 0 (max) to 20 (min)\n"
+ 	"  --expose-wayland               support wayland clients using xdg-shell\n"
+ 	"  -s, --mouse-sensitivity        multiply mouse movement by given decimal number\n"
+@@ -416,6 +417,8 @@ static enum GamescopeUpscaleFilter parse_upscaler_filter(const char *str)
+ 		return GamescopeUpscaleFilter::NIS;
+ 	} else if (strcmp(str, "pixel") == 0) {
+ 		return GamescopeUpscaleFilter::PIXEL;
++	} else if (strcmp(str, "sgsr") == 0) {
++		return GamescopeUpscaleFilter::SGSR;
+ 	} else {
+ 		fprintf( stderr, "gamescope: invalid value for --filter\n" );
+ 		exit(1);
+diff --git a/src/main.hpp b/src/main.hpp
+index 513bb3eb..d47fb979 100644
+--- a/src/main.hpp
++++ b/src/main.hpp
+@@ -4,6 +4,8 @@
+ 
+ #include <atomic>
+ 
++#include "gamescope_shared.h"
++
+ extern const char *gamescope_optstring;
+ extern const struct option *gamescope_options;
+ 
+@@ -39,13 +41,30 @@ enum class GamescopeUpscaleFilter : uint32_t
+     FSR,
+     NIS,
+     PIXEL,
++    SGSR,
+ 
+     FROM_VIEW = 0xF, // internal
+ };
+ 
+ static constexpr bool UpscaleFilterUsesSharpness( GamescopeUpscaleFilter eFilter )
+ {
+-    return eFilter == GamescopeUpscaleFilter::FSR || eFilter == GamescopeUpscaleFilter::NIS;
++    return eFilter == GamescopeUpscaleFilter::FSR ||
++           eFilter == GamescopeUpscaleFilter::NIS ||
++           eFilter == GamescopeUpscaleFilter::SGSR;
++}
++
++// cs_sgsr reads the plain sampler slot, not the YCbCr one, and thresholds in 8-bit SDR units.
++static constexpr bool SgsrSupportsInput( GamescopeAppTextureColorspace eColorspace, bool bYcbcr )
++{
++    return !bYcbcr && ( eColorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR || eColorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB );
++}
++
++// Sharp ran FSR before SGSR existed, so HDR keeps that rather than losing the sharpening. Neither pre-pass reads the YCbCr slot.
++static constexpr GamescopeUpscaleFilter ResolveUpscaleFilter( GamescopeUpscaleFilter eFilter, GamescopeAppTextureColorspace eColorspace, bool bYcbcr )
++{
++    if ( eFilter != GamescopeUpscaleFilter::SGSR || SgsrSupportsInput( eColorspace, bYcbcr ) )
++        return eFilter;
++    return bYcbcr ? GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::FSR;
+ }
+ 
+ static constexpr bool DoesHardwareSupportUpscaleFilter( GamescopeUpscaleFilter eFilter )
+diff --git a/src/meson.build b/src/meson.build
+index 72101d79..505e3753 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -69,6 +69,7 @@ shader_src = [
+   'shaders/cs_nis.comp',
+   'shaders/cs_nis_fp16.comp',
+   'shaders/cs_rgb_to_nv12.comp',
++  'shaders/cs_sgsr.comp',
+ ]
+ 
+ spirv_shaders = glsl_generator.process(shader_src)
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 17cbb276..7747340e 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -47,6 +47,7 @@
+ #include "cs_nis.h"
+ #include "cs_nis_fp16.h"
+ #include "cs_rgb_to_nv12.h"
++#include "cs_sgsr.h"
+ 
+ #define A_CPU
+ #include "shaders/ffx_a.h"
+@@ -965,6 +966,7 @@ bool CVulkanDevice::createShaders()
+ 		SHADER(NIS, cs_nis);
+ 	}
+ 	SHADER(RGB_TO_NV12, cs_rgb_to_nv12);
++	SHADER(SGSR, cs_sgsr);
+ #undef SHADER
+ 
+ 	for (uint32_t i = 0; i < shaderInfos.size(); i++)
+@@ -1195,6 +1197,7 @@ void CVulkanDevice::compileAllPipelines(std::stop_token st)
+ 	SHADER(EASU, 1, 1, 1);
+ 	SHADER(NIS, 1, 1, 1);
+ 	SHADER(RGB_TO_NV12, 1, 1, 1);
++	SHADER(SGSR, 1, 1, 1);
+ #undef SHADER
+ 
+ 	for (auto& info : pipelineInfos) {
+@@ -3811,10 +3814,12 @@ struct BlitPushData_t
+ 			scale[i] = layer->scale;
+ 			offset[i] = layer->offsetPixelCenter();
+ 			opacity[i] = layer->opacity;
+-            if (layer->isScreenSize() || (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
++            // SGSR only exists as a pre-pass, a layer still carrying it samples as linear.
++            GamescopeUpscaleFilter eFilter = layer->filter == GamescopeUpscaleFilter::SGSR ? GamescopeUpscaleFilter::LINEAR : layer->filter;
++            if (layer->isScreenSize() || (eFilter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
+                 u_shaderFilter |= ((uint32_t)GamescopeUpscaleFilter::FROM_VIEW) << (i * 4);
+             else
+-                u_shaderFilter |= ((uint32_t)layer->filter) << (i * 4);
++                u_shaderFilter |= ((uint32_t)eFilter) << (i * 4);
+ 
+ 			u_alphaMode |= ((uint32_t)layer->eAlphaBlendingMode) << ( i * 4 );
+ 
+@@ -3917,6 +3922,17 @@ struct EasuPushData_t
+ 	}
+ };
+ 
++struct SgsrPushData_t
++{
++	uint32_t u_width;
++	uint32_t u_height;
++
++	SgsrPushData_t(uint32_t tempX, uint32_t tempY)
++		: u_width(tempX), u_height(tempY)
++	{
++	}
++};
++
+ struct RcasPushData_t
+ {
+ 	uvec2_t u_layer0Offset;
+@@ -3955,10 +3971,11 @@ struct RcasPushData_t
+ 		{
+ 			const FrameInfo_t::Layer_t *layer = &frameInfo->layers.get( i );
+ 
+-            if (i == 0 || layer->isScreenSize() || (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
++            GamescopeUpscaleFilter eFilter = layer->filter == GamescopeUpscaleFilter::SGSR ? GamescopeUpscaleFilter::LINEAR : layer->filter;
++            if (i == 0 || layer->isScreenSize() || (eFilter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
+                 u_shaderFilter |= ((uint32_t)GamescopeUpscaleFilter::FROM_VIEW) << (i * 4);
+             else
+-                u_shaderFilter |= ((uint32_t)layer->filter) << (i * 4);
++                u_shaderFilter |= ((uint32_t)eFilter) << (i * 4);
+ 
+ 			u_alphaMode |= ((uint32_t)layer->eAlphaBlendingMode) << ( i * 4 );
+ 
+@@ -4144,7 +4161,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
+ 	for (uint32_t i = 0; i < EOTF_Count; i++)
+ 		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
+ 
+-	if ( frameInfo->useFSRLayer0 )
++	if ( frameInfo->useFSRLayer0 || frameInfo->useSGSRLayer0 )
+ 	{
+ 		uint32_t inputX = frameInfo->layers.get( 0 ).tex->width();
+ 		uint32_t inputY = frameInfo->layers.get( 0 ).tex->height();
+@@ -4154,13 +4171,16 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
+ 
+ 		update_tmp_images(tempX, tempY);
+ 
+-		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_EASU));
++		cmdBuffer->bindPipeline(g_device.pipeline(frameInfo->useSGSRLayer0 ? SHADER_TYPE_SGSR : SHADER_TYPE_EASU));
+ 		cmdBuffer->bindTarget(g_output.tmpOutput);
+ 		cmdBuffer->bindTexture(0, frameInfo->layers.get( 0 ).tex);
+ 		cmdBuffer->setTextureSrgb(0, true);
+ 		cmdBuffer->setSamplerUnnormalized(0, false);
+ 		cmdBuffer->setSamplerNearest(0, false);
+-		cmdBuffer->uploadConstants<EasuPushData_t>(inputX, inputY, tempX, tempY);
++		if ( frameInfo->useSGSRLayer0 )
++			cmdBuffer->uploadConstants<SgsrPushData_t>(tempX, tempY);
++		else
++			cmdBuffer->uploadConstants<EasuPushData_t>(inputX, inputY, tempX, tempY);
+ 
+ 		int pixelsPerGroup = 16;
+ 
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index ae84f38a..bd75b869 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -282,6 +282,7 @@ struct FrameInfo_t
+ {
+ 	bool useFSRLayer0;
+ 	bool useNISLayer0;
++	bool useSGSRLayer0;
+ 	// Upscale settings for this frame.
+ 	GamescopeUpscaleFilter eUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
+ 	GamescopeUpscaleScaler eUpscaleScaler = GamescopeUpscaleScaler::AUTO;
+@@ -611,6 +612,7 @@ enum ShaderType {
+ 	SHADER_TYPE_RCAS,
+ 	SHADER_TYPE_NIS,
+ 	SHADER_TYPE_RGB_TO_NV12,
++	SHADER_TYPE_SGSR,
+ 
+ 	SHADER_TYPE_COUNT
+ };
+diff --git a/src/shaders/cs_sgsr.comp b/src/shaders/cs_sgsr.comp
+new file mode 100644
+index 00000000..f79e8d02
+--- /dev/null
++++ b/src/shaders/cs_sgsr.comp
+@@ -0,0 +1,34 @@
++#version 460
++
++#extension GL_GOOGLE_include_directive : require
++#extension GL_EXT_scalar_block_layout : require
++
++#include "descriptor_set.h"
++
++layout(
++  local_size_x = 16,
++  local_size_y = 16,
++  local_size_z = 1) in;
++
++layout(binding = 0, scalar)
++uniform layers_t {
++    uint u_width;
++    uint u_height;
++};
++
++#include "sgsr1.h"
++
++void sgsrPass(uvec2 pos, vec2 invSize)
++{
++    if (pos.x >= u_width || pos.y >= u_height)
++        return;
++    vec4 color = sampleSgsr1(s_samplers[0], (vec2(pos) + 0.5) * invSize);
++    imageStore(dst, ivec2(pos), vec4(color.rgb, 1));
++}
++
++void main()
++{
++    // One pixel per thread, four as EASU does keeps too many gathers live here.
++    vec2 invSize = 1.0 / vec2(u_width, u_height);
++    sgsrPass(gl_GlobalInvocationID.xy, invSize);
++}
+diff --git a/src/shaders/sgsr1.h b/src/shaders/sgsr1.h
+new file mode 100644
+index 00000000..1d42149b
+--- /dev/null
++++ b/src/shaders/sgsr1.h
+@@ -0,0 +1,139 @@
++/*
++Copyright (c) 2023, 2025, Qualcomm Innovation Center, Inc. All rights reserved.
++
++Redistribution and use in source and binary forms, with or without
++modification, are permitted provided that the following conditions are met:
++
++1. Redistributions of source code must retain the above copyright notice,
++   this list of conditions and the following disclaimer.
++
++2. Redistributions in binary form must reproduce the above copyright notice,
++   this list of conditions and the following disclaimer in the documentation
++   and/or other materials provided with the distribution.
++
++3. Neither the name of the copyright holder nor the names of its contributors
++   may be used to endorse or promote products derived from this software
++   without specific prior written permission.
++
++THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++POSSIBILITY OF SUCH DAMAGE.
++
++SPDX-License-Identifier: BSD-3-Clause
++*/
++
++// Adapted from Qualcomm SGSR1, d926f074bcb9d714e179f1ce0fcb9ee2eeb5074e.
++// sgsr/v1/include/glsl/sgsr1_shader_mobile.frag, with the departures noted below.
++
++mediump float sgsrFastLanczos2(mediump float x)
++{
++	// The polynomial turns positive again past 4, the narrower kernel can reach it.
++	x = min(x, 4.0);
++	mediump float wA = x-4.0;
++	mediump float wB = x*wA-wA;
++	wA *= wA;
++	return wB*wA;
++}
++// Above the reference 0.55 to narrow the kernel, so far taps cannot outvote a lone dark texel.
++const float sgsrKernelWidth = 0.8;
++
++// Outlier rejection fades in with tap distance, so the texel covering the pixel always votes.
++mediump float sgsrWeight(mediump float dx, mediump float dy, mediump float g, mediump float std)
++{
++	mediump float d2 = (dx*dx)+(dy*dy);
++	mediump float outlier = clamp(abs(g)*std, 0.0, 1.0) * min(d2 * 0.5, 1.0);
++	return sgsrFastLanczos2(d2 * sgsrKernelWidth + outlier);
++}
++// Clamped to its own nearest 2x2, so shared weights cannot pull a channel out of range.
++mediump float sgsrChannel(mediump float w[12], mediump vec4 ud, mediump vec4 l, mediump vec4 r, mediump float invSum)
++{
++	mediump float acc = dot(vec4(w[0], w[1], w[2], w[3]), ud) + dot(vec4(w[4], w[5], w[6], w[7]), l) + dot(vec4(w[8], w[9], w[10], w[11]), r);
++	mediump float lo = min(min(l.y, l.z), min(r.x, r.w));
++	mediump float hi = max(max(l.y, l.z), max(r.x, r.w));
++	return clamp(acc * invSum, lo, hi);
++}
++mediump float sgsrMean(mediump vec4 l, mediump vec4 r)
++{
++	return (l.y+l.z+r.x+r.w)*0.25;
++}
++
++vec4 sampleSgsr1(sampler2D tex, vec2 uv)
++{
++	const float edgeThreshold = 8.0 / 255.0;
++	mediump vec4 color = textureLod(tex, uv, 0.0);
++
++	vec2 size = vec2(textureSize(tex, 0));
++	vec4 viewport = vec4(1.0 / size, size);
++	{
++		highp vec2 imgCoord = ((uv*viewport.zw)+vec2(-0.5,0.5));
++		highp vec2 imgCoordPixel = floor(imgCoord);
++		highp vec2 coord = (imgCoordPixel*viewport.xy);
++		mediump vec2 pl = (imgCoord+(-imgCoordPixel));
++		mediump vec4 leftG = textureGather(tex,coord, 1);
++
++		mediump float edgeVote = abs(leftG.z - leftG.y) + abs(color.g - leftG.y)  + abs(color.g - leftG.z) ;
++		if(edgeVote > edgeThreshold)
++		{
++			// Red and blue wait on green's weights so twelve gathers are never live at once.
++			highp vec2 leftCoord = coord;
++			coord.x += viewport.x;
++			highp vec2 rightCoord = coord + vec2(viewport.x, 0.0);
++			highp vec2 upCoord = coord + vec2(0.0, -viewport.y);
++			highp vec2 downCoord = coord + vec2(0.0, viewport.y);
++			mediump vec4 rightG = textureGather(tex,rightCoord, 1);
++			mediump vec4 upDownG;
++			upDownG.xy = textureGather(tex,upCoord, 1).wz;
++			upDownG.zw = textureGather(tex,downCoord, 1).yx;
++
++			mediump float meanG = sgsrMean(leftG, rightG);
++			leftG -= vec4(meanG); rightG -= vec4(meanG); upDownG -= vec4(meanG);
++
++			mediump float sum = (((((abs(leftG.x)+abs(leftG.y))+abs(leftG.z))+abs(leftG.w))+(((abs(rightG.x)+abs(rightG.y))+abs(rightG.z))+abs(rightG.w)))+(((abs(upDownG.x)+abs(upDownG.y))+abs(upDownG.z))+abs(upDownG.w)));
++			mediump float std = 2.181818/sum;
++
++			mediump float w[12];
++			w[0]  = sgsrWeight(pl.x,     pl.y+1.0, upDownG.x, std);
++			w[1]  = sgsrWeight(pl.x-1.0, pl.y+1.0, upDownG.y, std);
++			w[2]  = sgsrWeight(pl.x-1.0, pl.y-2.0, upDownG.z, std);
++			w[3]  = sgsrWeight(pl.x,     pl.y-2.0, upDownG.w, std);
++			w[4]  = sgsrWeight(pl.x+1.0, pl.y-1.0, leftG.x, std);
++			w[5]  = sgsrWeight(pl.x,     pl.y-1.0, leftG.y, std);
++			w[6]  = sgsrWeight(pl.x,     pl.y,     leftG.z, std);
++			w[7]  = sgsrWeight(pl.x+1.0, pl.y,     leftG.w, std);
++			w[8]  = sgsrWeight(pl.x-1.0, pl.y-1.0, rightG.x, std);
++			w[9]  = sgsrWeight(pl.x-2.0, pl.y-1.0, rightG.y, std);
++			w[10] = sgsrWeight(pl.x-2.0, pl.y,     rightG.z, std);
++			w[11] = sgsrWeight(pl.x-1.0, pl.y,     rightG.w, std);
++			mediump float invSum = 1.0 / (((w[0]+w[1])+(w[2]+w[3]))+((w[4]+w[5])+(w[6]+w[7]))+((w[8]+w[9])+(w[10]+w[11])));
++
++			// Green is centered on its mean, so its clamp window is centered too.
++			color.g = meanG + sgsrChannel(w, upDownG, leftG, rightG, invSum);
++			{
++				mediump vec4 l = textureGather(tex,leftCoord, 0);
++				mediump vec4 r = textureGather(tex,rightCoord, 0);
++				mediump vec4 ud;
++				ud.xy = textureGather(tex,upCoord, 0).wz;
++				ud.zw = textureGather(tex,downCoord, 0).yx;
++				color.r = sgsrChannel(w, ud, l, r, invSum);
++			}
++			{
++				mediump vec4 l = textureGather(tex,leftCoord, 2);
++				mediump vec4 r = textureGather(tex,rightCoord, 2);
++				mediump vec4 ud;
++				ud.xy = textureGather(tex,upCoord, 2).wz;
++				ud.zw = textureGather(tex,downCoord, 2).yx;
++				color.b = sgsrChannel(w, ud, l, r, invSum);
++			}
++		}
++	}
++
++	return color;
++}
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index 38f6feb0..7b11389a 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -300,7 +300,6 @@ gamescope::ConVar<int> cv_adaptive_sync_overlay_cycles( "adaptive_sync_overlay_c
+ 
+ gamescope::ConVar<bool> cv_upscale_preemptive( "upscale_preemptive", true, "Allow pre-emptive upscaling" );
+ gamescope::ConVar<bool> cv_upscale_preemptive_debug_force_sync( "upscale_preemptive_debug_force_sync", false, "Force synchronize pre-emptive upscaling" );
+-gamescope::ConVar<bool> cv_hack_remap_sharp_to_fsr( "hack_remap_sharp_to_fsr", true, "HACK: treat unknown scaling filter 5 as FSR" );
+ 
+ uint64_t g_SteamCompMgrLimitedAppRefreshCycle = 16'666'666;
+ uint64_t g_SteamCompMgrAppRefreshCycle = 16'666'666;
+@@ -3005,8 +3004,10 @@ paint_all( global_focus_t *pFocus, bool async )
+ 					paint_window(pFocus, w, w, &frameInfo, pFocus->cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders, 1.0f, fit);
+ 
+ 					bool needsScaling = frameInfo.layers.get( 0 ).scale.x < 0.999f && frameInfo.layers.get( 0 ).scale.y < 0.999f;
+-					frameInfo.useFSRLayer0 = frameInfo.eUpscaleFilter == GamescopeUpscaleFilter::FSR && needsScaling;
+-					frameInfo.useNISLayer0 = frameInfo.eUpscaleFilter == GamescopeUpscaleFilter::NIS && needsScaling;
++					GamescopeUpscaleFilter eLayer0Filter = ResolveUpscaleFilter( frameInfo.eUpscaleFilter, frameInfo.layers.get( 0 ).colorspace, frameInfo.layers.get( 0 ).isYcbcr() );
++					frameInfo.useFSRLayer0 = eLayer0Filter == GamescopeUpscaleFilter::FSR && needsScaling;
++					frameInfo.useNISLayer0 = eLayer0Filter == GamescopeUpscaleFilter::NIS && needsScaling;
++					frameInfo.useSGSRLayer0 = eLayer0Filter == GamescopeUpscaleFilter::SGSR && needsScaling;
+ 				}
+ 				if ( pFocus == GetCurrentMouseFocus() )
+ 					update_touch_scaling( &frameInfo );
+@@ -3183,6 +3184,7 @@ paint_all( global_focus_t *pFocus, bool async )
+ 
+ 		frameInfo.useFSRLayer0 = false;
+ 		frameInfo.useNISLayer0 = false;
++		frameInfo.useSGSRLayer0 = false;
+ 	}
+ 
+ 	pFocus->bFSRActive = frameInfo.useFSRLayer0;
+@@ -7024,16 +7026,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
+ 	{
+ 		uint32_t uScalingFilter = get_prop( ctx, ctx->root, ctx->atoms.gamescopeNewScalingFilter, 0 );
+ 
+-		// HACK: Steam Frame's Sharp option sends 5, which no filter enum
+-		// defines. Remap it so the option does something while the wire
+-		// mismatch is sorted out with Steam.
+-		if ( cv_hack_remap_sharp_to_fsr && uScalingFilter == 5 )
+-		{
+-			xwm_log.infof( "HACK: remapping scaling filter 5 to FSR" );
+-			uScalingFilter = uint32_t( GamescopeUpscaleFilter::FSR );
+-		}
+-
+-		if ( uScalingFilter > uint32_t( GamescopeUpscaleFilter::PIXEL ) )
++		if ( uScalingFilter > uint32_t( GamescopeUpscaleFilter::SGSR ) )
+ 			xwm_log.errorf( "Unknown scaling filter %u, keeping %u", uScalingFilter, uint32_t( g_wantedUpscaleFilter ) );
+ 		else if ( g_wantedUpscaleFilter != GamescopeUpscaleFilter( uScalingFilter ) )
+ 		{
+@@ -8117,8 +8110,10 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
+ 		upscaledFrameInfo.eUpscaleScaler = pUpscaleFocus->eUpscaleScaler;
+ 		upscaledFrameInfo.nUpscaleSharpness = pUpscaleFocus->nUpscaleSharpness;
+ 		paint_window_commit( newCommit, w, w, &upscaledFrameInfo, nullptr );
+-		upscaledFrameInfo.useFSRLayer0 = upscaledFrameInfo.eUpscaleFilter == GamescopeUpscaleFilter::FSR;
+-		upscaledFrameInfo.useNISLayer0 = upscaledFrameInfo.eUpscaleFilter == GamescopeUpscaleFilter::NIS;
++		GamescopeUpscaleFilter eLayer0Filter = ResolveUpscaleFilter( upscaledFrameInfo.eUpscaleFilter, upscaledFrameInfo.layers.get( 0 ).colorspace, upscaledFrameInfo.layers.get( 0 ).isYcbcr() );
++		upscaledFrameInfo.useFSRLayer0 = eLayer0Filter == GamescopeUpscaleFilter::FSR;
++		upscaledFrameInfo.useNISLayer0 = eLayer0Filter == GamescopeUpscaleFilter::NIS;
++		upscaledFrameInfo.useSGSRLayer0 = eLayer0Filter == GamescopeUpscaleFilter::SGSR;
+ 		globalScaleRatio = flOldGlobalScale;
+ 		zoomScaleRatio = flOldZoomScale;
+ 		overscanScaleRatio = flOldOverscanScale;
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+index ffe71da6..b15b0fc9 100644
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -1430,6 +1430,7 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
+ 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_MURA_CORRECTION, 1, 0 );
+ 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_LOOK, 1, 0 );
+ 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_PERF_QUERY, 1, 0 );
++	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_SGSR_FILTER, 1, 0 );
+ 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_DONE, 0, 0 );
+ 
+ 	wlserver_send_gamescope_control( resource );
+diff --git a/tests/test_upscale.cpp b/tests/test_upscale.cpp
+index 0dc5768d..f083bb45 100644
+--- a/tests/test_upscale.cpp
++++ b/tests/test_upscale.cpp
+@@ -2,7 +2,27 @@
+ 
+ #include "main.hpp"
+ 
++TEST_CASE("SGSR keeps the wire value Steam writes", "[upscale]") {
++	REQUIRE( uint32_t( GamescopeUpscaleFilter::SGSR ) == 5 );
++}
++
++TEST_CASE("SGSR only takes SDR RGB input", "[upscale]") {
++	REQUIRE( SgsrSupportsInput( GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR, false ) );
++	REQUIRE( SgsrSupportsInput( GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, false ) );
++	REQUIRE_FALSE( SgsrSupportsInput( GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, true ) );
++	for ( auto colorspace : { GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB, GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ, GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU } )
++		REQUIRE_FALSE( SgsrSupportsInput( colorspace, false ) );
++}
++
++TEST_CASE("SGSR falls back on input it cannot read", "[upscale]") {
++	REQUIRE( ResolveUpscaleFilter( GamescopeUpscaleFilter::SGSR, GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, false ) == GamescopeUpscaleFilter::SGSR );
++	REQUIRE( ResolveUpscaleFilter( GamescopeUpscaleFilter::SGSR, GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ, false ) == GamescopeUpscaleFilter::FSR );
++	REQUIRE( ResolveUpscaleFilter( GamescopeUpscaleFilter::SGSR, GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, true ) == GamescopeUpscaleFilter::LINEAR );
++	REQUIRE( ResolveUpscaleFilter( GamescopeUpscaleFilter::NIS, GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ, false ) == GamescopeUpscaleFilter::NIS );
++}
++
+ TEST_CASE("UpscaleFilterUsesSharpness", "[upscale]") {
++	REQUIRE( UpscaleFilterUsesSharpness( GamescopeUpscaleFilter::SGSR ) );
+ 	REQUIRE( UpscaleFilterUsesSharpness( GamescopeUpscaleFilter::FSR ) );
+ 	REQUIRE( UpscaleFilterUsesSharpness( GamescopeUpscaleFilter::NIS ) );
+ 	REQUIRE_FALSE( UpscaleFilterUsesSharpness( GamescopeUpscaleFilter::LINEAR ) );

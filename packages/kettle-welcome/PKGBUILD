@@ -1,0 +1,28 @@
+# Kettle Linux's Desktop Mode welcome: our pages and intro for KDE's Welcome Center
+# (plasma-welcome), which opens on a user's first desktop login and stays in the application
+# menu as Welcome Center.
+#   intro-customization.desktop  the first page's intro text and picture (the Plasma splash's
+#                                kettle), in place of "Welcome to SteamOS" from os-release
+#   pages/01-Desktop.qml         controller-as-mouse controls, on-screen keyboard, Game Mode,
+#                                and a button for the Kettle Installer (internal storage)
+#   pages/02-Games.qml           games outside Steam: Lutris, Heroic, Windows games via Wine
+#   pages/03-Extras.qml          Gaming Extras: optional apps (emulators, streaming, Steam
+#                                helpers) installed per user from Flathub by welcome-flatpak;
+#                                also in the menu on its own (org.kettle.gaming-extras.desktop)
+pkgname=kettle-welcome
+pkgver=1.0.0
+pkgrel=2
+pkgdesc='Kettle Linux pages for the Plasma Welcome Center'
+arch=(any)
+license=(BSD-3-Clause)
+depends=(plasma-welcome kirigami-addons plasma5support flatpak systemd kettle-plasma-splash)
+
+package() {
+  local share="$pkgdir/usr/share/plasma/plasma-welcome"
+  install -Dm644 "$startdir/intro-customization.desktop" -t "$share"
+  # every file in extra-pages is loaded as a page, in name order
+  install -Dm644 "$startdir"/pages/*.qml -t "$share/extra-pages"
+  install -Dm755 "$startdir/welcome-flatpak" -t "$pkgdir/usr/lib/kettle"
+  install -Dm644 "$startdir/org.kettle.gaming-extras.desktop" -t "$pkgdir/usr/share/applications"
+  install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}

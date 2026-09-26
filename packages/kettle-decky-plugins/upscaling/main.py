@@ -1,8 +1,11 @@
-# Upscaling: per-game SGSR 2 through OptiScaler (ARM64EC build), plus gamescope FSR 1, which
-# lives in the frontend (it only drives Steam's own per-game settings).
+# Upscaling: per-game OptiScaler (ARM64EC build), plus gamescope's filter, which lives in the
+# frontend (it only drives Steam's own per-game settings).
 #
 # OptiScaler (system package optiscaler-arm64ec, /usr/share/optiscaler) takes the game's DLSS,
-# FSR 2+ or XeSS inputs and runs Qualcomm's Snapdragon GSR 2 instead. It is only ever in a
+# FSR 2+ or XeSS inputs and runs the upscaler chosen here instead: SGSR 2, Arm ASR or FSR 2.2,
+# built into it, or FSR 3.1 with optional FSR frame generation from AMD's DLLs, which the
+# Welcome plugin downloads on request (component amd-fsr3). Those DLLs are copied into a game's
+# folder only while its settings use them, tracked like OptiScaler's own files. It is only ever in a
 # game's folder while it is on for that game: turning it on copies OptiScaler.dll next to the
 # game's exe under a proxy DLL name (and the frontend adds WINEDLLOVERRIDES=<proxy>=n,b);
 # turning it off removes it again. A copy can't just be left inert, since Proton itself sets
@@ -24,19 +27,29 @@ BAK = ".kettle-bak"
 PARKED = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "optiscaler")  # <appid>.ini, <appid>.json
 PROXIES = ["dxgi.dll", "winmm.dll", "version.dll", "dbghelp.dll", "d3d12.dll", "wininet.dll", "winhttp.dll"]
 LOGS = ["OptiScaler.log"]  # written next to the DLL; removed with it
+AMD = os.path.join(decky.DECKY_USER_HOME, ".local", "share", "kettle", "components", "amd-fsr3")
+AMD_FILES = ["amd_fidelityfx_loader_dx12.dll", "amd_fidelityfx_upscaler_dx12.dll",
+             "amd_fidelityfx_framegeneration_dx12.dll"]
 
 RATIOS = ["game", "1.3", "1.5", "1.7", "2.0", "3.0"]
+# choice -> (Dx12Upscaler, Dx11Upscaler). DX11 goes through the 11-on-12 bridge (the native
+# DX11 FSR2 path is a stub on ARM64EC); Vulkan games always get SGSR2, the only one with a
+# Vulkan path here.
+UPSCALERS = {"sgsr2": ("sgsr2", "sgsr2_12"), "asr": ("asr", "asr_12"), "fsr22": ("fsr22", "fsr22_12"),
+             "fsr31": ("ffx", "ffx_12")}  # fsr31 needs AMD's DLLs
+# choice -> ([FrameGen] Enabled, FGInput, FGOutput): FSR frame generation (AMD's DLLs), fed from
+# the upscaler's inputs (any game OptiScaler upscales; the HUD may ghost without HUDFix) or from
+# the game's own FSR 3 frame generation
+FRAMEGEN = {"off": ("false", "nofg", "nofg"), "upscaler": ("true", "upscaler", "fsrfg"),
+            "game": ("true", "fsrfg", "fsrfg")}
+ASR_QUALITY = ["balanced", "quality"]  # ASR 25.06's performance preset is broken upstream
 MENU_KEYS = ["0x2D", "0x24", "0x7B", "0x71"]  # Insert, Home, F12, F2
 
-DEFAULTS = {"sharpen": True, "sharpness": 0.3, "ratio": "game", "spoof": True, "menu_key": "0x2D"}
+DEFAULTS = {"upscaler": "sgsr2", "asr_quality": "balanced", "framegen": "off", "hudfix": False, "sharpen": True, "sharpness": 0.3, "ratio": "game", "spoof": True, "menu_key": "0x2D"}
 
-# Always written. SGSR2 is the only backend that runs on ARM64EC (FSR links against stubs,
-# XeSS/DLSS runtimes are x86-64); DX11 games go through its 11-on-12 bridge.
+# Always written
 BASE = [
-    ("Upscalers", "Dx12Upscaler", "sgsr2"),
-    ("Upscalers", "Dx11Upscaler", "sgsr2_12"),
-    ("Upscalers", "VulkanUpscaler", "sgsr2"),
-    ("FrameGen", "Enabled", "false"),              # FSR/XeSS FG libraries aren't shipped
+    ("Upscalers", "VulkanUpscaler", "sgsr2"),      # the only upscaler with a Vulkan path here
     ("Menu", "UseHQFont", "false"),                # HQ font can assert under Proton
     ("Plugins", "LoadAsiPlugins", "false"),
 ]
@@ -45,7 +58,13 @@ BASE = [
 def _to_ini(s: dict) -> list[tuple[str, str, str]]:
     b = lambda v: "true" if v else "false"
     ratio = s["ratio"] != "game"
+    dx12, dx11 = UPSCALERS[s["upscaler"]]
+    fg, fg_in, fg_out = FRAMEGEN[s["framegen"]]
     return BASE + [
+        ("Upscalers", "Dx12Upscaler", dx12), ("Upscalers", "Dx11Upscaler", dx11),
+        ("FrameGen", "Enabled", fg), ("FrameGen", "FGInput", fg_in), ("FrameGen", "FGOutput", fg_out),
+        ("OptiFG", "HUDFix", b(s["hudfix"] and s["framegen"] == "upscaler")),
+        ("ASR", "ShaderQuality", s["asr_quality"]),
         # SGSR2 has no sharpening of its own; RCAS supplies it
         ("CAS", "Enabled", b(s["sharpen"])), ("Sharpness", "OverrideSharpness", b(s["sharpen"])),
         ("Sharpness", "Sharpness", f"{s['sharpness']:.2f}"),
@@ -60,6 +79,12 @@ def _from_ini(ini: str) -> dict:
     v = lambda sec, key: _ini_get(ini, sec, key)
     t = lambda sec, key, dflt: {"true": True, "false": False}.get((v(sec, key) or "").lower(), dflt)
     s = dict(DEFAULTS)
+    s["upscaler"] = next((c for c, u in UPSCALERS.items() if u[0] == v("Upscalers", "Dx12Upscaler")), DEFAULTS["upscaler"])
+    fg = ((v("FrameGen", "Enabled") or "").lower(), v("FrameGen", "FGInput"))
+    s["framegen"] = next((c for c, f in FRAMEGEN.items() if f[:2] == fg), DEFAULTS["framegen"])
+    s["hudfix"] = t("OptiFG", "HUDFix", DEFAULTS["hudfix"])
+    q = (v("ASR", "ShaderQuality") or "").lower()
+    s["asr_quality"] = q if q in ASR_QUALITY else DEFAULTS["asr_quality"]
     s["sharpen"] = t("CAS", "Enabled", DEFAULTS["sharpen"])
     try:
         s["sharpness"] = round(float(v("Sharpness", "Sharpness") or "x"), 2)
@@ -73,13 +98,25 @@ def _from_ini(ini: str) -> dict:
     return s
 
 
-def _clean(s: dict) -> dict:
+def _needs_amd(s: dict) -> bool:
+    return s["upscaler"] == "fsr31" or s["framegen"] != "off"
+
+
+def _amd_available() -> bool:
+    return all(os.path.isfile(os.path.join(AMD, f)) for f in AMD_FILES)
+
+
+def _clean(s: dict, amd_ok: bool = True) -> dict:
+    """amd_ok: settings that need AMD's DLLs are allowed (they're installed, or already copied)."""
     out = dict(DEFAULTS)
     out.update({k: s[k] for k in DEFAULTS if k in s})
-    if out["ratio"] not in RATIOS or out["menu_key"] not in MENU_KEYS:
+    if out["ratio"] not in RATIOS or out["menu_key"] not in MENU_KEYS or out["upscaler"] not in UPSCALERS \
+            or out["asr_quality"] not in ASR_QUALITY or out["framegen"] not in FRAMEGEN:
         raise ValueError("invalid OptiScaler setting")
+    if _needs_amd(out) and not amd_ok:
+        raise ValueError("FSR 3.1 and frame generation need AMD FSR 3.1: install it in the Welcome panel")
     out["sharpness"] = round(max(0.0, min(1.3, float(out["sharpness"]))), 2)
-    for k in ("sharpen", "spoof"):
+    for k in ("sharpen", "spoof", "hudfix"):
         out[k] = bool(out[k])
     return out
 
@@ -192,6 +229,51 @@ def _ini_path(appid: int) -> str:
     return os.path.join(d, "OptiScaler.ini") if d else os.path.join(PARKED, f"{appid}.ini")
 
 
+def _place(d: str, m: dict, name: str, src: str):
+    """Copy src into game folder d as name, moving a game file of that name aside; recorded in m."""
+    dst = os.path.join(d, name)
+    if os.path.lexists(dst) and name not in m["files"]:
+        os.replace(dst, dst + BAK)
+        m["backups"].append(name)
+    shutil.copyfile(src, dst)
+    if name not in m["files"]:
+        m["files"].append(name)
+
+
+def _unplace(d: str, m: dict, name: str):
+    """Undo _place: remove our copy, put the game's file back."""
+    try:
+        os.remove(os.path.join(d, name))
+    except FileNotFoundError:
+        pass
+    m["files"].remove(name)
+    if name in m["backups"]:
+        b = os.path.join(d, name + BAK)
+        if os.path.lexists(b):
+            os.replace(b, os.path.join(d, name))
+        m["backups"].remove(name)
+
+
+def _sync_amd(d: str, settings: dict):
+    """AMD's DLLs in the game folder exactly while its settings use them."""
+    path = os.path.join(d, MARKER)
+    m = _read_json(path) or {}
+    m.setdefault("files", [])
+    m.setdefault("backups", [])
+    need = _needs_amd(settings)
+    for name in AMD_FILES:
+        if need and name not in m["files"]:
+            _place(d, m, name, os.path.join(AMD, name))
+        elif not need and name in m["files"]:
+            _unplace(d, m, name)
+    _write_json(path, m)
+
+
+def _has_amd_copies(d: str | None) -> bool:
+    m = _read_json(os.path.join(d, MARKER)) if d else None
+    return bool(m) and all(f in m.get("files", []) for f in AMD_FILES)
+
+
 def _stock_ini(path: str, settings: dict):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     shutil.copyfile(os.path.join(OPTI, "OptiScaler.ini"), path)
@@ -201,7 +283,7 @@ def _stock_ini(path: str, settings: dict):
 class Plugin:
     async def status(self) -> dict:
         return {"available": os.path.isfile(os.path.join(OPTI, "OptiScaler.dll")), "version": _version(),
-                "proxies": PROXIES}
+                "proxies": PROXIES, "amd": _amd_available()}
 
     async def installed_games(self) -> list[dict]:
         return steamlib.installed_games()
@@ -238,6 +320,10 @@ class Plugin:
         parked = os.path.join(PARKED, f"{appid}.ini")
         if not os.path.isfile(parked):
             _stock_ini(parked, DEFAULTS)
+        settings = _from_ini(parked)
+        if _needs_amd(settings) and not _amd_available():
+            raise ValueError("this game is set to use AMD FSR 3.1, which isn't installed: install it in "
+                             "the Welcome panel, or pick another upscaler first")
         copied, backups = [], []
         for src, name in [(os.path.join(OPTI, "OptiScaler.dll"), proxy), (parked, "OptiScaler.ini")]:
             dst = os.path.join(exe_dir, name)
@@ -251,6 +337,7 @@ class Plugin:
         _ini_set(ini, _to_ini(_from_ini(ini)))  # BASE may be newer than the parked ini
         _write_json(os.path.join(exe_dir, MARKER), {"appid": appid, "version": _version(), "proxy": proxy,
                                                     "files": copied, "backups": backups})
+        _sync_amd(exe_dir, settings)
         _write_json(os.path.join(PARKED, f"{appid}.json"), {"dir": exe_dir, "proxy": proxy})
         decky.logger.info("OptiScaler on for %s in %s as %s", appid, exe_dir, proxy)
         return await self.get_game(appid)
@@ -281,12 +368,19 @@ class Plugin:
         ini = _ini_path(appid)
         if not os.path.isfile(ini):
             _stock_ini(ini, DEFAULTS)
-        _ini_set(ini, _to_ini(_clean({**_from_ini(ini), **settings})))
+        d = _find_install(appid)
+        new = _clean({**_from_ini(ini), **settings}, amd_ok=_amd_available() or _has_amd_copies(d))
+        _ini_set(ini, _to_ini(new))
+        if d:
+            _sync_amd(d, new)
         return await self.get_game(appid)
 
     async def reset(self, appid: int) -> dict:
         """Stock OptiScaler.ini plus our defaults."""
         _stock_ini(_ini_path(appid), DEFAULTS)
+        d = _find_install(appid)
+        if d:
+            _sync_amd(d, DEFAULTS)
         return await self.get_game(appid)
 
     async def _main(self):

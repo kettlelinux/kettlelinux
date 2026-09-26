@@ -99,10 +99,10 @@ function GamescopeFsr({ appid }: { appid: number }) {
   );
 }
 
-// ---------- SGSR 2 through OptiScaler: replaces the game's DLSS / FSR 2+ / XeSS ----------
+// ---------- OptiScaler (SGSR 2, Arm ASR, FSR 2.2): replaces the game's DLSS / FSR 2+ / XeSS ----------
 
-type Settings = { sharpen: boolean; sharpness: number; ratio: string; spoof: boolean; menu_key: string };
-type Status = { available: boolean; version: string | null; proxies: string[] };
+type Settings = { upscaler: string; asr_quality: string; framegen: string; hudfix: boolean; sharpen: boolean; sharpness: number; ratio: string; spoof: boolean; menu_key: string };
+type Status = { available: boolean; version: string | null; proxies: string[]; amd: boolean };
 type Game = {
   found: boolean;
   on?: boolean;
@@ -120,6 +120,22 @@ const disable = callable<[appid: number], Game>("disable");
 const configure = callable<[appid: number, settings: Partial<Settings>], Game>("configure");
 const reset = callable<[appid: number], Game>("reset");
 
+const UPSCALERS = [
+  { data: "sgsr2", label: "SGSR 2 (Snapdragon)" },
+  { data: "asr", label: "Arm ASR" },
+  { data: "fsr22", label: "FSR 2.2" },
+];
+// with AMD's DLLs (Welcome panel › AMD FSR 3.1)
+const AMD_UPSCALERS = [{ data: "fsr31", label: "FSR 3.1 (AMD)" }];
+const FRAMEGEN = [
+  { data: "off", label: "Off" },
+  { data: "upscaler", label: "FSR FG from the upscaler" },
+  { data: "game", label: "Game's own FSR 3 FG" },
+];
+const ASR_QUALITY = [
+  { data: "balanced", label: "Balanced" },
+  { data: "quality", label: "Quality (slower)" },
+];
 const RATIOS = [
   { data: "game", label: "Game's quality setting" },
   { data: "1.3", label: "1.3× (ultra quality)" },
@@ -155,24 +171,26 @@ function Sgsr({ appid, name, s }: { appid: number; name: string; s: Status }) {
   }, [appid]);
 
   if (!s.available)
-    return <PanelSection title="SGSR 2"><PanelSectionRow><div>OptiScaler isn't installed on this system.</div></PanelSectionRow></PanelSection>;
+    return <PanelSection title="OptiScaler"><PanelSectionRow><div>OptiScaler isn't installed on this system.</div></PanelSectionRow></PanelSection>;
   if (!g) return null;
   if (!g.found)
-    return <PanelSection title="SGSR 2"><PanelSectionRow><div>{name} isn't installed.</div></PanelSectionRow></PanelSection>;
+    return <PanelSection title="OptiScaler"><PanelSectionRow><div>{name} isn't installed.</div></PanelSectionRow></PanelSection>;
 
   const run = async (f: () => Promise<Game>, msg?: string) => {
     setBusy(true);
     try {
       show(await f());
-      if (msg) toaster.toast({ title: "SGSR 2", body: msg });
+      if (msg) toaster.toast({ title: "OptiScaler", body: msg });
     } catch (e) {
-      toaster.toast({ title: "SGSR 2", body: String(e) });
+      toaster.toast({ title: "OptiScaler", body: String(e) });
     } finally {
       setBusy(false);
     }
   };
   const restartNote = () => (runningAppId() === appid ? ` Restart ${name} to apply.` : "");
   const st = g.settings!;
+  // FSR 3.1 and frame generation need AMD's DLLs; a game already using them keeps its choice
+  const amd = s.amd || st.upscaler === "fsr31" || st.framegen !== "off";
   const set = (patch: Partial<Settings>) => run(() => configure(appid, patch), g.on ? restartNote().trim() || undefined : undefined);
 
   // On: OptiScaler is copied into the game folder and loaded through a DLL override in the
@@ -191,17 +209,17 @@ function Sgsr({ appid, name, s }: { appid: number; name: string; s: Status }) {
     }, (on ? "On." : "Off.") + restartNote());
 
   return (
-    <PanelSection title="SGSR 2 (OptiScaler)">
+    <PanelSection title="Temporal upscaling (OptiScaler)">
       <PanelSectionRow>
         <div style={small}>
-          Qualcomm's temporal upscaler for Adreno, for DX11/DX12 games with DLSS, FSR 2+ or XeSS: pick that
-          upscaler in the game's settings and SGSR 2 runs in its place. Keep the render resolution above at
+          For DX11/DX12 games with DLSS, FSR 2+ or XeSS: pick that upscaler in the game's settings and
+          the one chosen here runs in its place. Keep the render resolution above at
           Default. Vulkan games are untested.
         </div>
       </PanelSectionRow>
       <PanelSectionRow>
         <ToggleField
-          label="SGSR 2"
+          label="OptiScaler"
           description={g.on ? short(g.dir ?? "") : undefined}
           checked={!!g.on}
           disabled={busy || (!g.on && !dir)}
@@ -232,11 +250,40 @@ function Sgsr({ appid, name, s }: { appid: number; name: string; s: Status }) {
       )}
 
       <PanelSectionRow>
+        <DropdownItem label="Upscaler" description="Vulkan games always use SGSR 2"
+          rgOptions={amd ? [...UPSCALERS, ...AMD_UPSCALERS] : UPSCALERS} selectedOption={st.upscaler} disabled={busy}
+          onChange={(o) => set({ upscaler: o.data })} />
+      </PanelSectionRow>
+      {st.upscaler === "asr" && (
+        <PanelSectionRow>
+          <DropdownItem label="ASR preset" rgOptions={ASR_QUALITY} selectedOption={st.asr_quality} disabled={busy}
+            onChange={(o) => set({ asr_quality: o.data })} />
+        </PanelSectionRow>
+      )}
+      {amd ? (
+        <>
+          <PanelSectionRow>
+            <DropdownItem label="Frame generation" description="DX12 games; heavy on this GPU (choppy in Deep Rock Galactic), the Frame Generation plugin is usually better. Don't combine the two."
+              rgOptions={FRAMEGEN} selectedOption={st.framegen} disabled={busy} onChange={(o) => set({ framegen: o.data })} />
+          </PanelSectionRow>
+          {st.framegen === "upscaler" && (
+            <PanelSectionRow>
+              <ToggleField label="HUD fix" description="Keeps the HUD from ghosting in generated frames; may crash some games"
+                checked={st.hudfix} disabled={busy} onChange={(hudfix) => set({ hudfix })} />
+            </PanelSectionRow>
+          )}
+        </>
+      ) : (
+        <PanelSectionRow>
+          <div style={small}>FSR 3.1 and frame generation: install AMD FSR 3.1 in the Welcome panel.</div>
+        </PanelSectionRow>
+      )}
+      <PanelSectionRow>
         <DropdownItem label="Render scale" description="Force a ratio instead of the game's DLSS/FSR quality mode"
           rgOptions={RATIOS} selectedOption={st.ratio} disabled={busy} onChange={(o) => set({ ratio: o.data })} />
       </PanelSectionRow>
       <PanelSectionRow>
-        <ToggleField label="Sharpening (RCAS)" description="SGSR 2 has no sharpening of its own"
+        <ToggleField label="Sharpening (RCAS)" description="RCAS after the upscaler"
           checked={st.sharpen} disabled={busy} onChange={(sharpen) => set({ sharpen })} />
       </PanelSectionRow>
       {st.sharpen && (
@@ -246,7 +293,7 @@ function Sgsr({ appid, name, s }: { appid: number; name: string; s: Status }) {
         </PanelSectionRow>
       )}
       <PanelSectionRow>
-        <ToggleField label="Report GPU as NVIDIA" description="Makes games offer DLSS, which SGSR 2 then replaces"
+        <ToggleField label="Report GPU as NVIDIA" description="Makes games offer DLSS, which OptiScaler then replaces"
           checked={st.spoof} disabled={busy} onChange={(spoof) => set({ spoof })} />
       </PanelSectionRow>
       <PanelSectionRow>

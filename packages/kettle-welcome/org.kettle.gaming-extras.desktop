@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Gaming Extras
+GenericName=Install Gaming Apps
+Comment=Emulators, game streaming and tools for games outside Steam, from Flathub
+Exec=plasma-welcome --pages 03-Extras
+Icon=applications-games
+Terminal=false
+Categories=Game;
+Keywords=emulator;flatpak;flathub;install;retroarch;moonlight;

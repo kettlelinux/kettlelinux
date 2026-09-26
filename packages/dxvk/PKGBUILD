@@ -1,0 +1,54 @@
+# DXVK: Direct3D 8, 9, 10 and 11 on Vulkan, built as ARM64EC (x86-64 games: runs natively in
+# their FEX-emulated process, like Proton ARM64's) and i686 (32-bit games, emulated with them).
+# Build input for packages/wine, which installs these as its own d3d8/d3d9/d3d10core/d3d11/dxgi,
+# so every Wine prefix uses them; this package itself isn't in the image.
+#
+# Upstream source, only our meson cross files (llvm-mingw's aarch64 Linux build, as the chroot
+# is aarch64). Submodules are fetched at the commits the release tag records.
+pkgname=dxvk
+pkgver=3.1.1
+pkgrel=1
+_llvm_mingw=20260908
+pkgdesc='Vulkan-based Direct3D 8/9/10/11 for Wine (ARM64EC and i686)'
+arch=(any)
+url='https://github.com/doitsujin/dxvk'
+license=(Zlib MIT)
+makedepends=(git meson ninja glslang)
+options=(!strip !buildflags !lto)  # PE builds (meson --strip uses llvm-mingw's strip)
+_llvm="llvm-mingw-$_llvm_mingw-ucrt-ubuntu-22.04-aarch64"
+source=("dxvk::git+$url.git#tag=v$pkgver"
+        "https://github.com/mstorsjo/llvm-mingw/releases/download/$_llvm_mingw/$_llvm.tar.xz"
+        cross-arm64ec.txt
+        cross-i686.txt)
+sha256sums=('SKIP'
+            'c907dd2302a292b663add18752a55ce9d544ca0fd19cf33c086ca242d5994ea6'
+            'SKIP'
+            'SKIP')
+
+prepare() {
+  cd dxvk
+  git submodule update --init --recursive
+}
+
+build() {
+  export PATH="$srcdir/$_llvm/bin:$PATH"
+  local t
+  for t in arm64ec i686; do
+    meson setup "build-$t" dxvk --cross-file "cross-$t.txt" --buildtype release \
+      --prefix /usr --bindir "lib/dxvk/$t" --libdir "lib/dxvk/$t" \
+      -Db_ndebug=if-release --strip
+    ninja -C "build-$t"
+  done
+}
+
+package() {
+  local t
+  for t in arm64ec i686; do
+    DESTDIR="$pkgdir" meson install -C "build-$t" --no-rebuild
+  done
+  rm "$pkgdir"/usr/lib/dxvk/*/*.dll.a  # import libraries: nothing links against them here
+  local l="$pkgdir/usr/share/licenses/$pkgname"
+  install -Dm644 dxvk/LICENSE -t "$l"
+  install -Dm644 dxvk/subprojects/libdisplay-info/LICENSE "$l/libdisplay-info_LICENSE"
+  install -Dm644 dxvk/subprojects/dxbc-spirv/LICENSE "$l/dxbc-spirv_LICENSE"
+}

@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Fri, 25 Sep 2026 16:00:56 -0500
+Subject: [PATCH 9/9] steamcompmgr: let steam_sharp_filter pick what Steam's
+ Sharp runs
+
+Steam's Sharp option writes scaling filter 5, which is SGSR since the
+Snapdragon GSR 1 backport. Add a steam_sharp_filter convar (default
+sgsr) naming the filter Sharp runs instead, so FSR 1 (or NIS) stays
+reachable from Steam's own per-game setting. Changing it while Sharp is
+selected applies right away; a filter picked with the scaling_filter
+command is left alone.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ src/steamcompmgr.cpp | 41 ++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 38 insertions(+), 3 deletions(-)
+
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index 858df01a..e36379e2 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -1011,6 +1011,32 @@ static gamescope::ConCommand cc_focus_info( "focus_info", "Dump debug info about
+ static std::atomic<int32_t> g_nPendingUpscaleFilter = { -1 };
+ static std::atomic<int32_t> g_nPendingUpscaleSharpness = { -1 };
+ 
++// Kettle: Steam's Sharp option writes filter 5 (SGSR). Let the device pick what Sharp runs,
++// so FSR stays reachable from Steam's own per-game setting. Parsed here, since the string
++// convar is written from the console thread while the filter is read on this one.
++static std::atomic<bool> g_bSteamSelectedSharp = { false };
++static std::atomic<int32_t> g_nSteamSharpFilter = { int32_t( GamescopeUpscaleFilter::SGSR ) };
++
++static gamescope::ConVar<std::string> cv_steam_sharp_filter( "steam_sharp_filter", "sgsr",
++	"Filter that Steam's Sharp scaling option runs (linear, nearest, fsr, nis, pixel, sgsr)",
++	[]( gamescope::ConVar<std::string> &cv )
++	{
++		std::optional<GamescopeUpscaleFilter> oFilter = ParseUpscaleFilter( cv.Get() );
++		if ( !oFilter )
++		{
++			// Names in GamescopeUpscaleFilter order, to put the one still in effect back.
++			static constexpr const char *k_pszFilterNames[] = { "linear", "nearest", "fsr", "nis", "pixel", "sgsr" };
++			const char *pszKept = k_pszFilterNames[ g_nSteamSharpFilter.load() ];
++			console_log.errorf( "Unknown scaling filter '%s' for steam_sharp_filter, keeping %s", cv.Get().c_str(), pszKept );
++			cv = std::string( pszKept );
++			return;
++		}
++
++		g_nSteamSharpFilter = int32_t( *oFilter );
++		if ( g_bSteamSelectedSharp )
++			g_nPendingUpscaleFilter = int32_t( *oFilter );
++	} );
++
+ static gamescope::ConCommand cc_scaling_filter( "scaling_filter", "Set the scaling filter (linear, nearest, fsr, nis, pixel, sgsr)",
+ []( std::span<std::string_view> args )
+ {
+@@ -1028,6 +1054,7 @@ static gamescope::ConCommand cc_scaling_filter( "scaling_filter", "Set the scali
+ 	}
+ 
+ 	g_nPendingUpscaleFilter = int32_t( *oFilter );
++	g_bSteamSelectedSharp = false;
+ });
+ 
+ static gamescope::ConCommand cc_scaling_sharpness( "scaling_sharpness", "Set the scaling sharpness (0 to 20)",
+@@ -7104,12 +7131,20 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
+ 	{
+ 		uint32_t uScalingFilter = get_prop( ctx, ctx->root, ctx->atoms.gamescopeNewScalingFilter, 0 );
+ 
++		bool bSteamSharp = uScalingFilter == uint32_t( GamescopeUpscaleFilter::SGSR );
++		if ( bSteamSharp )
++			uScalingFilter = uint32_t( g_nSteamSharpFilter.load() );
++
+ 		if ( uScalingFilter > uint32_t( GamescopeUpscaleFilter::SGSR ) )
+ 			xwm_log.errorf( "Unknown scaling filter %u, keeping %u", uScalingFilter, uint32_t( g_wantedUpscaleFilter ) );
+-		else if ( g_wantedUpscaleFilter != GamescopeUpscaleFilter( uScalingFilter ) )
++		else
+ 		{
+-			g_wantedUpscaleFilter = GamescopeUpscaleFilter( uScalingFilter );
+-			hasRepaint = true;
++			g_bSteamSelectedSharp = bSteamSharp;
++			if ( g_wantedUpscaleFilter != GamescopeUpscaleFilter( uScalingFilter ) )
++			{
++				g_wantedUpscaleFilter = GamescopeUpscaleFilter( uScalingFilter );
++				hasRepaint = true;
++			}
+ 		}
+ 	}
+ 	if ( ev->atom == ctx->atoms.gamescopeNewScalingScaler )

@@ -1,0 +1,2173 @@
+From c0b607872f049836b75cf8eeba4d2c2f9903db7f Mon Sep 17 00:00:00 2001
+From: Kettle <kettle@localhost>
+Date: Fri, 25 Sep 2026 16:33:13 -0500
+Subject: [PATCH 3/5] asr: add a D3D12 backend for Arm ASR, with DXIL built
+ from its HLSL
+
+Arm Accuracy Super Resolution (MIT) is FSR 2.2.2 reworked for mobile GPUs,
+but Arm only ships a Vulkan backend. This adds the pieces to run it on D3D12:
+
+- ffxm_dx12.cpp implements ASR's FfxmInterface on D3D12: root signatures
+  built from shader reflection, graphics PSOs per render-target format set
+  (most ASR passes are full-screen fragment shaders), resource state
+  tracking with UAV barriers, initial-data uploads, clears and copies. It
+  depends only on d3d12.h and ASR's host headers.
+- gen_asr_shaders.py compiles ASR's own HLSL to DXIL (SM6.0, min16float,
+  which vkd3d-proton lowers to native fp16 where the device has it) with a
+  Linux DXC, deduplicating permutations by preprocessed source (240 -> 100
+  blobs, ~0.9 MiB), and emits the binding reflection the backend needs.
+  Only the passes OptiScaler schedules are built.
+- build.sh fetches ASR at tag 25.06, builds its host library as
+  libasr_arm64ec.a, and runs the generator when $DXC passes a probe
+  compile; without one the DLL still builds and ASR reports unavailable.
+
+Checked on a desktop GPU under wine + vkd3d-proton against ASR's own Vulkan
+backend on a synthetic jittered scene: PSNR matches within 0.1 dB for every
+preset, static and panning, low- and display-resolution motion vectors.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ LICENSES/MIT-Arm-ASR.txt               |   20 +
+ OptiScaler/upscalers/asr/ffxm_dx12.cpp | 1586 ++++++++++++++++++++++++
+ OptiScaler/upscalers/asr/ffxm_dx12.h   |   64 +
+ arm64ec/README.md                      |   30 +
+ arm64ec/build.sh                       |   46 +-
+ arm64ec/gen_asr_shaders.py             |  316 +++++
+ 6 files changed, 2061 insertions(+), 1 deletion(-)
+ create mode 100644 LICENSES/MIT-Arm-ASR.txt
+ create mode 100644 OptiScaler/upscalers/asr/ffxm_dx12.cpp
+ create mode 100644 OptiScaler/upscalers/asr/ffxm_dx12.h
+ create mode 100644 arm64ec/gen_asr_shaders.py
+
+diff --git a/LICENSES/MIT-Arm-ASR.txt b/LICENSES/MIT-Arm-ASR.txt
+new file mode 100644
+index 0000000..637c17a
+--- /dev/null
++++ b/LICENSES/MIT-Arm-ASR.txt
+@@ -0,0 +1,20 @@
++Copyright  © 2023 Advanced Micro Devices, Inc.
++Copyright  © 2024-2025 Arm Limited.
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/OptiScaler/upscalers/asr/ffxm_dx12.cpp b/OptiScaler/upscalers/asr/ffxm_dx12.cpp
+new file mode 100644
+index 0000000..40a2117
+--- /dev/null
++++ b/OptiScaler/upscalers/asr/ffxm_dx12.cpp
+@@ -0,0 +1,1586 @@
++// D3D12 backend for Arm Accuracy Super Resolution's ffxm interface.
++//
++// Copyright (c) 2023 Advanced Micro Devices, Inc.
++// Copyright (c) 2024-2025 Arm Limited.
++// Copyright (c) 2026 the OptiScaler ARM64EC port contributors.
++//
++// Permission is hereby granted, free of charge, to any person obtaining a copy
++// of this software and associated documentation files (the "Software"), to deal
++// in the Software without restriction, including without limitation the rights
++// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++// copies of the Software, and to permit persons to whom the Software is
++// furnished to do so, subject to the following conditions:
++//
++// The above copyright notice and this permission notice shall be included in all
++// copies or substantial portions of the Software.
++//
++// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++// SOFTWARE.
++
++#include "ffxm_dx12.h"
++
++#include <host/ffxm_fsr2.h>
++
++#include <algorithm>
++#include <climits>
++#include <cmath>
++#include <cstdarg>
++#include <cstdio>
++#include <cstring>
++#include <cwchar>
++#include <new>
++
++#if __has_include(<asr_dx12_shaders.h>)
++#include <asr_dx12_shaders.h>
++#define FFXM_DX12_HAVE_SHADERS 1
++#else
++#define FFXM_DX12_HAVE_SHADERS 0
++#endif
++
++namespace arm
++{
++
++namespace
++{
++
++// ------------------------------------------------------------------ limits
++constexpr uint32_t kMaxResources = 128;      // [0] is the null resource
++constexpr uint32_t kDynamicBase = 96;        // registered (per-dispatch) resources live above this
++constexpr uint32_t kMaxPipelines = 16;
++constexpr uint32_t kGfxPsoCache = 4;         // RT-format variants per graphics pipeline
++constexpr uint32_t kCpuDescriptors = 1024;   // non-shader-visible CBV/SRV/UAV
++constexpr uint32_t kCpuDynamicBase = 768;    // views of registered resources, rewritten per dispatch
++constexpr uint32_t kRtvDescriptors = 128;
++constexpr uint32_t kRtvDynamicBase = 96;
++constexpr uint32_t kGpuDescriptors = 4096;   // shader-visible ring
++constexpr uint32_t kCbRingSize = 512 * 1024; // upload ring for root CBVs
++constexpr uint32_t kMaxBarriers = 64;
++
++FfxmDX12LogFn g_log = nullptr;
++
++void Log(int level, const char* fmt, ...)
++{
++    if (g_log == nullptr)
++        return;
++
++    char buf[512];
++    va_list ap;
++    va_start(ap, fmt);
++    vsnprintf(buf, sizeof(buf), fmt, ap);
++    va_end(ap);
++    g_log(level, buf);
++}
++
++constexpr D3D12_RESOURCE_STATES kShaderRead =
++    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
++
++struct Resource
++{
++    ID3D12Resource* res = nullptr;
++    FfxmResourceDescription desc {};
++    D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
++    D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_COMMON; // registered resources return here
++    DXGI_FORMAT srvFormat = DXGI_FORMAT_UNKNOWN;
++    DXGI_FORMAT uavFormat = DXGI_FORMAT_UNKNOWN;
++    DXGI_FORMAT rtvFormat = DXGI_FORMAT_UNKNOWN;
++    uint32_t mipCount = 1;
++    int32_t srvCpu = -1;
++    int32_t uavCpu = -1; // first of mipCount consecutive per-mip UAVs
++    int32_t rtvCpu = -1;
++    bool external = false;
++    bool isBuffer = false;
++    bool uavWritten = false; // needs a UAV barrier before the next UAV use
++};
++
++struct GfxPso
++{
++    ID3D12PipelineState* pso = nullptr;
++    DXGI_FORMAT formats[FFXM_MAX_NUM_RTS] {};
++    uint32_t count = 0;
++    uint32_t lastUse = 0;
++};
++
++#if FFXM_DX12_HAVE_SHADERS
++using Blob = asr_dx12_shaders::Blob;
++#else
++struct Blob
++{
++};
++#endif
++
++struct Pipeline
++{
++    bool used = false;
++    bool graphics = false;
++    const Blob* blob = nullptr;
++    ID3D12RootSignature* rootSignature = nullptr;
++    ID3D12PipelineState* computePso = nullptr;
++    GfxPso gfx[kGfxPsoCache];
++    uint32_t tableParam = UINT32_MAX; // SRVs then UAVs, in reflection order
++    uint32_t cbParamBase = 0;         // one root CBV per constant buffer, in reflection order
++    uint32_t tableSize = 0;
++    wchar_t name[64] {};
++};
++
++struct Backend
++{
++    ID3D12Device* device = nullptr;
++    bool contextCreated = false;
++
++    Resource resources[kMaxResources];
++    uint32_t nextStatic = 1;
++    uint32_t nextDynamic = kDynamicBase;
++
++    ID3D12DescriptorHeap* cpuHeap = nullptr;
++    ID3D12DescriptorHeap* gpuHeap = nullptr;
++    ID3D12DescriptorHeap* rtvHeap = nullptr;
++    uint32_t srvUavSize = 0;
++    uint32_t rtvSize = 0;
++    uint32_t nextCpuStatic = 3; // [0] null SRV, [1] null UAV, [2] spare
++    uint32_t nextCpuDynamic = kCpuDynamicBase;
++    uint32_t nextRtvStatic = 1; // [0] null RTV
++    uint32_t nextRtvDynamic = kRtvDynamicBase;
++    uint32_t gpuRing = 0;
++
++    ID3D12Resource* cbRing = nullptr;
++    uint8_t* cbMapped = nullptr;
++    uint32_t cbOffset = 0;
++
++    Pipeline pipelines[kMaxPipelines];
++    uint32_t psoClock = 0;
++
++    FfxmGpuJobDescription jobs[FFXM_MAX_GPU_JOBS];
++    uint32_t jobCount = 0;
++
++    D3D12_RESOURCE_BARRIER barriers[kMaxBarriers];
++    uint32_t barrierCount = 0;
++
++    bool fp16 = false;
++    uint32_t waveMin = 32, waveMax = 32;
++};
++
++Backend* GetBackend(FfxmInterface* iface) { return reinterpret_cast<Backend*>(iface->scratchBuffer); }
++
++// ------------------------------------------------------------------ formats
++DXGI_FORMAT ToDxgi(FfxmSurfaceFormat f)
++{
++    switch (f)
++    {
++    case FFXM_SURFACE_FORMAT_R32G32B32A32_TYPELESS: return DXGI_FORMAT_R32G32B32A32_TYPELESS;
++    case FFXM_SURFACE_FORMAT_R32G32B32A32_UINT: return DXGI_FORMAT_R32G32B32A32_UINT;
++    case FFXM_SURFACE_FORMAT_R32G32B32A32_FLOAT: return DXGI_FORMAT_R32G32B32A32_FLOAT;
++    case FFXM_SURFACE_FORMAT_R16G16B16A16_FLOAT: return DXGI_FORMAT_R16G16B16A16_FLOAT;
++    case FFXM_SURFACE_FORMAT_R32G32_FLOAT: return DXGI_FORMAT_R32G32_FLOAT;
++    case FFXM_SURFACE_FORMAT_R8_UINT: return DXGI_FORMAT_R8_UINT;
++    case FFXM_SURFACE_FORMAT_R32_UINT: return DXGI_FORMAT_R32_UINT;
++    case FFXM_SURFACE_FORMAT_R8G8B8A8_TYPELESS: return DXGI_FORMAT_R8G8B8A8_TYPELESS;
++    case FFXM_SURFACE_FORMAT_R8G8B8A8_UNORM: return DXGI_FORMAT_R8G8B8A8_UNORM;
++    case FFXM_SURFACE_FORMAT_R8G8B8A8_SNORM: return DXGI_FORMAT_R8G8B8A8_SNORM;
++    case FFXM_SURFACE_FORMAT_R8G8B8A8_SRGB: return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
++    case FFXM_SURFACE_FORMAT_R11G11B10_FLOAT: return DXGI_FORMAT_R11G11B10_FLOAT;
++    case FFXM_SURFACE_FORMAT_R16G16_FLOAT: return DXGI_FORMAT_R16G16_FLOAT;
++    case FFXM_SURFACE_FORMAT_R16G16_UINT: return DXGI_FORMAT_R16G16_UINT;
++    case FFXM_SURFACE_FORMAT_R16_FLOAT: return DXGI_FORMAT_R16_FLOAT;
++    case FFXM_SURFACE_FORMAT_R16_UINT: return DXGI_FORMAT_R16_UINT;
++    case FFXM_SURFACE_FORMAT_R16_UNORM: return DXGI_FORMAT_R16_UNORM;
++    case FFXM_SURFACE_FORMAT_R16_SNORM: return DXGI_FORMAT_R16_SNORM;
++    case FFXM_SURFACE_FORMAT_R8_UNORM: return DXGI_FORMAT_R8_UNORM;
++    case FFXM_SURFACE_FORMAT_R8_SNORM: return DXGI_FORMAT_R8_SNORM;
++    case FFXM_SURFACE_FORMAT_R8G8_UNORM: return DXGI_FORMAT_R8G8_UNORM;
++    case FFXM_SURFACE_FORMAT_R32_FLOAT: return DXGI_FORMAT_R32_FLOAT;
++    default: return DXGI_FORMAT_UNKNOWN;
++    }
++}
++
++FfxmSurfaceFormat FromDxgi(DXGI_FORMAT f)
++{
++    switch (f)
++    {
++    case DXGI_FORMAT_R32G32B32A32_TYPELESS: return FFXM_SURFACE_FORMAT_R32G32B32A32_TYPELESS;
++    case DXGI_FORMAT_R32G32B32A32_FLOAT: return FFXM_SURFACE_FORMAT_R32G32B32A32_FLOAT;
++    case DXGI_FORMAT_R16G16B16A16_FLOAT:
++    case DXGI_FORMAT_R16G16B16A16_TYPELESS: return FFXM_SURFACE_FORMAT_R16G16B16A16_FLOAT;
++    case DXGI_FORMAT_R32G32_FLOAT: return FFXM_SURFACE_FORMAT_R32G32_FLOAT;
++    case DXGI_FORMAT_R32_UINT: return FFXM_SURFACE_FORMAT_R32_UINT;
++    case DXGI_FORMAT_R8G8B8A8_TYPELESS: return FFXM_SURFACE_FORMAT_R8G8B8A8_TYPELESS;
++    case DXGI_FORMAT_R8G8B8A8_UNORM: return FFXM_SURFACE_FORMAT_R8G8B8A8_UNORM;
++    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: return FFXM_SURFACE_FORMAT_R8G8B8A8_SRGB;
++    case DXGI_FORMAT_R11G11B10_FLOAT: return FFXM_SURFACE_FORMAT_R11G11B10_FLOAT;
++    case DXGI_FORMAT_R16G16_FLOAT: return FFXM_SURFACE_FORMAT_R16G16_FLOAT;
++    case DXGI_FORMAT_R16_FLOAT: return FFXM_SURFACE_FORMAT_R16_FLOAT;
++    case DXGI_FORMAT_R8_UNORM: return FFXM_SURFACE_FORMAT_R8_UNORM;
++    case DXGI_FORMAT_R8G8_UNORM: return FFXM_SURFACE_FORMAT_R8G8_UNORM;
++    case DXGI_FORMAT_R32_FLOAT:
++    case DXGI_FORMAT_R32_TYPELESS:
++    case DXGI_FORMAT_D32_FLOAT: return FFXM_SURFACE_FORMAT_R32_FLOAT;
++    default: return FFXM_SURFACE_FORMAT_UNKNOWN;
++    }
++}
++
++// Typed, non-sRGB view format for whatever a game handed over. Depth formats
++// resolve to their readable colour aliases.
++DXGI_FORMAT ViewFormat(DXGI_FORMAT f)
++{
++    switch (f)
++    {
++    case DXGI_FORMAT_R8G8B8A8_TYPELESS:
++    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: return DXGI_FORMAT_R8G8B8A8_UNORM;
++    case DXGI_FORMAT_B8G8R8A8_TYPELESS:
++    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: return DXGI_FORMAT_B8G8R8A8_UNORM;
++    case DXGI_FORMAT_B8G8R8X8_TYPELESS:
++    case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB: return DXGI_FORMAT_B8G8R8X8_UNORM;
++    case DXGI_FORMAT_R16G16B16A16_TYPELESS: return DXGI_FORMAT_R16G16B16A16_FLOAT;
++    case DXGI_FORMAT_R32G32B32A32_TYPELESS: return DXGI_FORMAT_R32G32B32A32_FLOAT;
++    case DXGI_FORMAT_R32G32B32_TYPELESS: return DXGI_FORMAT_R32G32B32_FLOAT;
++    case DXGI_FORMAT_R10G10B10A2_TYPELESS: return DXGI_FORMAT_R10G10B10A2_UNORM;
++    case DXGI_FORMAT_R16G16_TYPELESS: return DXGI_FORMAT_R16G16_FLOAT;
++    case DXGI_FORMAT_R32G32_TYPELESS: return DXGI_FORMAT_R32G32_FLOAT;
++    case DXGI_FORMAT_R8G8_TYPELESS: return DXGI_FORMAT_R8G8_UNORM;
++    case DXGI_FORMAT_R8_TYPELESS: return DXGI_FORMAT_R8_UNORM;
++    case DXGI_FORMAT_R32_TYPELESS:
++    case DXGI_FORMAT_D32_FLOAT: return DXGI_FORMAT_R32_FLOAT;
++    case DXGI_FORMAT_R24G8_TYPELESS:
++    case DXGI_FORMAT_D24_UNORM_S8_UINT: return DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
++    case DXGI_FORMAT_R16_TYPELESS:
++    case DXGI_FORMAT_D16_UNORM: return DXGI_FORMAT_R16_UNORM;
++    case DXGI_FORMAT_R32G8X24_TYPELESS:
++    case DXGI_FORMAT_D32_FLOAT_S8X24_UINT: return DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
++    default: return f;
++    }
++}
++
++D3D12_RESOURCE_STATES ToD3D12State(FfxmResourceStates s)
++{
++    switch (s)
++    {
++    case FFXM_RESOURCE_STATE_UNORDERED_ACCESS: return D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
++    case FFXM_RESOURCE_STATE_COMPUTE_READ: return D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
++    case FFXM_RESOURCE_STATE_PIXEL_READ: return D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
++    case FFXM_RESOURCE_STATE_PIXEL_COMPUTE_READ: return kShaderRead;
++    case FFXM_RESOURCE_STATE_COPY_SRC: return D3D12_RESOURCE_STATE_COPY_SOURCE;
++    case FFXM_RESOURCE_STATE_COPY_DEST: return D3D12_RESOURCE_STATE_COPY_DEST;
++    case FFXM_RESOURCE_STATE_GENERIC_READ: return D3D12_RESOURCE_STATE_GENERIC_READ;
++    case FFXM_RESOURCE_STATE_INDIRECT_ARGUMENT: return D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT;
++    case FFXM_RESOURCE_STATE_PIXEL_WRITE: return D3D12_RESOURCE_STATE_RENDER_TARGET;
++    default: return D3D12_RESOURCE_STATE_COMMON;
++    }
++}
++
++FfxmResourceStates FromD3D12State(D3D12_RESOURCE_STATES s)
++{
++    if (s == D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
++        return FFXM_RESOURCE_STATE_UNORDERED_ACCESS;
++    if (s == D3D12_RESOURCE_STATE_RENDER_TARGET)
++        return FFXM_RESOURCE_STATE_PIXEL_WRITE;
++    if (s == D3D12_RESOURCE_STATE_COPY_SOURCE)
++        return FFXM_RESOURCE_STATE_COPY_SRC;
++    if (s == D3D12_RESOURCE_STATE_COPY_DEST)
++        return FFXM_RESOURCE_STATE_COPY_DEST;
++    if (s == D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
++        return FFXM_RESOURCE_STATE_PIXEL_READ;
++    if (s == kShaderRead)
++        return FFXM_RESOURCE_STATE_PIXEL_COMPUTE_READ;
++    return FFXM_RESOURCE_STATE_COMPUTE_READ;
++}
++
++// ------------------------------------------------------------------ descriptors
++D3D12_CPU_DESCRIPTOR_HANDLE CpuHandle(Backend* b, uint32_t i)
++{
++    auto h = b->cpuHeap->GetCPUDescriptorHandleForHeapStart();
++    h.ptr += (SIZE_T) i * b->srvUavSize;
++    return h;
++}
++
++D3D12_CPU_DESCRIPTOR_HANDLE RtvHandle(Backend* b, uint32_t i)
++{
++    auto h = b->rtvHeap->GetCPUDescriptorHandleForHeapStart();
++    h.ptr += (SIZE_T) i * b->rtvSize;
++    return h;
++}
++
++// Contiguous range in the shader-visible ring. Wraps rather than splitting a
++// table; the ring is deep enough that a wrapped range is long since retired.
++uint32_t AllocGpuDescriptors(Backend* b, uint32_t count)
++{
++    if (b->gpuRing + count > kGpuDescriptors)
++        b->gpuRing = 0;
++    uint32_t base = b->gpuRing;
++    b->gpuRing += count;
++    return base;
++}
++
++void CreateViews(Backend* b, Resource& r, bool dynamic)
++{
++    if (r.res == nullptr || r.isBuffer)
++        return;
++
++    uint32_t& cpuNext = dynamic ? b->nextCpuDynamic : b->nextCpuStatic;
++    uint32_t& rtvNext = dynamic ? b->nextRtvDynamic : b->nextRtvStatic;
++    const uint32_t cpuLimit = dynamic ? kCpuDescriptors : kCpuDynamicBase;
++    const uint32_t rtvLimit = dynamic ? kRtvDescriptors : kRtvDynamicBase;
++    const D3D12_RESOURCE_DESC d = r.res->GetDesc();
++
++    if (cpuNext + 1 <= cpuLimit)
++    {
++        D3D12_SHADER_RESOURCE_VIEW_DESC sd {};
++        sd.Format = r.srvFormat;
++        sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
++        sd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
++        sd.Texture2D.MipLevels = r.mipCount;
++        r.srvCpu = (int32_t) cpuNext++;
++        b->device->CreateShaderResourceView(r.res, &sd, CpuHandle(b, (uint32_t) r.srvCpu));
++    }
++
++    if ((d.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) && cpuNext + r.mipCount <= cpuLimit)
++    {
++        r.uavCpu = (int32_t) cpuNext;
++        for (uint32_t mip = 0; mip < r.mipCount; mip++)
++        {
++            D3D12_UNORDERED_ACCESS_VIEW_DESC ud {};
++            ud.Format = r.uavFormat;
++            ud.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
++            ud.Texture2D.MipSlice = mip;
++            b->device->CreateUnorderedAccessView(r.res, nullptr, &ud, CpuHandle(b, cpuNext++));
++        }
++    }
++
++    if ((d.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) && rtvNext + 1 <= rtvLimit)
++    {
++        D3D12_RENDER_TARGET_VIEW_DESC rd {};
++        rd.Format = r.rtvFormat;
++        rd.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
++        r.rtvCpu = (int32_t) rtvNext++;
++        b->device->CreateRenderTargetView(r.res, &rd, RtvHandle(b, (uint32_t) r.rtvCpu));
++    }
++}
++
++// ------------------------------------------------------------------ barriers
++void FlushBarriers(Backend* b, ID3D12GraphicsCommandList* cl)
++{
++    if (b->barrierCount > 0)
++    {
++        cl->ResourceBarrier(b->barrierCount, b->barriers);
++        b->barrierCount = 0;
++    }
++}
++
++void AddBarrier(Backend* b, ID3D12GraphicsCommandList* cl, uint32_t index, D3D12_RESOURCE_STATES newState)
++{
++    if (index == 0 || index >= kMaxResources)
++        return;
++
++    Resource& r = b->resources[index];
++    if (r.res == nullptr)
++        return;
++
++    if (b->barrierCount + 1 >= kMaxBarriers)
++        FlushBarriers(b, cl);
++
++    if (r.state == newState)
++    {
++        // Back-to-back UAV use needs ordering even without a state change.
++        if (newState == D3D12_RESOURCE_STATE_UNORDERED_ACCESS && r.uavWritten)
++        {
++            D3D12_RESOURCE_BARRIER& ub = b->barriers[b->barrierCount++];
++            ub = {};
++            ub.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
++            ub.UAV.pResource = r.res;
++        }
++        return;
++    }
++
++    // A read state already covering the request needs no transition.
++    if ((newState & ~kShaderRead) == 0 && (r.state & kShaderRead) != 0 && (r.state & newState) == newState)
++        return;
++
++    D3D12_RESOURCE_BARRIER& tb = b->barriers[b->barrierCount++];
++    tb = {};
++    tb.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++    tb.Transition.pResource = r.res;
++    tb.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
++    tb.Transition.StateBefore = r.state;
++    tb.Transition.StateAfter = newState;
++    r.state = newState;
++    r.uavWritten = false;
++}
++
++// ------------------------------------------------------------------ interface
++FfxmUInt32 GetSDKVersionDX12(FfxmInterface*) { return FFXM_SDK_MAKE_VERSION(FFXM_SDK_VERSION_MAJOR, FFXM_SDK_VERSION_MINOR, FFXM_SDK_VERSION_PATCH); }
++
++FfxmErrorCode GetDeviceCapabilitiesDX12(FfxmInterface* iface, FfxmDeviceCapabilities* caps)
++{
++    Backend* b = GetBackend(iface);
++    *caps = {};
++    caps->minimumSupportedShaderModel = FFXM_SHADER_MODEL_6_0;
++    caps->waveLaneCountMin = b->waveMin;
++    caps->waveLaneCountMax = b->waveMax;
++    caps->fp16Supported = b->fp16;
++    caps->raytracingSupported = false;
++    return FFXM_OK;
++}
++
++FfxmErrorCode CreateBackendContextDX12(FfxmInterface* iface, FfxmUInt32* effectContextId)
++{
++    Backend* b = GetBackend(iface);
++
++    if (b->contextCreated)
++    {
++        Log(0, "ASR DX12 backend: one context per interface");
++        return FFXM_ERROR_BACKEND_API_ERROR;
++    }
++
++    ID3D12Device* dev = b->device;
++
++    D3D12_DESCRIPTOR_HEAP_DESC hd {};
++    hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
++    hd.NumDescriptors = kCpuDescriptors;
++    hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
++    if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&b->cpuHeap))))
++        return FFXM_ERROR_BACKEND_API_ERROR;
++
++    hd.NumDescriptors = kGpuDescriptors;
++    hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
++    if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&b->gpuHeap))))
++        return FFXM_ERROR_BACKEND_API_ERROR;
++
++    hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
++    hd.NumDescriptors = kRtvDescriptors;
++    hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
++    if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&b->rtvHeap))))
++        return FFXM_ERROR_BACKEND_API_ERROR;
++
++    b->cpuHeap->SetName(L"ASR_CpuDescriptors");
++    b->gpuHeap->SetName(L"ASR_GpuDescriptors");
++    b->rtvHeap->SetName(L"ASR_Rtvs");
++    b->srvUavSize = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++    b->rtvSize = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
++
++    // Null descriptors stand in for anything ASR leaves unbound.
++    D3D12_SHADER_RESOURCE_VIEW_DESC nullSrv {};
++    nullSrv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
++    nullSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
++    nullSrv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
++    nullSrv.Texture2D.MipLevels = 1;
++    dev->CreateShaderResourceView(nullptr, &nullSrv, CpuHandle(b, 0));
++
++    D3D12_UNORDERED_ACCESS_VIEW_DESC nullUav {};
++    nullUav.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
++    nullUav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
++    dev->CreateUnorderedAccessView(nullptr, nullptr, &nullUav, CpuHandle(b, 1));
++
++    D3D12_RENDER_TARGET_VIEW_DESC nullRtv {};
++    nullRtv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
++    nullRtv.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
++    dev->CreateRenderTargetView(nullptr, &nullRtv, RtvHandle(b, 0));
++
++    D3D12_HEAP_PROPERTIES hp {};
++    hp.Type = D3D12_HEAP_TYPE_UPLOAD;
++    D3D12_RESOURCE_DESC rd {};
++    rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++    rd.Width = kCbRingSize;
++    rd.Height = 1;
++    rd.DepthOrArraySize = 1;
++    rd.MipLevels = 1;
++    rd.SampleDesc.Count = 1;
++    rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
++    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
++                                            IID_PPV_ARGS(&b->cbRing))))
++        return FFXM_ERROR_BACKEND_API_ERROR;
++
++    b->cbRing->SetName(L"ASR_ConstantRing");
++    D3D12_RANGE none { 0, 0 };
++    if (FAILED(b->cbRing->Map(0, &none, (void**) &b->cbMapped)))
++        return FFXM_ERROR_BACKEND_API_ERROR;
++
++    D3D12_FEATURE_DATA_D3D12_OPTIONS opts {};
++    if (SUCCEEDED(dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &opts, sizeof(opts))))
++        b->fp16 = (opts.MinPrecisionSupport & D3D12_SHADER_MIN_PRECISION_SUPPORT_16_BIT) != 0;
++
++    D3D12_FEATURE_DATA_D3D12_OPTIONS1 opts1 {};
++    if (SUCCEEDED(dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &opts1, sizeof(opts1))) &&
++        opts1.WaveLaneCountMin > 0)
++    {
++        b->waveMin = opts1.WaveLaneCountMin;
++        b->waveMax = opts1.WaveLaneCountMax;
++    }
++
++    b->contextCreated = true;
++    *effectContextId = 0;
++    return FFXM_OK;
++}
++
++void ReleaseResource(Resource& r)
++{
++    if (r.res != nullptr && !r.external)
++        r.res->Release();
++    r = Resource {};
++}
++
++FfxmErrorCode DestroyBackendContextDX12(FfxmInterface* iface, FfxmUInt32)
++{
++    Backend* b = GetBackend(iface);
++
++    for (auto& r : b->resources)
++        ReleaseResource(r);
++
++    for (auto& p : b->pipelines)
++    {
++        if (p.computePso)
++            p.computePso->Release();
++        for (auto& g : p.gfx)
++            if (g.pso)
++                g.pso->Release();
++        if (p.rootSignature)
++            p.rootSignature->Release();
++        p = Pipeline {};
++    }
++
++    if (b->cbRing)
++    {
++        b->cbRing->Unmap(0, nullptr);
++        b->cbRing->Release();
++    }
++    if (b->cpuHeap)
++        b->cpuHeap->Release();
++    if (b->gpuHeap)
++        b->gpuHeap->Release();
++    if (b->rtvHeap)
++        b->rtvHeap->Release();
++
++    ID3D12Device* dev = b->device;
++    b->~Backend();
++    new (b) Backend();
++    b->device = dev;
++    return FFXM_OK;
++}
++
++FfxmErrorCode CreateResourceDX12(FfxmInterface* iface, const FfxmCreateResourceDescription* cd, FfxmUInt32,
++                                 FfxmResourceInternal* out)
++{
++    Backend* b = GetBackend(iface);
++    ID3D12Device* dev = b->device;
++
++    const bool hasInit = cd->initData != nullptr && cd->heapType != FFXM_HEAP_TYPE_UPLOAD;
++    const uint32_t needed = hasInit ? 2 : 1;
++    if (b->nextStatic + needed > kDynamicBase)
++    {
++        Log(0, "ASR DX12 backend: out of resource slots");
++        return FFXM_ERROR_OUT_OF_MEMORY;
++    }
++
++    const uint32_t index = b->nextStatic++;
++    Resource& r = b->resources[index];
++    r = Resource {};
++    r.desc = cd->resourceDescription;
++
++    if (r.desc.mipCount == 0)
++        r.desc.mipCount = 1 + (uint32_t) std::floor(std::log2((double) std::max(std::max(r.desc.width, r.desc.height), 1u)));
++
++    D3D12_HEAP_PROPERTIES hp {};
++    hp.Type = cd->heapType == FFXM_HEAP_TYPE_UPLOAD ? D3D12_HEAP_TYPE_UPLOAD : D3D12_HEAP_TYPE_DEFAULT;
++
++    D3D12_RESOURCE_DESC rd {};
++    rd.SampleDesc.Count = 1;
++    rd.DepthOrArraySize = 1;
++
++    D3D12_RESOURCE_STATES initial = ToD3D12State(cd->initalState);
++    if (initial == D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
++        initial = kShaderRead;
++
++    if (cd->resourceDescription.type == FFXM_RESOURCE_TYPE_BUFFER)
++    {
++        r.isBuffer = true;
++        rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++        rd.Width = std::max<uint64_t>(cd->resourceDescription.width, 1);
++        rd.Height = 1;
++        rd.MipLevels = 1;
++        rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
++        if (cd->resourceDescription.usage & FFXM_RESOURCE_USAGE_UAV)
++            rd.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
++        if (hp.Type == D3D12_HEAP_TYPE_UPLOAD)
++            initial = D3D12_RESOURCE_STATE_GENERIC_READ;
++    }
++    else
++    {
++        const DXGI_FORMAT fmt = ToDxgi(cd->resourceDescription.format);
++        if (fmt == DXGI_FORMAT_UNKNOWN)
++        {
++            Log(0, "ASR DX12 backend: unsupported surface format %d", (int) cd->resourceDescription.format);
++            return FFXM_ERROR_INVALID_ARGUMENT;
++        }
++
++        rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++        rd.Width = cd->resourceDescription.width;
++        rd.Height = cd->resourceDescription.height;
++        rd.MipLevels = (UINT16) r.desc.mipCount;
++        rd.Format = fmt;
++        rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
++        if (cd->resourceDescription.usage & FFXM_RESOURCE_USAGE_UAV)
++            rd.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
++        if (cd->resourceDescription.usage & FFXM_RESOURCE_USAGE_RENDERTARGET)
++            rd.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
++
++        r.srvFormat = ViewFormat(fmt);
++        r.uavFormat = r.srvFormat;
++        r.rtvFormat = r.srvFormat;
++        r.mipCount = r.desc.mipCount;
++
++        // ASR renders into formats Vulkan only makes optional as colour
++        // attachments (R8_SNORM temporal reactivity in balanced/performance).
++        // Fail the context cleanly rather than render garbage where a driver
++        // lacks one.
++        D3D12_FEATURE_DATA_FORMAT_SUPPORT fs { r.srvFormat };
++        if (SUCCEEDED(dev->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &fs, sizeof(fs))))
++        {
++            const bool needRt = (rd.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) != 0;
++            const bool needUav = (rd.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) != 0;
++            if ((needRt && !(fs.Support1 & D3D12_FORMAT_SUPPORT1_RENDER_TARGET)) ||
++                (needUav && !(fs.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE)))
++            {
++                Log(0, "ASR DX12 backend: device cannot use format %d as %s for %ls", (int) r.srvFormat,
++                    needRt ? "render target" : "UAV", cd->name ? cd->name : L"?");
++                r = Resource {};
++                return FFXM_ERROR_BACKEND_API_ERROR;
++            }
++        }
++    }
++
++    if (hasInit)
++        initial = D3D12_RESOURCE_STATE_COPY_DEST;
++
++    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, initial, nullptr, IID_PPV_ARGS(&r.res))))
++    {
++        Log(0, "ASR DX12 backend: CreateCommittedResource failed for %ls (%ux%u fmt %d)",
++            cd->name ? cd->name : L"?", (unsigned) rd.Width, (unsigned) rd.Height, (int) rd.Format);
++        r = Resource {};
++        return FFXM_ERROR_BACKEND_API_ERROR;
++    }
++
++    if (cd->name)
++        r.res->SetName(cd->name);
++
++    r.state = initial;
++    r.initialState = initial;
++
++    if (hp.Type == D3D12_HEAP_TYPE_UPLOAD && cd->initData != nullptr)
++    {
++        void* p = nullptr;
++        D3D12_RANGE none { 0, 0 };
++        if (SUCCEEDED(r.res->Map(0, &none, &p)))
++        {
++            memcpy(p, cd->initData, cd->initDataSize);
++            r.res->Unmap(0, nullptr);
++        }
++    }
++
++    CreateViews(b, r, false);
++    out->internalIndex = (int32_t) index;
++
++    // Initial data goes through an upload buffer in the next slot, copied on
++    // the first ExecuteGpuJobs. ffxmSafeReleaseCopyResource relies on that
++    // index + 1 layout, as the Vulkan backend has it.
++    if (hasInit)
++    {
++        const uint32_t uploadIndex = b->nextStatic++;
++        Resource& u = b->resources[uploadIndex];
++        u = Resource {};
++        u.isBuffer = true;
++
++        D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp {};
++        UINT rows = 0;
++        UINT64 rowSize = 0, total = 0;
++        dev->GetCopyableFootprints(&rd, 0, 1, 0, &fp, &rows, &rowSize, &total);
++
++        D3D12_HEAP_PROPERTIES up {};
++        up.Type = D3D12_HEAP_TYPE_UPLOAD;
++        D3D12_RESOURCE_DESC bd {};
++        bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++        bd.Width = total;
++        bd.Height = 1;
++        bd.DepthOrArraySize = 1;
++        bd.MipLevels = 1;
++        bd.SampleDesc.Count = 1;
++        bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
++
++        if (FAILED(dev->CreateCommittedResource(&up, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_GENERIC_READ,
++                                                nullptr, IID_PPV_ARGS(&u.res))))
++            return FFXM_ERROR_BACKEND_API_ERROR;
++
++        u.state = u.initialState = D3D12_RESOURCE_STATE_GENERIC_READ;
++        u.desc.type = FFXM_RESOURCE_TYPE_BUFFER;
++        u.desc.width = (uint32_t) total;
++
++        uint8_t* p = nullptr;
++        D3D12_RANGE none { 0, 0 };
++        if (SUCCEEDED(u.res->Map(0, &none, (void**) &p)))
++        {
++            const uint8_t* src = (const uint8_t*) cd->initData;
++            const size_t srcPitch = rows > 0 ? cd->initDataSize / rows : 0;
++            for (UINT y = 0; y < rows; y++)
++                memcpy(p + fp.Offset + (size_t) y * fp.Footprint.RowPitch, src + y * srcPitch,
++                       (size_t) std::min<UINT64>(rowSize, srcPitch));
++            u.res->Unmap(0, nullptr);
++        }
++
++        FfxmGpuJobDescription job {};
++        job.jobType = FFXM_GPU_JOB_COPY;
++        job.copyJobDescriptor.src.internalIndex = (int32_t) uploadIndex;
++        job.copyJobDescriptor.dst.internalIndex = (int32_t) index;
++        if (b->jobCount < FFXM_MAX_GPU_JOBS)
++            b->jobs[b->jobCount++] = job;
++    }
++
++    return FFXM_OK;
++}
++
++FfxmErrorCode DestroyResourceDX12(FfxmInterface* iface, FfxmResourceInternal res)
++{
++    Backend* b = GetBackend(iface);
++    if (res.internalIndex > 0 && res.internalIndex < (int32_t) kDynamicBase)
++    {
++        Resource& r = b->resources[res.internalIndex];
++        if (r.res != nullptr && !r.external)
++            r.res->Release();
++        r.res = nullptr;
++    }
++    return FFXM_OK;
++}
++
++FfxmErrorCode RegisterResourceDX12(FfxmInterface* iface, const FfxmResource* in, FfxmUInt32,
++                                   FfxmResourceInternal* out)
++{
++    Backend* b = GetBackend(iface);
++
++    if (in->resource == nullptr)
++    {
++        out->internalIndex = 0;
++        return FFXM_OK;
++    }
++
++    ID3D12Resource* res = reinterpret_cast<ID3D12Resource*>(in->resource);
++
++    // The same resource registered twice in one dispatch (e.g. colour doubling
++    // as the reactive-mask source) must share one entry, or the two copies'
++    // state tracking would disagree.
++    for (uint32_t i = kDynamicBase; i < b->nextDynamic; i++)
++    {
++        if (b->resources[i].res == res)
++        {
++            out->internalIndex = (int32_t) i;
++            return FFXM_OK;
++        }
++    }
++
++    if (b->nextDynamic >= kMaxResources)
++    {
++        Log(0, "ASR DX12 backend: out of dynamic resource slots");
++        return FFXM_ERROR_OUT_OF_MEMORY;
++    }
++
++    const uint32_t index = b->nextDynamic++;
++    Resource& r = b->resources[index];
++    r = Resource {};
++    r.res = res;
++    r.external = true;
++
++    const D3D12_RESOURCE_DESC d = res->GetDesc();
++    r.isBuffer = d.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER;
++    r.desc = in->description;
++    r.desc.type = r.isBuffer ? FFXM_RESOURCE_TYPE_BUFFER : FFXM_RESOURCE_TYPE_TEXTURE2D;
++    r.desc.width = (uint32_t) d.Width;
++    r.desc.height = d.Height;
++    r.desc.depth = d.DepthOrArraySize;
++    r.desc.mipCount = d.MipLevels;
++    r.desc.format = FromDxgi(d.Format);
++    r.desc.usage = FFXM_RESOURCE_USAGE_READ_ONLY;
++    if (d.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)
++        r.desc.usage = (FfxmResourceUsage) (r.desc.usage | FFXM_RESOURCE_USAGE_UAV);
++    if (d.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
++        r.desc.usage = (FfxmResourceUsage) (r.desc.usage | FFXM_RESOURCE_USAGE_RENDERTARGET);
++
++    r.state = ToD3D12State(in->state);
++    r.initialState = r.state;
++    r.srvFormat = ViewFormat(d.Format);
++    r.uavFormat = r.srvFormat;
++    r.rtvFormat = r.srvFormat;
++    r.mipCount = 1;
++
++    CreateViews(b, r, true);
++
++    // A depth-stencil resource cannot also be a render target or UAV, so only
++    // the SRV above applies to it; ViewFormat resolved it to a colour alias.
++
++    out->internalIndex = (int32_t) index;
++    return FFXM_OK;
++}
++
++FfxmResource GetResourceDX12(FfxmInterface* iface, FfxmResourceInternal res)
++{
++    Backend* b = GetBackend(iface);
++    FfxmResource out {};
++    if (res.internalIndex > 0 && res.internalIndex < (int32_t) kMaxResources)
++    {
++        const Resource& r = b->resources[res.internalIndex];
++        out.resource = r.res;
++        out.description = r.desc;
++        out.state = FromD3D12State(r.state);
++    }
++    return out;
++}
++
++FfxmErrorCode UnregisterResourcesDX12(FfxmInterface* iface, FfxmCommandList commandList, FfxmUInt32)
++{
++    Backend* b = GetBackend(iface);
++    auto* cl = reinterpret_cast<ID3D12GraphicsCommandList*>(commandList);
++
++    for (uint32_t i = kDynamicBase; i < b->nextDynamic; i++)
++    {
++        Resource& r = b->resources[i];
++        if (r.res != nullptr && r.state != r.initialState)
++            AddBarrier(b, cl, i, r.initialState);
++    }
++    FlushBarriers(b, cl);
++
++    for (uint32_t i = kDynamicBase; i < b->nextDynamic; i++)
++        b->resources[i] = Resource {};
++
++    b->nextDynamic = kDynamicBase;
++    b->nextCpuDynamic = kCpuDynamicBase;
++    b->nextRtvDynamic = kRtvDynamicBase;
++    return FFXM_OK;
++}
++
++FfxmResourceDescription GetResourceDescriptionDX12(FfxmInterface* iface, FfxmResourceInternal res)
++{
++    Backend* b = GetBackend(iface);
++    if (res.internalIndex > 0 && res.internalIndex < (int32_t) kMaxResources)
++        return b->resources[res.internalIndex].desc;
++    return FfxmResourceDescription {};
++}
++
++// ------------------------------------------------------------------ pipelines
++#if FFXM_DX12_HAVE_SHADERS
++const Blob* LookupBlob(FfxmPass pass, FfxmShaderQuality quality, uint32_t options)
++{
++    if (pass >= 8 || quality < FFXM_FSR2_SHADER_QUALITY_MODE_QUALITY || quality > FFXM_FSR2_SHADER_QUALITY_MODE_PERFORMANCE)
++        return nullptr;
++
++    // Fs2ShaderPermutationOptions (ffxm_fsr2_private.h): HDR 1<<1, low-res MV
++    // 1<<2, jittered MV 1<<3, inverted depth 1<<4. Sharpening, wave64 and fp16
++    // do not select a different blob here.
++    const uint32_t key = ((options >> 1) & 1) | (((options >> 2) & 1) << 1) | (((options >> 3) & 1) << 2) |
++                         (((options >> 4) & 1) << 3);
++
++    const int16_t idx = asr_dx12_shaders::g_permutations[pass][quality - 1][key];
++    if (idx < 0)
++        return nullptr;
++    return &asr_dx12_shaders::g_blobs[idx];
++}
++#endif
++
++Pipeline* AllocPipeline(Backend* b)
++{
++    for (auto& p : b->pipelines)
++        if (!p.used)
++        {
++            p = Pipeline {};
++            p.used = true;
++            return &p;
++        }
++    return nullptr;
++}
++
++FfxmErrorCode CreatePipelineCommon(FfxmInterface* iface, FfxmPass pass, FfxmShaderQuality quality, uint32_t options,
++                                   const FfxmPipelineDescription* desc, bool graphics, FfxmPipelineState* out)
++{
++    Backend* b = GetBackend(iface);
++    memset(out, 0, sizeof(*out));
++
++#if !FFXM_DX12_HAVE_SHADERS
++    (void) b;
++    (void) pass;
++    (void) quality;
++    (void) options;
++    (void) desc;
++    (void) graphics;
++    Log(0, "ASR DX12 backend: built without shaders");
++    return FFXM_ERROR_BACKEND_API_ERROR;
++#else
++    const Blob* blob = LookupBlob(pass, quality, options);
++
++    // Passes OptiScaler never schedules (ASR's own RCAS, sharpened accumulate,
++    // reactive-mask generation) are not compiled. ffxm_fsr2.cpp still creates
++    // pipelines for them, so hand back an empty one; scheduling it is an error.
++    if (blob == nullptr)
++    {
++        if (pass == FFXM_FSR2_PASS_RCAS || pass == FFXM_FSR2_PASS_ACCUMULATE_SHARPEN ||
++            pass == FFXM_FSR2_PASS_GENERATE_REACTIVE)
++            return FFXM_OK;
++
++        Log(0, "ASR DX12 backend: no shader for pass %u quality %u options 0x%x", (unsigned) pass, (unsigned) quality,
++            options);
++        return FFXM_ERROR_BACKEND_API_ERROR;
++    }
++
++    Pipeline* p = AllocPipeline(b);
++    if (p == nullptr)
++        return FFXM_ERROR_OUT_OF_MEMORY;
++
++    p->graphics = graphics;
++    p->blob = blob;
++    wcsncpy(p->name, desc->name, 63);
++
++    // Root signature: one descriptor table of SRVs then UAVs at their HLSL
++    // registers, a root CBV per constant buffer, static samplers.
++    D3D12_DESCRIPTOR_RANGE ranges[FFXM_MAX_NUM_SRVS + FFXM_MAX_NUM_UAVS] {};
++    uint32_t rangeCount = 0, offset = 0;
++    for (uint32_t i = 0; i < blob->srvCount; i++)
++    {
++        auto& rg = ranges[rangeCount++];
++        rg.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
++        rg.NumDescriptors = blob->srvs[i].count;
++        rg.BaseShaderRegister = blob->srvs[i].reg;
++        rg.OffsetInDescriptorsFromTableStart = offset;
++        offset += blob->srvs[i].count;
++    }
++    for (uint32_t i = 0; i < blob->uavCount; i++)
++    {
++        auto& rg = ranges[rangeCount++];
++        rg.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
++        rg.NumDescriptors = blob->uavs[i].count;
++        rg.BaseShaderRegister = blob->uavs[i].reg;
++        rg.OffsetInDescriptorsFromTableStart = offset;
++        offset += blob->uavs[i].count;
++    }
++    p->tableSize = offset;
++
++    D3D12_ROOT_PARAMETER params[1 + FFXM_MAX_NUM_CONST_BUFFERS] {};
++    uint32_t paramCount = 0;
++    if (rangeCount > 0)
++    {
++        p->tableParam = paramCount;
++        auto& tp = params[paramCount++];
++        tp.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
++        tp.DescriptorTable.NumDescriptorRanges = rangeCount;
++        tp.DescriptorTable.pDescriptorRanges = ranges;
++        tp.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
++    }
++    p->cbParamBase = paramCount;
++    for (uint32_t i = 0; i < blob->cbCount && i < FFXM_MAX_NUM_CONST_BUFFERS; i++)
++    {
++        auto& cp = params[paramCount++];
++        cp.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
++        cp.Descriptor.ShaderRegister = blob->cbs[i].reg;
++        cp.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
++    }
++
++    D3D12_STATIC_SAMPLER_DESC samplers[FFXM_MAX_SAMPLERS] {};
++    uint32_t samplerCount = 0;
++    for (size_t i = 0; i < desc->samplerCount && samplerCount < FFXM_MAX_SAMPLERS; i++)
++    {
++        const auto& sd = desc->samplers[i];
++        auto& s = samplers[samplerCount++];
++        switch (sd.filter)
++        {
++        case FFXM_FILTER_TYPE_MINMAGMIP_POINT: s.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT; break;
++        case FFXM_FILTER_TYPE_MINMAGLINEARMIP_POINT: s.Filter = D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT; break;
++        default: s.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR; break;
++        }
++        auto addr = [](FfxmAddressMode m)
++        {
++            switch (m)
++            {
++            case FFXM_ADDRESS_MODE_WRAP: return D3D12_TEXTURE_ADDRESS_MODE_WRAP;
++            case FFXM_ADDRESS_MODE_MIRROR: return D3D12_TEXTURE_ADDRESS_MODE_MIRROR;
++            case FFXM_ADDRESS_MODE_BORDER: return D3D12_TEXTURE_ADDRESS_MODE_BORDER;
++            case FFXM_ADDRESS_MODE_MIRROR_ONCE: return D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE;
++            default: return D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
++            }
++        };
++        s.AddressU = addr(sd.addressModeU);
++        s.AddressV = addr(sd.addressModeV);
++        s.AddressW = addr(sd.addressModeW);
++        s.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
++        s.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
++        s.MinLOD = 0.0f;
++        s.MaxLOD = D3D12_FLOAT32_MAX;
++        s.ShaderRegister = sd.binding;
++        s.RegisterSpace = 0;
++        s.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
++    }
++
++    D3D12_ROOT_SIGNATURE_DESC rs {};
++    rs.NumParameters = paramCount;
++    rs.pParameters = params;
++    rs.NumStaticSamplers = samplerCount;
++    rs.pStaticSamplers = samplers;
++    rs.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
++
++    ID3DBlob* serialized = nullptr;
++    ID3DBlob* errors = nullptr;
++    HRESULT hr = D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors);
++    if (FAILED(hr))
++    {
++        Log(0, "ASR DX12 backend: root signature for %ls: %s", p->name,
++            errors ? (const char*) errors->GetBufferPointer() : "?");
++        if (errors)
++            errors->Release();
++        p->used = false;
++        return FFXM_ERROR_BACKEND_API_ERROR;
++    }
++    hr = b->device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
++                                        IID_PPV_ARGS(&p->rootSignature));
++    serialized->Release();
++    if (errors)
++        errors->Release();
++    if (FAILED(hr))
++    {
++        Log(0, "ASR DX12 backend: CreateRootSignature failed for %ls: 0x%08x", p->name, (unsigned) hr);
++        p->used = false;
++        return FFXM_ERROR_BACKEND_API_ERROR;
++    }
++    p->rootSignature->SetName(p->name);
++
++    if (!graphics)
++    {
++        D3D12_COMPUTE_PIPELINE_STATE_DESC cd {};
++        cd.pRootSignature = p->rootSignature;
++        cd.CS.pShaderBytecode = blob->data;
++        cd.CS.BytecodeLength = blob->size;
++        hr = b->device->CreateComputePipelineState(&cd, IID_PPV_ARGS(&p->computePso));
++        if (FAILED(hr))
++        {
++            Log(0, "ASR DX12 backend: CreateComputePipelineState failed for %ls: 0x%08x", p->name, (unsigned) hr);
++            p->rootSignature->Release();
++            p->used = false;
++            return FFXM_ERROR_BACKEND_API_ERROR;
++        }
++        p->computePso->SetName(p->name);
++    }
++    // Graphics PSOs depend on the render-target formats, which are only known
++    // once resources are bound; they are created on first use per format set.
++
++    out->rootSignature = reinterpret_cast<FfxmRootSignature>(p);
++    out->pipeline = reinterpret_cast<FfxmPipeline>(p->computePso);
++    out->srvTextureCount = blob->srvCount;
++    out->uavTextureCount = blob->uavCount;
++    out->constCount = std::min<uint32_t>(blob->cbCount, FFXM_MAX_NUM_CONST_BUFFERS);
++    out->rtCount = blob->rtCount;
++
++    auto setName = [](wchar_t* dst, const char* src)
++    {
++        size_t i = 0;
++        for (; src[i] && i < 63; i++)
++            dst[i] = (wchar_t) src[i];
++        dst[i] = 0;
++    };
++
++    for (uint32_t i = 0; i < blob->srvCount; i++)
++    {
++        out->srvTextureBindings[i].slotIndex = blob->srvs[i].reg;
++        out->srvTextureBindings[i].bindCount = blob->srvs[i].count;
++        setName(out->srvTextureBindings[i].name, blob->srvs[i].name);
++    }
++    for (uint32_t i = 0; i < blob->uavCount; i++)
++    {
++        out->uavTextureBindings[i].slotIndex = blob->uavs[i].reg;
++        out->uavTextureBindings[i].bindCount = blob->uavs[i].count;
++        setName(out->uavTextureBindings[i].name, blob->uavs[i].name);
++    }
++    for (uint32_t i = 0; i < out->constCount; i++)
++    {
++        out->constantBufferBindings[i].slotIndex = blob->cbs[i].reg;
++        out->constantBufferBindings[i].bindCount = 1;
++        setName(out->constantBufferBindings[i].name, blob->cbs[i].name);
++    }
++    for (uint32_t i = 0; i < blob->rtCount; i++)
++    {
++        out->rtBindings[i].slotIndex = i;
++        setName(out->rtBindings[i].name, blob->rtNames[i]);
++    }
++
++    return FFXM_OK;
++#endif
++}
++
++FfxmErrorCode CreateComputePipelineDX12(FfxmInterface* iface, FfxmEffect, FfxmPass pass, FfxmShaderQuality quality,
++                                        FfxmUInt32 options, const FfxmPipelineDescription* desc, FfxmUInt32,
++                                        FfxmPipelineState* out)
++{
++    return CreatePipelineCommon(iface, pass, quality, options, desc, false, out);
++}
++
++FfxmErrorCode CreateGraphicsPipelineDX12(FfxmInterface* iface, FfxmEffect, FfxmPass pass, FfxmShaderQuality quality,
++                                         FfxmUInt32 options, const FfxmPipelineDescription* desc, FfxmUInt32,
++                                         FfxmPipelineState* out)
++{
++    return CreatePipelineCommon(iface, pass, quality, options, desc, true, out);
++}
++
++FfxmErrorCode DestroyPipelineDX12(FfxmInterface*, FfxmPipelineState* state, FfxmUInt32)
++{
++    if (state == nullptr)
++        return FFXM_OK;
++
++    Pipeline* p = reinterpret_cast<Pipeline*>(state->rootSignature);
++    if (p != nullptr && p->used)
++    {
++        if (p->computePso)
++            p->computePso->Release();
++        for (auto& g : p->gfx)
++            if (g.pso)
++                g.pso->Release();
++        if (p->rootSignature)
++            p->rootSignature->Release();
++        *p = Pipeline {};
++    }
++
++    state->rootSignature = nullptr;
++    state->pipeline = nullptr;
++    return FFXM_OK;
++}
++
++ID3D12PipelineState* GetGraphicsPso(Backend* b, Pipeline* p, const DXGI_FORMAT* formats, uint32_t count)
++{
++#if FFXM_DX12_HAVE_SHADERS
++    b->psoClock++;
++    for (auto& g : p->gfx)
++    {
++        if (g.pso && g.count == count && memcmp(g.formats, formats, count * sizeof(DXGI_FORMAT)) == 0)
++        {
++            g.lastUse = b->psoClock;
++            return g.pso;
++        }
++    }
++
++    GfxPso* slot = &p->gfx[0];
++    for (auto& g : p->gfx)
++    {
++        if (g.pso == nullptr)
++        {
++            slot = &g;
++            break;
++        }
++        if (g.lastUse < slot->lastUse)
++            slot = &g;
++    }
++    if (slot->pso)
++    {
++        // Only reachable if a context sees more than kGfxPsoCache format sets;
++        // the evicted PSO may still be in flight, so it is leaked, not released.
++        slot->pso = nullptr;
++    }
++
++    D3D12_GRAPHICS_PIPELINE_STATE_DESC gd {};
++    gd.pRootSignature = p->rootSignature;
++    gd.VS.pShaderBytecode = asr_dx12_shaders::g_vertexShader.data;
++    gd.VS.BytecodeLength = asr_dx12_shaders::g_vertexShader.size;
++    gd.PS.pShaderBytecode = p->blob->data;
++    gd.PS.BytecodeLength = p->blob->size;
++    for (uint32_t i = 0; i < count; i++)
++    {
++        gd.BlendState.RenderTarget[i].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
++        gd.BlendState.RenderTarget[i].SrcBlend = D3D12_BLEND_ONE;
++        gd.BlendState.RenderTarget[i].DestBlend = D3D12_BLEND_ZERO;
++        gd.BlendState.RenderTarget[i].BlendOp = D3D12_BLEND_OP_ADD;
++        gd.BlendState.RenderTarget[i].SrcBlendAlpha = D3D12_BLEND_ONE;
++        gd.BlendState.RenderTarget[i].DestBlendAlpha = D3D12_BLEND_ZERO;
++        gd.BlendState.RenderTarget[i].BlendOpAlpha = D3D12_BLEND_OP_ADD;
++        gd.BlendState.RenderTarget[i].LogicOp = D3D12_LOGIC_OP_NOOP;
++        gd.RTVFormats[i] = formats[i];
++    }
++    gd.SampleMask = UINT_MAX;
++    gd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
++    // The full-screen triangle's winding flips between Vulkan and D3D clip
++    // space; with nothing to cull, just do not cull.
++    gd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
++    gd.RasterizerState.DepthClipEnable = TRUE;
++    gd.DepthStencilState.DepthEnable = FALSE;
++    gd.DepthStencilState.StencilEnable = FALSE;
++    gd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
++    gd.NumRenderTargets = count;
++    gd.SampleDesc.Count = 1;
++
++    HRESULT hr = b->device->CreateGraphicsPipelineState(&gd, IID_PPV_ARGS(&slot->pso));
++    if (FAILED(hr))
++    {
++        Log(0, "ASR DX12 backend: CreateGraphicsPipelineState failed for %ls: 0x%08x", p->name, (unsigned) hr);
++        slot->pso = nullptr;
++        return nullptr;
++    }
++    slot->pso->SetName(p->name);
++    memcpy(slot->formats, formats, count * sizeof(DXGI_FORMAT));
++    slot->count = count;
++    slot->lastUse = b->psoClock;
++    return slot->pso;
++#else
++    (void) b;
++    (void) p;
++    (void) formats;
++    (void) count;
++    return nullptr;
++#endif
++}
++
++// ------------------------------------------------------------------ jobs
++FfxmErrorCode ScheduleGpuJobDX12(FfxmInterface* iface, const FfxmGpuJobDescription* job)
++{
++    Backend* b = GetBackend(iface);
++    if (b->jobCount >= FFXM_MAX_GPU_JOBS)
++    {
++        Log(0, "ASR DX12 backend: job queue full");
++        return FFXM_ERROR_OUT_OF_MEMORY;
++    }
++    // The description is copied whole, constant data included, so it may live
++    // on the caller's stack. Fragment jobs hold a pipeline pointer into the
++    // context, which outlives the job.
++    b->jobs[b->jobCount++] = *job;
++    return FFXM_OK;
++}
++
++D3D12_GPU_VIRTUAL_ADDRESS PushConstants(Backend* b, const FfxmConstantBuffer& cb)
++{
++    const uint32_t size = (cb.num32BitEntries * 4 + 255) & ~255u;
++    if (b->cbOffset + size > kCbRingSize)
++        b->cbOffset = 0;
++    memcpy(b->cbMapped + b->cbOffset, cb.data, cb.num32BitEntries * 4);
++    D3D12_GPU_VIRTUAL_ADDRESS va = b->cbRing->GetGPUVirtualAddress() + b->cbOffset;
++    b->cbOffset += std::max(size, 256u);
++    return va;
++}
++
++// Copies the pass's SRVs and UAVs into the shader-visible ring in table order.
++D3D12_GPU_DESCRIPTOR_HANDLE BuildTable(Backend* b, Pipeline* p, const FfxmResourceInternal* srvs,
++                                       const FfxmResourceInternal* uavs, const uint32_t* uavMips)
++{
++    const uint32_t base = AllocGpuDescriptors(b, std::max(p->tableSize, 1u));
++    auto gpuCpu = b->gpuHeap->GetCPUDescriptorHandleForHeapStart();
++    gpuCpu.ptr += (SIZE_T) base * b->srvUavSize;
++    uint32_t slot = 0;
++
++#if FFXM_DX12_HAVE_SHADERS
++    for (uint32_t i = 0; i < p->blob->srvCount; i++)
++    {
++        for (uint32_t e = 0; e < p->blob->srvs[i].count; e++, slot++)
++        {
++            const int32_t idx = srvs[i + e].internalIndex;
++            const Resource* r = (idx > 0 && idx < (int32_t) kMaxResources) ? &b->resources[idx] : nullptr;
++            const uint32_t src = (r && r->res && r->srvCpu >= 0) ? (uint32_t) r->srvCpu : 0;
++            auto dst = gpuCpu;
++            dst.ptr += (SIZE_T) slot * b->srvUavSize;
++            b->device->CopyDescriptorsSimple(1, dst, CpuHandle(b, src), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++        }
++    }
++    for (uint32_t i = 0; i < p->blob->uavCount; i++)
++    {
++        for (uint32_t e = 0; e < p->blob->uavs[i].count; e++, slot++)
++        {
++            const int32_t idx = uavs[i].internalIndex;
++            const Resource* r = (idx > 0 && idx < (int32_t) kMaxResources) ? &b->resources[idx] : nullptr;
++            const uint32_t mip = uavMips ? uavMips[i] + e : e;
++            uint32_t src = 1;
++            if (r && r->res && r->uavCpu >= 0 && mip < r->mipCount)
++                src = (uint32_t) r->uavCpu + mip;
++            auto dst = gpuCpu;
++            dst.ptr += (SIZE_T) slot * b->srvUavSize;
++            b->device->CopyDescriptorsSimple(1, dst, CpuHandle(b, src), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++        }
++    }
++#else
++    (void) p;
++    (void) srvs;
++    (void) uavs;
++    (void) uavMips;
++    (void) slot;
++#endif
++
++    auto gpu = b->gpuHeap->GetGPUDescriptorHandleForHeapStart();
++    gpu.ptr += (UINT64) base * b->srvUavSize;
++    return gpu;
++}
++
++FfxmErrorCode ExecuteCompute(Backend* b, ID3D12GraphicsCommandList* cl, const FfxmComputeJobDescription& job)
++{
++    Pipeline* p = reinterpret_cast<Pipeline*>(job.pipeline.rootSignature);
++    if (p == nullptr || p->computePso == nullptr)
++        return FFXM_ERROR_INVALID_ARGUMENT;
++
++    for (uint32_t i = 0; i < job.pipeline.srvTextureCount; i++)
++        AddBarrier(b, cl, (uint32_t) job.srvTextures[i].internalIndex, kShaderRead);
++    for (uint32_t i = 0; i < job.pipeline.uavTextureCount; i++)
++        AddBarrier(b, cl, (uint32_t) job.uavTextures[i].internalIndex, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++    FlushBarriers(b, cl);
++
++    cl->SetComputeRootSignature(p->rootSignature);
++    cl->SetPipelineState(p->computePso);
++    if (p->tableParam != UINT32_MAX)
++        cl->SetComputeRootDescriptorTable(p->tableParam, BuildTable(b, p, job.srvTextures, job.uavTextures, job.uavTextureMips));
++    for (uint32_t i = 0; i < job.pipeline.constCount; i++)
++        cl->SetComputeRootConstantBufferView(p->cbParamBase + i, PushConstants(b, job.cbs[i]));
++
++    cl->Dispatch(job.dimensions[0], job.dimensions[1], job.dimensions[2]);
++
++    for (uint32_t i = 0; i < job.pipeline.uavTextureCount; i++)
++    {
++        const int32_t idx = job.uavTextures[i].internalIndex;
++        if (idx > 0 && idx < (int32_t) kMaxResources)
++            b->resources[idx].uavWritten = true;
++    }
++    return FFXM_OK;
++}
++
++FfxmErrorCode ExecuteFragment(Backend* b, ID3D12GraphicsCommandList* cl, const FfxmFragmentJobDescription& job)
++{
++    const FfxmPipelineState* ps = job.pipeline;
++    Pipeline* p = ps ? reinterpret_cast<Pipeline*>(ps->rootSignature) : nullptr;
++    if (p == nullptr || !p->graphics)
++    {
++        Log(0, "ASR DX12 backend: fragment job on a pass that was not built");
++        return FFXM_ERROR_INVALID_ARGUMENT;
++    }
++
++    for (uint32_t i = 0; i < ps->srvTextureCount; i++)
++        AddBarrier(b, cl, (uint32_t) job.srvTextures[i].internalIndex, kShaderRead);
++    for (uint32_t i = 0; i < ps->uavTextureCount; i++)
++        AddBarrier(b, cl, (uint32_t) job.uavTextures[i].internalIndex, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++
++    D3D12_CPU_DESCRIPTOR_HANDLE rtvs[FFXM_MAX_NUM_RTS] {};
++    DXGI_FORMAT formats[FFXM_MAX_NUM_RTS] {};
++    for (uint32_t i = 0; i < ps->rtCount; i++)
++    {
++        const int32_t idx = job.rtTextures[i].internalIndex;
++        const Resource* r = (idx > 0 && idx < (int32_t) kMaxResources) ? &b->resources[idx] : nullptr;
++        if (r == nullptr || r->res == nullptr || r->rtvCpu < 0)
++        {
++            Log(0, "ASR DX12 backend: %ls render target %u (%ls) is not renderable", p->name, i, ps->rtBindings[i].name);
++            return FFXM_ERROR_INVALID_ARGUMENT;
++        }
++        AddBarrier(b, cl, (uint32_t) idx, D3D12_RESOURCE_STATE_RENDER_TARGET);
++        rtvs[i] = RtvHandle(b, (uint32_t) r->rtvCpu);
++        formats[i] = r->rtvFormat;
++    }
++    FlushBarriers(b, cl);
++
++    ID3D12PipelineState* pso = GetGraphicsPso(b, p, formats, ps->rtCount);
++    if (pso == nullptr)
++        return FFXM_ERROR_BACKEND_API_ERROR;
++
++    cl->SetGraphicsRootSignature(p->rootSignature);
++    cl->SetPipelineState(pso);
++    if (p->tableParam != UINT32_MAX)
++        cl->SetGraphicsRootDescriptorTable(p->tableParam, BuildTable(b, p, job.srvTextures, job.uavTextures, job.uavTextureMips));
++    for (uint32_t i = 0; i < ps->constCount; i++)
++        cl->SetGraphicsRootConstantBufferView(p->cbParamBase + i, PushConstants(b, job.cbs[i]));
++
++    cl->OMSetRenderTargets(ps->rtCount, rtvs, FALSE, nullptr);
++
++    D3D12_VIEWPORT vp { 0.0f, 0.0f, (float) job.viewport[0], (float) job.viewport[1], 0.0f, 1.0f };
++    D3D12_RECT sc { 0, 0, (LONG) job.viewport[0], (LONG) job.viewport[1] };
++    cl->RSSetViewports(1, &vp);
++    cl->RSSetScissorRects(1, &sc);
++    cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++    cl->DrawInstanced(3, 1, 0, 0);
++
++    for (uint32_t i = 0; i < ps->uavTextureCount; i++)
++    {
++        const int32_t idx = job.uavTextures[i].internalIndex;
++        if (idx > 0 && idx < (int32_t) kMaxResources)
++            b->resources[idx].uavWritten = true;
++    }
++    return FFXM_OK;
++}
++
++FfxmErrorCode ExecuteClear(Backend* b, ID3D12GraphicsCommandList* cl, const FfxmClearFloatJobDescription& job)
++{
++    const int32_t idx = job.target.internalIndex;
++    if (idx <= 0 || idx >= (int32_t) kMaxResources)
++        return FFXM_OK;
++
++    Resource& r = b->resources[idx];
++    if (r.res == nullptr || r.isBuffer)
++        return FFXM_OK;
++
++    if (r.rtvCpu >= 0 && r.mipCount == 1)
++    {
++        AddBarrier(b, cl, (uint32_t) idx, D3D12_RESOURCE_STATE_RENDER_TARGET);
++        FlushBarriers(b, cl);
++        cl->ClearRenderTargetView(RtvHandle(b, (uint32_t) r.rtvCpu), job.color, 0, nullptr);
++        return FFXM_OK;
++    }
++
++    if (r.uavCpu >= 0)
++    {
++        AddBarrier(b, cl, (uint32_t) idx, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++        FlushBarriers(b, cl);
++
++        const bool isUint = r.uavFormat == DXGI_FORMAT_R32_UINT || r.uavFormat == DXGI_FORMAT_R16G16_UINT ||
++                            r.uavFormat == DXGI_FORMAT_R16_UINT || r.uavFormat == DXGI_FORMAT_R8_UINT;
++
++        for (uint32_t mip = 0; mip < r.mipCount; mip++)
++        {
++            const uint32_t slot = AllocGpuDescriptors(b, 1);
++            auto gpuCpu = b->gpuHeap->GetCPUDescriptorHandleForHeapStart();
++            gpuCpu.ptr += (SIZE_T) slot * b->srvUavSize;
++            b->device->CopyDescriptorsSimple(1, gpuCpu, CpuHandle(b, (uint32_t) r.uavCpu + mip),
++                                             D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++            auto gpu = b->gpuHeap->GetGPUDescriptorHandleForHeapStart();
++            gpu.ptr += (UINT64) slot * b->srvUavSize;
++
++            if (isUint)
++            {
++                const UINT v[4] = { (UINT) job.color[0], (UINT) job.color[1], (UINT) job.color[2], (UINT) job.color[3] };
++                cl->ClearUnorderedAccessViewUint(gpu, CpuHandle(b, (uint32_t) r.uavCpu + mip), r.res, v, 0, nullptr);
++            }
++            else
++            {
++                cl->ClearUnorderedAccessViewFloat(gpu, CpuHandle(b, (uint32_t) r.uavCpu + mip), r.res, job.color, 0,
++                                                  nullptr);
++            }
++        }
++        r.uavWritten = true;
++        return FFXM_OK;
++    }
++
++    Log(1, "ASR DX12 backend: clear of a resource with neither RTV nor UAV skipped");
++    return FFXM_OK;
++}
++
++FfxmErrorCode ExecuteCopy(Backend* b, ID3D12GraphicsCommandList* cl, const FfxmCopyJobDescription& job)
++{
++    const int32_t si = job.src.internalIndex, di = job.dst.internalIndex;
++    if (si <= 0 || di <= 0 || si >= (int32_t) kMaxResources || di >= (int32_t) kMaxResources)
++        return FFXM_ERROR_INVALID_ARGUMENT;
++
++    Resource& src = b->resources[si];
++    Resource& dst = b->resources[di];
++    if (src.res == nullptr || dst.res == nullptr)
++        return FFXM_ERROR_INVALID_ARGUMENT;
++
++    if (!src.isBuffer || src.state != D3D12_RESOURCE_STATE_GENERIC_READ)
++        AddBarrier(b, cl, (uint32_t) si, D3D12_RESOURCE_STATE_COPY_SOURCE);
++    AddBarrier(b, cl, (uint32_t) di, D3D12_RESOURCE_STATE_COPY_DEST);
++    FlushBarriers(b, cl);
++
++    if (src.isBuffer && !dst.isBuffer)
++    {
++        const D3D12_RESOURCE_DESC dd = dst.res->GetDesc();
++        D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp {};
++        b->device->GetCopyableFootprints(&dd, 0, 1, 0, &fp, nullptr, nullptr, nullptr);
++
++        D3D12_TEXTURE_COPY_LOCATION s {};
++        s.pResource = src.res;
++        s.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
++        s.PlacedFootprint = fp;
++        D3D12_TEXTURE_COPY_LOCATION d {};
++        d.pResource = dst.res;
++        d.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++        d.SubresourceIndex = 0;
++        cl->CopyTextureRegion(&d, 0, 0, 0, &s, nullptr);
++    }
++    else if (src.isBuffer && dst.isBuffer)
++    {
++        cl->CopyBufferRegion(dst.res, 0, src.res, 0, std::min(src.desc.width, dst.desc.width));
++    }
++    else
++    {
++        cl->CopyResource(dst.res, src.res);
++    }
++    return FFXM_OK;
++}
++
++FfxmErrorCode ExecuteGpuJobsDX12(FfxmInterface* iface, FfxmCommandList commandList)
++{
++    Backend* b = GetBackend(iface);
++    auto* cl = reinterpret_cast<ID3D12GraphicsCommandList*>(commandList);
++    FfxmErrorCode result = FFXM_OK;
++
++    ID3D12DescriptorHeap* heaps[] = { b->gpuHeap };
++    cl->SetDescriptorHeaps(1, heaps);
++
++    for (uint32_t i = 0; i < b->jobCount; i++)
++    {
++        const FfxmGpuJobDescription& job = b->jobs[i];
++        FfxmErrorCode r = FFXM_OK;
++        switch (job.jobType)
++        {
++        case FFXM_GPU_JOB_CLEAR_FLOAT: r = ExecuteClear(b, cl, job.clearJobDescriptor); break;
++        case FFXM_GPU_JOB_COPY: r = ExecuteCopy(b, cl, job.copyJobDescriptor); break;
++        case FFXM_GPU_JOB_COMPUTE: r = ExecuteCompute(b, cl, job.computeJobDescriptor); break;
++        case FFXM_GPU_JOB_FRAGMENT: r = ExecuteFragment(b, cl, job.fragmentJobDescription); break;
++        default: break;
++        }
++        if (r != FFXM_OK && result == FFXM_OK)
++            result = r;
++    }
++    FlushBarriers(b, cl);
++    b->jobCount = 0;
++    return result;
++}
++
++} // namespace
++
++// ------------------------------------------------------------------ public
++size_t ffxmGetScratchMemorySizeDX12() { return sizeof(Backend); }
++
++bool ffxmDX12HasShaders() { return FFXM_DX12_HAVE_SHADERS != 0; }
++
++void ffxmSetLogCallbackDX12(FfxmDX12LogFn fn) { g_log = fn; }
++
++FfxmErrorCode ffxmGetInterfaceDX12(FfxmInterface* iface, ID3D12Device* device, void* scratch, size_t scratchSize)
++{
++    if (iface == nullptr || device == nullptr || scratch == nullptr)
++        return FFXM_ERROR_INVALID_POINTER;
++    if (scratchSize < sizeof(Backend))
++        return FFXM_ERROR_INSUFFICIENT_MEMORY;
++
++    Backend* b = new (scratch) Backend();
++    b->device = device;
++
++    iface->fpGetSDKVersion = GetSDKVersionDX12;
++    iface->fpCreateBackendContext = CreateBackendContextDX12;
++    iface->fpGetDeviceCapabilities = GetDeviceCapabilitiesDX12;
++    iface->fpDestroyBackendContext = DestroyBackendContextDX12;
++    iface->fpCreateResource = CreateResourceDX12;
++    iface->fpRegisterResource = RegisterResourceDX12;
++    iface->fpGetResource = GetResourceDX12;
++    iface->fpUnregisterResources = UnregisterResourcesDX12;
++    iface->fpGetResourceDescription = GetResourceDescriptionDX12;
++    iface->fpDestroyResource = DestroyResourceDX12;
++    iface->fpCreateComputePipeline = CreateComputePipelineDX12;
++    iface->fpCreateGraphicsPipeline = CreateGraphicsPipelineDX12;
++    iface->fpDestroyPipeline = DestroyPipelineDX12;
++    iface->fpScheduleGpuJob = ScheduleGpuJobDX12;
++    iface->fpExecuteGpuJobs = ExecuteGpuJobsDX12;
++    iface->scratchBuffer = scratch;
++    iface->scratchBufferSize = scratchSize;
++    iface->device = reinterpret_cast<FfxmDevice>(device);
++    return FFXM_OK;
++}
++
++FfxmResource ffxmGetResourceDX12(ID3D12Resource* resource, FfxmResourceStates state, const wchar_t* name)
++{
++    FfxmResource r {};
++    r.resource = resource;
++    r.state = state;
++    if (resource != nullptr)
++    {
++        const D3D12_RESOURCE_DESC d = resource->GetDesc();
++        r.description.type = d.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER ? FFXM_RESOURCE_TYPE_BUFFER
++                                                                              : FFXM_RESOURCE_TYPE_TEXTURE2D;
++        r.description.width = (uint32_t) d.Width;
++        r.description.height = d.Height;
++        r.description.depth = d.DepthOrArraySize;
++        r.description.mipCount = d.MipLevels;
++        r.description.format = FromDxgi(d.Format);
++    }
++    if (name != nullptr)
++        wcsncpy(r.name, name, FFXM_RESOURCE_NAME_SIZE - 1);
++    return r;
++}
++
++} // namespace arm
+diff --git a/OptiScaler/upscalers/asr/ffxm_dx12.h b/OptiScaler/upscalers/asr/ffxm_dx12.h
+new file mode 100644
+index 0000000..ba580d9
+--- /dev/null
++++ b/OptiScaler/upscalers/asr/ffxm_dx12.h
+@@ -0,0 +1,64 @@
++// D3D12 backend for Arm Accuracy Super Resolution's ffxm interface.
++//
++// Copyright (c) 2023 Advanced Micro Devices, Inc.
++// Copyright (c) 2024-2025 Arm Limited.
++// Copyright (c) 2026 the OptiScaler ARM64EC port contributors.
++//
++// Permission is hereby granted, free of charge, to any person obtaining a copy
++// of this software and associated documentation files (the "Software"), to deal
++// in the Software without restriction, including without limitation the rights
++// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++// copies of the Software, and to permit persons to whom the Software is
++// furnished to do so, subject to the following conditions:
++//
++// The above copyright notice and this permission notice shall be included in all
++// copies or substantial portions of the Software.
++//
++// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++// SOFTWARE.
++//
++// Arm ASR ships only a Vulkan backend. This one implements the same FfxmInterface
++// on D3D12, modelled on AMD's FidelityFX DX12 backends (MIT) with ASR's fragment
++// jobs added: most ASR passes are full-screen pixel shaders writing render
++// targets, so unlike FSR2's backend this one builds graphics PSOs too.
++//
++// Shaders are ASR's own HLSL compiled to DXIL at build time by
++// arm64ec/gen_asr_shaders.py; see asr_dx12_shaders.h.
++//
++// Deliberately independent of OptiScaler: only d3d12.h and ASR's host headers,
++// so it can be exercised by a standalone test.
++
++#pragma once
++
++#include <d3d12.h>
++#include <host/ffxm_interface.h>
++
++namespace arm
++{
++
++// Scratch memory ffxmGetInterfaceDX12 needs; the backend context lives in it.
++size_t ffxmGetScratchMemorySizeDX12();
++
++// Fills backendInterface for device. One interface serves one ASR context.
++FfxmErrorCode ffxmGetInterfaceDX12(FfxmInterface* backendInterface, ID3D12Device* device, void* scratchBuffer,
++                                   size_t scratchBufferSize);
++
++// Wraps a D3D12 resource for ffxmFsr2ContextDispatch. state is the state the
++// resource is in when the dispatch is recorded; the backend transitions it as
++// the passes need and returns it to that state before the dispatch returns.
++FfxmResource ffxmGetResourceDX12(ID3D12Resource* resource, FfxmResourceStates state, const wchar_t* name = nullptr);
++
++// Whether the build carries compiled shaders at all (false when the generator
++// was not run, e.g. no DXC was available).
++bool ffxmDX12HasShaders();
++
++// Backend diagnostics sink; level 0 = error, 1 = warning, 2 = info.
++typedef void (*FfxmDX12LogFn)(int level, const char* message);
++void ffxmSetLogCallbackDX12(FfxmDX12LogFn fn);
++
++} // namespace arm
+diff --git a/arm64ec/README.md b/arm64ec/README.md
+index 6e54ee9..4609b0d 100644
+--- a/arm64ec/README.md
++++ b/arm64ec/README.md
+@@ -66,6 +66,36 @@ particular the motion-vector sign/scale convention (`motionVectorScale` in the
+ Convert pass) is derived rather than measured, and is the first thing to check
+ if output looks smeared or inverted.
+ 
++## Arm ASR
++
++Arm Accuracy Super Resolution (MIT, `LICENSES/MIT-Arm-ASR.txt`; it carries
++AMD's FSR2 copyright too) is AMD's FSR 2.2.2 reworked for mobile GPUs: fp16
++throughout, most passes as full-screen fragment shaders, and a shader quality
++preset independent of the upscaling ratio. Select it with `Dx12Upscaler=asr`
++(or `Dx11Upscaler=asr_12` for the DX11 bridge) and pick the preset with
++`[ASR] ShaderQuality=quality|balanced|performance` (default balanced).
++
++Arm only ships a Vulkan backend, so the pieces here are:
++
++- `build.sh` clones the library at tag 25.06
++  (`0501f490bd9946a2e1806b5363d7ab8a9a6a5e0a`) into `$DEPS/asr` and builds its
++  host library (`ffxmFsr2*`) as `libasr_arm64ec.a`. Its Vulkan backend and
++  prebuilt SPIR-V are not used.
++- `gen_asr_shaders.py` compiles ASR's own HLSL to DXIL (SM6.0, `min16float`)
++  with a Linux DXC into `$DEPS/asrgen/asr_dx12_shaders.h`, together with the
++  binding reflection the backend needs. Permutations whose preprocessed source
++  is identical are compiled once (240 -> 100 blobs, ~0.9 MiB). `build.sh` runs
++  it when that header is missing and `$DXC` (default `dxc`) passes a probe
++  compile; otherwise the DLL builds without ASR and `asr` falls back.
++  Arch's `directx-shader-compiler` 1.10.2605.37-1 (x86_64 and ALARM aarch64)
++  currently aborts on every input; Microsoft's Linux release build works.
++- `OptiScaler/upscalers/asr/ffxm_dx12.cpp` is a D3D12 implementation of ASR's
++  `FfxmInterface` (root signatures from the reflection, graphics PSOs per
++  render-target format set, resource state tracking), and `ASRFeature_Dx12`
++  the OptiScaler feature on top of it. Sharpening uses OptiScaler's RCAS, as
++  for SGSR2, so ASR's own RCAS / sharpened-accumulate / reactive-mask passes
++  are not compiled.
++
+ ## Standard defines
+ 
+ ```
+diff --git a/arm64ec/build.sh b/arm64ec/build.sh
+index 518b0f2..559d179 100755
+--- a/arm64ec/build.sh
++++ b/arm64ec/build.sh
+@@ -32,6 +32,37 @@ fi
+ [ -d "$DEPS/freetype" ]    || git clone --depth 1 -q -b VER-2-13-3 \
+                                  https://gitlab.freedesktop.org/freetype/freetype.git "$DEPS/freetype"
+ 
++# ------------------------------------------------------------------ Arm ASR
++# Arm Accuracy Super Resolution (MIT). Only its host library and HLSL are used:
++# the Vulkan backend and the prebuilt SPIR-V are not. OptiScaler's D3D12
++# backend (OptiScaler/upscalers/asr/ffxm_dx12.cpp) runs DXIL compiled here from
++# ASR's HLSL by gen_asr_shaders.py, which needs a working Linux DXC:
++#   DXC=/path/to/dxc ./arm64ec/build.sh ...
++# Without one the DLL still builds, but "asr" reports itself unavailable.
++ASR_COMMIT=0501f490bd9946a2e1806b5363d7ab8a9a6a5e0a # tag 25.06
++ASR_DIR="$DEPS/asr"
++ASR_GEN="$DEPS/asrgen"
++if [ ! -d "$ASR_DIR" ]; then
++  git clone -q https://github.com/arm/accuracy-super-resolution-generic-library "$ASR_DIR"
++  git -C "$ASR_DIR" checkout -q "$ASR_COMMIT"
++fi
++
++if [ ! -f "$ASR_GEN/asr_dx12_shaders.h" ]; then
++  DXC="${DXC:-dxc}"
++  # Arch's directx-shader-compiler 1.10.2605.37-1 (x86_64 and ALARM aarch64)
++  # aborts on every input with an LLVM "hung off uses" assertion, so probe it
++  # with a trivial shader instead of trusting that it exists.
++  probe="$(mktemp -d)"
++  printf 'float4 main(float4 p : SV_Position) : SV_Target { return p; }\n' > "$probe/t.hlsl"
++  if "$DXC" -T ps_6_0 -E main -Fo "$probe/t.dxil" "$probe/t.hlsl" >/dev/null 2>&1 && [ -s "$probe/t.dxil" ]; then
++    echo ">> compiling Arm ASR shaders to DXIL ($("$DXC" --version 2>/dev/null | head -1))"
++    python3 "$ROOT/arm64ec/gen_asr_shaders.py" --asr "$ASR_DIR" --out "$ASR_GEN" --dxc "$DXC" -j "$(nproc)"
++  else
++    echo "!! no working DXC ('$DXC'); building WITHOUT Arm ASR shaders -- upscaler=asr will be unavailable" >&2
++  fi
++  rm -rf "$probe"
++fi
++
+ # ------------------------------------------------- case-insensitivity shim
+ # OptiScaler uses MSVC-cased includes (<Windows.h>) and a few in-repo includes
+ # whose case does not match the file on disk. Harmless on Windows, fatal on a
+@@ -84,6 +115,7 @@ fi
+ 
+ # ------------------------------------------------------------------- compile
+ INC="-I$SHIM -I$DEPS/DirectXMath/Inc -I$ROOT/compat/arm64ec -I$ROOT/OptiScaler/include/imgui"
++INC="$INC -I$ASR_DIR/include -I$ASR_GEN"
+ while read -r p; do [ -n "$p" ] && INC="$INC -I$ROOT/$p"; done < "$ROOT/arm64ec/include-flags.txt.paths"
+ DEFS="-DWIN32 -DNDEBUG -D_WINDOWS -D_USRDLL -DIMGUI_DISABLE_SSE -DUNICODE -D_UNICODE -Wno-c++11-narrowing"
+ FLAGS="-std=c++23 -O2 $INC -include $ROOT/compat/arm64ec/opti_sal_compat.h $DEFS"
+@@ -110,6 +142,18 @@ else
+   FSR2_LIB=""
+ fi
+ 
++# ASR's host library (ffxmFsr2* API) is built on its own: it wants its own
++# include layout and C++20, and kept out of obj/ the stale-object pruning below
++# leaves it alone.
++echo ">> building Arm ASR host library (arm64ec)"
++ASR_OBJ="$OUT/asrobj"; mkdir -p "$ASR_OBJ"; rm -f "$ASR_OBJ"/*.o
++for f in src/shared/ffxm_assert.cpp src/shared/ffxm_object_management.cpp src/components/fsr2/ffxm_fsr2.cpp; do
++  "$CXX" -std=c++20 -O2 -DWIN32 -DNDEBUG -DUNICODE -D_UNICODE -Wno-unknown-pragmas \
++    -I"$ASR_DIR" -I"$ASR_DIR/include" -I"$ASR_DIR/include/host" -I"$ASR_DIR/include/gpu" \
++    -c "$ASR_DIR/$f" -o "$ASR_OBJ/$(basename "${f%.cpp}").o"
++done
++"$TC/llvm-ar" rcs "$OUT/libasr_arm64ec.a" "$ASR_OBJ"/*.o
++
+ echo ">> compiling OptiScaler"
+ cd "$ROOT"
+ find OptiScaler -name '*.cpp' -not -path '*/library/*' -not -name 'imgui_impl_uwp.cpp' > "$OUT/srcs.txt"
+@@ -162,7 +206,7 @@ python3 "$ROOT/arm64ec/gen_def.py" OptiScaler/Source.def "$OUT/all_syms.txt" "$O
+ echo ">> linking"
+ "$CXX" -shared -o "$OUT/OptiScaler.dll" "$OUT"/obj/*.o "$OUT/obj/zz_resource.res" "$OUT/Source_arm64ec.def" \
+   ${FSR2_LIB:+"$FSR2_LIB"} \
+-  -L"$OUT" -L"$OUT/freetype" -ldetours -lfreetype -lvulkan-1 -ld3d12_extra \
++  -L"$OUT" -L"$OUT/freetype" -lasr_arm64ec -ldetours -lfreetype -lvulkan-1 -ld3d12_extra \
+   -ld3d11 -ld3d12 -ldxgi -ldxguid -ld3dcompiler -lwinhttp -ldbghelp -ldwmapi \
+   -lgdi32 -limm32 -lshell32 -luser32 -lversion -lole32 -loleaut32 -luuid \
+   -static-libgcc -static-libstdc++ -Wl,--error-limit=0
+diff --git a/arm64ec/gen_asr_shaders.py b/arm64ec/gen_asr_shaders.py
+new file mode 100644
+index 0000000..2e101b2
+--- /dev/null
++++ b/arm64ec/gen_asr_shaders.py
+@@ -0,0 +1,316 @@
++#!/usr/bin/env python3
++"""Compile Arm ASR's HLSL passes to DXIL for OptiScaler's D3D12 ASR backend.
++
++    gen_asr_shaders.py --asr <accuracy-super-resolution-generic-library> --out <dir> [--dxc dxc] [-j N]
++
++Arm ASR ships only a Vulkan backend, with shaders prebuilt as SPIR-V by AMD's
++Windows-only FidelityFX_SC. Its HLSL still carries the D3D register layout it
++inherited from FSR2 (t#/u#/b#/s#), so it compiles to DXIL unchanged with a Linux
++DXC, and that DXIL is what vkd3d-proton consumes on the device.
++
++Output is a single C++ header, asr_dx12_shaders.h: one DXIL blob per distinct
++permutation plus the reflection the backend needs to build root signatures and
++to hand ffxm_fsr2.cpp the binding names it matches resources by.
++
++Permutations cover the options OptiScaler can actually request:
++  * passes    luminance pyramid, reconstruct-previous-depth, depth clip, lock,
++              accumulate (no sharpening: OptiScaler sharpens with its own RCAS),
++              plus the shared full-screen vertex shader
++  * presets   quality, balanced, performance
++  * flags     HDR input, low-res MVs, jittered MVs, inverted depth
++Permutations whose preprocessed source is identical (a flag the pass ignores)
++are compiled once.
++
++Precision: FFXM_HLSL_6_2=0, i.e. min16float at SM6.0. vkd3d-proton lowers
++min-precision to native fp16 when the device exposes it (Turnip does) and to
++RelaxedPrecision otherwise, so one set of blobs is both fast and always
++loadable -- unlike SM6.2 -enable-16bit-types, which fails PSO creation outright
++where Native16BitShaderOpsSupported is false.
++"""
++
++import argparse
++import concurrent.futures
++import hashlib
++import os
++import re
++import subprocess
++import sys
++import tempfile
++
++# FfxmFsr2Pass values (ffxm_fsr2.h)
++PASS_DEPTH_CLIP = 0
++PASS_RECONSTRUCT_PREVIOUS_DEPTH = 1
++PASS_LOCK = 2
++PASS_ACCUMULATE = 3
++PASS_LUMINANCE_PYRAMID = 6
++PASS_COUNT = 8
++
++QUALITIES = ["quality", "balanced", "performance"]  # FfxmFsr2ShaderQualityMode 1..3
++
++# (pass id, source file, stage)
++PASSES = [
++    (PASS_DEPTH_CLIP, "ffxm_fsr2_depth_clip_pass_fs.hlsl", "ps"),
++    (PASS_RECONSTRUCT_PREVIOUS_DEPTH, "ffxm_fsr2_reconstruct_previous_depth_pass_fs.hlsl", "ps"),
++    (PASS_LOCK, "ffxm_fsr2_lock_pass.hlsl", "cs"),
++    (PASS_ACCUMULATE, "ffxm_fsr2_accumulate_pass_fs.hlsl", "ps"),
++    (PASS_LUMINANCE_PYRAMID, "ffxm_fsr2_compute_luminance_pyramid_pass.hlsl", "cs"),
++]
++VS_SOURCE = "ffxm_fsr2_vs.hlsl"
++
++# Render-target names. ASR's extended FidelityFX_SC hardcodes these per pass and
++# SV_Target index (see tools/ffx_shader_compiler.diff); ffxm_fsr2.cpp matches
++# them against its rtTextureBindingTable. Keyed by (pass, balanced-or-performance).
++RT_NAMES = {
++    (PASS_RECONSTRUCT_PREVIOUS_DEPTH, False): ["rw_dilatedDepth", "rw_dilated_motion_vectors", "rw_lock_input_luma"],
++    (PASS_RECONSTRUCT_PREVIOUS_DEPTH, True): ["rw_dilatedDepth", "rw_dilated_motion_vectors", "rw_lock_input_luma"],
++    (PASS_DEPTH_CLIP, False): ["rw_dilated_reactive_masks", "rw_prepared_input_color"],
++    (PASS_DEPTH_CLIP, True): ["rw_dilated_reactive_masks", "rw_prepared_input_color"],
++    (PASS_ACCUMULATE, False): ["rw_internal_upscaled_color", "rw_lock_status", "rw_luma_history", "rw_upscaled_output"],
++    (PASS_ACCUMULATE, True): ["rw_internal_upscaled_color", "rw_internal_temporal_reactive", "rw_lock_status",
++                              "rw_upscaled_output"],
++}
++
++FLAG_DEFINES = [
++    "FFXM_FSR2_OPTION_HDR_COLOR_INPUT",               # bit 0
++    "FFXM_FSR2_OPTION_LOW_RESOLUTION_MOTION_VECTORS",  # bit 1
++    "FFXM_FSR2_OPTION_JITTERED_MOTION_VECTORS",        # bit 2
++    "FFXM_FSR2_OPTION_INVERTED_DEPTH",                 # bit 3
++]
++
++
++def permutation_defines(quality, flags):
++    d = {name: (flags >> i) & 1 for i, name in enumerate(FLAG_DEFINES)}
++    d["FFXM_FSR2_OPTION_APPLY_SHARPENING"] = 0
++    d["FFXM_FSR2_OPTION_SHADER_OPT_BALANCED"] = 1 if quality in ("balanced", "performance") else 0
++    d["FFXM_FSR2_OPTION_SHADER_OPT_PERFORMANCE"] = 1 if quality == "performance" else 0
++    d["FFXM_FSR2_OPTION_SHADER_OPT_ULTRA_PERFORMANCE"] = 0
++    return d
++
++
++# ASR_NATIVE_16BIT=1 selects SM6.2 explicit 16-bit types instead (experiments only).
++NATIVE16 = os.environ.get("ASR_NATIVE_16BIT", "0") == "1"
++SM = "6_2" if NATIVE16 else "6_0"
++HLSL_6_2 = 1 if NATIVE16 else 0
++
++
++def base_args(asr, stage):
++    extra = ["-enable-16bit-types"] if NATIVE16 else []
++    gpu = os.path.join(asr, "include", "gpu")
++    return [
++        "-T", f"{stage}_{SM}", "-E", "main", "-HV", "2021",
++        "-DFFXM_GPU=1", "-DFFXM_HLSL=1", f"-DFFXM_HLSL_6_2={HLSL_6_2}", "-DFFXM_HALF=1",
++        "-I", gpu, "-I", os.path.join(gpu, "fsr2"),
++        "-Wno-ambig-lit-shift", "-Wno-for-redefinition", "-Wno-conversion", "-Wno-unused-value",
++    ] + extra
++
++
++def run(cmd):
++    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
++    if p.returncode != 0:
++        raise RuntimeError(f"{' '.join(cmd)}\n{p.stdout}\n{p.stderr}")
++    return p
++
++
++def preprocess(dxc, asr, src, stage, defines, work):
++    fd, out = tempfile.mkstemp(suffix=".i", dir=work)
++    os.close(fd)
++    cmd = [dxc, "-P", "-Fi", out] + base_args(asr, stage) + [f"-D{k}={v}" for k, v in defines.items()] + [src]
++    run(cmd)
++    with open(out, "r", errors="replace") as f:
++        text = f.read()
++    os.unlink(out)
++    # #line directives carry absolute paths; they do not change the code.
++    text = "\n".join(l for l in text.splitlines() if not l.startswith("#line"))
++    return hashlib.sha256(text.encode()).hexdigest()
++
++
++BIND_RE = re.compile(r"^(cb|t|u|s)(\d+)$")
++
++
++def reflect(asm_text):
++    """Pull resource bindings and SV_Target count out of a DXC -Fc listing."""
++    res = {"cb": [], "t": [], "u": [], "s": []}
++    lines = asm_text.splitlines()
++    try:
++        start = next(i for i, l in enumerate(lines) if l.startswith("; Resource Bindings:"))
++    except StopIteration:
++        start = None
++    if start is not None:
++        i = start + 1
++        while i < len(lines) and not lines[i].startswith("; ------"):
++            i += 1
++        i += 1
++        while i < len(lines):
++            l = lines[i].lstrip(";").strip()
++            if not l:
++                break
++            tok = l.split()
++            name, bind, count = tok[0], tok[-2], tok[-1]
++            m = BIND_RE.match(bind)
++            if not m:
++                raise RuntimeError(f"unparsed binding line: {lines[i]}")
++            res[m.group(1)].append((name, int(m.group(2)), int(count)))
++            i += 1
++
++    rts = 0
++    try:
++        o = next(i for i, l in enumerate(lines) if l.startswith("; Output signature:"))
++        i = o + 1
++        while i < len(lines) and not lines[i].startswith("; ------"):
++            i += 1
++        i += 1
++        while i < len(lines):
++            l = lines[i].lstrip(";").strip()
++            if not l:
++                break
++            tok = l.split()
++            if tok[0].upper() == "SV_TARGET":
++                rts = max(rts, int(tok[1]) + 1)
++            i += 1
++    except StopIteration:
++        pass
++    for k in res:
++        res[k].sort(key=lambda b: b[1])
++    return res, rts
++
++
++def compile_blob(dxc, asr, src, stage, defines, work, tag):
++    dxil = os.path.join(work, tag + ".dxil")
++    asm = os.path.join(work, tag + ".asm")
++    args = base_args(asr, stage) + [f"-D{k}={v}" for k, v in defines.items()]
++    # The listing is taken from an unstripped build: with -Qstrip_reflect DXC
++    # drops the resource names from it, and the names are what ffxm_fsr2.cpp
++    # binds resources by. The shipped blob is stripped.
++    run([dxc] + args + ["-Fc", asm, src])
++    run([dxc] + args + ["-Qstrip_debug", "-Qstrip_reflect", "-Qstrip_rootsignature", "-Fo", dxil, src])
++    with open(dxil, "rb") as f:
++        data = f.read()
++    with open(asm, "r", errors="replace") as f:
++        refl, rts = reflect(f.read())
++    return data, refl, rts
++
++
++def c_bytes(data):
++    out = []
++    for i in range(0, len(data), 24):
++        out.append("    " + ",".join(f"0x{b:02x}" for b in data[i:i + 24]) + ",")
++    return "\n".join(out)
++
++
++def main():
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--asr", required=True)
++    ap.add_argument("--out", required=True)
++    ap.add_argument("--dxc", default=os.environ.get("DXC", "dxc"))
++    ap.add_argument("-j", type=int, default=int(os.environ.get("ASR_SHADER_JOBS", "4")))
++    a = ap.parse_args()
++
++    hlsl_dir = os.path.join(a.asr, "src", "backends", "vk", "shaders", "fsr2", "hlsl")
++    os.makedirs(a.out, exist_ok=True)
++    work = tempfile.mkdtemp(prefix="asrgen-", dir=a.out)
++
++    jobs = []  # (pass, qi, flags, src, stage, defines)
++    for pass_id, fname, stage in PASSES:
++        for qi, q in enumerate(QUALITIES):
++            for flags in range(16):
++                jobs.append((pass_id, qi, flags, os.path.join(hlsl_dir, fname), stage, permutation_defines(q, flags)))
++
++    with concurrent.futures.ThreadPoolExecutor(max_workers=a.j) as ex:
++        hashes = list(ex.map(lambda j: preprocess(a.dxc, a.asr, j[3], j[4], j[5], work), jobs))
++
++    # Distinct (pass, preprocessed text) -> blob index.
++    unique = {}
++    order = []
++    for j, h in zip(jobs, hashes):
++        key = (j[0], h)
++        if key not in unique:
++            unique[key] = len(order)
++            order.append(j)
++
++    def build(idx_job):
++        idx, j = idx_job
++        return compile_blob(a.dxc, a.asr, j[3], j[4], j[5], work, f"b{idx}")
++
++    with concurrent.futures.ThreadPoolExecutor(max_workers=a.j) as ex:
++        blobs = list(ex.map(build, enumerate(order)))
++
++    vs = compile_blob(a.dxc, a.asr, os.path.join(hlsl_dir, VS_SOURCE), "vs", {}, work, "vs")
++
++    table = [[[-1] * 16 for _ in QUALITIES] for _ in range(PASS_COUNT)]
++    for j, h in zip(jobs, hashes):
++        table[j[0]][j[1]][j[2]] = unique[(j[0], h)]
++
++    # Render-target names, checked against the SV_Target count DXC reports.
++    rt_names = []
++    for j, (data, refl, rts) in zip(order, blobs):
++        if j[4] != "ps":
++            rt_names.append([])
++            continue
++        names = RT_NAMES[(j[0], QUALITIES[j[1]] != "quality")]
++        if rts != len(names):
++            sys.exit(f"pass {j[0]} quality {QUALITIES[j[1]]}: DXC reports {rts} render targets, "
++                     f"the name table has {len(names)}")
++        rt_names.append(names)
++
++    hdr = os.path.join(a.out, "asr_dx12_shaders.h")
++    total = 0
++    with open(hdr + ".tmp", "w") as f:
++        f.write("// Generated by arm64ec/gen_asr_shaders.py -- do not edit.\n")
++        f.write("// DXIL compiled from Arm ASR's HLSL (MIT, Copyright (c) 2024-2025 Arm Limited;\n")
++        f.write("// derived from AMD FidelityFX Super Resolution 2, MIT, Copyright (c) 2023 AMD).\n")
++        f.write(f"// Compiler: {run([a.dxc, '--version']).stdout.strip()}\n")
++        f.write("#pragma once\n#include <cstdint>\n\nnamespace asr_dx12_shaders\n{\n")
++        f.write("struct Binding\n{\n    const char* name;\n    uint32_t reg;\n    uint32_t count;\n};\n\n")
++        f.write("struct Blob\n{\n    const uint8_t* data;\n    uint32_t size;\n"
++                "    uint32_t cbCount, srvCount, uavCount, samplerCount, rtCount;\n"
++                "    const Binding* cbs;\n    const Binding* srvs;\n    const Binding* uavs;\n"
++                "    const Binding* samplers;\n    const char* const* rtNames;\n};\n\n")
++
++        def emit(idx, data, refl, rts, names):
++            nonlocal total
++            total += len(data)
++            f.write(f"alignas(4) static const uint8_t blob{idx}_data[] = {{\n{c_bytes(data)}\n}};\n")
++            for kind, label in (("cb", "cbs"), ("t", "srvs"), ("u", "uavs"), ("s", "samplers")):
++                if refl[kind]:
++                    items = ", ".join(f'{{ "{n}", {r}, {c} }}' for n, r, c in refl[kind])
++                    f.write(f"static const Binding blob{idx}_{label}[] = {{ {items} }};\n")
++            if names:
++                f.write(f"static const char* const blob{idx}_rts[] = {{ " + ", ".join(f'"{n}"' for n in names) + " };\n")
++
++        def ref(idx, refl, label, kind):
++            return f"blob{idx}_{label}" if refl[kind] else "nullptr"
++
++        for idx, (data, refl, rts) in enumerate(blobs):
++            emit(idx, data, refl, rts, rt_names[idx])
++        emit("vs", vs[0], vs[1], vs[2], [])
++
++        def blob_entry(idx, data, refl, rts, names):
++            return (f"    {{ blob{idx}_data, {len(data)}, {len(refl['cb'])}, {len(refl['t'])}, {len(refl['u'])}, "
++                    f"{len(refl['s'])}, {len(names)}, {ref(idx, refl, 'cbs', 'cb')}, {ref(idx, refl, 'srvs', 't')}, "
++                    f"{ref(idx, refl, 'uavs', 'u')}, {ref(idx, refl, 'samplers', 's')}, "
++                    f"{('blob%s_rts' % idx) if names else 'nullptr'} }},\n")
++
++        f.write("\nstatic const Blob g_blobs[] = {\n")
++        for idx, (data, refl, rts) in enumerate(blobs):
++            f.write(blob_entry(idx, data, refl, rts, rt_names[idx]))
++        f.write("};\n\n")
++        f.write("static const Blob g_vertexShader =\n" + blob_entry("vs", vs[0], vs[1], vs[2], []).rstrip(",\n") + ";\n\n")
++
++        f.write("// [FfxmFsr2Pass][quality - 1][hdr | lowResMV << 1 | jitteredMV << 2 | invertedDepth << 3] -> g_blobs index, -1 = not built\n")
++        f.write(f"static const int16_t g_permutations[{PASS_COUNT}][{len(QUALITIES)}][16] = {{\n")
++        for p in range(PASS_COUNT):
++            f.write("    {\n")
++            for q in range(len(QUALITIES)):
++                f.write("        { " + ", ".join(str(v) for v in table[p][q]) + " },\n")
++            f.write("    },\n")
++        f.write("};\n} // namespace asr_dx12_shaders\n")
++    os.replace(hdr + ".tmp", hdr)
++
++    for fn in os.listdir(work):
++        os.unlink(os.path.join(work, fn))
++    os.rmdir(work)
++    print(f"asr shaders: {len(jobs)} permutations -> {len(order)} unique blobs + VS, {total // 1024} KiB DXIL -> {hdr}")
++
++
++if __name__ == "__main__":
++    main()
+-- 
+2.55.0
+

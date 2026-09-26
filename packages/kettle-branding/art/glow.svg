@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="600" viewBox="0 0 840 600">
+  <!-- the warm glow behind the kettle (Plasma splash, Steam startup movie) -->
+  <defs>
+    <radialGradient id="glow">
+      <stop offset="0" stop-color="#ff8a3d" stop-opacity="1"/>
+      <stop offset="1" stop-color="#ff8a3d" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <ellipse cx="420" cy="300" rx="420" ry="300" fill="url(#glow)"/>
+</svg>

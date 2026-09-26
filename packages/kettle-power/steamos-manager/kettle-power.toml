@@ -1,0 +1,18 @@
+# Interfaces kettle-powerd implements for steamos-manager to relay to Steam
+[TdpLimit1]
+bus_name = "org.kettlelinux.Power1"
+object_path = "/org/kettlelinux/Power1"
+
+[PerformanceProfile1]
+bus_name = "org.kettlelinux.Power1"
+object_path = "/org/kettlelinux/Power1"
+
+[GpuPerformanceLevel1]
+bus_name = "org.kettlelinux.Power1"
+object_path = "/org/kettlelinux/Power1"
+
+# BatteryChargeLimit1 too, on firmware that supports a charge limit (odin2portal.toml)
+
+[FanControl1]
+bus_name = "org.kettlelinux.Power1"
+object_path = "/org/kettlelinux/Power1"

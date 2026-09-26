@@ -1,0 +1,102 @@
+# Wine for aarch64 with ARM64EC: runs x86-64 and 32-bit x86 Windows programs through FEX
+# (fex-emu-wine) inside Wine itself, like Proton ARM64 does in Steam, with no x86 root file
+# system. This is the Wine Lutris, Heroic and winetricks use.
+#
+# Source: Hangover's Wine 11.16 (wine-11.16 plus Billy Laws' WoW64 thread-suspend and
+# address-space patches that Proton ARM64 carries too, and FEX as the default x86-64
+# emulator: HODLL64, default libarm64ecfex.dll). Hangover defaults 32-bit x86 to box64's
+# wowbox64.dll, which we don't ship; prepare() makes it FEX's libwow64fex.dll (still
+# overridable with HODLL). Hangover's wine ignores the registry's Wow64 emulator keys.
+#
+# Prefixes are always 64-bit (WoW64): never WINEARCH=win32. /usr/bin/wine64 is a link to
+# wine, for launchers (Lutris) that decide a new prefix's arch by looking for it.
+#
+# Direct3D is DXVK (8/9/10/11, with its dxgi) and vkd3d-proton (12), ARM64EC and i686 builds
+# (packages/dxvk, packages/vkd3d-proton), installed in place of Wine's own d3d8, d3d9,
+# d3d10core, d3d11, dxgi, d3d12 and d3d12core, as Proton ARM64 does. So every prefix, from
+# Lutris, Heroic or plain wine, renders D3D through Vulkan (turnip) without per-prefix setup.
+# They are stamped as Wine builtins (winebuild --builtin): Wine only loads builtins from its
+# own lib dir. DirectDraw and D3D 1-7 still go through Wine's wined3d.
+#
+# PE code is built with llvm-mingw's aarch64 Linux build (ARM64EC needs clang; it also has
+# the i686 and x86_64 targets configure wants). Not stripped: makepkg's strip doesn't know PE.
+pkgname=wine
+pkgver=11.16
+pkgrel=2
+_tag=hangover-$pkgver
+_llvm_mingw=20260908
+pkgdesc='A compatibility layer for running Windows programs (ARM64EC, with FEX for x86)'
+arch=(aarch64)
+url='https://github.com/AndreRH/hangover'
+license=(LGPL-2.1-or-later Zlib MIT Apache-2.0)  # Wine; DXVK; bundled SPIR-V libraries
+depends=(desktop-file-utils fontconfig freetype2 gcc-libs gettext glib2 glibc libpcap libunwind
+         libx11 libxcursor libxext libxkbcommon libxi libxrandr systemd-libs wayland
+         fex-emu-wine)
+makedepends=(alsa-lib ffmpeg gnutls gst-plugins-base-libs libcups libgphoto2 libpulse
+             libxcomposite libxinerama libxxf86vm libglvnd mesa ocl-icd opencl-headers pcsclite
+             perl samba sane sdl2 unixodbc v4l-utils vulkan-headers vulkan-icd-loader flex bison
+             dxvk vkd3d-proton)
+optdepends=('alsa-lib: ALSA audio' 'alsa-plugins: ALSA audio' 'libpulse: PulseAudio audio'
+            'gnutls: TLS (logins in game launchers)' 'sdl2: game controllers'
+            'gst-plugins-base-libs: video playback' 'gst-plugins-good: video playback'
+            'ffmpeg: video playback' 'vulkan-icd-loader: Vulkan and D3D through wined3d-vulkan'
+            'libcups: printing' 'samba: NTLM authentication' 'v4l-utils: webcams'
+            'ocl-icd: OpenCL' 'pcsclite: smart cards' 'sane: scanners' 'libgphoto2: cameras'
+            'unixodbc: ODBC databases')
+provides=(wine-wow64)
+options=(!lto !strip)
+_llvm="llvm-mingw-$_llvm_mingw-ucrt-ubuntu-22.04-aarch64"
+source=("wine-$_tag.tar.gz::https://github.com/AndreRH/wine/archive/refs/tags/$_tag.tar.gz"
+        "https://github.com/mstorsjo/llvm-mingw/releases/download/$_llvm_mingw/$_llvm.tar.xz"
+        30-win32-aliases.conf)
+sha256sums=('21e4dd77a9d1d4897194d5751e03a5fc6cdec4390889ad6a652b87d05aa0bb4d'
+            'c907dd2302a292b663add18752a55ce9d544ca0fd19cf33c086ca242d5994ea6'
+            '9901a5ee619f24662b241672a7358364617227937d5f6d3126f70528ee5111e7')
+
+prepare() {
+  cd wine-$_tag
+  grep -q 'return L"wowbox64.dll";' dlls/wow64/syscall.c
+  sed -i 's/return L"wowbox64.dll";/return L"libwow64fex.dll";/' dlls/wow64/syscall.c
+  rm -rf "$srcdir/build"; mkdir "$srcdir/build"
+}
+
+build() {
+  cd build
+  export PATH="$srcdir/$_llvm/bin:$PATH"
+  # flags for the PE side; makepkg's CFLAGS stay on the Unix side
+  # (no CROSSLDFLAGS: with --with-mingw=clang the PE links go through lld-link, which rejects -O1)
+  export CROSSCFLAGS="-O2 -pipe" CROSSCXXFLAGS="-O2 -pipe" CROSSLDFLAGS=""
+  ../wine-$_tag/configure \
+    --prefix=/usr \
+    --libdir=/usr/lib \
+    --with-mingw=clang \
+    --enable-archs=arm64ec,aarch64,i386 \
+    --disable-tests
+  make
+}
+
+package() {
+  make -C build DESTDIR="$pkgdir" install
+  ln -s wine "$pkgdir/usr/bin/wine64"
+  strip --strip-unneeded "$pkgdir"/usr/lib/wine/aarch64-unix/*.so "$pkgdir"/usr/bin/{wine,wineserver} 2>/dev/null || true
+
+  # DXVK and vkd3d-proton as Wine's own Direct3D (see the top)
+  local w="$pkgdir/usr/lib/wine" dll
+  for dll in d3d8 d3d9 d3d10core d3d11 dxgi; do
+    install -m644 /usr/lib/dxvk/arm64ec/$dll.dll "$w/aarch64-windows/$dll.dll"
+    install -m644 /usr/lib/dxvk/i686/$dll.dll "$w/i386-windows/$dll.dll"
+  done
+  for dll in d3d12 d3d12core; do
+    install -m644 /usr/lib/vkd3d-proton/arm64ec/$dll.dll "$w/aarch64-windows/$dll.dll"
+    install -m644 /usr/lib/vkd3d-proton/i686/$dll.dll "$w/i386-windows/$dll.dll"
+  done
+  "$pkgdir/usr/bin/winebuild" --builtin "$w"/{aarch64,i386}-windows/{d3d8,d3d9,d3d10core,d3d11,dxgi,d3d12,d3d12core}.dll
+  install -Dm644 wine-$_tag/LICENSE wine-$_tag/COPYING.LIB -t "$pkgdir/usr/share/licenses/$pkgname"
+  cp -r /usr/share/licenses/dxvk "$pkgdir/usr/share/licenses/$pkgname/dxvk"
+  cp -r /usr/share/licenses/vkd3d-proton "$pkgdir/usr/share/licenses/$pkgname/vkd3d-proton"
+
+  # Windows font names (MS Shell Dlg, ...) mapped to installed fonts
+  install -Dm644 30-win32-aliases.conf -t "$pkgdir/usr/share/fontconfig/conf.avail"
+  install -d "$pkgdir/usr/share/fontconfig/conf.default"
+  ln -s ../conf.avail/30-win32-aliases.conf "$pkgdir/usr/share/fontconfig/conf.default/30-win32-aliases.conf"
+}

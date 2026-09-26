@@ -1,14 +1,16 @@
 # Kettle Linux's own Decky plugins, preinstalled (decky-loader-start links them into
 # ~/homebrew/plugins):
 #   framegen   per-game frame generation: our kettle-framegen layer, or lsfg-vk
-#   upscaling  per-game gamescope FSR 1 (render resolution + Sharp filter) and SGSR 2
+#   upscaling  per-game gamescope FSR 1 (render resolution + Sharp filter) and SGSR 2 / Arm ASR / FSR 2.2
 #              through OptiScaler (ARM64EC build, optiscaler-arm64ec)
+#   power      per-game fan curve / fixed speed and CPU core parking and caps, a live power and
+#              temperature readout, the battery charge limit (all through kettle-powerd)
 #   welcome    opens once on first boot: a tour, a setup checklist, and optional components
 #              (components.json) downloaded from their upstream source on request
 # Sources live next to this PKGBUILD; shared/ holds code both frontends use.
 pkgbase=kettle-decky-plugins
-pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome)
-pkgver=1.8.0
+pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome kettle-decky-power)
+pkgver=1.10.0
 pkgrel=2
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
@@ -17,8 +19,8 @@ makedepends=(nodejs npm)
 
 prepare() {
   rm -rf src-tree; mkdir src-tree
-  cp -r "$startdir"/{package.json,pnpm-lock.yaml,shared,framegen,upscaling,welcome} src-tree/
-  rm -rf src-tree/{framegen,upscaling,welcome}/dist
+  cp -r "$startdir"/{package.json,pnpm-lock.yaml,shared,framegen,upscaling,welcome,power} src-tree/
+  rm -rf src-tree/{framegen,upscaling,welcome,power}/dist
 }
 
 build() {
@@ -44,7 +46,7 @@ package_kettle-decky-framegen() {
 }
 
 package_kettle-decky-upscaling() {
-  pkgdesc='Upscaling Decky plugin (per-game gamescope FSR 1 and SGSR 2)'
+  pkgdesc='Upscaling Decky plugin (per-game gamescope FSR 1; SGSR 2, Arm ASR, FSR 2.2 via OptiScaler)'
   depends=(decky-loader optiscaler-arm64ec)
   _install_plugin kettle-upscaling upscaling
 }
@@ -54,4 +56,10 @@ package_kettle-decky-welcome() {
   depends=(decky-loader)
   _install_plugin kettle-welcome welcome
   install -Dm644 src-tree/welcome/components.json -t "$pkgdir/usr/share/decky/plugins/kettle-welcome"
+}
+
+package_kettle-decky-power() {
+  pkgdesc='Power Decky plugin (per-game fan and CPU settings, power readout, charge limit)'
+  depends=(decky-loader kettle-power python-gobject)
+  _install_plugin kettle-power power
 }

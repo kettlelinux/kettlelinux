@@ -19,7 +19,7 @@ a patched mainline kernel plus Valve's SteamOS "deckard" (Steam Frame) aarch64 u
 | `device/odin2portal/` | rootfs overlay (s2idle, power key, first-boot grow, sshd) + ALSA UCM patches |
 | `scripts/build-packages.sh` | rootless makepkg in an aarch64 chroot → local `[kettle]` repo (installed ahead of Valve's) |
 | `scripts/push-kernel.sh` | install out/kernel on a running Portal over SSH (keeps previous kernel as a boot entry) |
-| `packages/` | our PKGBUILDs: `kscreen` (Display Settings, absent from all deckard snapshots), `mangohud` (Valve's deckard build + Portal sensors for the Steam performance overlay), `plasma-keyboard` (desktop on-screen keyboard), `plymouth` + `kettle-branding` (boot splash, Steam startup movie), `decky-loader` + `kettle-decky-plugins` + `kettle-framegen` + `lsfg-vk` + `optiscaler-arm64ec` (Game Mode plugins, below) |
+| `packages/` | our PKGBUILDs: `kscreen` (Display Settings, absent from all deckard snapshots), `mangohud` (Valve's deckard build + Portal sensors for the Steam performance overlay), `plasma-keyboard` (desktop on-screen keyboard), `plymouth` + `kettle-branding` (boot splash, Steam startup movie, Plasma splash), `decky-loader` + `kettle-decky-plugins` + `kettle-framegen` + `lsfg-vk` + `optiscaler-arm64ec` (+ build-only `directx-shader-compiler`) + `gamescope` (SGSR 1) (Game Mode plugins, below), `kettle-power` (power, clocks and fan behind Steam's Performance panel and the Power plugin, below), `plasma-welcome` + `kettle-welcome` (Desktop Mode welcome), `wine` + `fex-emu-wine` + `dxvk` + `vkd3d-proton` + `winetricks` + `cabextract` + `lutris` + `heroic-games-launcher` (games outside Steam, below) |
 | `tools/` | `bc` shim; `qemu-aarch64-static` (extracted from Arch's package, not installed) |
 
 Build (x86_64 host, no root needed):
@@ -40,17 +40,23 @@ restore: [docs/INTERNAL-INSTALL.md](docs/INTERNAL-INSTALL.md).
 - [x] Plasma 6.2.5 desktop (SteamOS desktop mode), audio (UCM alias fix), display scale 1.5
 - [x] Steam: Valve's arm64 client + own handheld Game Mode session (gamescope DRM), steamos-manager switching
 - [x] Desktop mode: plasma-keyboard on-screen keyboard (KWin input method) and gamepad mouse mode (below)
-- [ ] Game Mode plugins: Decky Loader with Frame Generation (kettle-framegen, lsfg-vk) and Upscaling (FSR 1, SGSR 2) — built, not yet validated on hardware
+- [ ] Desktop welcome (Welcome Center with Kettle pages, Gaming Extras from Flathub) and games outside Steam (ARM64EC Wine + FEX + DXVK/vkd3d-proton, Lutris, Heroic) — built, untested on hardware
+- [ ] Game Mode plugins: Decky Loader with Frame Generation (kettle-framegen, lsfg-vk) and Upscaling (gamescope FSR 1/SGSR 1; SGSR 2, Arm ASR, FSR 2.2 via OptiScaler) — SGSR 2 validated in Deep Rock Galactic, the rest built
 - [ ] InputPlumber (Steam Deck controller emulation for the rsinput pad)
 - [ ] Boot chain: ESP with `BOOTAA64.EFI` (steamcl/GRUB, A/B) — or boot.img v0 `KERNEL` for first bring-up
 - [ ] Firmware package: linux-firmware-qcom (a740/gmu/zap) + Portal ADSP/CDSP/topology blobs
 - [ ] Mirror the pinned deckard repos locally (Valve prunes snapshots)
 - [ ] Own packages: kernel, firmware, handheld gamescope session (DRM backend), inputplumber + AYN mapping,
-      ALSA UCM for `AYN-Odin2`, fan curve, steamos-manager device TOML, powerbuttond hwdb
+      ALSA UCM for `AYN-Odin2`, powerbuttond hwdb
+- [ ] Power: kettle-powerd (TDP budget, profiles, GPU clock, charge limit, fan control via
+      steamos-manager remotes.d) + Power plugin (per-game fan curve, core parking). On hardware:
+      profiles, GPU clock, fan modes, core parking and the TDP budget (stress-ng 9.2 W held at
+      5 W on the charger) work through steamos-manager; not yet checked in Steam's own UI or on
+      battery. No charge limit: the charger firmware doesn't support it
 - [ ] Suspend: s2idle validation on hardware (wake sources, rsinput/Wi-Fi/panel resume, drain)
 - [ ] Image: A/B btrfs rootfs + RAUC with our own keyring/compatible (`kettle-aarch64`)
 
-## Boot splash and startup movie
+## Boot splash, startup movie and Plasma splash
 `plymouth` (built by us; no deckard snapshot has it) shows `kettle-plymouth-theme` from early
 boot until SDDM starts the session, and again at shutdown: a copper kettle on black with steam
 rising from the spout and a progress line under the name. There is no initramfs, so it starts
@@ -64,6 +70,16 @@ building up again, with a boil and a chime, then a fade into Game Mode. It is re
 the same art at build time (`render-startup.py`: SVG frames, VP9 + Opus like Valve's movies),
 and `run-steam` copies it to `config/uioverrides/movies/steam_os_startup.webm`, the override
 Steam checks first. A movie chosen in Settings > Customization > Startup Movie still wins.
+
+Desktop Mode starts with `kettle-plasma-splash`, the same picture as a Plasma (KSplash) QML
+scene whose progress line follows Plasma's startup. Plasma puts the global theme's splash
+(Valve's Vapor has none) in `~/.config/kdedefaults`, ahead of `/etc/xdg`, so a session env
+script (`/etc/xdg/plasma-workspace/env/kettle-splash.sh`) writes it into the user's own
+`ksplashrc` when there is none; a splash picked in System Settings > Splash Screen is kept.
+
+Our `plymouth` does not load a gamma table (`packages/plymouth/0001-drm-leave-gamma-alone.patch`):
+on the Portal's display controller the table outlives plymouth, and KWin's page flips then
+never complete (black screen, "Pageflip timed out").
 
 ## Desktop mode controls
 `kettle-desktop-controller` (user service, Plasma session only) grabs the gamepad and
@@ -81,6 +97,65 @@ for a game started from the desktop, and again to turn it back on.
 
 The on-screen keyboard also pops up by itself whenever a text field gets focus
 (`KWIN_IM_SHOW_ALWAYS=1`), and from the keyboard icon in the system tray.
+
+## Desktop welcome and Gaming Extras
+The first desktop login opens KDE's Welcome Center (`plasma-welcome`, built by us at 6.2.5 to
+match Plasma; the deckard base has 6.0.4). Its first page carries Kettle's intro
+(`intro-customization.desktop`) instead of "Welcome to SteamOS" from os-release, and
+`kettle-welcome` adds three pages after KDE's own (Welcome, Simple by Default, Powerful When
+Needed, Discover):
+1. **Desktop Mode**: the gamepad controls above, the on-screen keyboard, the way back to Game
+   Mode, and a button that opens the Kettle Installer (internal storage, [docs/INTERNAL-INSTALL.md](docs/INTERNAL-INSTALL.md))
+2. **Games Outside Steam**: Heroic and Lutris (below), and adding their games to Steam
+3. **Gaming Extras**: optional apps, ticked and installed from Flathub for the user only
+   (`flatpak --user`, no password). `welcome-flatpak` runs the installs as a transient
+   systemd user unit, so they finish even if the window is closed. The page is also in the
+   application menu as **Gaming Extras** (`plasma-welcome --pages 03-Extras`).
+
+Gaming Extras lists only apps with an aarch64 build on Flathub. RetroArch, Moonlight, BoilR
+and Ludusavi start ticked:
+
+| Group | Apps |
+|---|---|
+| Steam helpers and tools | BoilR, Ludusavi, ProtonUp-Qt, SGDBoop, AntiMicroX, GOverlay, Flatseal, Warehouse |
+| Emulators | RetroArch, Dolphin, PPSSPP, Azahar, melonDS, Ryujinx, RPCS3, xemu, Flycast, Rosalie's Mupen GUI, mGBA, MAME, ScummVM, DOSBox Staging |
+| Streaming and more | Moonlight, Chiaki4deck, Prism Launcher, Vesktop |
+
+x86-only on Flathub, so left out: PCSX2, DuckStation, Cemu, shadPS4, RetroDECK, Bottles,
+Protontricks, Discord, OBS, Parsec. The Welcome Center opens again from the menu (Welcome
+Center); it only opens by itself once per user (`LastSeenVersion` in `plasma-welcomerc`).
+
+## Games outside Steam
+Windows games outside Steam run the way Proton ARM64 runs them inside Steam: an ARM64EC Wine
+with FEX's emulator DLLs translating the x86 code in-process, with no x86 root file system.
+- `wine`: Hangover's Wine 11.16 (wine-11.16 + the WoW64 thread-suspend and address-space
+  patches Proton ARM64 carries). FEX is the default emulator for both x86-64
+  (`libarm64ecfex.dll`, env `HODLL64`) and 32-bit x86 (`libwow64fex.dll`, env `HODLL`;
+  Hangover's default is box64's wowbox64, which we don't ship). Prefixes are always 64-bit;
+  `/usr/bin/wine64` links to `wine` for Lutris.
+- Direct3D: `dxvk` 3.1.1 (D3D 8/9/10/11 and dxgi) and `vkd3d-proton` 3.0.1 (D3D 12), built as
+  ARM64EC (x86-64 games; runs natively inside the FEX-emulated process) and i686 (32-bit
+  games), as in Proton ARM64. They are build inputs, not image packages: the `wine` package
+  installs them in place of Wine's own d3d8/d3d9/d3d10core/d3d11/dxgi/d3d12/d3d12core, stamped
+  as Wine builtins, so every prefix (Lutris, Heroic, winetricks, plain `wine`) renders through
+  Vulkan on turnip with no per-prefix setup. DirectDraw and D3D 1-7 stay on wined3d. DXVK's
+  usual knobs apply (`DXVK_HUD`, `DXVK_CONFIG_FILE`, `VKD3D_CONFIG`, ...).
+- `fex-emu-wine`: FEX-2609.1's `libarm64ecfex.dll`/`libwow64fex.dll` (+ Unix side) as Wine
+  builtins, and Proton ARM64's FEX defaults in `/usr/share/fex-emu/Config.json` (override in
+  `~/.config/fex-emu/Config.json`, per game in `AppConfig/<Game.exe>.json`, or `FEX_*`).
+- `lutris` 0.5.22: patched (`0001`) so that on aarch64, which Lutris has no Wine builds for,
+  it defaults to the system Wine instead of GE-Proton through umu, and ignores x86 Wine
+  versions pinned by install scripts. New users get no Lutris runtime and the system Wine and
+  winetricks, with Lutris's own (downloaded, x86) DXVK/VKD3D/nvapi off so they don't replace
+  ours in the prefix (`/etc/skel/.local/share/lutris`). python-moddb is not packaged (optional; only
+  ModDB-hosted downloads need it).
+- `heroic-games-launcher` 2.22.3: built from source for arm64 (Heroic publishes no Linux arm64
+  build), with legendary, gogdl and nile built from source and `vulkan-helper` rebuilt in place
+  of the committed binary; Electron is upstream's arm64 release (Chromium isn't practical to
+  build). New users default to the system Wine, with Heroic's downloaded x86 DXVK/VKD3D and
+  anti-cheat runtimes off (`/etc/skel/.config/heroic/config.json`). comet (GOG Galaxy online
+  features) is not included.
+- `winetricks`, `cabextract`: for both launchers.
 
 ## Game Mode plugins
 Decky Loader runs natively (system Python, `plugin_loader.service`) with its self-updater
@@ -125,24 +200,47 @@ it is launched. Settings are kept when a game is turned off.
   so the multiplier stays the user's choice. The Lossless Scaling engine needs Lossless
   Scaling from Steam, installed with Proton and switched to the **lsfg-vk** beta branch (it
   provides `lsfg-vk.dll`); nothing of it is shipped.
-- **Upscaling**: gamescope FSR 1 per game: render resolution (Steam's per-game resolution
-  override), and Steam's Sharp (FSR) filter and sharpness for the running game.
-  **SGSR 2** per game through OptiScaler, for DX11/DX12 games with DLSS, FSR 2+ or XeSS: the
-  game's upscaler inputs go to Qualcomm's Snapdragon Game Super Resolution 2, a temporal
-  upscaler tuned for Adreno. Upstream OptiScaler is x86-64 and its Detours hooks fault on Proton
-  ARM64's ARM64EC dxgi/DXVK/winevulkan (Skyrim SE), so `packages/optiscaler-arm64ec` builds
-  the [Sloptiscaler](https://github.com/justradical/Sloptiscaler) fork as an ARM64EC DLL
-  (llvm-mingw), which runs natively inside the FEX-emulated game and adds the SGSR 2 backend.
-  SGSR 2 is the only backend there: FSR 2/3 links against stubs, and XeSS/DLSS and the frame
-  generation runtimes are x86-64 vendor binaries. Tested with Deep Rock Galactic (DX12, DLSS
-  through Streamline, NVIDIA spoofing on): SGSR 2 1279×720 → 1920×1080 at DLSS Quality, image
-  good. Vulkan games are untested. Turning it on
-  copies OptiScaler into the game's folder (game folder and proxy DLL name are chosen in the
-  panel, `dxgi.dll` by default) and adds `WINEDLLOVERRIDES=<proxy>=n,b` to its launch options;
-  turning it off removes both and restores any file it moved aside. It can't stay in the folder
-  while off, since Proton sets dxgi/d3d12 to native and would load it. The game's
-  `OptiScaler.ini` (render scale, RCAS sharpening, NVIDIA spoofing so games offer DLSS,
-  overlay key) is parked in the plugin's settings while the game is off.
+- **Upscaling**: two layers, both per game.
+  - **gamescope (any game)**: render resolution (Steam's per-game resolution override) plus
+    Steam's scaling filter and sharpness for the running game. Our `packages/gamescope`
+    rebuilds deckard's gamescope (same commit, e383171f) with Valve's SGSR 1 backport from
+    3.16.29, so Steam's "Sharp" runs Qualcomm's Snapdragon GSR 1 followed by RCAS; our 0009
+    adds `gamescopectl steam_sharp_filter fsr|sgsr|…` to choose what Sharp runs (default sgsr).
+    Built, not yet run on the device.
+  - **OptiScaler (DX11/DX12 games with DLSS, FSR 2+ or XeSS)**: the game's upscaler inputs go
+    to a temporal upscaler chosen in the panel: **SGSR 2** (Qualcomm, tuned for Adreno; the
+    default), **Arm ASR** (Arm's FSR 2.2-derived mobile upscaler, balanced or quality preset)
+    or **FSR 2.2**. Upstream OptiScaler is x86-64 and its Detours hooks fault on Proton ARM64's
+    ARM64EC dxgi/DXVK/winevulkan (Skyrim SE), so `packages/optiscaler-arm64ec` builds the
+    [Sloptiscaler](https://github.com/justradical/Sloptiscaler) fork as an ARM64EC DLL
+    (llvm-mingw), which runs natively inside the FEX-emulated game. Our patches: 0001 guards
+    SGSR 2's kernel weight sum, which cancelled to ~0 at some sub-pixel phases and showed as
+    vertical strips of black/white pixels moving with each frame while turning; 0002 handles
+    display-resolution motion vectors (UE's DLSS plugin default); 0003/0004 add Arm ASR with a
+    D3D12 backend for its API and DXIL built from its HLSL (ASR 25.06's performance preset is
+    broken upstream, so the panel offers balanced and quality); 0005 builds FSR 2.2.1's DX12
+    shaders with Linux dxc instead of AMD's compiler under Wine. dxc comes from
+    `packages/directx-shader-compiler` (build-time only; built with CMake's own flags, since
+    with makepkg's it segfaults). Tested with Deep Rock Galactic (DX12, DLSS through
+    Streamline, NVIDIA spoofing on): SGSR 2 1279×720 → 1920×1080 at DLSS Quality, ~2.2 ms/frame
+    GPU (~13% of a 60 fps frame). ASR and FSR 2.2 are built, not yet run on the device. DX11
+    games use the 11-on-12 bridge; Vulkan games always get SGSR 2 (the Vulkan SGSR 2 shaders are
+    precompiled SPIR-V without 0001/0002, and untested). FSR 3.1+ and XeSS are loaded from
+    AMD's/Intel's own DLLs at runtime, which aren't shipped. Turning it on copies OptiScaler
+    into the game's folder (game folder and proxy DLL name are chosen in the panel, `dxgi.dll`
+    by default) and adds `WINEDLLOVERRIDES=<proxy>=n,b` to its launch options; turning it off
+    removes both and restores any file it moved aside. It can't stay in the folder while off,
+    since Proton sets dxgi/d3d12 to native and would load it. The game's `OptiScaler.ini`
+    (upscaler, render scale, RCAS sharpening, NVIDIA spoofing so games offer DLSS, overlay key)
+    is parked in the plugin's settings while the game is off.
+  - **AMD FSR 3.1** (optional component, downloaded on request by the Welcome plugin from
+    AMD's FidelityFX SDK v2.3.0, pinned sha256): AMD's signed x86-64 DLLs load fine next to the
+    ARM64EC OptiScaler under FEX, adding **FSR 3.1** to the upscaler list and **FSR frame
+    generation** (from the upscaler's inputs, with optional HUDFix, or the game's own FSR 3 FG).
+    The DLLs are copied into a game's folder only while its settings use them. In Deep Rock
+    Galactic, FSR 3.1 cost ~3.9 ms/frame more than SGSR 2 and looked the same; its frame
+    generation ran (FfxApi FG 3.1.6) but felt choppy, so the Frame Generation plugin remains
+    the recommended way to generate frames.
 - **Welcome**: a full-screen page that opens once, on the first Game Mode boot (a tour of
   Kettle, Game Mode and the desktop mode controls), then stays reachable from its Quick
   Access panel. Its setup checklist walks through getting Lossless Scaling onto the lsfg-vk
@@ -154,6 +252,51 @@ it is launched. Settings are kept when a game is turned off.
 
 Licensing: kettle-framegen is ours (BSD-3-Clause). lsfg-vk is CC BY-NC-ND 4.0, so
 `packages/lsfg-vk` must stay patch-free and the image non-commercial while it ships.
+
+## Power, clocks and fan
+`kettle-powerd` (`packages/kettle-power`, root, system bus `org.kettlelinux.Power1`) is the
+only thing that writes CPU caps (`scaling_max_freq`, CPU hotplug), GPU caps (devfreq
+`min_freq`/`max_freq`), the fan and the charge limit. Every source of a cap goes through it and
+the lowest wins, so nothing fights over the same sysfs file. Device description:
+`odin2portal.toml` (frequency tables as read on the Portal; the prime core's 3187.2 MHz only
+with CPU boost on). State is kept in `/var/lib/kettle-power/state.json`.
+
+**Steam's own controls** (Quick Access > Performance, per-game profiles included). steamos-manager
+relays these to kettle-powerd via `remotes.d/kettle-power.toml`. It has no backend of its own
+for them on this hardware, and the device config
+`devices/ayn-odin2portal.toml` deliberately leaves them out: a local backend would win over
+the remote one and write the same files. It matches on DMI when U-Boot's EFI provides SMBIOS
+(`ayn` / `AYN Odin 2`: steamos-manager then ignores `dt.compatible`), else on the device tree.
+- **TDP limit** (TdpLimit1, 4–18 W): there is no SoC power limit on Snapdragon, so this is a
+  budget for the *whole device's* draw, screen included: battery V×I, or on the charger its
+  input × 0.9 minus what goes into the battery (`current_now` updates about every 0.5 s;
+  `power_now` is stale). Each second it lowers or raises caps one step, choosing the busier
+  unit: the GPU through its OPPs (GPU busy from debugfs `perf_now`, patch 1110) or the CPU
+  down a 16-step ladder (every cluster at the same share of its top clock, down to 30%). 18 W
+  means no limit. Steam drops it to 5 W for downloads during sleep (`download_mode_limit`).
+- **Performance profile** (PerformanceProfile1): Performance (no caps), Balanced, Powersave,
+  as per-cluster CPU caps plus a GPU cap.
+- **GPU clock** (GpuPerformanceLevel1): auto, or fixed (min = max) at 220–680 MHz.
+- **Battery charge limit** (BatteryChargeLimit1): not offered. The Portal's charger
+  firmware never answers qcom_battmgr's charge-limit request (`charge_control_end_threshold`
+  writes time out after 1 s and read back 0), so `charge_limit = false` in `odin2portal.toml`.
+  The code is there for firmware that does (55–100%, charging resumes 5% below).
+- **Fan control** (FanControl1): 0 keeps the device tree curve whatever the Power plugin says.
+
+**Power plugin** (`kettle-decky-power`): what Steam has no UI for, per game or for all games,
+applied while the game runs (the plugin reports the running game to kettle-powerd):
+- fan: automatic (the kernel's step_wise curve from the DTS), a custom curve (6 points, linear
+  in between, slows down only 3 °C below a point), or a fixed speed; full speed from 90 °C
+  either way. Custom settings switch the fan's thermal zones to the `user_space` governor
+  (`CONFIG_THERMAL_GOV_USER_SPACE`) and write `pwm1`; handing back restores step_wise and its
+  last level. `ExecStopPost=kettle-powerd --restore` does the same if the daemon dies;
+- the prime core on/off, 1–4 performance cores online, and a max clock per cluster;
+- a live readout (draw, battery, hottest fan zone, fan RPM, clocks, GPU busy, what Steam has
+  set), and the charge limit where the firmware has one.
+
+Debugging: `busctl introspect org.kettlelinux.Power1 /org/kettlelinux/Power1`,
+`busctl call org.kettlelinux.Power1 /org/kettlelinux/Power1 org.kettlelinux.Power1 GetStatus`,
+`steamosctl get-all-properties` (what Steam sees), `journalctl -u kettle-powerd`.
 
 ## Suspend
 SM8550's TrustZone has no PSCI SYSTEM_SUSPEND, so there is no deep/S3; the target is s2idle

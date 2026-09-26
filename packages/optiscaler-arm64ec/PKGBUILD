@@ -5,9 +5,22 @@
 # dxgi/DXVK/winevulkan. Built as ARM64EC it runs natively inside the FEX-emulated game and
 # hooks those DLLs correctly. The fork adds Qualcomm's Snapdragon Game Super Resolution 2
 # (temporal, tuned for Adreno) as a backend for DX12, DX11 (via 11-on-12) and Vulkan.
-# Only SGSR2 works here: FSR 2/3 links against stubs (the FidelityFX libraries are x86-64
-# only, and building FSR 2 from source needs AMD's Windows shader compiler under Wine), and
-# XeSS/DLSS runtimes are x86-64 vendor binaries.
+# Built-in upscalers here: SGSR2 (default on Adreno), Arm ASR and FSR 2.2.1 (DX12, and DX11
+# via 11-on-12). FSR 3.1+ and XeSS are loaded from AMD's/Intel's own DLLs at runtime, which
+# this package doesn't ship; DLSS needs NVIDIA hardware.
+#
+# Our patches (tested with Deep Rock Galactic, DX12 via DLSS, where noted):
+#   0001  SGSR2: guard the upscale kernel's weight sum: at some sub-pixel phases it cancels
+#         to ~0, which showed as moving vertical strips of black/white pixels while turning
+#         (tested)
+#   0002  SGSR2: display-resolution motion vectors (MVLowRes unset, UE's DLSS plugin default)
+#         are fetched at the display pixel and scaled by the display size, as FSR2 does
+#   0003  Arm ASR (MIT, FSR2-derived, tuned for mobile GPUs): a D3D12 backend for its ffxm
+#   0004  API, DXIL built from its HLSL; upscaler=asr / asr_12, [ASR] ShaderQuality
+#         (quality|balanced|performance; performance is broken upstream in 25.06)
+#   0005  FSR2 2.2.1's DX12 shader permutations generated with Linux dxc instead of AMD's
+#         FidelityFX_SC.exe under Wine
+# dxc comes from our directx-shader-compiler package (build-time only).
 #
 # Ships OptiScaler.dll/.ini only (GPL-3.0, source: the pinned fork commit below; SGSR2
 # shaders BSD-3-Clause). Statically linked: Detours (MIT), FreeType (FTL), spdlog, simpleini,
@@ -16,15 +29,15 @@
 # runs makepkg in the aarch64 chroot.
 pkgname=optiscaler-arm64ec
 pkgver=10.0.0.20260923
-pkgrel=1
+pkgrel=3
 _commit=f80e4da339cd4624212fd0546922571fe01205c1
 _llvm_mingw=20260908
 _ffx=c6efa6bf7f2027b3ec94f28578bb5965eabb9e55   # FidelityFX-SDK: only ffx-api/include is used
-pkgdesc='OptiScaler (ARM64EC) with Snapdragon GSR 2 for Proton ARM64 games'
+pkgdesc='OptiScaler (ARM64EC) with Snapdragon GSR 2, Arm ASR and FSR 2.2 for Proton ARM64 games'
 arch=(any)
 url='https://github.com/justradical/Sloptiscaler'
 license=(GPL-3.0-only BSD-3-Clause MIT FTL)
-makedepends=(git cmake ninja python)
+makedepends=(git cmake ninja python directx-shader-compiler)
 options=(!strip !buildflags !lto)  # a Windows PE cross build: no host (ELF) flags
 _llvm="llvm-mingw-$_llvm_mingw-ucrt-ubuntu-22.04-aarch64"
 source=("Sloptiscaler::git+$url.git#commit=$_commit"
@@ -40,7 +53,15 @@ source=("Sloptiscaler::git+$url.git#commit=$_commit"
         "DirectXMath::git+https://github.com/microsoft/DirectXMath.git#commit=b758b4a5669aca3542b4bf2b0cbc334696edd302"
         "Detours::git+https://github.com/microsoft/Detours.git#commit=adb07604aa56508448b95bf037c2a6d0d3b6831a"
         "freetype::git+https://gitlab.freedesktop.org/freetype/freetype.git#commit=42608f77f20749dd6ddc9e0536788eaad70ea4b5"  # VER-2-13-3
-        "https://github.com/mstorsjo/llvm-mingw/releases/download/$_llvm_mingw/$_llvm.tar.xz")
+        "https://github.com/mstorsjo/llvm-mingw/releases/download/$_llvm_mingw/$_llvm.tar.xz"
+        0001-sgsr2-weight-guard.patch
+        0002-sgsr2-display-res-motion-vectors.patch
+        0003-asr-d3d12-backend.patch
+        0004-asr-upscaler.patch
+        0005-fsr2-shaders-with-linux-dxc.patch
+        # upscalers built in (their submodules aren't needed)
+        "asr::git+https://github.com/arm/accuracy-super-resolution-generic-library.git#commit=0501f490bd9946a2e1806b5363d7ab8a9a6a5e0a"  # 25.06
+        "FidelityFX-FSR2::git+https://github.com/GPUOpen-Effects/FidelityFX-FSR2.git#commit=1680d1edd5c034f88ebbbb793d8b88f8842cf804")  # v2.2.1
 _ffx_headers=(ffx_api.h ffx_api.hpp ffx_api_loader.h ffx_api_types.h ffx_framegeneration.h
               ffx_framegeneration.hpp ffx_upscale.h ffx_upscale.hpp dx12/ffx_api_dx12.h
               dx12/ffx_api_dx12.hpp vk/ffx_api_vk.h vk/ffx_api_vk.hpp)
@@ -49,6 +70,13 @@ for _h in "${_ffx_headers[@]}"; do
 done
 sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
             'c907dd2302a292b663add18752a55ce9d544ca0fd19cf33c086ca242d5994ea6'
+            'ce46e7c303821ed685c0b1cb83fc2e70a0e7ebc5ff4a9aed3134da0244e6499e'
+            '01bd2313e3262a953255064b0f9d1b441b4067cd689964ad17a74a4ea75d105d'
+            'd8f00f531ee8cec47a193cd526cee7a70ed6d2e03d49d9e5b1aa2207075655cf'
+            'dffbc7e3e21c8f839a251d24f043342a8a489d796e7d187c6fdec8dd6419b559'
+            '1d58a3681595c43a6e92758cd06c154fbfd893062103e2b204468fb368d428ef'
+            'SKIP'
+            'SKIP'
             '408b4203545e8299ed188fbb1d9ddfe0932b73ea6e8b14fe10edcf1f45771561'
             '42470189c0241feca12eed959cf90ade15806bb9ecc578b65f8c20ca9365c34d'
             '7be51b7bf1e640b84c0c7f22a9db50a6816debce3755b51224e56c89501659c3'
@@ -66,6 +94,9 @@ _submodules=(simpleini unordered_dense xess vulkan spdlog magic_enum nvapi)
 
 prepare() {
   cd Sloptiscaler
+  for p in "$srcdir"/0*.patch; do
+    patch -Np1 -i "$p"
+  done
   git submodule init "${_submodules[@]/#/external/}"
   for s in "${_submodules[@]}"; do
     git config "submodule.external/$s.url" "$srcdir/$s"
@@ -80,14 +111,17 @@ prepare() {
   # build.sh expects the x86-64 llvm-mingw and fetches missing deps; hand it ours
   sed -i 's|^LLVM_MINGW=.*|LLVM_MINGW="${LLVM_MINGW:?}"|' arm64ec/build.sh
   rm -rf "$srcdir/deps"; mkdir "$srcdir/deps"
-  for d in DirectXMath Detours freetype; do
+  for d in DirectXMath Detours freetype asr FidelityFX-FSR2; do
     ln -s "$srcdir/$d" "$srcdir/deps/$d"
   done
 }
 
 build() {
   cd Sloptiscaler
-  LLVM_MINGW="$srcdir/$_llvm" ./arm64ec/build.sh "$srcdir/deps"
+  LLVM_MINGW="$srcdir/$_llvm" DXC=/usr/bin/dxc ./arm64ec/build.sh "$srcdir/deps"
+  # build.sh quietly falls back to stubs when dxc fails; this package has to have both
+  [ -f "$srcdir/deps/asrgen/asr_dx12_shaders.h" ] || { echo "Arm ASR shaders missing (dxc)" >&2; return 1; }
+  [ -d "$srcdir/deps/fsr2gen/dx12" ] || { echo "FSR2 shaders missing (dxc)" >&2; return 1; }
 }
 
 package() {
@@ -95,12 +129,14 @@ package() {
   local d="$pkgdir/usr/share/optiscaler"
   install -Dm644 "$srcdir/deps/build/OptiScaler.dll" OptiScaler.ini -t "$d"
   echo "$pkgver-$pkgrel" >"$d/VERSION"
-  printf 'OptiScaler (ARM64EC, Sloptiscaler fork) is free software under the GPL-3.0.\nCorresponding source: %s/tree/%s\n' \
+  printf 'OptiScaler (ARM64EC, Sloptiscaler fork) is free software under the GPL-3.0.\nCorresponding source: %s/tree/%s\nplus the patches in Kettle Linux packages/optiscaler-arm64ec/\n' \
     "$url" "$_commit" >"$d/SOURCE"
 
   local l="$pkgdir/usr/share/licenses/$pkgname"
   install -Dm644 LICENSE "$l/OptiScaler_LICENSE"
   install -Dm644 LICENSES/BSD-3-Clause-Qualcomm.txt "$l/SGSR_LICENSE"
+  install -Dm644 LICENSES/MIT-Arm-ASR.txt "$l/ArmASR_LICENSE"
+  install -Dm644 "$srcdir/FidelityFX-FSR2/LICENSE.txt" "$l/FidelityFX-FSR2_LICENSE"
   install -Dm644 OptiScaler/include/imgui/LICENSE.txt "$l/imgui_LICENSE"
   install -Dm644 "$srcdir/Detours/LICENSE" "$l/Detours_LICENSE"
   install -Dm644 "$srcdir/freetype/docs/FTL.TXT" "$l/FreeType_FTL.TXT"

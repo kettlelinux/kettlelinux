@@ -1,0 +1,11 @@
+{
+  "name": "Power",
+  "author": "Kettle Linux",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["power", "fan", "tdp"],
+    "description": "Per-game fan curves and CPU core/clock limits, with a live power and temperature readout.",
+    "image": ""
+  }
+}

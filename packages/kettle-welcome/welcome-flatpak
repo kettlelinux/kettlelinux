@@ -1,0 +1,76 @@
+#!/bin/bash
+# Installs the Welcome Center's Gaming Extras from Flathub, for the calling user only (no root).
+#
+#   welcome-flatpak start ID...   install in the background (a transient systemd user unit, so
+#                                 it carries on when the Welcome Center is closed)
+#   welcome-flatpak install ID... install in the foreground (what the unit runs)
+#   welcome-flatpak status        one line: idle | running I N ID | done N | error ID MESSAGE
+#   welcome-flatpak installed     the user's installed Flatpak app IDs, one per line
+set -uo pipefail
+
+dir="${XDG_RUNTIME_DIR:-/tmp}/kettle-welcome"
+state="$dir/flatpak.status"
+log="$dir/flatpak.log"
+unit=kettle-welcome-flatpak
+id_re='^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$'
+mkdir -p "$dir"
+
+check_ids() {
+  [ $# -gt 0 ] || { echo "no apps given" >&2; exit 2; }
+  local id
+  for id in "$@"; do
+    [[ $id =~ $id_re ]] || { echo "not an app ID: $id" >&2; exit 2; }
+  done
+}
+
+case "${1:-}" in
+  start)
+    shift; check_ids "$@"
+    systemctl --user -q is-active "$unit" && { echo "already installing" >&2; exit 1; }
+    # "running 0": queued, not yet started by the unit (status doesn't call that a dead run)
+    echo "running 0 $# $1" >"$state"
+    if ! systemd-run --user --collect --quiet --unit="$unit" "$(realpath "$0")" install "$@"; then
+      echo "error $1 Could not start the installation." >"$state"
+      exit 1
+    fi
+    ;;
+  install)
+    shift; check_ids "$@"
+    : >"$log"
+    if ! flatpak remote-add --user --if-not-exists flathub \
+         https://dl.flathub.org/repo/flathub.flatpakrepo >>"$log" 2>&1; then
+      echo "error flathub Could not reach Flathub. Check the internet connection." >"$state"
+      exit 1
+    fi
+    n=$# i=0
+    for id in "$@"; do
+      i=$((i + 1))
+      echo "running $i $n $id" >"$state"
+      if ! flatpak install --user --noninteractive -y flathub "$id" >>"$log" 2>&1; then
+        msg=$(grep -v '^\s*$' "$log" | tail -n 1); msg=${msg#error: }
+        echo "error $id ${msg:-flatpak install failed}" >"$state"
+        exit 1
+      fi
+    done
+    echo "done $n" >"$state"
+    ;;
+  status)
+    if [ -f "$state" ]; then
+      read -r line <"$state"
+      # a run that died without saying so (the unit was stopped, or the user logged out)
+      if [[ $line == running* && $line != "running 0 "* ]] && ! systemctl --user -q is-active "$unit"; then
+        line="error ${line##* } The installation stopped unexpectedly."
+      fi
+      echo "$line"
+    else
+      echo idle
+    fi
+    ;;
+  installed)
+    flatpak list --user --app --columns=application
+    ;;
+  *)
+    sed -n '2,9p' "$0" >&2
+    exit 2
+    ;;
+esac

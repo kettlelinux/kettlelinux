@@ -1,0 +1,17 @@
+[Unit]
+Description=Kettle Linux power, clock and fan control
+# Before Steam starts, so steamos-manager finds the remote interfaces at once
+Before=display-manager.service
+
+[Service]
+Type=dbus
+BusName=org.kettlelinux.Power1
+ExecStart=/usr/lib/kettle-power/kettle-powerd
+# However it stopped: the fan back to the kernel's curve, no caps, every CPU online
+ExecStopPost=/usr/lib/kettle-power/kettle-powerd --restore
+Restart=on-failure
+RestartSec=2
+StateDirectory=kettle-power
+
+[Install]
+WantedBy=multi-user.target

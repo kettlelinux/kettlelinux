@@ -1,0 +1,716 @@
+#!/usr/bin/python3
+"""kettle-powerd: power, clocks, fan and charging on the Odin 2 Portal.
+
+The one writer of CPU/GPU frequency caps, the fan and the battery charge limit. It serves
+Steam's power controls through steamos-manager's remote interfaces (remotes.d/kettle-power.toml):
+
+  TdpLimit1             whole-device power budget in watts, held by lowering CPU/GPU caps
+  PerformanceProfile1   CPU/GPU caps per profile (device config)
+  GpuPerformanceLevel1  auto, or a fixed GPU clock
+  BatteryChargeLimit1   charge end threshold (qcom_battmgr)
+  FanControl1           0: device tree fan curve only, 1: per-game fan settings apply
+
+Steam keeps those per game itself. org.kettlelinux.Power1 adds what Steam has no UI for,
+per game (the Power plugin): fan curve or fixed speed, per-cluster CPU caps and core
+parking. Every cap source is combined here, the lowest wins, so no two writers fight over
+scaling_max_freq or devfreq max_freq.
+
+  kettle-powerd            run the daemon (system bus, root)
+  kettle-powerd --restore  hand the fan back to the kernel and lift every cap (ExecStopPost)
+"""
+import json
+import os
+import signal
+import sys
+import tomllib
+import warnings
+
+from gi.repository import Gio, GLib
+
+# Newer PyGObject deprecates register_object with Python callables and unix_signal_add; both
+# still work, and the Portal's 3.48 has no replacement for either
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+ROOT = os.environ.get("KETTLE_POWER_SYSROOT", "")  # fake sysfs prefix for testing
+CONFIG = os.environ.get("KETTLE_POWER_CONFIG", "/usr/share/kettle-power/odin2portal.toml")
+STATE = os.environ.get("KETTLE_POWER_STATE", "/var/lib/kettle-power/state.json")
+BUS = Gio.BusType.SESSION if os.environ.get("KETTLE_POWER_BUS") == "session" else Gio.BusType.SYSTEM
+BUS_NAME = "org.kettlelinux.Power1"
+OBJ_PATH = "/org/kettlelinux/Power1"
+SOM = "com.steampowered.SteamOSManager1."
+TICK_MS = 1000
+EMA = 0.4  # weight of each new power sample
+TDP_DWELL = 2  # ticks to wait after changing a cap before judging its effect
+CPU_STEPS = 16  # CPU budget ladder: 100% down to 30% of each cluster's top frequency
+FAN_HYST = 3  # C: the fan slows down only once the temperature is this far below a point
+
+
+def log(msg):
+    print(msg, file=sys.stderr, flush=True)
+
+
+def read(path, default=None):
+    try:
+        with open(ROOT + path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def read_int(path, default=None):
+    try:
+        return int(read(path))
+    except (TypeError, ValueError):
+        return default
+
+
+def write(path, value):
+    try:
+        with open(ROOT + path, "w") as f:
+            f.write(str(value))
+        return True
+    except OSError as e:
+        log(f"write {path} = {value}: {e}")
+        return False
+
+
+def listdir(path):
+    try:
+        return sorted(os.listdir(ROOT + path))
+    except OSError:
+        return []
+
+
+def find_class(cls, attr, value):
+    """/sys/class/<cls>/<dev> whose <attr> file reads <value>."""
+    for d in listdir(f"/sys/class/{cls}"):
+        if read(f"/sys/class/{cls}/{d}/{attr}") == value:
+            return f"/sys/class/{cls}/{d}"
+    return None
+
+
+class Hardware:
+    def __init__(self, cfg):
+        self.cfg = cfg
+        # a parked cluster's policy can't be read: start from every CPU online
+        for c in cfg["cpu"]["clusters"]:
+            for cpu_id in c["cpus"]:
+                if cpu_id != 0 and read_int(f"/sys/devices/system/cpu/cpu{cpu_id}/online") == 0:
+                    write(f"/sys/devices/system/cpu/cpu{cpu_id}/online", 1)
+        self.clusters = []
+        for c in cfg["cpu"]["clusters"]:
+            p = f"/sys/devices/system/cpu/cpufreq/policy{c['policy']}"
+            freqs = {int(f) for f in (read(f"{p}/scaling_available_frequencies", "") + " "
+                                      + read(f"{p}/scaling_boost_frequencies", "")).split()}
+            self.clusters.append({**c, "path": p, "freqs": sorted(freqs),
+                                  "base_max": max(int(f) for f in read(f"{p}/scaling_available_frequencies", "0").split())})
+        g = cfg["gpu"]["devfreq"]
+        self.gpu = g
+        self.gpu_freqs = sorted(int(f) for f in read(f"{g}/available_frequencies", "").split())
+        self.gpu_load_path = cfg["gpu"].get("load")
+        self.hwmon = find_class("hwmon", "name", cfg["fan"]["hwmon"])
+        self.fan_cdev = find_class("thermal", "type", cfg["fan"]["cooling_device"])
+        self.fan_zones = self._fan_zones()
+        # custom fan settings need the user_space governor to keep step_wise off the fan
+        self.fan_custom_ok = bool(self.hwmon and self.fan_zones) and all(
+            "user_space" in (read(f"{z}/available_policies", "") or "").split() for z in self.fan_zones)
+        self.battery = f"/sys/class/power_supply/{cfg['power']['battery']}"
+        self.charger = f"/sys/class/power_supply/{cfg['power']['charger']}"
+        self._stat = None
+
+    def _fan_zones(self):
+        """Thermal zones that drive the fan (a cdevN link to the pwm-fan cooling device)."""
+        if not self.fan_cdev:
+            return []
+        cdev = os.path.basename(self.fan_cdev)
+        zones = []
+        for z in listdir("/sys/class/thermal"):
+            if not z.startswith("thermal_zone"):
+                continue
+            base = f"/sys/class/thermal/{z}"
+            for e in listdir(base):
+                if e.startswith("cdev") and e[4:].isdigit():
+                    if os.path.basename(os.path.realpath(ROOT + f"{base}/{e}")) == cdev:
+                        zones.append(base)
+                        break
+        return zones
+
+    # --- readings ---
+
+    def fan_temp(self):
+        """Hottest fan zone, in C."""
+        t = [read_int(f"{z}/temp") for z in self.fan_zones]
+        t = [v for v in t if v is not None]
+        return max(t) / 1000 if t else None
+
+    def power_w(self):
+        """Whole-device draw in watts: from the battery, or on the charger its input power
+        less what goes into the battery."""
+        b, c = self.battery, self.charger
+        v, i = read_int(f"{b}/voltage_now"), read_int(f"{b}/current_now")
+        if v is None or i is None:
+            return None
+        bat = v * abs(i) / 1e12
+        status = read(f"{b}/status", "")
+        if status == "Discharging" or read(f"{c}/online") != "1":
+            return bat
+        vin, iin = read_int(f"{c}/voltage_now"), read_int(f"{c}/current_now")
+        if vin is None or iin is None:
+            return None
+        into_battery = bat if status == "Charging" else 0
+        return max(0.0, vin * abs(iin) / 1e12 * self.cfg["power"]["charger_efficiency"] - into_battery)
+
+    def cpu_busy(self):
+        """Busiest online CPU since the last call, 0..1 (a game's main thread is what counts)."""
+        now = {}
+        for line in (read("/proc/stat", "") or "").splitlines():
+            parts = line.split()
+            if parts and parts[0].startswith("cpu") and parts[0] != "cpu":
+                vals = [int(x) for x in parts[1:]]
+                now[parts[0]] = (sum(vals), vals[3] + vals[4])  # total, idle + iowait
+        prev, self._stat = self._stat, now
+        if not prev:
+            return 0.0
+        busy = 0.0
+        for k, (tot, idle) in now.items():
+            if k in prev and tot > prev[k][0]:
+                busy = max(busy, 1 - (idle - prev[k][1]) / (tot - prev[k][0]))
+        return busy
+
+    def gpu_busy(self):
+        v = read_int(self.gpu_load_path) if self.gpu_load_path else None
+        return None if v is None else v / 100
+
+
+def floor_freq(freqs, cap):
+    """Highest frequency in freqs at or below cap (the lowest one if none is)."""
+    below = [f for f in freqs if f <= cap]
+    return below[-1] if below else freqs[0]
+
+
+def curve_pct(curve, temp):
+    """Fan percent at temp, linear between curve points."""
+    if temp <= curve[0][0]:
+        return curve[0][1]
+    for (t0, p0), (t1, p1) in zip(curve, curve[1:]):
+        if temp <= t1:
+            return p0 + (p1 - p0) * (temp - t0) / (t1 - t0)
+    return curve[-1][1]
+
+
+class Daemon:
+    def __init__(self):
+        with open(CONFIG, "rb") as f:
+            self.cfg = tomllib.load(f)
+        self.hw = Hardware(self.cfg)
+        pw = self.cfg["power"]
+        self.profiles = {p["name"]: p for p in self.cfg.get("profile", [])}
+        self.state = {
+            "steam": {"tdp": pw["tdp_max"], "profile": next(iter(self.profiles), ""),
+                      "gpu_level": "auto", "gpu_clock": self.hw.gpu_freqs[-1] // 1_000_000,
+                      "fan_control": 1, "charge_limit": -1},
+            "games": {"default": self.normalize({})},
+        }
+        self.load()
+        self.charge_ok = pw.get("charge_limit", True)
+        self.active = ""  # running game's appid, from the Power plugin
+        self.written = {}  # path -> value last written, so only changes are written
+        self.fan_saved_cdev = None  # device tree fan level when the daemon took the fan over
+        self.fan_pct = None
+        self.power = None
+        self.tdp_cpu = 0  # steps down the CPU budget ladder (0: no cap)
+        self.tdp_gpu = 0  # steps down the GPU frequency table
+        self.tdp_wait = 0
+        self.cpu_ladder = self._cpu_ladder()
+        self.conn = None
+
+    # --- settings ---
+
+    def normalize(self, g):
+        """A game's (or the default) plugin settings with every field present and valid."""
+        fan = g.get("fan") or {}
+        cpu = g.get("cpu") or {}
+        curve = fan.get("curve") or self.cfg["fan"]["default_curve"]
+        points = {}
+        for t, p in curve:  # one point per temperature, the later one wins
+            points[max(0, min(110, int(t)))] = max(0, min(100, int(p)))
+        curve = sorted([t, p] for t, p in points.items())
+        mode = fan.get("mode") if fan.get("mode") in ("auto", "curve", "fixed") else "auto"
+        out = {"fan": {"mode": mode, "curve": curve,
+                       "fixed": max(0, min(100, int(fan.get("fixed", 50))))},
+               "cpu": {"mid_cores": max(1, min(4, int(cpu.get("mid_cores", 4)))),
+                       "prime_core": bool(cpu.get("prime_core", True))}}
+        for c in self.cfg["cpu"]["clusters"]:
+            v = cpu.get(c["name"])
+            out["cpu"][c["name"]] = int(v) if v else None
+        return out
+
+    def load(self):
+        try:
+            with open(STATE) as f:
+                saved = json.load(f)
+        except (OSError, ValueError):
+            return
+        self.state["steam"].update({k: v for k, v in saved.get("steam", {}).items() if k in self.state["steam"]})
+        for k, v in saved.get("games", {}).items():
+            self.state["games"][k] = self.normalize(v)
+        if self.state["steam"]["profile"] not in self.profiles:
+            self.state["steam"]["profile"] = next(iter(self.profiles), "")
+
+    def save(self):
+        try:
+            os.makedirs(os.path.dirname(STATE), exist_ok=True)
+            tmp = STATE + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(self.state, f, indent=1)
+            os.replace(tmp, STATE)
+        except OSError as e:
+            log(f"saving {STATE}: {e}")
+
+    def game(self):
+        g = self.state["games"]
+        return g.get(self.active) or g["default"]
+
+    # --- caps ---
+
+    def _cpu_ladder(self):
+        """CPU budget steps: each cluster capped to the same share of its top frequency."""
+        ladder = []
+        for k in range(CPU_STEPS):
+            share = 1 - k * 0.7 / (CPU_STEPS - 1)
+            ladder.append({c["name"]: floor_freq(c["freqs"], c["base_max"] * share) for c in self.hw.clusters})
+        return ladder
+
+    def targets(self):
+        """Frequency caps from every source, the lowest winning: {cluster: kHz}, GPU (min, max) Hz."""
+        steam = self.state["steam"]
+        prof = self.profiles.get(steam["profile"], {})
+        game = self.game()["cpu"]
+        cpu = {}
+        for c in self.hw.clusters:
+            cap = max(c["freqs"])
+            for src in (prof.get(c["name"]), game.get(c["name"]),
+                        self.cpu_ladder[self.tdp_cpu][c["name"]] if self.tdp_cpu else None):
+                if src:
+                    cap = min(cap, src)
+            cpu[c["name"]] = floor_freq(c["freqs"], cap)
+        gf = self.hw.gpu_freqs
+        gmax = gf[-1]
+        if prof.get("gpu_mhz"):
+            gmax = min(gmax, prof["gpu_mhz"] * 1_000_000)
+        if self.tdp_gpu:
+            gmax = min(gmax, gf[max(0, len(gf) - 1 - self.tdp_gpu)])
+        gmin = gf[0]
+        if steam["gpu_level"] == "manual":
+            clock = steam["gpu_clock"] * 1_000_000
+            gmax = min(gmax, clock)
+            gmin = gmax
+        gmax = floor_freq(gf, gmax)
+        return cpu, (floor_freq(gf, gmin), gmax)
+
+    def put(self, path, value):
+        if self.written.get(path) != value and write(path, value):
+            self.written[path] = value
+
+    def apply_cores(self):
+        cpu = self.game()["cpu"]
+        want = {}
+        for c in self.hw.clusters:
+            n = len(c["cpus"])
+            if c["name"] == "mid":
+                n = cpu["mid_cores"]
+            elif c["name"] == "prime" and not cpu["prime_core"]:
+                n = 0
+            for idx, cpu_id in enumerate(c["cpus"]):
+                if cpu_id != 0:
+                    want[cpu_id] = 1 if idx < n else 0
+        onlined = False
+        for cpu_id, on in want.items():
+            path = f"/sys/devices/system/cpu/cpu{cpu_id}/online"
+            if read_int(path) != on and write(path, on):
+                onlined |= bool(on)
+        if onlined:  # a policy coming back takes its caps anew
+            self.written = {k: v for k, v in self.written.items() if "cpufreq" not in k}
+
+    def apply_caps(self):
+        cpu, (gmin, gmax) = self.targets()
+        for c in self.hw.clusters:
+            # a parked cluster's policy takes no writes; it gets its cap when it comes back
+            if any(cpu_id == 0 or read_int(f"/sys/devices/system/cpu/cpu{cpu_id}/online") != 0 for cpu_id in c["cpus"]):
+                self.put(f"{c['path']}/scaling_max_freq", cpu[c["name"]])
+        g = self.hw.gpu
+        # widen first so min <= max holds at every step
+        if gmin > read_int(f"{g}/max_freq", 0):
+            self.put(f"{g}/max_freq", gmax)
+            self.put(f"{g}/min_freq", gmin)
+        else:
+            self.put(f"{g}/min_freq", gmin)
+            self.put(f"{g}/max_freq", gmax)
+
+    def apply(self):
+        self.apply_cores()
+        self.apply_caps()
+
+    # --- fan ---
+
+    def fan_setting(self):
+        if self.state["steam"]["fan_control"] == 0 or not self.hw.fan_custom_ok:
+            return {"mode": "auto"}
+        return self.game()["fan"]
+
+    def set_zone_policy(self, policy):
+        for z in self.hw.fan_zones:
+            if read(f"{z}/policy") != policy:
+                write(f"{z}/policy", policy)
+
+    def fan_takeover(self):
+        if self.fan_saved_cdev is None:
+            self.fan_saved_cdev = read_int(f"{self.hw.fan_cdev}/cur_state", 0)
+            self.set_zone_policy("user_space")
+
+    def fan_release(self):
+        """Give the fan back to step_wise at the level it had (or the level for this temperature)."""
+        if self.fan_saved_cdev is None and all(read(f"{z}/policy") == "step_wise" for z in self.hw.fan_zones):
+            return
+        level = self.fan_saved_cdev
+        if level is None:
+            level = kernel_fan_level(self.hw.fan_temp(), read_int(f"{self.hw.fan_cdev}/max_state", 7))
+        self.set_zone_policy("step_wise")
+        write(f"{self.hw.fan_cdev}/cur_state", level)
+        self.fan_saved_cdev = None
+        self.fan_pct = None
+
+    def fan_tick(self):
+        fan = self.fan_setting()
+        if fan["mode"] == "auto":
+            self.fan_release()
+            return
+        temp = self.hw.fan_temp()
+        if temp is None:
+            return
+        self.fan_takeover()
+        if temp >= self.cfg["fan"]["full_speed_temp"]:
+            pct = 100
+        elif fan["mode"] == "fixed":
+            pct = fan["fixed"]
+        else:
+            pct = curve_pct(fan["curve"], temp)
+            if self.fan_pct is not None and pct < self.fan_pct:
+                # slow down only once clearly below: no hunting around a curve point
+                pct = max(pct, min(self.fan_pct, curve_pct(fan["curve"], temp + FAN_HYST)))
+        self.fan_pct = pct
+        pwm = round(pct * 255 / 100)
+        if read_int(f"{self.hw.hwmon}/pwm1_enable") != 1:
+            write(f"{self.hw.hwmon}/pwm1_enable", 1)
+        if read_int(f"{self.hw.hwmon}/pwm1") != pwm:
+            write(f"{self.hw.hwmon}/pwm1", pwm)
+
+    # --- power budget ---
+
+    def tdp_tick(self):
+        p = self.hw.power_w()
+        cpu_busy = self.hw.cpu_busy()
+        if p is not None:
+            self.power = p if self.power is None else self.power + EMA * (p - self.power)
+        limit = self.state["steam"]["tdp"]
+        if limit >= self.cfg["power"]["tdp_max"] or self.power is None:
+            changed = self.tdp_cpu or self.tdp_gpu
+            self.tdp_cpu = self.tdp_gpu = 0
+            return bool(changed)
+        if self.tdp_wait:
+            self.tdp_wait -= 1
+            return False
+        gpu_busy = self.hw.gpu_busy()
+        if gpu_busy is None:
+            gpu_busy = 1.0
+        cpu_room = len(self.cpu_ladder) - 1 - self.tdp_cpu
+        gpu_room = len(self.hw.gpu_freqs) - 1 - self.tdp_gpu
+        err = self.power - limit
+        steps = 2 if abs(err) > 3 else 1
+        before = (self.tdp_cpu, self.tdp_gpu)
+        if err > 0.3:
+            # over budget: slow down the busier unit, it's the one drawing the power
+            for _ in range(steps):
+                gpu_first = gpu_busy >= cpu_busy
+                if (gpu_first or not cpu_room) and gpu_room:
+                    self.tdp_gpu += 1
+                    gpu_room -= 1
+                elif cpu_room:
+                    self.tdp_cpu += 1
+                    cpu_room -= 1
+        elif err < -0.8:
+            # headroom: give it back to the busier unit first
+            for _ in range(steps):
+                gpu_first = gpu_busy >= cpu_busy
+                if (gpu_first or not self.tdp_cpu) and self.tdp_gpu:
+                    self.tdp_gpu -= 1
+                elif self.tdp_cpu:
+                    self.tdp_cpu -= 1
+        if (self.tdp_cpu, self.tdp_gpu) != before:
+            self.tdp_wait = TDP_DWELL
+            return True
+        return False
+
+    def tick(self):
+        try:
+            if self.tdp_tick():
+                self.apply_caps()
+            self.fan_tick()
+        except Exception as e:  # keep the fan loop alive whatever a sysfs read does
+            log(f"tick: {e!r}")
+        return True
+
+    # --- Steam's properties ---
+
+    def charge_limit(self):
+        v = read_int(f"{self.hw.battery}/charge_control_end_threshold")
+        return -1 if not v or v >= 100 else v
+
+    def apply_charge_limit(self):
+        limit = self.state["steam"]["charge_limit"]
+        write(f"{self.hw.battery}/charge_control_end_threshold", 100 if limit < 0 else limit)
+
+    def gpu_range(self):
+        return (max(self.cfg["gpu"]["manual_min_mhz"], self.hw.gpu_freqs[0] // 1_000_000),
+                self.hw.gpu_freqs[-1] // 1_000_000)
+
+    def get_property(self, iface, prop):
+        s = self.state["steam"]
+        pw = self.cfg["power"]
+        v = {
+            ("TdpLimit1", "TdpLimit"): ("u", s["tdp"]),
+            ("TdpLimit1", "TdpLimitMin"): ("u", pw["tdp_min"]),
+            ("TdpLimit1", "TdpLimitMax"): ("u", pw["tdp_max"]),
+            ("PerformanceProfile1", "AvailablePerformanceProfiles"): ("as", list(self.profiles)),
+            ("PerformanceProfile1", "PerformanceProfile"): ("s", s["profile"]),
+            ("PerformanceProfile1", "SuggestedDefaultPerformanceProfile"): ("s", next(iter(self.profiles), "")),
+            ("GpuPerformanceLevel1", "AvailableGpuPerformanceLevels"): ("as", ["auto", "manual"]),
+            ("GpuPerformanceLevel1", "GpuPerformanceLevel"): ("s", s["gpu_level"]),
+            ("GpuPerformanceLevel1", "ManualGpuClock"): ("u", s["gpu_clock"]),
+            ("GpuPerformanceLevel1", "ManualGpuClockMin"): ("u", self.gpu_range()[0]),
+            ("GpuPerformanceLevel1", "ManualGpuClockMax"): ("u", self.gpu_range()[1]),
+            ("BatteryChargeLimit1", "MaxChargeLevel"): ("i", self.charge_limit()),
+            ("BatteryChargeLimit1", "SuggestedMinimumLimit"): ("i", pw["charge_limit_min"]),
+            ("FanControl1", "FanControlState"): ("u", s["fan_control"]),
+        }.get((iface.removeprefix(SOM), prop))
+        return GLib.Variant(*v) if v else None
+
+    def set_property(self, iface, prop, value):
+        s = self.state["steam"]
+        pw = self.cfg["power"]
+        iface = iface.removeprefix(SOM)
+        if (iface, prop) == ("TdpLimit1", "TdpLimit"):
+            s["tdp"] = max(pw["tdp_min"], min(pw["tdp_max"], value))
+        elif (iface, prop) == ("PerformanceProfile1", "PerformanceProfile"):
+            if value not in self.profiles:
+                return False
+            s["profile"] = value
+        elif (iface, prop) == ("GpuPerformanceLevel1", "GpuPerformanceLevel"):
+            if value not in ("auto", "manual"):
+                return False
+            s["gpu_level"] = value
+        elif (iface, prop) == ("GpuPerformanceLevel1", "ManualGpuClock"):
+            lo, hi = self.gpu_range()
+            s["gpu_clock"] = max(lo, min(hi, value))
+        elif (iface, prop) == ("BatteryChargeLimit1", "MaxChargeLevel"):
+            s["charge_limit"] = -1 if value < 0 or value >= 100 else max(pw["charge_limit_min"], value)
+            self.apply_charge_limit()
+        elif (iface, prop) == ("FanControl1", "FanControlState"):
+            if value not in (0, 1):
+                return False
+            s["fan_control"] = value
+            self.fan_tick()
+        else:
+            return False
+        self.save()
+        self.apply_caps()
+        self.changed(SOM + iface, prop)
+        return True
+
+    def changed(self, iface, prop):
+        if self.conn:
+            v = self.get_property(iface, prop)
+            self.conn.emit_signal(None, OBJ_PATH, "org.freedesktop.DBus.Properties", "PropertiesChanged",
+                                  GLib.Variant("(sa{sv}as)", (iface, {prop: v}, [])))
+
+    # --- the Power plugin's interface ---
+
+    def status(self):
+        cpu, (gmin, gmax) = self.targets()
+        hw = self.hw
+        return {
+            "power_w": None if self.power is None else round(self.power, 2),
+            "temp_c": hw.fan_temp(),
+            "fan_rpm": read_int(f"{hw.hwmon}/fan1_input") if hw.hwmon else None,
+            "fan_pct": round(read_int(f"{hw.hwmon}/pwm1", 0) * 100 / 255) if hw.hwmon else None,
+            "fan_custom": self.fan_saved_cdev is not None,
+            "cpu_khz": {c["name"]: read_int(f"{c['path']}/scaling_cur_freq") for c in hw.clusters},
+            "cpu_cap_khz": cpu,
+            "gpu_mhz": (read_int(f"{hw.gpu}/cur_freq") or 0) // 1_000_000,
+            "gpu_cap_mhz": gmax // 1_000_000,
+            "gpu_load": hw.gpu_busy(),
+            "tdp_limiting": bool(self.tdp_cpu or self.tdp_gpu),
+            "steam": {**self.state["steam"], "charge_limit": self.charge_limit() if self.charge_ok else None},
+            "battery": {"status": read(f"{hw.battery}/status"), "capacity": read_int(f"{hw.battery}/capacity")},
+            "active_game": self.active,
+        }
+
+    def info(self):
+        pw = self.cfg["power"]
+        return {
+            "clusters": [{"name": c["name"], "cpus": c["cpus"], "freqs": c["freqs"]} for c in self.hw.clusters],
+            "gpu_mhz": [f // 1_000_000 for f in self.hw.gpu_freqs],
+            "default_curve": self.cfg["fan"]["default_curve"],
+            "full_speed_temp": self.cfg["fan"]["full_speed_temp"],
+            "fan": self.hw.fan_custom_ok,
+            "profiles": list(self.profiles),
+            "tdp": [pw["tdp_min"], pw["tdp_max"]],
+            "charge_limit": self.charge_ok,
+            "charge_limit_min": pw["charge_limit_min"],
+        }
+
+    def method(self, name, args):
+        if name == "GetStatus":
+            return json.dumps(self.status())
+        if name == "GetInfo":
+            return json.dumps(self.info())
+        if name == "GetGame":
+            appid = args[0] or "default"
+            g = self.state["games"]
+            return json.dumps({"custom": appid in g, "settings": g.get(appid) or g["default"]})
+        if name == "SetGame":
+            appid, settings = args[0] or "default", json.loads(args[1] or "null")
+            if settings is None:
+                if appid != "default":
+                    self.state["games"].pop(appid, None)
+            else:
+                self.state["games"][appid] = self.normalize(settings)
+            self.save()
+            self.apply()
+            self.fan_tick()
+            return ""
+        if name == "SetActiveGame":
+            if args[0] != self.active:
+                self.active = args[0]
+                log(f"active game: {self.active or 'none'}")
+                self.apply()
+                self.fan_tick()
+            return ""
+        raise ValueError(name)
+
+    # --- D-Bus ---
+
+    def on_method(self, conn, sender, path, iface, name, params, invocation):
+        try:
+            out = self.method(name, params.unpack())
+            invocation.return_value(GLib.Variant("(s)", (out,)) if name.startswith("Get") else None)
+        except Exception as e:
+            invocation.return_dbus_error("org.kettlelinux.Power1.Error", str(e))
+
+    def on_get(self, conn, sender, path, iface, prop):
+        return self.get_property(iface, prop)
+
+    def on_set(self, conn, sender, path, iface, prop, value):
+        return self.set_property(iface, prop, value.unpack())
+
+    def on_bus(self, conn, name):
+        self.conn = conn
+        node = Gio.DBusNodeInfo.new_for_xml(INTROSPECTION)
+        for iface in node.interfaces:
+            if iface.name == SOM + "BatteryChargeLimit1" and not self.charge_ok:
+                continue
+            conn.register_object(OBJ_PATH, iface, self.on_method, self.on_get, self.on_set)
+
+    def run(self):
+        self.apply()
+        if self.charge_ok and self.state["steam"]["charge_limit"] >= 0:
+            self.apply_charge_limit()
+        self.tick()
+        loop = GLib.MainLoop()
+
+        def stop():
+            loop.quit()
+            return False
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            GLib.unix_signal_add(GLib.PRIORITY_HIGH, sig, stop)
+        Gio.bus_own_name(BUS, BUS_NAME, Gio.BusNameOwnerFlags.NONE, self.on_bus, None,
+                         lambda *_: log(f"lost the bus name {BUS_NAME}"))
+        GLib.timeout_add(TICK_MS, self.tick)
+        loop.run()
+        restore(self.hw, self)
+
+
+def kernel_fan_level(temp, max_state):
+    """The device tree curve's level for temp: one per 5 C from 50 C."""
+    if temp is None:
+        return max_state
+    return max(0, min(max_state, int((temp - 50) // 5) + 1)) if temp >= 50 else 0
+
+
+def restore(hw, daemon=None):
+    """The fan back to the kernel's curve, every CPU online, no caps."""
+    if daemon:
+        daemon.fan_release()
+    elif any(read(f"{z}/policy") != "step_wise" for z in hw.fan_zones):
+        for z in hw.fan_zones:
+            write(f"{z}/policy", "step_wise")
+        if hw.fan_cdev:
+            write(f"{hw.fan_cdev}/cur_state",
+                  kernel_fan_level(hw.fan_temp(), read_int(f"{hw.fan_cdev}/max_state", 7)))
+    for c in hw.clusters:
+        for cpu_id in c["cpus"]:
+            if cpu_id != 0 and read_int(f"/sys/devices/system/cpu/cpu{cpu_id}/online") == 0:
+                write(f"/sys/devices/system/cpu/cpu{cpu_id}/online", 1)
+    for c in hw.clusters:
+        write(f"{c['path']}/scaling_max_freq", max(c["freqs"]))
+    if hw.gpu_freqs:
+        write(f"{hw.gpu}/min_freq", hw.gpu_freqs[0])
+        write(f"{hw.gpu}/max_freq", hw.gpu_freqs[-1])
+
+
+INTROSPECTION = f"""<node>
+  <interface name="{SOM}TdpLimit1">
+    <property name="TdpLimit" type="u" access="readwrite"/>
+    <property name="TdpLimitMin" type="u" access="read"/>
+    <property name="TdpLimitMax" type="u" access="read"/>
+  </interface>
+  <interface name="{SOM}PerformanceProfile1">
+    <property name="AvailablePerformanceProfiles" type="as" access="read"/>
+    <property name="PerformanceProfile" type="s" access="readwrite"/>
+    <property name="SuggestedDefaultPerformanceProfile" type="s" access="read"/>
+  </interface>
+  <interface name="{SOM}GpuPerformanceLevel1">
+    <property name="AvailableGpuPerformanceLevels" type="as" access="read"/>
+    <property name="GpuPerformanceLevel" type="s" access="readwrite"/>
+    <property name="ManualGpuClock" type="u" access="readwrite"/>
+    <property name="ManualGpuClockMin" type="u" access="read"/>
+    <property name="ManualGpuClockMax" type="u" access="read"/>
+  </interface>
+  <interface name="{SOM}BatteryChargeLimit1">
+    <property name="MaxChargeLevel" type="i" access="readwrite"/>
+    <property name="SuggestedMinimumLimit" type="i" access="read"/>
+  </interface>
+  <interface name="{SOM}FanControl1">
+    <property name="FanControlState" type="u" access="readwrite"/>
+  </interface>
+  <interface name="org.kettlelinux.Power1">
+    <method name="GetStatus"><arg type="s" direction="out"/></method>
+    <method name="GetInfo"><arg type="s" direction="out"/></method>
+    <method name="GetGame"><arg name="appid" type="s"/><arg type="s" direction="out"/></method>
+    <method name="SetGame"><arg name="appid" type="s"/><arg name="settings" type="s"/></method>
+    <method name="SetActiveGame"><arg name="appid" type="s"/></method>
+  </interface>
+</node>"""
+
+
+def main():
+    if "--restore" in sys.argv[1:]:
+        with open(CONFIG, "rb") as f:
+            restore(Hardware(tomllib.load(f)))
+        return
+    Daemon().run()
+
+
+if __name__ == "__main__":
+    main()
