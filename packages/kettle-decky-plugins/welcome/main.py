@@ -1,12 +1,9 @@
 # Welcome: a page shown once on first boot (a tour of Kettle and a setup checklist), then kept
 # in the Quick Access menu.
 #
-# Setup has two parts:
-#  - things the user sets up in Steam themselves (Lossless Scaling for the lsfg-vk engine),
-#    which this backend only detects
-#  - optional components: software Kettle can't ship in the image (license or no source build),
-#    downloaded on request from its official upstream source. components.json, next to this
-#    file, lists them; each entry:
+# Setup lists optional components: software Kettle can't ship in the image (license or no
+#    source build), downloaded on request from its official upstream source. components.json,
+#    next to this file, lists them; each entry:
 #      {"id": "name-like-this", "name": ..., "description": ..., "license": ..., "homepage": ...,
 #       "version": ..., "url": "https://...", "sha256": ..., "archive": "zip" | "tar" | "file",
 #       "file": "<name to save as, for archive=file>"}
@@ -28,7 +25,6 @@ import urllib.request
 import zipfile
 
 import decky
-import steamlib
 
 MANIFEST = os.path.join(decky.DECKY_PLUGIN_DIR, "components.json")
 COMPONENTS = os.path.join(decky.DECKY_USER_HOME, ".local", "share", "kettle", "components")
@@ -172,11 +168,7 @@ class Plugin:
                 "progress": job["progress"] if job else None,
                 "error": job["error"] if job else None,
             })
-        ls = steamlib.lossless_scaling()
-        return {
-            "lossless": {"installed": ls["installed"] is not None, "dll": ls["dll"] is not None},
-            "components": comps,
-        }
+        return {"components": comps}
 
     async def first_run(self) -> bool:
         """True exactly once: the first time this is asked (the welcome page opens then)."""
