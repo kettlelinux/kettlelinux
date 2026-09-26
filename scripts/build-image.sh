@@ -5,14 +5,14 @@
 # namespace-local binfmt_misc entry for tools/qemu-aarch64-static, so pacman can
 # install into an aarch64 root and run package scriptlets/hooks in a chroot.
 #
-# Inputs: out/kernel (scripts/build-kernel.sh), out/firmware (scripts/build-firmware.sh)
+# Inputs: out/kernel (scripts/build-kernel.sh), our local repo (scripts/build-packages.sh)
 # Output: out/kettle-<date>.img  (GPT: p1 FAT "KETTLE" with \KERNEL for the
 #         ROCKNIX ABL, p2 ext4 root)
 #
 # Env: WIFI_SSID / WIFI_PSK  preconfigure Wi-Fi (NetworkManager) for SSH access;
-#      SSH_PUBKEY            public key file to authorize for user steamos
+#      SSH_PUBKEY            public key file to authorize for user kettle
 #                            (all of these are also read from ./local.env, gitignored)
-#      USER_PASSWORD         password for user "steamos" (default: steamos)
+#      USER_PASSWORD         password for user "kettle" (default: kettle)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,7 +24,6 @@ IMG="$ROOT/out/kettle-$(date +%Y%m%d).img"
 
 if [ "${KETTLE_IN_NS:-}" != 1 ]; then
   [ -f "$ROOT/out/kernel/boot/Image" ] || die "no kernel; run scripts/build-kernel.sh"
-  [ -d "$ROOT/out/firmware" ] || die "no firmware; run scripts/build-firmware.sh"
   [ -f "$LOCAL_REPO/kettle.db" ] || die "no local repo; run scripts/build-packages.sh"
 fi
 be_nice
@@ -51,21 +50,11 @@ for d in "$RFS"/var/lib/pacman/local/*/desc; do
   sed -i '/^%INSTALLED_DB%$/,/^$/d' "$d"
 done
 
-log "installing kernel $(cat "$ROOT/out/kernel/kernelrelease"), modules, firmware"
+log "installing kernel $(cat "$ROOT/out/kernel/kernelrelease") and modules"
 cp -a --no-preserve=ownership "$ROOT/out/kernel/usr/lib/modules/." "$RFS/usr/lib/modules/"
 install -d "$RFS/boot/dtbs/qcom"
 install -m 0644 "$ROOT/out/kernel/boot/Image" "$RFS/boot/Image"
 install -m 0644 "$ROOT"/out/kernel/boot/dtbs/qcom/*.dtb "$RFS/boot/dtbs/qcom/"
-cp -a --no-preserve=ownership "$ROOT/out/firmware/usr/lib/firmware/." "$RFS/usr/lib/firmware/"
-
-log "installing AYN-Odin2 ALSA UCM profile"
-ucm="$WORK/ucm"; mkdir -p "$ucm"
-git -C "$ucm" init -q
-for p in "$DEVICE"/ucm/*.patch; do git -C "$ucm" apply "$p"; done
-# alsa-lib looks up conf.d/<driver>/<card longname>.conf. Booted via EFI the longname is
-# "ayn-AYNOdin2" (DMI vendor-product); ROCKNIX only aliases "AYN-Odin2" and "ayn-AYNOdin2-".
-ln -sf ../../AYN/Odin2/AYN-Odin2.conf "$ucm/ucm2/conf.d/sm8550/ayn-AYNOdin2.conf"
-cp -a --no-preserve=ownership "$ucm/ucm2/." "$RFS/usr/share/alsa/ucm2/"
 
 log "applying device overlay"
 # --no-preserve=ownership: new files become root-owned; never chown -R package dirs
@@ -88,14 +77,14 @@ EOF
 install -d -m 0700 "$RFS/flash"
 
 log "configuring system (in aarch64 chroot)"
-USER_PASSWORD="${USER_PASSWORD:-steamos}"
+USER_PASSWORD="${USER_PASSWORD:-kettle}"
 chroot "$RFS" /bin/bash -euo pipefail -s <<EOF
 sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' /etc/locale.gen
 locale-gen >/dev/null
 echo LANG=en_US.UTF-8 >/etc/locale.conf
 ln -sf /usr/share/zoneinfo/UTC /etc/localtime
-useradd -m -G wheel,video,input,audio,render -s /bin/bash steamos
-echo 'steamos:$USER_PASSWORD' | chpasswd
+useradd -m -G wheel,video,input,audio,render -s /bin/bash kettle
+echo 'kettle:$USER_PASSWORD' | chpasswd
 passwd -l root >/dev/null
 systemctl enable NetworkManager sshd bluetooth systemd-timesyncd sddm >/dev/null 2>&1
 systemctl set-default graphical.target >/dev/null 2>&1
@@ -116,9 +105,9 @@ systemctl mask systemd-firstboot.service >/dev/null 2>&1
 EOF
 
 if [ -n "${SSH_PUBKEY:-}" ] && [ -f "$SSH_PUBKEY" ]; then
-  log "authorizing SSH key ${SSH_PUBKEY##*/} for steamos"
-  install -d -m 0700 -o 1000 -g 1000 "$RFS/home/steamos/.ssh"
-  install -m 0600 -o 1000 -g 1000 "$SSH_PUBKEY" "$RFS/home/steamos/.ssh/authorized_keys"
+  log "authorizing SSH key ${SSH_PUBKEY##*/} for kettle"
+  install -d -m 0700 -o 1000 -g 1000 "$RFS/home/kettle/.ssh"
+  install -m 0600 -o 1000 -g 1000 "$SSH_PUBKEY" "$RFS/home/kettle/.ssh/authorized_keys"
 fi
 
 if [ -n "${WIFI_SSID:-}" ]; then

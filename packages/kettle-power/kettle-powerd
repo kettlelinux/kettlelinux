@@ -560,6 +560,7 @@ class Daemon:
         return {
             "clusters": [{"name": c["name"], "cpus": c["cpus"], "freqs": c["freqs"]} for c in self.hw.clusters],
             "gpu_mhz": [f // 1_000_000 for f in self.hw.gpu_freqs],
+            "gpu_manual_mhz": list(self.gpu_range()),
             "default_curve": self.cfg["fan"]["default_curve"],
             "full_speed_temp": self.cfg["fan"]["full_speed_temp"],
             "fan": self.hw.fan_custom_ok,

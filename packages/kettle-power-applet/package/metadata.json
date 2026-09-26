@@ -1,0 +1,21 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Kettle Linux contributors"
+            }
+        ],
+        "Category": "System Information",
+        "Description": "Performance profile, power limit, GPU clock, fan and CPU cores",
+        "EnabledByDefault": true,
+        "Icon": "speedometer",
+        "Id": "org.kettle.power",
+        "License": "BSD-3-Clause",
+        "Name": "Power",
+        "Version": "1.0"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-NotificationArea": "true",
+    "X-Plasma-NotificationAreaCategory": "Hardware"
+}

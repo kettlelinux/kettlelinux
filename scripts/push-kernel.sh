@@ -4,7 +4,7 @@
 #   /usr/lib/modules/<release>
 # The ABL \KERNEL is not rebuilt here; re-run build-image.sh for ABL users.
 #
-# Usage: scripts/push-kernel.sh steamos@<ip>
+# Usage: scripts/push-kernel.sh kettle@<ip>
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

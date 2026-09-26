@@ -55,16 +55,28 @@ chroot_umount() {
   for m in dev/pts dev sys proc run tmp; do umount -l "$r/$m" 2>/dev/null || true; done
 }
 
-# pacman.conf for build time: image/pacman.conf plus our local repo (if built) ahead of Valve's.
-build_pacman_conf() {
-  local out="$1"
-  if [ -f "$LOCAL_REPO/kettle.db" ]; then
-    awk -v repo="$LOCAL_REPO" '
-      /^\[deckard-arch-hotfixes/ && !done { print "[kettle]\nSigLevel = Never\nServer = file://" repo "\n"; done=1 }
-      { print }' "$ROOT/image/pacman.conf" >"$out"
-  else
-    cp "$ROOT/image/pacman.conf" "$out"
+# Where builds get Valve's packages: KETTLE_MIRROR (a URL with one directory per repo), else
+# the local mirror from scripts/mirror-repos.sh if there is one, else Valve's servers.
+mirror_url() {
+  if [ -n "${KETTLE_MIRROR:-}" ]; then
+    printf '%s\n' "${KETTLE_MIRROR%/}"
+  elif [ -d "$ROOT/cache/mirror" ]; then
+    printf 'file://%s\n' "$ROOT/cache/mirror"
   fi
+}
+
+# pacman.conf for build time: image/pacman.conf with Valve's repos on the mirror (if any) first
+# and Valve's servers after it, for packages the mirror doesn't have yet (a new dependency: the
+# next scripts/mirror-repos.sh freezes it too), plus our local repo (if built) ahead of them. The image's own /etc/pacman.conf keeps Valve's URLs.
+build_pacman_conf() {
+  local out="$1" mirror
+  mirror="$(mirror_url)"
+  [ -n "$mirror" ] && log "Valve's repos from ${mirror#file://"$ROOT"/}"
+  awk -v repo="$LOCAL_REPO" -v haslocal="$([ -f "$LOCAL_REPO/kettle.db" ] && echo 1)" -v m="$mirror" '
+    /^\[deckard-arch-hotfixes/ && haslocal && !done { print "[kettle]\nSigLevel = Never\nServer = file://" repo "\n"; done=1 }
+    /^\[/ { r = substr($0, 2, length($0) - 2) }
+    m && r != "options" && /^Server *=/ { print "Server = " m "/" r }
+    { print }' "$ROOT/image/pacman.conf" >"$out"
 }
 
 # pacman against a root at $1 (extra args follow).

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Kettle Welcome
+GenericName=Setup and Tools
+Comment=Set up Kettle Linux: Wi-Fi, password, controls, games and gaming apps
+Exec=kettle-welcome
+Icon=/usr/share/plasma/look-and-feel/org.kettle.splash/contents/splash/images/kettle.png
+Terminal=false
+Categories=Qt;KDE;System;Settings;
+Keywords=welcome;setup;start;password;wifi;help;kettle;
+StartupNotify=true
+X-KDE-StartupNotify=true
