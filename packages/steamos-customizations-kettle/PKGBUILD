@@ -3,9 +3,10 @@
 # /var and the /etc overlay, each slot's GRUB, steamcl's registration, the RAUC update hooks,
 # holo-readonly and the /home offload mounts. See docs/UPDATES.md.
 #
-# 0001-0008 are Kettle's changes to Valve's code (arm64, RAUC compatible and no verity slots,
+# 0001-0009 are Kettle's changes to Valve's code (arm64, RAUC compatible and no verity slots,
 # image-build UUIDs, post-install.d hooks, steamcl-install arguments, holo-chroot without EFI,
-# factory reset by partset link, GRUB modules for update-grub). Kettle's own files:
+# factory reset by partset link, GRUB modules for update-grub, both slots' partsets on the
+# other efi). Kettle's own files:
 #   update-grub         writes a slot's grub.cfg (kernel, initramfs, devicetree) without grub-probe
 #   kettle-boot-legacy  points the ABL's \KERNEL and U-Boot's extlinux at the newest slot
 #   mkbootimg.py        builds \KERNEL (Android boot.img v0)
@@ -21,7 +22,7 @@
 pkgname=steamos-customizations-kettle
 _srctag=jupiter-20260914.1
 pkgver=${_srctag#jupiter-}
-pkgrel=5
+pkgrel=6
 pkgdesc='SteamOS atomic A/B system (Valve steamos-customizations) for Kettle Linux'
 arch=(aarch64)
 url='https://gitlab.steamos.cloud/holo/steamos-customizations'
@@ -40,6 +41,7 @@ source=("https://steamdeck-packages.steamos.cloud/archlinux-mirror/sources/jupit
         0006-holo-chroot-bind-mount-efivars-only-if-the-system-ha.patch
         0007-factory-reset-format-the-partitions-through-their-pa.patch
         0008-holo-grub-mkimage-regexp-and-probe-in-the-arm64-imag.patch
+        0009-rauc-post-install-give-the-other-efi-both-slots-part.patch
         update-grub
         kettle-boot-legacy
         mkbootimg.py
@@ -57,6 +59,7 @@ sha256sums=('1df4fcaf6af7713b8b885031eeeae0489d9cd6cd71593f93c589f89775547489'
             '5731a7fb62a21459b00c5fb29ea6d7f81454792dd2c174c1b4980d8f9323c33d'
             '78f47e2565d9a48bbd0cebaa318eeaca1540fc116003f616e5fb5817a80c5d02'
             'a99f7889fff91cc3e11615e5a128acab636228dabcc0803b0b661f479ac685f2'
+            '4e795fe93549b171628d9737ccbf6119c1cb39bf4e6f29687c593ed87ef64362'
             'ce52557046321350447f2da5650b4bae16a35cd0c451929c6fa1471e7bdf73f4'
             '260db9fb661f59f3898007f786901402fb4c7e625d0e1629c7fdd5e653094e65'
             '4f61a4f3a9f058ce65227cd7e607ba8c2162b1a070a3071c89517bdba2b67889'
