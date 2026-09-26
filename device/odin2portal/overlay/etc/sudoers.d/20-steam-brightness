@@ -1,2 +1,5 @@
-# The Steam client (Game Mode brightness slider) writes the backlight via "sudo tee", as on SteamOS
-%wheel ALL=(root) NOPASSWD: /usr/bin/tee /sys/class/backlight/*/brightness
+# The Steam client (Game Mode brightness slider) makes the backlight writable with "sudo chmod",
+# and older clients write it with "sudo tee", as on SteamOS. Anchored patterns: a plain * in
+# sudoers arguments also matches spaces, which would let "tee" or "chmod" take other files too.
+%wheel ALL=(root) NOPASSWD: /usr/bin/chmod ^a[+]w /sys/class/backlight/[A-Za-z0-9._-]+/brightness$
+%wheel ALL=(root) NOPASSWD: /usr/bin/tee ^/sys/class/backlight/[A-Za-z0-9._-]+/brightness$
