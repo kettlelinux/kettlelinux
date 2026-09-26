@@ -1,0 +1,44 @@
+From 18702de9e451e889aca3b4f6aa36416ce86c77bf Mon Sep 17 00:00:00 2001
+From: Kettle <kettle@localhost>
+Date: Sat, 26 Sep 2026 12:15:38 -0500
+Subject: [PATCH] steamcl-install: use the aarch64 removable media path on
+ arm64
+
+UEFI firmware looks for \EFI\BOOT\BOOTAA64.EFI on arm64; bootx64.efi is only
+the x86_64 name.
+---
+ util/steamcl-install.in | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/util/steamcl-install.in b/util/steamcl-install.in
+index 3832722..3f42a98 100755
+--- a/util/steamcl-install.in
++++ b/util/steamcl-install.in
+@@ -88,8 +88,8 @@ entry if needed.
+ 
+ --force-extra-removable
+ 
+-    Also install the chainloader at the removable media path (for x86_64 arch:
+-    efi/boot/bootx64.efi).
++    Also install the chainloader at the removable media path
++    (efi/boot/bootx64.efi on x86_64, efi/boot/bootaa64.efi on aarch64).
+ 
+ --force-removable-efiboot
+ 
+@@ -404,9 +404,11 @@ update_esp ()
+     # install the chainloader in the EFI fallback (RC) position in case we boot without an explicit efiboot entry
+     # FUTURE: We should skip this step if $espbootloader exists but doesn't look like it's one of ours
+     espbootdir=${esp}/efi/boot
+-    echo "Installing bootloader to ${espbootdir}/bootx64.efi"
++    local removable=bootx64.efi
++    [ "$(uname -m)" = aarch64 ] && removable=bootaa64.efi
++    echo "Installing bootloader to ${espbootdir}/${removable}"
+     mkdir -p ${espbootdir}/fonts
+-    cp -av ${bin} ${espbootdir}/bootx64.efi ||:
++    cp -av ${bin} ${espbootdir}/${removable} ||:
+     cp -av ${fnt} ${espbootdir}/fonts/default.pf2 ||:
+ 
+     return 0
+-- 
+2.55.0
+

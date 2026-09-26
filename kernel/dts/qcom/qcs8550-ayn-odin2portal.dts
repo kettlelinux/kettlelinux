@@ -294,6 +294,43 @@
 };
 
 /*
+ * The back buttons (M1 left, M2 right) are active-low TLMM GPIOs 57/58 with external
+ * pull-ups, wired as on the Odin 2 (verified on the Portal). The node name is the input
+ * device name InputPlumber matches ("gpio-keys-paddles"); its rsinput1 map turns BTN_Z/BTN_C
+ * into the left/right back paddles.
+ */
+/ {
+	gpio-keys-paddles {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&paddle_keys_default>;
+
+		key-paddle-m1 {
+			label = "Back Paddle M1";
+			linux,code = <BTN_Z>;
+			gpios = <&tlmm 57 GPIO_ACTIVE_LOW>;
+			debounce-interval = <15>;
+		};
+
+		key-paddle-m2 {
+			label = "Back Paddle M2";
+			linux,code = <BTN_C>;
+			gpios = <&tlmm 58 GPIO_ACTIVE_LOW>;
+			debounce-interval = <15>;
+		};
+	};
+};
+
+&tlmm {
+	paddle_keys_default: paddle-keys-default-state {
+		pins = "gpio57", "gpio58";
+		function = "gpio";
+		bias-pull-up;
+		drive-strength = <2>;
+	};
+};
+
+/*
  * Fan curve in the kernel. The common dtsi (ROCKNIX) defines fan trip points but no
  * cooling-maps: ROCKNIX drives pwm1 from a userspace daemon, and without one the fan sits
  * at the boot duty cycle forever -- spinning at idle, never ramping under load. Bind the

@@ -13,13 +13,14 @@ a patched mainline kernel plus Valve's SteamOS "deckard" (Steam Frame) aarch64 u
 | `scripts/build-kernel.sh` | fetch, patch (`--fuzz=0`), config (asserts every fragment option survived), LLVM cross-build → `out/kernel/` |
 | `scripts/refresh-patches.sh` | rebase the stack's context onto a new pinned kernel |
 | `scripts/mirror-repos.sh` | freeze Valve's deckard repos into `cache/mirror/` (what our builds use, or `--full`); builds install from it once it exists, or from `KETTLE_MIRROR=<url>` |
-| `scripts/build-image.sh` | rootless SD image: deckard packages via pacman in a user namespace (qemu binfmt), \KERNEL boot.img → `out/kettle-DATE.img` |
+| `scripts/build-image.sh` | rootless release build: deckard packages via pacman in a user namespace (qemu binfmt) → system image, SD card image (SteamOS A/B layout) and signed update bundle, `out/kettle-BUILDID-odin2portal.{img,raucb,castr}` |
+| `scripts/publish-update.sh` | add a build to the update server tree (`out/update-server`, static files) with Valve's own server tool |
 | `scripts/mkbootimg.py` | Android boot.img v0 writer (byte-identical to AOSP mkbootimg for our args) |
 | `image/` | `pacman.conf` (deckard `mash-20240428.1` + `release-0.4` hotfixes), `packages.txt` |
 | `device/odin2portal/` | rootfs overlay (s2idle, power key, first-boot grow, sshd) |
 | `scripts/build-packages.sh` | rootless makepkg in an aarch64 chroot → local `[kettle]` repo (installed ahead of Valve's); downloaded sources are kept in `cache/src/<name>/` and reused |
-| `scripts/push-kernel.sh` | install out/kernel on a running Portal over SSH (keeps previous kernel as a boot entry) |
-| `packages/` | our PKGBUILDs: `kettle-firmware-odin2portal` (ROCKNIX extra-firmware DSPs, amp, topology, WCN7850 + linux-firmware GPU/BT, pinned), `kettle-ucm-odin2portal` (ALSA UCM for `AYN-Odin2`), `kscreen` (Display Settings, absent from all deckard snapshots), `mangohud` (Valve's deckard build + Portal sensors for the Steam performance overlay), `plasma-keyboard` (desktop on-screen keyboard), `plymouth` + `kettle-branding` (boot splash, Steam startup movie, Plasma splash), `decky-loader` + `kettle-decky-plugins` + `kettle-framegen` + `optiscaler-arm64ec` (+ build-only `directx-shader-compiler`) + `gamescope` (SGSR 1) (Game Mode plugins, below), `kettle-power` + `kettle-power-applet` (power, clocks and fan behind Steam's Performance panel, the Power plugin and the desktop's Power applet, below), `kettle-welcome` (Desktop Mode welcome and hub), `kettle-firefox-desktop` (menu entry, icons and default-browser setting for Valve's bare `firefox`; the taskbar's "Install Chromium" placeholder is left out via `NoExtract`), `wine` + `fex-emu-wine` + `dxvk` + `vkd3d-proton` + `winetricks` + `cabextract` + `lutris` + `heroic-games-launcher` (games outside Steam, below) |
+| `scripts/push-kernel.sh` | install out/kernel into the running slot of a Portal over SSH (development) |
+| `packages/` | our PKGBUILDs: `steamos-efi` + `steamos-customizations-kettle` (Valve's SteamOS A/B update system, built for arm64: [docs/UPDATES.md](docs/UPDATES.md)), `inputplumber` (Steam Deck controller emulation), `kettle-firmware-odin2portal` (ROCKNIX extra-firmware DSPs, amp, topology, WCN7850 + linux-firmware GPU/BT, pinned), `kettle-ucm-odin2portal` (ALSA UCM for `AYN-Odin2`), `kscreen` (Display Settings, absent from all deckard snapshots), `mangohud` (Valve's deckard build + Portal sensors for the Steam performance overlay), `plasma-keyboard` (desktop on-screen keyboard), `plymouth` + `kettle-branding` (boot splash, Steam startup movie, Plasma splash), `decky-loader` + `kettle-decky-plugins` + `kettle-framegen` + `optiscaler-arm64ec` (+ build-only `directx-shader-compiler`) + `gamescope` (SGSR 1) (Game Mode plugins, below), `kettle-power` + `kettle-power-applet` (power, clocks and fan behind Steam's Performance panel, the Power plugin and the desktop's Power applet, below), `kettle-welcome` (Desktop Mode welcome and hub), `kettle-firefox-desktop` (menu entry, icons and default-browser setting for Valve's bare `firefox`; the taskbar's "Install Chromium" placeholder is left out via `NoExtract`), `wine` + `fex-emu-wine` + `dxvk` + `vkd3d-proton` + `winetricks` + `cabextract` + `lutris` + `heroic-games-launcher` (games outside Steam, below) |
 | `tools/` | `bc` shim; `qemu-aarch64-static` (extracted from Arch's package, not installed) |
 
 Build (x86_64 host, no root needed):
@@ -27,8 +28,11 @@ Build (x86_64 host, no root needed):
 scripts/build-kernel.sh      # ~3 min on 32 cores
 scripts/build-packages.sh    # our own packages (packages/*/PKGBUILD) -> out/repo/aarch64
 scripts/mirror-repos.sh      # once: freeze Valve's repos locally (~2 GB); later builds use it
-scripts/build-image.sh       # reads WIFI_SSID/WIFI_PSK/SSH_PUBKEY from local.env (gitignored)
+scripts/build-image.sh       # reads WIFI_SSID/WIFI_PSK/SSH_PUBKEY/KETTLE_UPDATE_URL from local.env (gitignored)
+scripts/publish-update.sh out/kettle-BUILDID-odin2portal.raucb   # to release it as an update
 ```
+Updates work like SteamOS's: whole-image A/B updates, signed, installed by Steam's own
+*Check for updates* — see [docs/UPDATES.md](docs/UPDATES.md).
 Flashing and the hardware checklist: [docs/TESTING.md](docs/TESTING.md).
 Installing to the internal storage next to Android (Kettle Installer), with backup and
 restore: [docs/INTERNAL-INSTALL.md](docs/INTERNAL-INSTALL.md).
@@ -48,7 +52,8 @@ restore: [docs/INTERNAL-INSTALL.md](docs/INTERNAL-INSTALL.md).
       source) with `40-kettle-odin2portal.yaml` (Deck target; the button below the right stick is Quick Access),
       run by Game Mode only (`kettle-inputplumber.service`) so the desktop controller keeps the raw pad;
       `kettle-qam-button` remains as a fallback — built, untested on hardware
-- [ ] Boot chain: ESP with `BOOTAA64.EFI` (steamcl/GRUB, A/B) — or boot.img v0 `KERNEL` for first bring-up
+- [ ] Boot chain: ESP with `BOOTAA64.EFI` = steamcl (Valve's A/B chainloader, built for arm64) → each slot's GRUB;
+      the ROCKNIX ABL's `\KERNEL` and U-Boot extlinux follow the newest slot — built, untested on hardware
 - [x] Firmware package: linux-firmware-qcom (a740/gmu/zap) + Portal ADSP/CDSP/topology blobs (`kettle-firmware-odin2portal`)
 - [x] Mirror the pinned deckard repos locally (Valve prunes snapshots; the hotfix repo isn't a snapshot at all): `scripts/mirror-repos.sh`
 - [ ] Own packages: kernel. Done: inputplumber + AYN mapping, firmware, gamescope, ALSA UCM for `AYN-Odin2`
@@ -62,7 +67,9 @@ restore: [docs/INTERNAL-INSTALL.md](docs/INTERNAL-INSTALL.md).
 - [ ] Desktop Mode Power applet (system tray: profile, TDP, GPU clock, fan, CPU cores) — built,
       tested against kettle-powerd on a fake sysfs, untested on hardware
 - [ ] Suspend: s2idle validation on hardware (wake sources, rsinput/Wi-Fi/panel resume, drain)
-- [ ] Image: A/B btrfs rootfs + RAUC with our own keyring/compatible (`kettle-aarch64`)
+- [ ] Image: A/B btrfs rootfs + RAUC with our own keyring/compatible (`kettle-aarch64`), SteamOS partition layout,
+      read-only root, update bundles and server tree (`publish-update.sh`); internal installs use the same layout —
+      built, untested on hardware; no update server yet ([docs/UPDATES.md](docs/UPDATES.md))
 
 ## Boot splash, startup movie and Plasma splash
 `plymouth` (built by us; no deckard snapshot has it) shows `kettle-plymouth-theme` from early

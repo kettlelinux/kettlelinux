@@ -1,0 +1,67 @@
+From a05d4e374e3c5d9c139913ab8d91730e90dfa94a Mon Sep 17 00:00:00 2001
+From: Kettle <kettle@localhost>
+Date: Sat, 26 Sep 2026 12:10:22 -0500
+Subject: [PATCH] configure: build for arm64
+
+- only pass the x86 no-SIMD flags to x86 targets: the emu-* case was
+  missing its separating comma, so every non-emu target, arm64 included,
+  got -mno-mmx/-mno-sse..., which aarch64 GCC rejects
+- gnu-efi and binutils name the architecture aarch64, not arm64: use that
+  name for gnu-efi's headers, linker script and crt0 and for the objcopy
+  target
+---
+ configure.ac | 15 ++++++++++-----
+ 1 file changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/configure.ac b/configure.ac
+index 2d59abe..1de200c 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -274,7 +274,7 @@ AS_IF([test x"$target_m64" = x1],
+ # Some toolchains enable these features by default, but they need
+ # registers that aren't set up properly pre-OS start
+ AS_CASE([$platform-$target_cpu],
+-        [emu-*], [true]
++        [emu-*], [true],
+         [*-i386|*-x86_64],
+         [TARGET_CFLAGS="$TARGET_CFLAGS -mno-mmx -mno-sse -mno-sse2 -mno-sse3 -mno-3dnow"])
+ 
+@@ -309,6 +309,11 @@ AS_CASE(["$target_cpu"-"$platform"],[x86_64-efi],
+         [TARGET_CFLAGS="$TARGET_CFLAGS -mno-red-zone"]
+         )
+ 
++# gnu-efi and binutils call arm64 "aarch64" (headers, linker script, crt0, objcopy target)
++AS_CASE([$target_cpu],
++        [arm64], [gnuefi_cpu=aarch64],
++        [gnuefi_cpu=$target_cpu])
++
+ AS_CASE([$with_efilib],
+         [gnu],
+         [PKG_CHECK_MODULES(GNUEFI, [gnu-efi >= 3.0.18],
+@@ -316,11 +321,11 @@ AS_CASE([$with_efilib],
+                            [GNUEFI_LIBS=$(echo $GNUEFI_LIBS)])]
+         [PKG_CHECK_VAR(GNUEFI_LIBDIR, [gnu-efi], libdir)]
+         [EFI_EXTRALIBS="${GNUEFI_LIBS} -lgnuefi $($TARGET_CC -print-libgcc-file-name)"]
+-        [EFI_LDSCRIPT=${GNUEFI_LIBDIR}/elf_${target_cpu}_efi.lds]
+-        [EFI_CRTOBJS=${GNUEFI_LIBDIR}/crt0-efi-${target_cpu}.o]
++        [EFI_LDSCRIPT=${GNUEFI_LIBDIR}/elf_${gnuefi_cpu}_efi.lds]
++        [EFI_CRTOBJS=${GNUEFI_LIBDIR}/crt0-efi-${gnuefi_cpu}.o]
+         [EFI_LDFLAGS="-T ${EFI_LDSCRIPT} -shared -Bsymbolic -nostdlib"]
+         [EFI_LDFLAGS="${EFI_LDFLAGS} -L${GNUEFI_LIBDIR} ${EFI_CRTOBJS}"]
+-        [EFI_CFLAGS="$GNUEFI_CFLAGS $GNUEFI_CFLAGS/${target_cpu}"]
++        [EFI_CFLAGS="$GNUEFI_CFLAGS $GNUEFI_CFLAGS/${gnuefi_cpu}"]
+         [EFI_CFLAGS="${EFI_CFLAGS} -DGNU_EFI_USE_MS_ABI"]
+         [EFI_CFLAGS="$EFI_CFLAGS ${GNUEFI_CFLAGS}/protocol"]
+         [EFI_SECT="text sdata data dynamic rodata rel rela rel.\* rel\* rela.\* rela\* areloc reloc"],
+@@ -336,7 +341,7 @@ AS_IF([test -n "$_x"],
+       [EFI_SECT="${EFI_SECT} $_x"; AC_MSG_RESULT([$_x])],
+       [AC_MSG_RESULT([-none-])])
+ for x in $EFI_SECT; do EFI_OBJCOPYARGS="$EFI_OBJCOPYARGS -j .$x"; done;
+-EFI_OBJCOPYARGS="$EFI_OBJCOPYARGS --output-target=$platform-app-$target_cpu";
++EFI_OBJCOPYARGS="$EFI_OBJCOPYARGS --output-target=$platform-app-$gnuefi_cpu";
+ 
+ AC_SUBST([EFI_LDSCRIPT])
+ AC_SUBST([EFI_LDFLAGS])
+-- 
+2.55.0
+

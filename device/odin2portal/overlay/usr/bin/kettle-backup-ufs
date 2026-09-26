@@ -15,7 +15,7 @@
 # Backups are tied to this device (SoC serial in the manifest).
 #
 # Usage: sudo kettle-backup-ufs [--essentials] [--progress --yes] [DEST_DIR]
-#   default DEST_DIR: /var/lib/kettle/ufs-backup/<date> on the SD card system
+#   default DEST_DIR: /home/.kettle/ufs-backup/<date> on the SD card system
 set -euo pipefail
 . /usr/lib/kettle/ufs-lib.sh
 
@@ -45,6 +45,7 @@ for l in "${LUNS[@]}"; do none_mounted "${l#* }" || die "${l#* } (or a partition
 # The userdata byte range skipped by an essentials backup
 skip_lun="" skip_off=0 skip_len=0
 if [ "$KIND" = essentials ]; then
+  need_ufs_disk
   UD=$(part_by_label userdata)
   [ -n "$UD" ] || die "Android userdata partition not found on $DISK"
   skip_lun=$(ufs_luns | awk -v d="$DISK" '$2 == d { print $1 }')

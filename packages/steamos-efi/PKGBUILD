@@ -1,0 +1,53 @@
+# SteamOS's stage-1 bootloader (steamcl.efi) and steamos-bootconf, built for aarch64 from Valve's
+# published source. steamcl picks slot A or B from \SteamOS\conf on the ESP (newest good image,
+# falling back after failed boot attempts) and chainloads that slot's \EFI\steamos\grubaa64.efi.
+# Valve's deckard build of this package targets the Steam Frame, whose /usr/bin/steamos-bootconf
+# is a wrapper around the Qualcomm bootloader's slots (splctl); the Portal boots through U-Boot's
+# EFI instead, as a Steam Deck does, so this is the Deck's variant built for arm64.
+pkgname=steamos-efi
+_srctag=jupiter-20260824.1
+pkgver=${_srctag#jupiter-}
+pkgrel=1
+pkgdesc='Stage 1 bootloader for SteamOS 3+ (A/B chainloader), Kettle Linux arm64 build'
+arch=(aarch64)
+url='https://gitlab.steamos.cloud/holo/steamos-efi'
+license=(GPL-2.0-or-later)
+depends=(efibootmgr util-linux coreutils)
+makedepends=(git autoconf automake gnu-efi grub fontconfig noto-fonts)
+options=(!strip)  # steamcl.efi is a PE image; the ELF helpers are stripped by the build
+# Valve publishes the source (a bare clone of the repository) next to its packages
+source=("https://steamdeck-packages.steamos.cloud/archlinux-mirror/sources/holo-main/steamos-efi-20260824.1-3.src.tar.gz"
+        0001-configure-build-for-arm64.patch
+        0002-steamcl-install-aarch64-removable-path.patch)
+sha256sums=('dcfa1ae84ada58413c482bb56bfbcd1429aa0148dfec7a1172635e3b2f1aef18'
+            '6b6fca5581d06180adc31722b625227d9b731e8f25955ccc9e48103e9c5c430b'
+            '81401828ccb85e6da4c6586bb544cbdcdd914c1fc5c979a44729c7efd95e644b')
+
+prepare() {
+  rm -rf "$pkgname-src"
+  git clone -q "$srcdir/steamos-efi/steamos-efi" "$pkgname-src"
+  git -C "$pkgname-src" checkout -q "$_srctag"
+  # Valve builds this for x86 only: the build and steamcl-install need small fixes for arm64
+  local p
+  for p in 0001-configure-build-for-arm64.patch 0002-steamcl-install-aarch64-removable-path.patch; do
+    git -C "$pkgname-src" apply "$srcdir/$p"
+  done
+}
+
+build() {
+  cd "$pkgname-src"
+  autoreconf -vif
+  ./configure --prefix=/usr --with-release-version="$pkgver"
+  make
+}
+
+package() {
+  cd "$pkgname-src"
+  make DESTDIR="$pkgdir/" install
+  if [ -d "$pkgdir/usr/sbin" ]; then
+    mv "$pkgdir/usr/sbin/"* "$pkgdir/usr/bin/"
+    rmdir "$pkgdir/usr/sbin"
+  fi
+  # the SteamOS names older scripts and docs use
+  ln -s holo-bootconf "$pkgdir/usr/bin/steamos-bootconf"
+}

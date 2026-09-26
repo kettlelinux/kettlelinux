@@ -8,12 +8,23 @@
 # Without it output is for a terminal. Either way everything is logged under /var/log/kettle.
 
 DISK=/dev/sda                      # UFS LUN 0: Android, and Kettle once installed
-BACKUPS=/var/lib/kettle/ufs-backup # on the SD card system
+BACKUPS=/home/.kettle/ufs-backup   # on the SD card system's home partition (/var is small)
+# Kettle's partitions after userdata: the SteamOS A/B layout of the SD card image (see
+# docs/UPDATES.md), with the same sizes except a 512 MiB ESP. Slot A's root is named
+# rootfs-A.partial until the install has been verified, and the ESP stays empty until then:
+# a half-done install never boots.
 ESP_LABEL=kettle-esp
-ROOT_LABEL=kettle-ufs-root         # SD image root is "kettle-root"
-PARTIAL_LABEL=kettle-ufs-root.partial   # root while an install is being written
+ROOT_LABEL=rootfs-A
+PARTIAL_LABEL=rootfs-A.partial
+OLD_LABELS="kettle-ufs-root kettle-ufs-root.partial"   # Kettle before A/B updates (one root)
+KETTLE_LABELS="$ESP_LABEL efi-A efi-B $ROOT_LABEL $PARTIAL_LABEL rootfs-B var-A var-B home $OLD_LABELS"
 ESP_TYPE=C12A7328-F81F-11D2-BA4B-00A0C93EC93B
+DATA_TYPE=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7   # efi-A/B (FAT, not ESPs)
 ROOT_TYPE=B921B045-1DF0-41C3-AF44-4C6F280D3FAE   # root-arm64
+LINUX_TYPE=0FC63DAF-8483-4772-8E79-3D69D8477DE4  # var-A/B
+HOME_TYPE=933AC7E1-2EB4-4F13-B844-0E14E2AEF915
+ESP_MIB=512 EFI_MIB=64 ROOTFS_MIB=12288 VAR_MIB=256
+FIXED_MIB=$(( ESP_MIB + 2 * EFI_MIB + 2 * ROOTFS_MIB + 2 * VAR_MIB ))   # everything but home
 MIN_BATTERY=50                     # % needed to start without the charger
 PROGRESS=0 YES=0
 
@@ -42,6 +53,12 @@ start_log() {
 }
 
 need_root() { [ "$(id -u)" = 0 ] || die "run as root (sudo $0)"; }
+# $DISK must be the UFS (LUN 0), never a USB drive that happened to get its name
+need_ufs_disk() {
+  [ -b "$DISK" ] || die "$DISK not found"
+  readlink -f "/sys/block/${DISK##*/}" | grep -q ufshc || die "$DISK is not the internal UFS storage"
+  [ "$(lun_dev 0)" = "$DISK" ] || die "$DISK is not LUN 0 of the internal UFS storage"
+}
 need_sd_root() {
   case "$(findmnt -no SOURCE /)" in
     /dev/mmcblk*) ;;
@@ -109,31 +126,40 @@ pt_norm() { sfdisk -d "$1" 2>/dev/null | sed -e 's|^/dev/[a-z]*\([0-9]*\) |p\1 |
 disk_end_b() {
   sfdisk -d "$DISK" | awk '/^last-lba:/ { l = $2 } /^sector-size:/ { s = $2 } END { print (l + 1) * (s ? s : 512) }'
 }
-# What copying this SD system to the internal storage takes: "<system bytes> <game bytes>"
-# (Steam game files, left out by --no-games; backups on the SD card are never copied)
+# What copying this SD system to the internal storage takes: "<home bytes> <game bytes>" (the
+# system image and /var go into their fixed-size partitions; Steam game files are left out
+# by --no-games; backups on the SD card are never copied)
 copy_bytes() {
-  local sys bk games=0 h
-  sys=$(df -B1 --output=used / | tail -1)
+  local home bk games=0 h
+  home=$(df -B1 --output=used /home | tail -1)
   bk=$(du -sbx "$BACKUPS" 2>/dev/null | cut -f1 || true)
   for h in /home/*/.local/share/Steam/steamapps; do
     [ -d "$h" ] && games=$(( games + $(du -sbxc "$h/common" "$h/downloading" 2>/dev/null | tail -1 | cut -f1) ))
   done
-  echo "$(( sys - ${bk:-0} - games )) $games"
+  echo "$(( home - ${bk:-0} - games )) $games"
 }
-# Smallest Kettle root partition for a copy of $1 bytes: 10% + 8 GiB to grow, at least 32 GiB
+# Smallest space for Kettle when copying $1 bytes of /home: the fixed partitions, and a home
+# with 10% + 8 GiB to grow, at least 16 GiB
 kettle_min_bytes() {
-  local b=$(( $1 + $1 / 10 + 8 * 1024**3 ))
-  [ "$b" -ge $(( 32 * 1024**3 )) ] || b=$(( 32 * 1024**3 ))
-  echo "$b"
+  local h=$(( $1 + $1 / 10 + 8 * 1024**3 ))
+  [ "$h" -ge $(( 16 * 1024**3 )) ] || h=$(( 16 * 1024**3 ))
+  echo $(( FIXED_MIB * 1024**2 + h ))
 }
-ESP_MIB=512
 MIN_ANDROID_GB=16                  # "minimal Android": room to boot and set up, little else
 
-# What is on the internal storage: none | partial | installed
+# What is on the internal storage: none | partial | installed | old (a Kettle install from before
+# A/B updates: remove it, kettle-uninstall-internal, and install again)
 install_state() {
+  local l
+  for l in $OLD_LABELS; do [ -n "$(part_by_label "$l")" ] && { echo old; return; }; done
   if [ -n "$(part_by_label $ROOT_LABEL)" ]; then echo installed
   elif [ -n "$(part_by_label $PARTIAL_LABEL)" ] || [ -n "$(part_by_label $ESP_LABEL)" ]; then echo partial
   else echo none; fi
+}
+# Kettle's partitions on $DISK (any layout), one device per line
+kettle_parts() {
+  local l
+  for l in $KETTLE_LABELS; do part_by_label "$l"; done | sort -u
 }
 
 # Estimated zstd size of a device (byte range $2..$2+$3 skipped): sampled blocks that read back as

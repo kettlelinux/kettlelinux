@@ -1,0 +1,17 @@
+[Unit]
+Description=Grow this slot's root filesystem to the slot and make it read-only
+# Kettle's system images are built rootless and at their smallest (see build-image.sh), so on a
+# slot's first boot the filesystem is grown to its partition and given the btrfs read-only flag
+# SteamOS images carry. holo-readonly disable leaves /.ROOTFS_RW behind: a root made writable
+# on purpose stays that way.
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target
+ConditionPathExists=!/.ROOTFS_RW
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'holo-readonly status >/dev/null || { btrfs filesystem resize max /; holo-readonly enable; }'
+
+[Install]
+WantedBy=sysinit.target

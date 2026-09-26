@@ -146,7 +146,7 @@ A backup of the internal storage is made first. Keep the charger connected: it t
   fi
 
   # Largest Android share that still leaves Kettle enough room
-  max=$(( (SPACE_B - ESP_MIB * 1024**2 - $(kettle_min_bytes "$copy")) / 1024**3 ))
+  max=$(( (SPACE_B - $(kettle_min_bytes "$copy")) / 1024**3 ))
   if [ "$max" -lt "$MIN_ANDROID_GB" ]; then
     error "The internal storage is too small for this system$games_txt: Kettle needs $(gib "$(kettle_min_bytes "$copy")") GiB next to the minimum Android."
     return 0
@@ -189,7 +189,8 @@ Do not power off or remove the SD card until it has finished." "Erase Android da
   • To start it: power off, remove the SD card and start Linux as usual.
   • With the SD card inserted, the card's system starts instead.
   • Android's next start resets its data and runs its setup. If it shows \"Cannot load Android system\", choose <i>Factory data reset</i>.
-  • The backup is in /var/lib/kettle/ufs-backup on this SD card: copy it to a computer as well.
+  • It updates itself like this SD card's system does (Settings, System in Game Mode).
+  • The backup is in $BACKUPS on this SD card: copy it to a computer as well.
   • To undo, run the Kettle Installer from the SD card again."
     exit 0
   else
@@ -273,8 +274,12 @@ while :; do
             backup "Back up the internal storage" "To this SD card, without installing anything" \
             restore "Restore a backup" "Put the internal storage back to an earlier backup") ;;
     installed) action=$(choose "Kettle Linux is installed on the internal storage. What would you like to do?" \
-            reinstall "Update the internal install" "Copy this SD card's system to it again" \
+            reinstall "Reinstall the internal system" "Replace it with a copy of this SD card's system" \
             uninstall "Remove from internal storage" "Give the space back to Android" \
+            backup "Back up the internal storage" "To this SD card" \
+            restore "Restore a backup" "Put the internal storage back to an earlier backup") ;;
+    old) action=$(choose "An older Kettle Linux (from before system updates) is on the internal storage. Remove it, then install this version. What would you like to do?" \
+            uninstall "Remove it" "Give the space back to Android, then install again" \
             backup "Back up the internal storage" "To this SD card" \
             restore "Restore a backup" "Put the internal storage back to an earlier backup") ;;
     *) action=$(choose "An installation to the internal storage did not finish (it cannot start yet). What would you like to do?" \

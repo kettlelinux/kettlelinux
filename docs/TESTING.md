@@ -1,13 +1,17 @@
 # Testing on an Odin 2 Portal
 
-The SD card's first partition (FAT, `KETTLE`) carries every boot path, so it works
-with whichever loader the device runs:
+The SD card's first partition (FAT, `KETTLE`, the SteamOS `esp`) carries every boot path, so
+it works with whichever loader the device runs:
 
-| Loader | Uses |
-|---|---|
-| ROCKNIX ABL | `\KERNEL` + `\KERNEL.md5` (boot.img v0, all SM8550 DTBs; ABL picks by Device model) |
-| U-Boot (standard boot / distro_bootcmd) | `\extlinux\extlinux.conf` → `\Image` + `\dtbs\qcom\qcs8550-ayn-odin2portal.dtb` |
-| Any UEFI (U-Boot EFI, ABL EFI chainload) | `\EFI\BOOT\BOOTAA64.EFI` = systemd-boot → `\loader\entries\kettle.conf` |
+| Loader | Uses | Slot fallback |
+|---|---|---|
+| ROCKNIX ABL | `\KERNEL` + `\KERNEL.md5` (boot.img v0, all SM8550 DTBs; ABL picks by Device model) | no: always the newest slot |
+| U-Boot (standard boot / distro_bootcmd) | `\extlinux\extlinux.conf` → `\Image` + `\dtbs\qcom\qcs8550-ayn-odin2portal.dtb` | no: always the newest slot |
+| Any UEFI (U-Boot EFI, ABL EFI chainload) | `\EFI\BOOT\BOOTAA64.EFI` = steamcl → the slot's GRUB (`efi-A`/`efi-B`) | yes ([UPDATES.md](UPDATES.md)) |
+
+U-Boot usually tries extlinux before EFI, and would then never reach steamcl: which one it
+used shows in the checklist below (Boot path). That decides whether the SD card image should
+keep extlinux.
 
 Partition 1 also has the GPT *LegacyBIOSBootable* attribute, which older U-Boot
 `distro_bootcmd` scripts use to choose the partition. From a U-Boot prompt you can boot by hand:
@@ -41,11 +45,12 @@ Boot controls with the ROCKNIX ABL:
 ```sh
 scripts/build-kernel.sh && scripts/build-packages.sh
 WIFI_SSID='MyNetwork' WIFI_PSK='secret' scripts/build-image.sh   # Wi-Fi optional but needed for SSH
-sudo dd if=out/kettle-YYYYMMDD.img of=/dev/sdX bs=4M conv=fsync status=progress
+sudo dd if=out/kettle-YYYYMMDD.N-odin2portal.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
-Check `/dev/sdX` with `lsblk` first — dd overwrites the whole target.
-The root partition grows to fill the card on first boot.
+Check `/dev/sdX` with `lsblk` first — dd overwrites the whole target. The card needs 32 GB or
+more. On first boot the system creates slot B and `/home` in the rest of the card (the SteamOS
+layout, [UPDATES.md](UPDATES.md)); that first start takes a little longer.
 
 Login: `kettle` / `kettle` (sudo via wheel), on the panel console or `ssh kettle@kettle.local`
 (or the IP from your router). Root login is disabled.
@@ -56,6 +61,11 @@ Login: `kettle` / `kettle` (sudo via wheel), on the panel console or `ssh kettle
 |---|---|---|
 | Boot / panel | — | console on the OLED, rotated upright |
 | Kernel | `uname -r` | `7.2.7-kettle` |
+| Boot path | `ls /sys/firmware/efi`; `holo-bootconf this-image`; `lsblk -o NAME,PARTLABEL,SIZE,MOUNTPOINTS` | present if steamcl booted it (absent: extlinux or `\KERNEL`); `A`; `rootfs-B` and `home` exist, `/home` fills the card |
+| Read-only system | `holo-readonly status`; `findmnt /etc /var /home` | `enabled`; `/etc` an overlay, `/var` and `/home` their own partitions |
+| Updates | `sudo rauc status`; `steamos-update check` | slot A booted, good; "No update available" or a build (needs `KETTLE_UPDATE_URL`) |
+| Update from a file | copy a newer build's `.raucb` and its `.castr/` folder into one directory on the device; `sudo rauc install kettle-….raucb`; reboot | installs into slot B; boots it (`holo-bootconf this-image`: `B`) |
+| Slot fallback (EFI boot only) | in slot B: `sudo holo-bootconf config --image B --set image-invalid 1`; reboot | slot A boots |
 | Wi-Fi | `nmcli dev wifi list` | WCN7850 (`ath12k_pci`) sees networks |
 | Bluetooth | `bluetoothctl show` | controller present |
 | Gamepad | `sudo evtest` | "RSInput Gamepad"-like device; sticks/triggers/buttons move |

@@ -1,0 +1,4 @@
+# Kettle Linux: desync, which installs updates, reads the running slot's data from the file next
+# to its chunk index (rootfs.caibx). steamos-atomupd-client makes this link before each update;
+# it is here too so that `rauc install <bundle>` works without the client.
+L+ /var/lib/steamos-atomupd/rootfs - - - - /dev/disk/by-partsets/self/rootfs

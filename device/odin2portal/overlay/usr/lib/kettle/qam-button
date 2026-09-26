@@ -1,21 +1,33 @@
 #!/usr/bin/python3
-"""Game Mode: open Steam's Quick Access menu from the button below the right stick.
+"""Game Mode: toggle Steam's Quick Access menu from the button below the right stick.
 
-That button reports BTN_BACK, which Steam leaves unmapped. Steam opens Quick Access on
-Guide+A, and has no steam:// URL for it, so on each press we inject that chord into the pad's
-own event stream: Steam then sees it from the same controller it already reads.
+Fallback for when InputPlumber (which maps the button itself) is not running.
+That button reports BTN_BACK, which Steam leaves unmapped, and Steam has no steam:// URL for
+Quick Access. Faking the Guide+A chord on the pad works but leaks a plain A press whenever
+Steam reads A before Guide, activating whatever has focus. Instead we call the same handler
+the Steam Deck's "..." button uses, through the client's CEF DevTools port (opened by
+run-steam), so no fake input ever reaches Steam.
 """
+import base64
 import errno
+import json
+import os
+import socket
+import struct
 import sys
 import time
+import urllib.request
+from urllib.parse import urlparse
 
 import evdev
 from evdev import ecodes as e
 
 PAD_NAME = "AYN Odin2 Gamepad"
 QAM_BUTTON = e.BTN_BACK
-CHORD = (e.BTN_MODE, e.BTN_SOUTH)
-HOLD = 0.08  # s; Steam polls the pad, so a same-frame press/release can be missed
+CEF = "http://127.0.0.1:8080/json"
+CEF_TIMEOUT = 2  # s
+TOGGLE_QAM = ("(w => w ? (w.OnQuickAccessButtonPressed(), true) : false)"
+              "(SteamUIStore?.WindowStore?.GamepadUIMainWindowInstance)")
 
 
 def log(msg):
@@ -34,21 +46,44 @@ def find_pad():
     return None
 
 
-def send(pad, code, value):
-    pad.write(e.EV_KEY, code, value)
-    pad.write(e.EV_SYN, e.SYN_REPORT, 0)
+def cef_eval(expr):
+    """Evaluate expr in Steam's SharedJSContext over a minimal WebSocket client."""
+    with urllib.request.urlopen(CEF, timeout=CEF_TIMEOUT) as resp:
+        targets = json.load(resp)
+    url = next(t["webSocketDebuggerUrl"] for t in targets if t.get("title") == "SharedJSContext")
+    u = urlparse(url)
+    with socket.create_connection((u.hostname, u.port), timeout=CEF_TIMEOUT) as sock:
+        key = base64.b64encode(os.urandom(16)).decode()
+        sock.sendall(f"GET {u.path} HTTP/1.1\r\nHost: {u.netloc}\r\nUpgrade: websocket\r\n"
+                     f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+                     "Sec-WebSocket-Version: 13\r\n\r\n".encode())
+        f = sock.makefile("rb")
+        if b" 101 " not in f.readline():
+            raise OSError("CEF refused the WebSocket upgrade")
+        while f.readline() not in (b"\r\n", b""):
+            pass
+        payload = json.dumps({"id": 1, "method": "Runtime.evaluate",
+                              "params": {"expression": expr, "returnByValue": True}}).encode()
+        n = len(payload)
+        header = bytes([0x81, 0x80 | n]) if n < 126 else bytes([0x81, 0xFE]) + struct.pack(">H", n)
+        mask = os.urandom(4)
+        sock.sendall(header + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+        _, b1 = f.read(2)
+        n = b1 & 0x7F
+        if n == 126:
+            n = struct.unpack(">H", f.read(2))[0]
+        elif n == 127:
+            n = struct.unpack(">Q", f.read(8))[0]
+        reply = json.loads(f.read(n))
+    return reply.get("result", {}).get("result", {}).get("value")
 
 
-def open_qam(pad):
-    held = set(pad.active_keys())
-    for code in CHORD:  # Guide first, so Steam treats A as a chord and not a plain press
-        if code not in held:
-            send(pad, code, 1)
-            time.sleep(HOLD)
-    for code in reversed(CHORD):
-        if code not in held:
-            send(pad, code, 0)
-            time.sleep(HOLD)
+def toggle_qam():
+    try:
+        if not cef_eval(TOGGLE_QAM):
+            log("Quick Access: Steam's gamepad UI is not up")
+    except (OSError, ValueError, StopIteration) as err:
+        log(f"Quick Access: {err!r}")
 
 
 def run():
@@ -66,7 +101,7 @@ def run():
         try:
             for ev in pad.read_loop():
                 if ev.type == e.EV_KEY and ev.code == QAM_BUTTON and ev.value == 1:
-                    open_qam(pad)
+                    toggle_qam()
         except OSError as err:
             if err.errno != errno.ENODEV:
                 raise

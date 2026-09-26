@@ -120,6 +120,10 @@ steamos-manager
 # The Portal's pad as a Steam Deck controller in Game Mode (built by us, packages/inputplumber;
 # started and stopped with Game Mode by kettle-inputplumber.service)
 inputplumber
+# System updates as on SteamOS: A/B slots, steamcl + per-slot GRUB, RAUC bundles checked by
+# atomupd (Steam's Check for updates). Valve's code, built by us for arm64 (packages/steamos-efi,
+# packages/steamos-customizations-kettle); see docs/UPDATES.md
+steamos-customizations-kettle
 # Game Mode power button: short press = Steam's sleep, long press = Steam's power menu
 # (its hwdb already tags the Portal's pmic_pwrkey; Game Mode only, see its kettle.conf drop-in)
 steamos-powerbuttond

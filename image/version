@@ -1,0 +1,3 @@
+# Kettle Linux version (VERSION_ID in os-release, semantic versioning). Each image build also gets
+# a BUILD_ID, YYYYMMDD.N, which is what the update server orders releases by.
+0.1.0

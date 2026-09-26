@@ -9,7 +9,7 @@
 # the snapshot's 1.78.
 pkgname=inputplumber
 pkgver=0.81.0
-pkgrel=1
+pkgrel=2
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Input router and remapper daemon (Steam Deck controller emulation for the Portal)'
@@ -25,7 +25,7 @@ source=("InputPlumber-$pkgver.tar.gz::https://github.com/ShadowBlip/InputPlumber
 noextract=("rust-$_rust-aarch64-unknown-linux-gnu.tar.xz")
 sha256sums=('804ff31b6b67efe266f21cc752282b1defe14b34916261d0600da1b6094a21a7'
             '0b514a8cc1cbcd939bff0f151661fe58b6ea5c7a7f645a5098c69e32e8c1e0a2'
-            'a92862ed5f5d344754d2766b981245e6abf64b01e7eddf5b971d194723d855d6')
+            'fda1ae4bfb045bb67e047ac73be99037079e753e268ce35c50db91c4dc2d57c1')
 
 prepare() {
   rm -rf rust-dist rust && mkdir rust-dist

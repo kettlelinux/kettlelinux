@@ -62,6 +62,8 @@ for name in "${names[@]}"; do
   done
   for p in "$CHROOT/build/$name"/.out/*.pkg.tar.zst; do
     cp "$p" "$LOCAL_REPO/"
+    # a rebuild keeps its version: drop pacman's cached copy of the old build
+    rm -f "$PKG_CACHE/$(basename "$p")"
     repo-add -q -R "$LOCAL_REPO/kettle.db.tar.zst" "$LOCAL_REPO/$(basename "$p")"
     log "added $(basename "$p")"
   done

@@ -1,0 +1,70 @@
+From 6077abd4a9dfd6625c44718ee8695e02a71e6593 Mon Sep 17 00:00:00 2001
+From: Kettle <kettle@localhost>
+Date: Sat, 26 Sep 2026 12:17:26 -0500
+Subject: [PATCH 2/4] rauc: configurable compatible string, no verity slots
+
+Kettle Linux has no verity-A/verity-B partitions (see STEAMOS_ALL_PARTLABELS),
+and names its own RAUC compatible (RAUC_COMPATIBLE).
+---
+ atomic-update/rauc/system.conf.in | 12 +-----------
+ common.mk                         |  4 ++++
+ 2 files changed, 5 insertions(+), 11 deletions(-)
+
+diff --git a/atomic-update/rauc/system.conf.in b/atomic-update/rauc/system.conf.in
+index 9323c07..287b305 100644
+--- a/atomic-update/rauc/system.conf.in
++++ b/atomic-update/rauc/system.conf.in
+@@ -1,5 +1,5 @@
+ [system]
+-compatible=steamos-amd64
++compatible=@rauc_compatible@
+ bootloader=custom
+ max-bundle-download-size=268435456
+ activate-installed=false
+@@ -22,21 +22,11 @@ bootname=A
+ device=@udev_symlinks_absdir@/A/rootfs
+ type=raw
+ 
+-[slot.verity.0]
+-device=@udev_symlinks_absdir@/A/verity
+-parent=rootfs.0
+-type=raw
+-
+ [slot.rootfs.1]
+ bootname=B
+ device=@udev_symlinks_absdir@/B/rootfs
+ type=raw
+ 
+-[slot.verity.1]
+-device=@udev_symlinks_absdir@/B/verity
+-parent=rootfs.1
+-type=raw
+-
+ [slot.rootfs.2]
+ bootname=dev
+ device=@udev_symlinks_absdir@/dev/rootfs
+diff --git a/common.mk b/common.mk
+index 604fc8f..ca40220 100644
+--- a/common.mk
++++ b/common.mk
+@@ -118,6 +118,9 @@ ATOMUPD_BRANCHES_LIST := stable;rc;beta;bc;main
+ # separator.
+ ATOMUPD_DEV_BRANCHES_LIST := main;staging
+ 
++# The RAUC compatible string: bundles for anything else are refused
++RAUC_COMPATIBLE := steamos-amd64
++
+ # Directory where RAUC will mount the update bundle
+ RAUC_RUNTIME_DIR := /run/rauc
+ 
+@@ -181,6 +184,7 @@ SWAPFILE=/home/swapfile
+ 	  -e 's|@atomupd_branches_list@|$(ATOMUPD_BRANCHES_LIST)|g' \
+ 	  -e 's|@atomupd_dev_branches_list@|$(ATOMUPD_DEV_BRANCHES_LIST)|g' \
+ 	  -e 's|@rauc_runtime_dir@|$(RAUC_RUNTIME_DIR)|g' \
++	  -e 's|@rauc_compatible@|$(RAUC_COMPATIBLE)|g' \
+ 	  -e 's|@steamos_atomupd_runtime_dir@|$(STEAMOS_ATOMUPD_RUNTIME_DIR)|g' \
+ 	  -e 's|@reboot_for_update@|$(REBOOT_FOR_UPDATE)|g' \
+ 	  -e 's|@holo_booted_slot_sync_trigger@|$(HOLO_BOOTED_SLOT_SYNC_TRIGGER)|g' \
+-- 
+2.55.0
+

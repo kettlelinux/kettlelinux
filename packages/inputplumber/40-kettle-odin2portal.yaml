@@ -2,7 +2,8 @@
 # Kettle Linux: the Portal's pad as a Steam Deck controller. Sorts before upstream's
 # 50-ayn_odin2.yaml (Xbox Elite target), which then finds the pad already in use.
 # rsinput1 (upstream): the button below the right stick is Quick Access, and North/West are
-# swapped back to the Xbox/Deck layout the kernel driver reports by position.
+# swapped back to the Xbox/Deck layout the kernel driver reports by position, and the back
+# buttons (BTN_Z/BTN_C) are the left/right paddles.
 version: 1
 kind: CompositeDevice
 name: AYN Odin 2 Portal (Kettle)
@@ -25,6 +26,13 @@ source_devices:
       phys_path: rsinput-gamepad/input0
       vendor_id: "2020"
       product_id: "3001"
+      handler: event*
+
+  # the back buttons (M1/M2), a gpio-keys device from our dts emitting BTN_Z/BTN_C
+  - group: gamepad
+    capability_map_id: rsinput1
+    evdev:
+      name: gpio-keys-paddles
       handler: event*
 
 target_devices:

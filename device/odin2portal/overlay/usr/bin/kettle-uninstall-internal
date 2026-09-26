@@ -1,8 +1,8 @@
 #!/bin/bash
 # Remove the internal Kettle Linux install and give its space back to Android.
 #
-# Deletes (and trims) the kettle-esp and kettle-ufs-root partitions, then grows Android's
-# userdata over them. Android's apps and data are kept by default; Android's encrypted file
+# Deletes (and trims) Kettle's partitions (the A/B layout, or the single root of Kettle before
+# system updates), then grows Android's userdata over them. Android's apps and data are kept by default; Android's encrypted file
 # system is not resized from Linux, so the extra space shows up after Android's next factory
 # reset. --wipe-android asks Android's recovery to reset it now instead (fresh setup, full space).
 # Nothing else on the internal storage is touched. To put back the exact state from before the
@@ -30,16 +30,15 @@ need_sd_root
 inhibit "Removing Kettle Linux from the internal storage" "${ARGS[@]}"
 start_log uninstall-internal "${ARGS[@]}"
 need_power
-[ -b "$DISK" ] || die "$DISK not found"
+need_ufs_disk
 none_mounted "$DISK" || die "a partition of $DISK is mounted"
 
 UD=$(part_by_label userdata)
 [ -n "$UD" ] || die "Android userdata partition not found on $DISK"
 UD_N=$(partnum "$UD")
 [ "$(install_state)" != none ] || die "Kettle Linux is not installed on the internal storage"
-ESP=$(part_by_label $ESP_LABEL)
-ROOT=$(part_by_label $ROOT_LABEL); [ -n "$ROOT" ] || ROOT=$(part_by_label $PARTIAL_LABEL)
-kettle=(); for p in "$ESP" "$ROOT"; do [ -n "$p" ] && kettle+=("$p"); done
+mapfile -t kettle < <(kettle_parts)
+[ ${#kettle[@]} -gt 0 ] || die "no Kettle partitions found on $DISK"
 
 # Only Kettle's partitions may follow userdata, or growing it would cover something else
 ud_start=$(part_start_b "$UD")

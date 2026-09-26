@@ -91,7 +91,7 @@ else
     for n in $(bash -c ". '$src'; echo \${pkgname[@]}" 2>/dev/null); do OURS[$n]=1; done
   done
   theirs() { local p out=(); for p in "$@"; do [ -z "${OURS[${p%%[<>=]*}]:-}" ] && out+=("$p"); done; echo "${out[*]}"; }
-  targets=("build-chroot:base base-devel")
+  targets=("build-chroot:base base-devel" "bundle-tools:rauc casync squashfs-tools")
   for src in "$ROOT"/packages/*/PKGBUILD; do
     deps="$(theirs $(bash -c ". '$src'; echo \${depends[@]} \${makedepends[@]}" 2>/dev/null))"
     [ -n "$deps" ] && targets+=("$(basename "$(dirname "$src")"):$deps")
