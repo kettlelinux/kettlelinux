@@ -8,7 +8,7 @@ include(KDEInstallDirs)
 include(KDECMakeSettings)
 include(KDECompilerSettings NO_POLICY_SCOPE)
 
-find_package(Qt6 6.7 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Widgets)
+find_package(Qt6 6.7 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Widgets)
 find_package(KF6 6.5 REQUIRED COMPONENTS CoreAddons Config DBusAddons KIO Service WindowSystem)
 
 # where welcome-flatpak lives, and the window icon (the Plasma splash's kettle)
@@ -42,7 +42,7 @@ qt_add_qml_module(kettle-welcome
 )
 
 target_link_libraries(kettle-welcome PRIVATE
-    Qt6::Quick Qt6::Qml Qt6::QuickControls2 Qt6::Widgets
+    Qt6::Network Qt6::Quick Qt6::Qml Qt6::QuickControls2 Qt6::Widgets
     KF6::CoreAddons KF6::ConfigCore KF6::DBusAddons KF6::KIOGui KF6::Service KF6::WindowSystem)
 
 install(TARGETS kettle-welcome ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})

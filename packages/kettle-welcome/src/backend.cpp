@@ -3,6 +3,7 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QNetworkInterface>
 #include <QProcess>
 #include <QQuickWindow>
 
@@ -31,6 +32,7 @@ Backend::Backend(const QString &screenshotDir, QObject *parent)
     refreshApps();
     pollStatus(); // picks up an install started before the window was reopened
     refreshBootMode();
+    refreshSsh();
 }
 
 bool Backend::showAtLogin() const
@@ -104,6 +106,49 @@ void Backend::setBootMode(const QString &mode)
     run(steamosctl, {QStringLiteral("set-default-login-mode"), mode}, [this](int, const QString &, const QString &) {
         refreshBootMode();
     });
+}
+
+void Backend::refreshSsh()
+{
+    // enabled at boot and running now: what the switch promises
+    run(QStringLiteral("systemctl"), {QStringLiteral("is-enabled"), QStringLiteral("sshd.service")}, [this](int enabled, const QString &, const QString &) {
+        run(QStringLiteral("systemctl"), {QStringLiteral("is-active"), QStringLiteral("sshd.service")}, [this, enabled](int active, const QString &, const QString &) {
+            m_sshEnabled = enabled == 0 && active == 0;
+            m_sshBusy = false;
+            Q_EMIT sshChanged();
+        });
+    });
+}
+
+void Backend::setSshEnabled(bool enabled)
+{
+    if (m_sshBusy || enabled == m_sshEnabled)
+        return;
+    m_sshBusy = true;
+    Q_EMIT sshChanged();
+    // systemd asks polkit, so the desktop's authentication dialog asks for the password;
+    // read the state back either way, so a cancelled dialog leaves the switch where it was
+    run(QStringLiteral("systemctl"),
+        {enabled ? QStringLiteral("enable") : QStringLiteral("disable"), QStringLiteral("--now"), QStringLiteral("sshd.service")},
+        [this](int, const QString &, const QString &) {
+            refreshSsh();
+        });
+}
+
+QStringList Backend::addresses() const
+{
+    QStringList out;
+    const auto ifaces = QNetworkInterface::allInterfaces();
+    for (const QNetworkInterface &i : ifaces) {
+        if (!(i.flags() & QNetworkInterface::IsUp) || (i.flags() & QNetworkInterface::IsLoopBack))
+            continue;
+        const auto entries = i.addressEntries();
+        for (const QNetworkAddressEntry &e : entries) {
+            if (e.ip().protocol() == QAbstractSocket::IPv4Protocol)
+                out << e.ip().toString();
+        }
+    }
+    return out;
 }
 
 void Backend::installApps(const QStringList &ids)
