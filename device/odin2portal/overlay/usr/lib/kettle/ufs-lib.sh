@@ -130,11 +130,14 @@ disk_end_b() {
 # system image and /var go into their fixed-size partitions; Steam game files are left out
 # by --no-games; backups on the SD card are never copied)
 copy_bytes() {
-  local home bk games=0 h
+  local home bk games=0 d s
   home=$(df -B1 --output=used /home | tail -1)
   bk=$(du -sbx "$BACKUPS" 2>/dev/null | cut -f1 || true)
-  for h in /home/*/.local/share/Steam/steamapps; do
-    [ -d "$h" ] && games=$(( games + $(du -sbxc "$h/common" "$h/downloading" 2>/dev/null | tail -1 | cut -f1) ))
+  # Steam makes common/ and downloading/ only when it needs them: count the ones there are
+  for d in /home/*/.local/share/Steam/steamapps/{common,downloading}; do
+    [ -d "$d" ] || continue
+    s=$(du -sbx "$d" 2>/dev/null | cut -f1 || true)
+    games=$(( games + ${s:-0} ))
   done
   echo "$(( home - ${bk:-0} - games )) $games"
 }
@@ -200,7 +203,7 @@ matching_backups() {
       diff -q <(pt_norm "$dev") <(sed -e 's|^/dev/[a-z]*\([0-9]*\) |p\1 |' -e '/^device:/d' "$d/lun$l.sfdisk") \
         >/dev/null || { ok=0; break; }
     done < <(ufs_luns)
-    [ "$ok" = 1 ] && echo "$d $(sed -n 's/^kind=//p' "$d/manifest")"
+    if [ "$ok" = 1 ]; then echo "$d $(sed -n 's/^kind=//p' "$d/manifest")"; fi
   done
 }
 

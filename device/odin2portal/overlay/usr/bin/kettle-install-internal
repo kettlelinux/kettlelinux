@@ -76,7 +76,7 @@ find_parts() {
   ROOTB=$(part_by_label rootfs-B) VARA=$(part_by_label var-A) VARB=$(part_by_label var-B)
   HOME_P=$(part_by_label home)
 }
-read -r home_b games_b < <(copy_bytes)
+read -r home_b games_b < <(copy_bytes) || die "could not measure what to copy from /home"
 
 if [ "$PLAN" = 1 ]; then
   echo "state=$STATE"
