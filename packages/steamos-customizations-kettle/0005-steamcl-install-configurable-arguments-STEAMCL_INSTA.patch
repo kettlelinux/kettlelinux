@@ -1,0 +1,69 @@
+From 925a878cfe09967650b9f84f77c9097075d63c03 Mon Sep 17 00:00:00 2001
+From: Kettle <kettle@localhost>
+Date: Sat, 26 Sep 2026 13:24:18 -0500
+Subject: [PATCH] steamcl-install: configurable arguments
+ (STEAMCL_INSTALL_ARGS)
+
+Where the system (re)installs steamcl: holo-finalize-install, run by every
+update, and holo-install-steamcl.service. Lets a distribution pass --no-efi
+on firmware whose EFI variables are read-only (a failed boot entry makes
+steamcl-install, and so the update, fail) and --flags restricted
+--force-extra-removable to keep steamcl to its own disk.
+---
+ chainloader/systemd/holo-install-steamcl.service.in | 2 +-
+ common.mk                                           | 5 +++++
+ misc/bin/holo-finalize-install.in                   | 2 +-
+ 3 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/chainloader/systemd/holo-install-steamcl.service.in b/chainloader/systemd/holo-install-steamcl.service.in
+index be5fb17..c26d737 100644
+--- a/chainloader/systemd/holo-install-steamcl.service.in
++++ b/chainloader/systemd/holo-install-steamcl.service.in
+@@ -19,7 +19,7 @@ ConditionPathExists=!/esp/@removable_efi_relpath@
+ [Service]
+ Type=oneshot
+ RemainAfterExit=yes
+-ExecStart=@sbindir@/steamcl-install
++ExecStart=@sbindir@/steamcl-install @steamcl_install_args@
+ 
+ [Install]
+ WantedBy=sysinit.target
+diff --git a/common.mk b/common.mk
+index ca40220..94838b4 100644
+--- a/common.mk
++++ b/common.mk
+@@ -53,6 +53,10 @@ GRUB_BINARY_RELPATH := $(GRUB_RELPATH)/grubx64.efi
+ # The firmware's fallback bootloader path (relative to the esp mountpoint)
+ REMOVABLE_EFI_RELPATH := efi/boot/bootx64.efi
+ 
++# Extra arguments for steamcl-install, where the system installs it (updates, and repair at
++# boot), e.g. --no-efi on firmware without writable EFI variables
++STEAMCL_INSTALL_ARGS :=
++
+ # GRUB configuration (relative to the efi mountpoint)
+ GRUB_CONFIG_RELPATH := $(GRUB_RELPATH)/grub.cfg
+ 
+@@ -167,6 +171,7 @@ SWAPFILE=/home/swapfile
+ 	  -e 's|@grub_binary_relpath@|$(GRUB_BINARY_RELPATH)|g' \
+ 	  -e 's|@grub_config_relpath@|$(GRUB_CONFIG_RELPATH)|g' \
+ 	  -e 's|@removable_efi_relpath@|$(REMOVABLE_EFI_RELPATH)|g' \
++	  -e 's|@steamcl_install_args@|$(STEAMCL_INSTALL_ARGS)|g' \
+ 	  -e 's|@steamos_relpath@|$(STEAMOS_RELPATH)|g' \
+ 	  -e 's|@bootconf_reldir@|$(BOOTCONF_RELDIR)|g' \
+ 	  -e 's|@bootconf_oldpath@|$(BOOTCONF_OLDPATH)|g' \
+diff --git a/misc/bin/holo-finalize-install.in b/misc/bin/holo-finalize-install.in
+index 6dfaf8c..52958ce 100755
+--- a/misc/bin/holo-finalize-install.in
++++ b/misc/bin/holo-finalize-install.in
+@@ -45,7 +45,7 @@ function install_bootloaders
+             exit 1
+         fi
+ 
+-        steamcl-install
++        steamcl-install @steamcl_install_args@
+         if mountpoint -q /boot
+         then
+             grub-install
+-- 
+2.55.0
+

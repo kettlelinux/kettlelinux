@@ -1,0 +1,141 @@
+# SteamOS's atomic A/B system (Valve's steamos-customizations, the Steam Deck variant), built for
+# Kettle Linux on arm64: the initramfs hook that finds the booted slot's partitions and mounts
+# /var and the /etc overlay, each slot's GRUB, steamcl's registration, the RAUC update hooks,
+# holo-readonly and the /home offload mounts. See docs/UPDATES.md.
+#
+# 0001-0008 are Kettle's changes to Valve's code (arm64, RAUC compatible and no verity slots,
+# image-build UUIDs, post-install.d hooks, steamcl-install arguments, holo-chroot without EFI,
+# factory reset by partset link, GRUB modules for update-grub). Kettle's own files:
+#   update-grub         writes a slot's grub.cfg (kernel, initramfs, devicetree) without grub-probe
+#   kettle-boot-legacy  points the ABL's \KERNEL and U-Boot's extlinux at the newest slot
+#   mkbootimg.py        builds \KERNEL (Android boot.img v0)
+#   20-kettle.conf      initramfs hooks
+#   kettle-readonly-root.service  grows a slot's root to the slot and sets the btrfs read-only flag
+#                                 on its first boot
+#   home-after-repart.conf        mounts /home after systemd-repart creates or grows it
+#   kettle-atomupd.tmpfiles       the running slot's data next to its update chunk index
+# Left out of Valve's package: Steam Deck hardware and hibernation (swap, sleep, Xorg,
+# steamos-firmware-update, the steam-deck initramfs hook, CFS tunings, OOBE migration), the
+# rules that start InputPlumber at boot (Kettle runs it with Game Mode only), Valve's signing
+# certificate (images trust Kettle's, installed by the image build).
+pkgname=steamos-customizations-kettle
+_srctag=jupiter-20260914.1
+pkgver=${_srctag#jupiter-}
+pkgrel=5
+pkgdesc='SteamOS atomic A/B system (Valve steamos-customizations) for Kettle Linux'
+arch=(aarch64)
+url='https://gitlab.steamos.cloud/holo/steamos-customizations'
+license=(LGPL-2.1-or-later BSD-3-Clause)
+depends=(e2fsprogs gptfdisk rsync util-linux mkinitcpio btrfs-progs dosfstools exfatprogs jq python
+         grub steamos-efi rauc desync steamos-atomupd-client atomupd-daemon)
+makedepends=(git systemd)
+backup=(etc/mkinitcpio.conf.d/20-kettle.conf)
+_update_url=https://updates.kettle.invalid  # no update server yet: the image build sets the real one
+source=("https://steamdeck-packages.steamos.cloud/archlinux-mirror/sources/jupiter-main/steamos-customizations-jupiter-20260914.1-2.src.tar.gz"
+        0001-Support-arm64-aarch64-as-well-as-x86_64.patch
+        0002-rauc-configurable-compatible-string-no-verity-slots.patch
+        0003-holo-grub-mkearlyconfig-take-the-filesystem-UUIDs-fr.patch
+        0004-rauc-post-install-run-the-hooks-in-post-install.d.patch
+        0005-steamcl-install-configurable-arguments-STEAMCL_INSTA.patch
+        0006-holo-chroot-bind-mount-efivars-only-if-the-system-ha.patch
+        0007-factory-reset-format-the-partitions-through-their-pa.patch
+        0008-holo-grub-mkimage-regexp-and-probe-in-the-arm64-imag.patch
+        update-grub
+        kettle-boot-legacy
+        mkbootimg.py
+        20-kettle.conf
+        desync-config.json
+        kettle-readonly-root.service
+        home-after-repart.conf
+        kettle-atomupd.tmpfiles)
+sha256sums=('1df4fcaf6af7713b8b885031eeeae0489d9cd6cd71593f93c589f89775547489'
+            'eab06145a1129c8ef66d1c351e8e20594384d93822ec3c9908ec9601436985f1'
+            'cdf3f3bef537b5c482dffb2368932138bcd6b67adf40eb67397f1a8a1e57201a'
+            '5fd11ebcff8826e764ac7cc52e8b2dbcdd8601a149de59c98c7ce5b39dc4dc8d'
+            'c9b061d3979cf64f09b200aa35346b96d49e71523e1825e5aae329f9227b2b1f'
+            '5ec6952c72c90bd2f920c4cf356de41aa16f2de25328b376c812d2d7292473a4'
+            '5731a7fb62a21459b00c5fb29ea6d7f81454792dd2c174c1b4980d8f9323c33d'
+            '78f47e2565d9a48bbd0cebaa318eeaca1540fc116003f616e5fb5817a80c5d02'
+            'a99f7889fff91cc3e11615e5a128acab636228dabcc0803b0b661f479ac685f2'
+            'ce52557046321350447f2da5650b4bae16a35cd0c451929c6fa1471e7bdf73f4'
+            '260db9fb661f59f3898007f786901402fb4c7e625d0e1629c7fdd5e653094e65'
+            '4f61a4f3a9f058ce65227cd7e607ba8c2162b1a070a3071c89517bdba2b67889'
+            '63c8a727e10cf35d79772ca5b3c11f2f15c9de9c2ee598bb1e57c6b10f518fa6'
+            '545638e85db9e487c1d03f3bad4206e5e4272c017daf5c29c726b319f2c87627'
+            'f338627672b10c5e4cf4c9944f47a019d7b1741943faa8ce5ec3e1e58b9ecfd1'
+            '1e4e26e2113dcf58b4876e16826b4b09b2fb3271dfd95d309af3743b372f36aa'
+            'bd900a5b052362bfed378e6ef6fb6c5f3ee843cf69aefbbbf947954faaa4b405')
+
+_make() {
+  make prefix=/usr sbindir=/usr/bin libexecdir=/usr/lib \
+    GRUB_BINARY_RELPATH=EFI/steamos/grubaa64.efi \
+    REMOVABLE_EFI_RELPATH=efi/boot/bootaa64.efi \
+    STEAMOS_N_PARTITIONS=8 \
+    STEAMOS_ALL_PARTLABELS='esp efi-A efi-B rootfs-A rootfs-B var-A var-B home' \
+    RAUC_COMPATIBLE=kettle-aarch64 \
+    ATOMUPD_META_URL=$_update_url/meta \
+    ATOMUPD_IMAGES_URL=$_update_url/images \
+    ATOMUPD_VARIANTS_LIST=odin2portal \
+    ATOMUPD_BRANCHES_LIST='stable;beta;main' \
+    ATOMUPD_DEV_BRANCHES_LIST=main \
+    STEAMCL_INSTALL_ARGS='--no-efi --flags restricted --force-extra-removable' \
+    "$@"
+}
+
+prepare() {
+  rm -rf src-tree
+  git clone -q "$srcdir/steamos-customizations-jupiter/steamos-customizations-jupiter" src-tree
+  git -C src-tree checkout -q "$_srctag"
+  local p
+  for p in "$srcdir"/0*.patch; do git -C src-tree apply "$p"; done
+}
+
+package() {
+  cd src-tree
+  local d
+  for d in atomic-update chainloader grub misc offload mkinitcpio; do
+    _make DESTDIR="$pkgdir" -C $d install
+  done
+
+  cd "$pkgdir"
+  rm -f etc/rauc/trusted_keys/* \
+        usr/share/X11/xorg.conf.d/10-holo-virtualdisplaysize.conf \
+        usr/lib/systemd/sleep.conf.d/steamos-suspend-then-hibernate.conf \
+        usr/lib/systemd/system-sleep/hibernate-post.sh \
+        usr/lib/systemd/system-sleep/modules-reload.sh \
+        etc/systemd/system/systemd-logind.service.d/homedir-override.conf \
+        usr/lib/udev/rules.d/90-steam-inputplumber.rules \
+        usr/lib/udev/rules.d/80-vlv-wobt.rules \
+        usr/lib/udev/hwdb.d/60-steam-inputplumber.hwdb \
+        usr/bin/steamos-firmware-update \
+        usr/lib/initcpio/install/steam-deck \
+        etc/mkinitcpio.conf.d/20-steamdeck.conf
+  # (with the links that enable them)
+  find . \( -name 'holo-cfs-debugfs*' -o -name 'holo-finish-oobe-migration*' \) -exec rm -f {} +
+  find . -type d -empty -delete
+
+  # Valve's grub-install/grub-mkimage (holo-grub-*) stand in for GRUB's, as in Valve's package
+  ln -sf /usr/lib/holo/holo-grub-install usr/bin/grub-install
+  ln -sf /usr/lib/holo/holo-grub-mkimage usr/bin/grub-mkimage
+
+  install -Dm755 "$srcdir/update-grub" usr/bin/update-grub
+  install -Dm755 "$srcdir/kettle-boot-legacy" usr/bin/kettle-boot-legacy
+  install -d usr/lib/rauc/post-install.d
+  ln -s /usr/bin/kettle-boot-legacy usr/lib/rauc/post-install.d/50-kettle-boot-legacy
+  install -Dm644 "$srcdir/mkbootimg.py" usr/lib/kettle/mkbootimg.py
+  install -Dm644 "$srcdir/20-kettle.conf" etc/mkinitcpio.conf.d/20-kettle.conf
+  install -Dm644 "$srcdir/desync-config.json" etc/desync/config.json
+  install -Dm644 "$srcdir/kettle-readonly-root.service" -t usr/lib/systemd/system
+  ln -s ../kettle-readonly-root.service usr/lib/systemd/system/sysinit.target.wants/
+  # Valve's home.mount has no [Install]: SteamOS pulls it in elsewhere
+  install -d usr/lib/systemd/system/local-fs.target.wants
+  ln -s ../home.mount usr/lib/systemd/system/local-fs.target.wants/
+  install -Dm644 "$srcdir/home-after-repart.conf" usr/lib/systemd/system/home.mount.d/kettle-repart.conf
+  install -Dm644 "$srcdir/kettle-atomupd.tmpfiles" usr/lib/tmpfiles.d/kettle-atomupd.conf
+  # Valve's steamos-atomupd-client (release-0.4 hotfixes) is built for Python 3.12; the image's
+  # Python is 3.11 (the pinned snapshot's). Its code runs on 3.11 as is (checked by compiling
+  # and importing it there), so it is made visible to 3.11.
+  install -d usr/lib/python3.11/site-packages
+  ln -s ../../python3.12/site-packages/steamosatomupd usr/lib/python3.11/site-packages/steamosatomupd
+  install -Dm644 "$srcdir/src-tree/COPYING.LGPL-2.1" -t usr/share/licenses/$pkgname
+}

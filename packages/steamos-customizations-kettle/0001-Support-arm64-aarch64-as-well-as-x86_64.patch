@@ -1,0 +1,109 @@
+From ef63a4b8672d6bcd963d30b348453040a97de2e6 Mon Sep 17 00:00:00 2001
+From: Kettle <kettle@localhost>
+Date: Sat, 26 Sep 2026 12:17:13 -0500
+Subject: [PATCH 1/4] Support arm64 (aarch64) as well as x86_64
+
+- holo-grub-mkimage builds an arm64-efi image on aarch64, with the modules
+  its config needs to boot built in (linux, fdt, zstd, gzio, efi_gop): the
+  grub modules aren't installed on the root filesystem to load later
+- holo-install-grub and holo-install-steamcl check the architecture's file
+  names (GRUB_BINARY_RELPATH, the new REMOVABLE_EFI_RELPATH) instead of the
+  x86_64 ones
+---
+ .../systemd/holo-install-steamcl.service.in       |  2 +-
+ common.mk                                         |  4 ++++
+ grub/libexec/holo-grub-mkimage.in                 | 15 ++++++++++++---
+ grub/systemd/holo-install-grub.service.in         |  2 +-
+ 4 files changed, 18 insertions(+), 5 deletions(-)
+
+diff --git a/chainloader/systemd/holo-install-steamcl.service.in b/chainloader/systemd/holo-install-steamcl.service.in
+index e1a45be..be5fb17 100644
+--- a/chainloader/systemd/holo-install-steamcl.service.in
++++ b/chainloader/systemd/holo-install-steamcl.service.in
+@@ -14,7 +14,7 @@ Wants=esp.mount
+ After=local-fs.target esp.mount
+ Before=shutdown.target sysinit.target
+ Conflicts=shutdown.target
+-ConditionPathExists=!/esp/efi/boot/bootx64.efi
++ConditionPathExists=!/esp/@removable_efi_relpath@
+ 
+ [Service]
+ Type=oneshot
+diff --git a/common.mk b/common.mk
+index 6b5bd4b..604fc8f 100644
+--- a/common.mk
++++ b/common.mk
+@@ -50,6 +50,9 @@ GRUB_RELPATH := EFI/steamos
+ # GRUB binary (relative to the efi mountpoint)
+ GRUB_BINARY_RELPATH := $(GRUB_RELPATH)/grubx64.efi
+ 
++# The firmware's fallback bootloader path (relative to the esp mountpoint)
++REMOVABLE_EFI_RELPATH := efi/boot/bootx64.efi
++
+ # GRUB configuration (relative to the efi mountpoint)
+ GRUB_CONFIG_RELPATH := $(GRUB_RELPATH)/grub.cfg
+ 
+@@ -160,6 +163,7 @@ SWAPFILE=/home/swapfile
+ 	  -e 's|@steamos_all_partlabels@|$(STEAMOS_ALL_PARTLABELS)|g' \
+ 	  -e 's|@grub_binary_relpath@|$(GRUB_BINARY_RELPATH)|g' \
+ 	  -e 's|@grub_config_relpath@|$(GRUB_CONFIG_RELPATH)|g' \
++	  -e 's|@removable_efi_relpath@|$(REMOVABLE_EFI_RELPATH)|g' \
+ 	  -e 's|@steamos_relpath@|$(STEAMOS_RELPATH)|g' \
+ 	  -e 's|@bootconf_reldir@|$(BOOTCONF_RELDIR)|g' \
+ 	  -e 's|@bootconf_oldpath@|$(BOOTCONF_OLDPATH)|g' \
+diff --git a/grub/libexec/holo-grub-mkimage.in b/grub/libexec/holo-grub-mkimage.in
+index baebbdb..0feca36 100755
+--- a/grub/libexec/holo-grub-mkimage.in
++++ b/grub/libexec/holo-grub-mkimage.in
+@@ -20,7 +20,11 @@ set -u
+ FORMAT= # --format=
+ OUTPUT= # --output=
+ 
+-DEFAULT_FORMAT=x86_64-efi
++case "$(uname -m)" in
++    x86_64)  DEFAULT_FORMAT=x86_64-efi ;;
++    aarch64) DEFAULT_FORMAT=arm64-efi ;;
++    *)       DEFAULT_FORMAT= ;;
++esac
+ DEFAULT_OUTPUT=/efi/@grub_binary_relpath@
+ 
+ # Helpers
+@@ -110,8 +114,8 @@ while [ $# -gt 0 ]; do
+ done
+ 
+ if [ -z "$FORMAT" ] && [ -z "$OUTPUT" ]; then
+-    [ "$(uname -m)" = "x86_64" ] || \
+-        fail "Unsupported architecture, we expect x86_64"
++    [ "$DEFAULT_FORMAT" ] || \
++        fail "Unsupported architecture $(uname -m), we expect x86_64 or aarch64"
+     FORMAT=$DEFAULT_FORMAT
+     OUTPUT=$DEFAULT_OUTPUT
+ fi
+@@ -129,6 +133,11 @@ cd $WORKDIR
+ 
+ MEMDISK=grub-memdisk.tar
+ MODULES=(search search_fs_uuid ext2 btrfs fat part_gpt configfile test echo sleep)
++# arm64: no modules on the root filesystem to load later, so everything the config
++# uses to boot is built in (the kernel, its devicetree, compressed btrfs)
++if [ "$FORMAT" = arm64-efi ]; then
++    MODULES+=(linux fdt zstd gzio efi_gop)
++fi
+ 
+ prefix=${PREFIX:-} \
+ @libexecdir@/holo/holo-grub-mkearlyconfig > grub.cfg
+diff --git a/grub/systemd/holo-install-grub.service.in b/grub/systemd/holo-install-grub.service.in
+index aad7d51..44fc36a 100644
+--- a/grub/systemd/holo-install-grub.service.in
++++ b/grub/systemd/holo-install-grub.service.in
+@@ -15,7 +15,7 @@ After=local-fs.target efi.mount
+ Before=shutdown.target sysinit.target
+ Conflicts=shutdown.target
+ ConditionPathExists=|!/efi/EFI/SteamOS/grub.cfg
+-ConditionPathExists=|!/efi/EFI/SteamOS/grubx64.efi
++ConditionPathExists=|!/efi/@grub_binary_relpath@
+ 
+ [Service]
+ Type=oneshot
+-- 
+2.55.0
+

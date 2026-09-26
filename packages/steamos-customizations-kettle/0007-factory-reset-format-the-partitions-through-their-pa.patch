@@ -1,0 +1,38 @@
+From 694e1ee751ce5881b35f605514b8e80ffa7ee4d7 Mon Sep 17 00:00:00 2001
+From: Kettle <kettle@localhost>
+Date: Sat, 26 Sep 2026 13:24:18 -0500
+Subject: [PATCH] factory reset: format the partitions through their
+ partset links
+
+holo-factory-reset-config records each partition as its partset link and
+the kernel device name it had then (/dev/sda40); the reset formatted the
+name. Kernel names are not stable across boots where one disk holds
+another system's partitions (Kettle Linux next to Android on UFS), so
+format the partset link, which the initramfs resolves by partition UUID.
+---
+ initrd/holo-factory-reset.ash | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/initrd/holo-factory-reset.ash b/initrd/holo-factory-reset.ash
+index 112324e..e579a5b 100644
+--- a/initrd/holo-factory-reset.ash
++++ b/initrd/holo-factory-reset.ash
+@@ -87,9 +87,13 @@ do_reset() {
+                 VAR|HOME)
+                     # these are slow so we want them done in parallel and async
+                     # BUT we need to wait until they're all done before proceeding
+-                    @INFO@ "Formatting data partition $dev ($instance)"
++                    # Format through the partset link ($instance), which the
++                    # booted image's partsets resolve by partition UUID: the
++                    # kernel name recorded with it ($dev) may belong to
++                    # another partition on this boot.
++                    @INFO@ "Formatting data partition $instance (was $dev)"
+                     (
+-                        if reset_device_ext4 "$dev" "$name" "$casefold" "$noreserved"; then
++                        if reset_device_ext4 "$instance" "$name" "$casefold" "$noreserved"; then
+                             rm -f "$cfg"
+                             @INFO@ "Reset of $dev ($instance) complete"
+                         else
+-- 
+2.55.0
+

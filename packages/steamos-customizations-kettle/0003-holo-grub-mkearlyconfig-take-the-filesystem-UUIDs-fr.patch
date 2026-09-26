@@ -1,0 +1,31 @@
+From 76a232e0e434e6e0c76231b32cc26093d5bc51f0 Mon Sep 17 00:00:00 2001
+From: Kettle <kettle@localhost>
+Date: Sat, 26 Sep 2026 12:17:26 -0500
+Subject: [PATCH 3/4] holo-grub-mkearlyconfig: take the filesystem UUIDs from
+ the environment
+
+HOLO_ROOT_UUID and HOLO_VAR_UUID let an image build generate slot A's GRUB
+before the filesystems exist on a device.
+---
+ grub/libexec/holo-grub-mkearlyconfig.in | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/grub/libexec/holo-grub-mkearlyconfig.in b/grub/libexec/holo-grub-mkearlyconfig.in
+index e708846..3fc8a7e 100755
+--- a/grub/libexec/holo-grub-mkearlyconfig.in
++++ b/grub/libexec/holo-grub-mkearlyconfig.in
+@@ -64,8 +64,9 @@ while [ $# -gt 0 ]; do
+ done
+ 
+ # Get UUIDs for root and var (optional) partitions
+-ROOTUUID=$(findmnt -no uuid /)
+-VARUUID=$(findmnt -no uuid /var || true)
++# (HOLO_ROOT_UUID/HOLO_VAR_UUID: for building an image, where / isn't the target filesystem)
++ROOTUUID=${HOLO_ROOT_UUID:-$(findmnt -no uuid /)}
++VARUUID=${HOLO_VAR_UUID:-$(findmnt -no uuid /var || true)}
+ 
+ [ "$ROOTUUID" ] || fail "Failed to get root fs uuid"
+ [ "$VARUUID"  ] || warn "Failed to get var fs uuid"
+-- 
+2.55.0
+

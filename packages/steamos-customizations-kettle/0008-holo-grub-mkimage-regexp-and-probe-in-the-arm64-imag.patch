@@ -1,0 +1,33 @@
+From 6872689abfb0927af10ad368eb41ca2cd9662ebf Mon Sep 17 00:00:00 2001
+From: Kettle <kettle@localhost>
+Date: Sat, 26 Sep 2026 13:24:30 -0500
+Subject: [PATCH] holo-grub-mkimage: regexp and probe in the arm64 image
+
+The slot's grub.cfg finds its root filesystem by partition UUID on the disk
+GRUB was loaded from ($cmdpath): a second installation's slot can carry the
+same filesystem UUID (the same update image), which search --fs-uuid can't
+tell apart.
+---
+ grub/libexec/holo-grub-mkimage.in | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/grub/libexec/holo-grub-mkimage.in b/grub/libexec/holo-grub-mkimage.in
+index 0feca36..ff9ec2e 100755
+--- a/grub/libexec/holo-grub-mkimage.in
++++ b/grub/libexec/holo-grub-mkimage.in
+@@ -134,9 +134,10 @@ cd $WORKDIR
+ MEMDISK=grub-memdisk.tar
+ MODULES=(search search_fs_uuid ext2 btrfs fat part_gpt configfile test echo sleep)
+ # arm64: no modules on the root filesystem to load later, so everything the config
+-# uses to boot is built in (the kernel, its devicetree, compressed btrfs)
++# uses to boot is built in (the kernel, its devicetree, compressed btrfs, and regexp and
++# probe to find the root filesystem on the disk GRUB was started from)
+ if [ "$FORMAT" = arm64-efi ]; then
+-    MODULES+=(linux fdt zstd gzio efi_gop)
++    MODULES+=(linux fdt zstd gzio efi_gop regexp probe)
+ fi
+ 
+ prefix=${PREFIX:-} \
+-- 
+2.55.0
+

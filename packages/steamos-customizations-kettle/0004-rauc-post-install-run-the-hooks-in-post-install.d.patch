@@ -1,0 +1,37 @@
+From 7c26401361134c1dc870b422fc7515aa382e6c08 Mon Sep 17 00:00:00 2001
+From: Kettle <kettle@localhost>
+Date: Sat, 26 Sep 2026 12:17:36 -0500
+Subject: [PATCH 4/4] rauc post-install: run the hooks in post-install.d
+
+Executables in $libdir/rauc/post-install.d/ run with the updated slot's
+name once it is installed and marked for its first boot, so a distribution
+can add steps (Kettle Linux: its bootloaders that can't choose a slot) without
+patching this script. A failing hook is a warning, not a failed update.
+---
+ atomic-update/rauc/post-install.sh.in | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/atomic-update/rauc/post-install.sh.in b/atomic-update/rauc/post-install.sh.in
+index ead2cfb..665bcec 100755
+--- a/atomic-update/rauc/post-install.sh.in
++++ b/atomic-update/rauc/post-install.sh.in
+@@ -293,6 +293,16 @@ fi
+ # attempts and setting it as the highest priority
+ (( ERR == 0 )) && holo-bootconf --image $UPDATED_SLOT set-mode first-boot
+ 
++# Distribution hooks, run with the updated slot's name once it's installed and bootable.
++# The update stands even if one of them fails.
++if (( ERR == 0 )); then
++    for hook in @libdir@/rauc/post-install.d/*; do
++        [ -x "$hook" ] || continue
++        log "Running $hook $UPDATED_SLOT"
++        "$hook" "$UPDATED_SLOT" || warn "$hook failed"
++    done
++fi
++
+ # Store the installed update version in a temporary file to record that we
+ # have a pending reboot to switch to the new image
+ # Additionally, record the current booted slot in a temporary file that
+-- 
+2.55.0
+

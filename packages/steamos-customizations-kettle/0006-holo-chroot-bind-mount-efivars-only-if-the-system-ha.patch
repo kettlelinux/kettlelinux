@@ -1,0 +1,43 @@
+From 756a356273b74310c296515e4a53e8ed65e8249a Mon Sep 17 00:00:00 2001
+From: Kettle <kettle@localhost>
+Date: Sat, 26 Sep 2026 13:24:18 -0500
+Subject: [PATCH] holo-chroot: bind-mount efivars only if the system has
+ them
+
+A kernel started without EFI (by U-Boot's extlinux, or an Android boot
+image) has no /sys/firmware/efi/efivars; the bind mount then failed, and
+with it holo-chroot and every update's post-install.
+---
+ misc/bin/holo-chroot.in | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/misc/bin/holo-chroot.in b/misc/bin/holo-chroot.in
+index 043b899..e0216a8 100755
+--- a/misc/bin/holo-chroot.in
++++ b/misc/bin/holo-chroot.in
+@@ -233,7 +233,10 @@ prepare_chroot_at() {
+     mount --bind /proc $dir/proc
+     mount --bind /run  $dir/run
+     mount --bind /sys  $dir/sys
+-    mount --bind /sys/firmware/efi/efivars $dir/sys/firmware/efi/efivars
++    # (not there when the kernel wasn't started through EFI)
++    if [ -d /sys/firmware/efi/efivars ]; then
++        mount --bind /sys/firmware/efi/efivars $dir/sys/firmware/efi/efivars
++    fi
+     mount -t tmpfs -o size=128M tmpfs $dir/tmp
+     mount "$EFI_DEVICE" $dir/efi
+     mount "$ESP_DEVICE" $dir/esp
+@@ -271,7 +274,9 @@ cleanup_chroot_at() {
+     umount $dir/esp  || :
+     umount $dir/efi  || :
+     umount $dir/tmp  || :
+-    umount $dir/sys/firmware/efi/efivars || :
++    if mountpoint -q $dir/sys/firmware/efi/efivars; then
++        umount $dir/sys/firmware/efi/efivars || :
++    fi
+     umount -R $dir/sys  || :
+     umount $dir/run  || :
+     umount -R $dir/proc || :
+-- 
+2.55.0
+
