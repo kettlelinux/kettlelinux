@@ -1,0 +1,59 @@
+# vkd3d-proton: Direct3D 12 on Vulkan, built as ARM64EC (x86-64 games) and i686 (32-bit
+# games), like Proton ARM64's. Build input for packages/wine, which installs these as its own
+# d3d12/d3d12core (with DXVK's dxgi), so every Wine prefix uses them; this package itself isn't
+# in the image.
+#
+# Upstream source, only our meson cross files (llvm-mingw's aarch64 Linux build). Their
+# cpp_args force-include <new> and <exception>: LLVM 23's libc++ no longer includes them
+# transitively, and dxil-spirv/dxbc-spirv rely on it. Submodules are fetched at the commits
+# the release tag records.
+pkgname=vkd3d-proton
+pkgver=3.0.1
+pkgrel=1
+_llvm_mingw=20260908
+pkgdesc='Vulkan-based Direct3D 12 for Wine (ARM64EC and i686)'
+arch=(any)
+url='https://github.com/HansKristian-Work/vkd3d-proton'
+license=(LGPL-2.1-or-later MIT Apache-2.0)
+makedepends=(git meson ninja glslang)
+options=(!strip !buildflags !lto)
+_llvm="llvm-mingw-$_llvm_mingw-ucrt-ubuntu-22.04-aarch64"
+source=("vkd3d-proton::git+$url.git#tag=v$pkgver"
+        "https://github.com/mstorsjo/llvm-mingw/releases/download/$_llvm_mingw/$_llvm.tar.xz"
+        cross-arm64ec.txt
+        cross-i686.txt)
+sha256sums=('SKIP'
+            'c907dd2302a292b663add18752a55ce9d544ca0fd19cf33c086ca242d5994ea6'
+            'SKIP'
+            'SKIP')
+
+prepare() {
+  cd vkd3d-proton
+  git submodule update --init --recursive
+}
+
+build() {
+  export PATH="$srcdir/$_llvm/bin:$PATH"
+  local t
+  for t in arm64ec i686; do
+    meson setup "build-$t" vkd3d-proton --cross-file "cross-$t.txt" --buildtype release \
+      --prefix /usr --bindir "lib/vkd3d-proton/$t" --libdir "lib/vkd3d-proton/$t" \
+      -Denable_tests=false -Denable_extras=false --strip
+    ninja -C "build-$t"
+  done
+}
+
+package() {
+  local t
+  for t in arm64ec i686; do
+    DESTDIR="$pkgdir" meson install -C "build-$t" --no-rebuild
+  done
+  rm "$pkgdir"/usr/lib/vkd3d-proton/*/*.dll.a
+  local l="$pkgdir/usr/share/licenses/$pkgname" d=vkd3d-proton/subprojects/dxil-spirv
+  install -Dm644 vkd3d-proton/LICENSE -t "$l"
+  install -Dm644 $d/LICENSE.MIT "$l/dxil-spirv_LICENSE"
+  install -Dm644 $d/subprojects/dxbc-spirv/LICENSE "$l/dxbc-spirv_LICENSE"
+  install -Dm644 $d/third_party/SPIRV-Tools/LICENSE "$l/SPIRV-Tools_LICENSE"
+  install -Dm644 $d/third_party/SPIRV-Cross/LICENSE "$l/SPIRV-Cross_LICENSE"
+  install -Dm644 $d/third_party/spirv-headers/LICENSE "$l/SPIRV-Headers_LICENSE"
+}

@@ -1,0 +1,1364 @@
+From 02e7748ab28e58139f76b49905b9f33ff5b121ac Mon Sep 17 00:00:00 2001
+From: Kettle <kettle@localhost>
+Date: Fri, 25 Sep 2026 16:33:13 -0500
+Subject: [PATCH 4/5] asr: add the Arm ASR upscaler (asr, asr_12)
+
+Dx12Upscaler=asr runs Arm ASR through the new D3D12 backend; Dx11Upscaler=asr_12
+drives the same backend over the DX11-on-12 bridge. [ASR] ShaderQuality picks
+the quality / balanced / performance preset, balanced by default. SGSR2 stays
+the Adreno default.
+
+Inputs follow OptiScaler's FSR2 backends (NGX MVs with MV_Scale, NGX init
+flags as FSR2 context flags, display-resolution MVs through ASR's native
+path); input resource states follow the SGSR2 backend's defaults. Sharpening
+is OptiScaler's RCAS. The accumulate pass renders to a render target, so an
+output without ALLOW_RENDER_TARGET gets an intermediate buffer and a copy.
+
+The context is sized to the actual render resolution: ASR 25.06 degrades
+badly when renderSize < maxRenderSize (reproduced with Arm's own Vulkan
+backend), so a larger render size rebuilds it at once and a smaller one
+once it has held for 30 frames. Replaced contexts are destroyed 8 frames
+later. OPTI_ASR_TIMING=1 logs the GPU time of the dispatch.
+
+SGSR2 and ASR are also added to the in-game upscaler lists.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ OptiScaler.ini                                |  14 +-
+ OptiScaler/Config.cpp                         |  11 +
+ OptiScaler/Config.h                           |   3 +
+ OptiScaler/OptiTypes.cpp                      |  45 ++
+ OptiScaler/OptiTypes.h                        |  16 +
+ OptiScaler/menu/menu_common.cpp               |   6 +-
+ OptiScaler/upscalers/FeatureProvider_Dx11.cpp |   5 +
+ OptiScaler/upscalers/FeatureProvider_Dx12.cpp |   5 +
+ OptiScaler/upscalers/IFeature_Dx12.cpp        |   2 +-
+ OptiScaler/upscalers/asr/ASRFeature.cpp       | 123 +++
+ OptiScaler/upscalers/asr/ASRFeature.h         |  51 ++
+ .../upscalers/asr/ASRFeature_Dx11on12.cpp     |  11 +
+ .../upscalers/asr/ASRFeature_Dx11on12.h       |  12 +
+ OptiScaler/upscalers/asr/ASRFeature_Dx12.cpp  | 701 ++++++++++++++++++
+ OptiScaler/upscalers/asr/ASRFeature_Dx12.h    | 101 +++
+ 15 files changed, 1101 insertions(+), 5 deletions(-)
+ create mode 100644 OptiScaler/upscalers/asr/ASRFeature.cpp
+ create mode 100644 OptiScaler/upscalers/asr/ASRFeature.h
+ create mode 100644 OptiScaler/upscalers/asr/ASRFeature_Dx11on12.cpp
+ create mode 100644 OptiScaler/upscalers/asr/ASRFeature_Dx11on12.h
+ create mode 100644 OptiScaler/upscalers/asr/ASRFeature_Dx12.cpp
+ create mode 100644 OptiScaler/upscalers/asr/ASRFeature_Dx12.h
+
+diff --git a/OptiScaler.ini b/OptiScaler.ini
+index c254a1a..3f5a74b 100644
+--- a/OptiScaler.ini
++++ b/OptiScaler.ini
+@@ -2,11 +2,11 @@
+ [Upscalers]
+ ; -------------------------------------------------------
+ ; Select Upscaler for Dx11 games
+-; fsr22 (native DX11), fsr31 (native DX11), xess (native DX11, Arc only), xess_12 (dx11on12), fsr21_12 (dx11on12), fsr22_12 (dx11on12), ffx_12 (FSR 2.3; 3.1; 4.x), sgsr2_12 (dx11on12), dlss - Default (auto) is fsr22
++; fsr22 (native DX11), fsr31 (native DX11), xess (native DX11, Arc only), xess_12 (dx11on12), fsr21_12 (dx11on12), fsr22_12 (dx11on12), ffx_12 (FSR 2.3; 3.1; 4.x), sgsr2_12 (dx11on12), asr_12 (Arm ASR, dx11on12), dlss - Default (auto) is fsr22
+ Dx11Upscaler=auto
+ 
+ ; Select Upscaler for Dx12 games
+-; xess, fsr21, fsr22, ffx (FSR 2.3; 3.1; 4.x), sgsr2, dlss
++; xess, fsr21, fsr22, ffx (FSR 2.3; 3.1; 4.x), sgsr2, asr (Arm ASR), dlss
+ ; Default (auto) is DLSS when capable gpu, FSR4 when capable gpu, XeSS otherwise
+ Dx12Upscaler=auto
+ 
+@@ -532,6 +532,16 @@ NetworkModel=auto
+ 
+ 
+ 
++; -------------------------------------------------------
++[ASR]
++; -------------------------------------------------------
++; Arm Accuracy Super Resolution (upscaler=asr / asr_12) shader preset.
++; Independent of the upscaling ratio: quality keeps FSR 2.2's image quality,
++; balanced and performance trade some of it for lower GPU cost.
++; quality, balanced or performance - Default (auto) is balanced
++ShaderQuality=auto
++
++
+ ; -------------------------------------------------------
+ [FSR]
+ ; -------------------------------------------------------
+diff --git a/OptiScaler/Config.cpp b/OptiScaler/Config.cpp
+index 11e960c..6951abd 100644
+--- a/OptiScaler/Config.cpp
++++ b/OptiScaler/Config.cpp
+@@ -254,6 +254,11 @@ bool Config::Reload(std::filesystem::path iniPath)
+             FramerateLimit.set_from_config(readFloat("Framerate", "FramerateLimit"));
+         }
+ 
++        // Arm ASR
++        {
++            AsrShaderQuality.set_from_config(readString("ASR", "ShaderQuality", true).transform(CodeToAsrQuality));
++        }
++
+         // FSR Common
+         {
+             FsrVerticalFov.set_from_config(readFloat("FSR", "VerticalFov"));
+@@ -1092,6 +1097,12 @@ bool Config::SaveIni()
+         ini.SetValue("OutputScaling", "Downscaler", GetIntValue(Instance()->OutputScalingDownscaler).c_str());
+     }
+ 
++    // Arm ASR
++    {
++        std::string quality = AsrShaderQuality.value_for_config().transform(AsrQualityToCode).value_or("auto");
++        ini.SetValue("ASR", "ShaderQuality", quality.c_str());
++    }
++
+     // FSR common
+     {
+         ini.SetValue("FSR", "VerticalFov", GetFloatValue(Instance()->FsrVerticalFov.value_for_config()).c_str());
+diff --git a/OptiScaler/Config.h b/OptiScaler/Config.h
+index 8eee1a8..cc94264 100644
+--- a/OptiScaler/Config.h
++++ b/OptiScaler/Config.h
+@@ -462,6 +462,9 @@ class Config
+     CustomOptional<bool> Fsr4EnableWatermark { false };
+     CustomOptional<bool> Fsr4DoNotLoadAmdxc64 { false };
+ 
++    // Arm ASR
++    CustomOptional<AsrQuality> AsrShaderQuality { AsrQuality::Balanced };
++
+     // FSR Common
+     CustomOptional<float> FsrVerticalFov { 60.0f };
+     CustomOptional<float> FsrHorizontalFov { 0.0f }; // off by default
+diff --git a/OptiScaler/OptiTypes.cpp b/OptiScaler/OptiTypes.cpp
+index 292b5dd..bfc1e50 100644
+--- a/OptiScaler/OptiTypes.cpp
++++ b/OptiScaler/OptiTypes.cpp
+@@ -52,6 +52,15 @@ std::string UpscalerDisplayName(Upscaler upscaler, API api)
+     case Upscaler::SGSR2:
+         return "SGSR 2";
+ 
++    case Upscaler::SGSR2_on12:
++        return "SGSR 2 w/Dx12";
++
++    case Upscaler::ASR:
++        return "Arm ASR";
++
++    case Upscaler::ASR_on12:
++        return "Arm ASR w/Dx12";
++
+     case Upscaler::FFX:
+         if (fsr4Capable && api == API::DX12)
+             return "FSR 3.X/4";
+@@ -123,6 +132,10 @@ std::string UpscalerShortName(Upscaler upscaler)
+     case Upscaler::SGSR2:
+     case Upscaler::SGSR2_on12:
+         return "SGSR";
++
++    case Upscaler::ASR:
++    case Upscaler::ASR_on12:
++        return "ASR";
+     }
+ 
+     return "????";
+@@ -159,6 +172,10 @@ std::string UpscalerToCode(Upscaler upscaler)
+         return "sgsr2";
+     case Upscaler::SGSR2_on12:
+         return "sgsr2_12";
++    case Upscaler::ASR:
++        return "asr";
++    case Upscaler::ASR_on12:
++        return "asr_12";
+     default: // Upscaler::Reset and unknown
+         return "";
+     }
+@@ -175,6 +192,7 @@ Upscaler CodeToUpscaler(const std::string& code)
+         { "dlss", Upscaler::DLSS },   { "dlssd", Upscaler::DLSSD },
+         { "fsr31", Upscaler::FSR31 }, { "fsr31_12", Upscaler::FFX_on12 }, // for compat reasons
+         { "sgsr2", Upscaler::SGSR2 },  { "sgsr2_12", Upscaler::SGSR2_on12 },
++        { "asr", Upscaler::ASR },      { "asr_12", Upscaler::ASR_on12 },
+     };
+ 
+     auto it = mapping.find(code);
+@@ -222,3 +240,30 @@ SharpenShader CodeToSharpnessShader(const std::string& code)
+     auto it = mapping.find(code);
+     return (it != mapping.end()) ? it->second : SharpenShader::RCAS;
+ }
++
++std::string AsrQualityToCode(AsrQuality quality)
++{
++    switch (quality)
++    {
++    case AsrQuality::Quality:
++        return "quality";
++    case AsrQuality::Balanced:
++        return "balanced";
++    case AsrQuality::Performance:
++        return "performance";
++    default:
++        return "";
++    }
++}
++
++AsrQuality CodeToAsrQuality(const std::string& code)
++{
++    static const std::unordered_map<std::string, AsrQuality> mapping = {
++        { "quality", AsrQuality::Quality },
++        { "balanced", AsrQuality::Balanced },
++        { "performance", AsrQuality::Performance },
++    };
++
++    auto it = mapping.find(code);
++    return (it != mapping.end()) ? it->second : AsrQuality::Balanced;
++}
+diff --git a/OptiScaler/OptiTypes.h b/OptiScaler/OptiTypes.h
+index 391b0ea..1cd905a 100644
+--- a/OptiScaler/OptiTypes.h
++++ b/OptiScaler/OptiTypes.h
+@@ -67,6 +67,9 @@ enum class Upscaler
+     SGSR2, // "sgsr2", Snapdragon Game Super Resolution 2; shader-only, no vendor runtime to link
+     SGSR2_on12, // "sgsr2_12", the same backend driven from DX11 through the DX12 bridge
+ 
++    ASR, // "asr", Arm Accuracy Super Resolution; FSR 2.2 derivative, shaders built from source
++    ASR_on12, // "asr_12", the same backend driven from DX11 through the DX12 bridge
++
+     Reset
+ };
+ 
+@@ -88,6 +91,15 @@ enum class ApiUpscalerInput
+     FSR3_DX12,
+ };
+ 
++// Arm ASR shader quality preset ([ASR] ShaderQuality). Independent of the
++// upscaling ratio; trades image quality for GPU time inside the passes.
++enum class AsrQuality
++{
++    Quality,
++    Balanced,
++    Performance
++};
++
+ enum class SharpenShader
+ {
+     RCAS,
+@@ -252,3 +264,7 @@ std::string SharpnessShaderToCode(SharpenShader sharpenShader);
+ 
+ // Converts string codes into enum for config
+ SharpenShader CodeToSharpnessShader(const std::string& code);
++
++// "quality" / "balanced" / "performance" <-> AsrQuality
++std::string AsrQualityToCode(AsrQuality quality);
++AsrQuality CodeToAsrQuality(const std::string& code);
+diff --git a/OptiScaler/menu/menu_common.cpp b/OptiScaler/menu/menu_common.cpp
+index 02b63ff..fb241e5 100644
+--- a/OptiScaler/menu/menu_common.cpp
++++ b/OptiScaler/menu/menu_common.cpp
+@@ -499,13 +499,15 @@ void MenuCommon::AddDx11Backends(Upscaler upscaler)
+ {
+     RenderUpscalerCombo(API::DX11, upscaler,
+                         { Upscaler::XeSS, Upscaler::FSR22, Upscaler::FSR31, Upscaler::XeSS_on12, Upscaler::FSR21_on12,
+-                          Upscaler::FSR22_on12, Upscaler::FFX_on12, Upscaler::DLSS });
++                          Upscaler::FSR22_on12, Upscaler::FFX_on12, Upscaler::SGSR2_on12, Upscaler::ASR_on12,
++                          Upscaler::DLSS });
+ }
+ 
+ void MenuCommon::AddDx12Backends(Upscaler upscaler)
+ {
+     RenderUpscalerCombo(API::DX12, upscaler,
+-                        { Upscaler::XeSS, Upscaler::FSR21, Upscaler::FSR22, Upscaler::FFX, Upscaler::DLSS });
++                        { Upscaler::XeSS, Upscaler::FSR21, Upscaler::FSR22, Upscaler::FFX, Upscaler::SGSR2, Upscaler::ASR,
++                          Upscaler::DLSS });
+ }
+ 
+ void MenuCommon::AddVulkanBackends(Upscaler upscaler)
+diff --git a/OptiScaler/upscalers/FeatureProvider_Dx11.cpp b/OptiScaler/upscalers/FeatureProvider_Dx11.cpp
+index a5444a3..1ebe5a0 100644
+--- a/OptiScaler/upscalers/FeatureProvider_Dx11.cpp
++++ b/OptiScaler/upscalers/FeatureProvider_Dx11.cpp
+@@ -1,5 +1,6 @@
+ #include <pch.h>
+ #include "sgsr2/SGSR2Feature_Dx11on12.h"
++#include "asr/ASRFeature_Dx11on12.h"
+ #include "FeatureProvider_Dx11.h"
+ 
+ #include "Util.h"
+@@ -36,6 +37,10 @@ bool FeatureProvider_Dx11::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NG
+         *feature = std::make_unique<SGSR2FeatureDx11on12>(handleId, parameters);
+         break;
+ 
++    case Upscaler::ASR_on12:
++        *feature = std::make_unique<ASRFeatureDx11on12>(handleId, parameters);
++        break;
++
+     case Upscaler::XeSS_on12:
+         *feature = std::make_unique<XeSSFeatureDx11on12>(handleId, parameters);
+         break;
+diff --git a/OptiScaler/upscalers/FeatureProvider_Dx12.cpp b/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
+index b66cfc3..d07fb74 100644
+--- a/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
++++ b/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
+@@ -13,6 +13,7 @@
+ #include "upscalers/ffx/FFXFeature_Dx12.h"
+ #include "upscalers/xess/XeSSFeature_Dx12.h"
+ #include "upscalers/sgsr2/SGSR2Feature_Dx12.h"
++#include "upscalers/asr/ASRFeature_Dx12.h"
+ #include "FeatureProvider_Dx11.h"
+ #include <misc/IdentifyGpu.h>
+ 
+@@ -42,6 +43,10 @@ bool FeatureProvider_Dx12::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NG
+         *feature = std::make_unique<SGSR2FeatureDx12>(handleId, parameters);
+         break;
+ 
++    case Upscaler::ASR:
++        *feature = std::make_unique<ASRFeatureDx12>(handleId, parameters);
++        break;
++
+     case Upscaler::FFX:
+         *feature = std::make_unique<FFXFeatureDx12>(handleId, parameters);
+         break;
+diff --git a/OptiScaler/upscalers/IFeature_Dx12.cpp b/OptiScaler/upscalers/IFeature_Dx12.cpp
+index b25117e..adc56ad 100644
+--- a/OptiScaler/upscalers/IFeature_Dx12.cpp
++++ b/OptiScaler/upscalers/IFeature_Dx12.cpp
+@@ -65,7 +65,7 @@ bool IFeature_Dx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX
+     bool useRcas = upscaler == Upscaler::XeSS ||
+                    (upscaler == Upscaler::DLSS && Version() >= feature_version(2, 5, 1)) ||
+                    upscaler == Upscaler::DLSSD || upscaler == Upscaler::SGSR2 ||
+-                   upscaler == Upscaler::SGSR2_on12;
++                   upscaler == Upscaler::SGSR2_on12 || upscaler == Upscaler::ASR || upscaler == Upscaler::ASR_on12;
+ 
+     if (!useRcas)
+         useRcas = Config::Instance()->RcasEnabled.value_or_default();
+diff --git a/OptiScaler/upscalers/asr/ASRFeature.cpp b/OptiScaler/upscalers/asr/ASRFeature.cpp
+new file mode 100644
+index 0000000..2e401ed
+--- /dev/null
++++ b/OptiScaler/upscalers/asr/ASRFeature.cpp
+@@ -0,0 +1,123 @@
++#include "pch.h"
++#include "ASRFeature.h"
++#include "ffxm_dx12.h"
++
++#include <Config.h>
++#include <MathUtils.h>
++
++using namespace OptiMath;
++
++ASRFeature::ASRFeature(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters) : IFeature(InHandleId, InParameters)
++{
++    // Pull render/display size and init flags out of the NGX parameters, as
++    // every feature base must; see the note in SGSR2Feature.
++    _initParameters = SetInitParameters(InParameters);
++    _moduleLoaded = arm::ffxmDX12HasShaders();
++    _lastFrameTime = Util::MillisecondsNow();
++
++    if (!_moduleLoaded)
++        LOG_ERROR("Arm ASR: this build carries no ASR shaders (gen_asr_shaders.py did not run)");
++}
++
++bool ASRFeature::ModuleLoaded() { return _moduleLoaded; }
++
++double ASRFeature::GetDeltaTime()
++{
++    const double now = Util::MillisecondsNow();
++    const double delta = now - _lastFrameTime;
++    _lastFrameTime = now;
++    return delta;
++}
++
++arm::FfxmFsr2ShaderQualityMode ASRFeature::ConfiguredQuality()
++{
++    switch (Config::Instance()->AsrShaderQuality.value_or_default())
++    {
++    case AsrQuality::Quality:
++        return arm::FFXM_FSR2_SHADER_QUALITY_MODE_QUALITY;
++    case AsrQuality::Performance:
++        return arm::FFXM_FSR2_SHADER_QUALITY_MODE_PERFORMANCE;
++    default:
++        return arm::FFXM_FSR2_SHADER_QUALITY_MODE_BALANCED;
++    }
++}
++
++const char* ASRFeature::QualityName(arm::FfxmFsr2ShaderQualityMode quality)
++{
++    switch (quality)
++    {
++    case arm::FFXM_FSR2_SHADER_QUALITY_MODE_QUALITY:
++        return "quality";
++    case arm::FFXM_FSR2_SHADER_QUALITY_MODE_PERFORMANCE:
++        return "performance";
++    default:
++        return "balanced";
++    }
++}
++
++uint32_t ASRFeature::ContextFlags()
++{
++    uint32_t flags = 0;
++
++    if (DepthInverted())
++        flags |= arm::FFXM_FSR2_ENABLE_DEPTH_INVERTED;
++
++    if (AutoExposure())
++        flags |= arm::FFXM_FSR2_ENABLE_AUTO_EXPOSURE;
++
++    if (IsHdr())
++        flags |= arm::FFXM_FSR2_ENABLE_HIGH_DYNAMIC_RANGE;
++
++    if (JitteredMV())
++        flags |= arm::FFXM_FSR2_ENABLE_MOTION_VECTORS_JITTER_CANCELLATION;
++
++    // NGX MVLowRes unset: the vectors are at display resolution and in display
++    // pixels. ASR handles that natively (it is FSR2's display-res MV path), so
++    // unlike SGSR2 there is nothing to rescale here.
++    if (!LowResMV())
++        flags |= arm::FFXM_FSR2_ENABLE_DISPLAY_RESOLUTION_MOTION_VECTORS;
++
++#if _DEBUG
++    flags |= arm::FFXM_FSR2_ENABLE_DEBUG_CHECKING;
++#endif
++
++    return flags;
++}
++
++void ASRFeature::GetCamera(NVSDK_NGX_Parameter* InParameters, float* cameraNear, float* cameraFar, float* fovVertical)
++{
++    auto& cfg = *Config::Instance();
++
++    *cameraNear = 0.0f;
++    *cameraFar = 0.0f;
++
++    if (!cfg.FsrUseFsrInputValues.value_or_default() ||
++        InParameters->Get("FSR.cameraNear", cameraNear) != NVSDK_NGX_Result_Success)
++    {
++        if (DepthInverted())
++            *cameraFar = cfg.FsrCameraNear.value_or_default();
++        else
++            *cameraNear = cfg.FsrCameraNear.value_or_default();
++    }
++
++    if (!cfg.FsrUseFsrInputValues.value_or_default() ||
++        InParameters->Get(OptiKeys::FSR_FarPlane, cameraFar) != NVSDK_NGX_Result_Success)
++    {
++        if (DepthInverted())
++            *cameraNear = cfg.FsrCameraFar.value_or_default();
++        else
++            *cameraFar = cfg.FsrCameraFar.value_or_default();
++    }
++
++    if (!cfg.FsrUseFsrInputValues.value_or_default() ||
++        InParameters->Get(OptiKeys::FSR_CameraFovVertical, fovVertical) != NVSDK_NGX_Result_Success)
++    {
++        if (cfg.FsrVerticalFov.has_value())
++            *fovVertical = GetRadiansFromDeg(cfg.FsrVerticalFov.value());
++        else if (cfg.FsrHorizontalFov.value_or_default() > 0.0f)
++            *fovVertical = GetVerticalFovFromHorizontal(GetRadiansFromDeg(cfg.FsrHorizontalFov.value()),
++                                                        (float) TargetWidth(), (float) TargetHeight());
++        else
++            *fovVertical = GetRadiansFromDeg(60);
++    }
++}
+diff --git a/OptiScaler/upscalers/asr/ASRFeature.h b/OptiScaler/upscalers/asr/ASRFeature.h
+new file mode 100644
+index 0000000..b49cff4
+--- /dev/null
++++ b/OptiScaler/upscalers/asr/ASRFeature.h
+@@ -0,0 +1,51 @@
++#pragma once
++
++#include <upscalers/IFeature.h>
++
++#include <host/ffxm_fsr2.h>
++
++//============================================================================================================
++// Arm Accuracy Super Resolution -- shared, API-independent bits.
++//
++// Arm ASR (MIT) is AMD's FSR 2.2.2 reworked for mobile GPUs: most passes are
++// full-screen fragment shaders, fp16 throughout, and a shader "quality" preset
++// that is independent of the upscaling ratio. Arm only ships a Vulkan backend;
++// ffxm_dx12.cpp is the D3D12 one this port uses, fed DXIL that
++// arm64ec/gen_asr_shaders.py compiles from ASR's own HLSL at build time.
++//
++// The host API is FSR2's, so the inputs follow OptiScaler's FSR2 backends:
++// NGX motion vectors go in as-is with MV_Scale as motionVectorScale, and the
++// NGX init flags map onto the FSR2 context flags one to one.
++//============================================================================================================
++
++class ASRFeature : public virtual IFeature
++{
++  private:
++    double _lastFrameTime = 0.0;
++
++  protected:
++    double GetDeltaTime();
++
++    // Config [ASR] ShaderQuality -> ffxm preset.
++    static arm::FfxmFsr2ShaderQualityMode ConfiguredQuality();
++    static const char* QualityName(arm::FfxmFsr2ShaderQualityMode quality);
++
++    // Context flags from the NGX init flags.
++    uint32_t ContextFlags();
++
++    // Camera near/far/vertical FOV from the FSR input keys or the [FSR] config
++    // fallbacks, exactly as OptiScaler's FSR2 backends take them.
++    void GetCamera(NVSDK_NGX_Parameter* InParameters, float* cameraNear, float* cameraFar, float* fovVertical);
++
++  public:
++    // Arm ASR release 25.06 (FSR 2.2.2 derivative).
++    feature_version Version() override { return feature_version { 25, 6, 0 }; }
++    Upscaler GetUpscalerType() const override { return Upscaler::ASR; }
++
++    // Shader-only, nothing to load at runtime -- but a build made without the
++    // shader generator (no DXC) has no blobs, and FeatureProvider falls back
++    // when this is false.
++    bool ModuleLoaded() override;
++
++    ASRFeature(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters);
++};
+diff --git a/OptiScaler/upscalers/asr/ASRFeature_Dx11on12.cpp b/OptiScaler/upscalers/asr/ASRFeature_Dx11on12.cpp
+new file mode 100644
+index 0000000..3d8bed3
+--- /dev/null
++++ b/OptiScaler/upscalers/asr/ASRFeature_Dx11on12.cpp
+@@ -0,0 +1,11 @@
++#include <pch.h>
++
++#include "ASRFeature_Dx11on12.h"
++#include "ASRFeature_Dx12.h"
++
++ASRFeatureDx11on12::ASRFeatureDx11on12(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters)
++    : IFeature_Dx11wDx12(InHandleId, InParameters), IFeature_Dx11(InHandleId, InParameters),
++      IFeature(InHandleId, InParameters)
++{
++    dx12Feature = std::make_unique<ASRFeatureDx12>(InHandleId, InParameters);
++}
+diff --git a/OptiScaler/upscalers/asr/ASRFeature_Dx11on12.h b/OptiScaler/upscalers/asr/ASRFeature_Dx11on12.h
+new file mode 100644
+index 0000000..a403c9a
+--- /dev/null
++++ b/OptiScaler/upscalers/asr/ASRFeature_Dx11on12.h
+@@ -0,0 +1,12 @@
++#pragma once
++#include <upscalers/IFeature_Dx11wDx12.h>
++
++// Arm ASR driven from a D3D11 game: the bridge shares the game's D3D11 colour,
++// depth and motion textures into D3D12 and runs the ordinary D3D12 backend.
++class ASRFeatureDx11on12 : public IFeature_Dx11wDx12
++{
++  public:
++    Upscaler GetUpscalerType() const final { return Upscaler::ASR_on12; }
++
++    ASRFeatureDx11on12(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters);
++};
+diff --git a/OptiScaler/upscalers/asr/ASRFeature_Dx12.cpp b/OptiScaler/upscalers/asr/ASRFeature_Dx12.cpp
+new file mode 100644
+index 0000000..6f5cccb
+--- /dev/null
++++ b/OptiScaler/upscalers/asr/ASRFeature_Dx12.cpp
+@@ -0,0 +1,701 @@
++#include "pch.h"
++#include "ASRFeature_Dx12.h"
++#include "ffxm_dx12.h"
++
++#include <Config.h>
++#include <State.h>
++#include <Util.h>
++
++#include <algorithm>
++#include <cstdlib>
++
++using namespace arm;
++
++namespace
++{
++
++void BackendLog(int level, const char* message)
++{
++    if (level == 0)
++        LOG_ERROR("Arm ASR backend: {}", message);
++    else if (level == 1)
++        LOG_WARN("Arm ASR backend: {}", message);
++    else
++        LOG_INFO("Arm ASR backend: {}", message);
++}
++
++void AsrMessage(FfxmMsgType type, const wchar_t* message)
++{
++    LOG_DEBUG("Arm ASR runtime ({}): {}", (int) type, wstring_to_string(std::wstring(message)));
++}
++
++const char* ErrorName(FfxmErrorCode code)
++{
++    switch (code)
++    {
++    case FFXM_OK: return "ok";
++    case FFXM_ERROR_INVALID_POINTER: return "invalid pointer";
++    case FFXM_ERROR_INVALID_ALIGNMENT: return "invalid alignment";
++    case FFXM_ERROR_INVALID_SIZE: return "invalid size";
++    case FFXM_ERROR_OUT_OF_MEMORY: return "out of memory";
++    case FFXM_ERROR_INCOMPLETE_INTERFACE: return "incomplete interface";
++    case FFXM_ERROR_INVALID_ENUM: return "invalid enum";
++    case FFXM_ERROR_INVALID_ARGUMENT: return "invalid argument";
++    case FFXM_ERROR_OUT_OF_RANGE: return "out of range";
++    case FFXM_ERROR_NULL_DEVICE: return "null device";
++    case FFXM_ERROR_BACKEND_API_ERROR: return "backend API error";
++    case FFXM_ERROR_INSUFFICIENT_MEMORY: return "insufficient memory";
++    default: return "unknown";
++    }
++}
++
++// Copy-compatible typeless family, so the render-target buffer can be copied
++// into whatever typed or sRGB flavour the caller's output uses.
++DXGI_FORMAT TypelessOf(DXGI_FORMAT f)
++{
++    switch (f)
++    {
++    case DXGI_FORMAT_R8G8B8A8_UNORM:
++    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
++    case DXGI_FORMAT_R8G8B8A8_TYPELESS: return DXGI_FORMAT_R8G8B8A8_TYPELESS;
++    case DXGI_FORMAT_B8G8R8A8_UNORM:
++    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
++    case DXGI_FORMAT_B8G8R8A8_TYPELESS: return DXGI_FORMAT_B8G8R8A8_TYPELESS;
++    case DXGI_FORMAT_B8G8R8X8_UNORM:
++    case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
++    case DXGI_FORMAT_B8G8R8X8_TYPELESS: return DXGI_FORMAT_B8G8R8X8_TYPELESS;
++    case DXGI_FORMAT_R16G16B16A16_FLOAT:
++    case DXGI_FORMAT_R16G16B16A16_TYPELESS: return DXGI_FORMAT_R16G16B16A16_TYPELESS;
++    case DXGI_FORMAT_R10G10B10A2_UNORM:
++    case DXGI_FORMAT_R10G10B10A2_TYPELESS: return DXGI_FORMAT_R10G10B10A2_TYPELESS;
++    case DXGI_FORMAT_R32G32B32A32_FLOAT:
++    case DXGI_FORMAT_R32G32B32A32_TYPELESS: return DXGI_FORMAT_R32G32B32A32_TYPELESS;
++    default: return f;
++    }
++}
++
++bool IsSrgb(DXGI_FORMAT f)
++{
++    return f == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || f == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
++           f == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB;
++}
++
++// Linear, typed view of a typeless or sRGB format; the backend makes the same choice.
++DXGI_FORMAT TypedOf(DXGI_FORMAT f)
++{
++    switch (TypelessOf(f))
++    {
++    case DXGI_FORMAT_R8G8B8A8_TYPELESS: return DXGI_FORMAT_R8G8B8A8_UNORM;
++    case DXGI_FORMAT_B8G8R8A8_TYPELESS: return DXGI_FORMAT_B8G8R8A8_UNORM;
++    case DXGI_FORMAT_B8G8R8X8_TYPELESS: return DXGI_FORMAT_B8G8R8X8_UNORM;
++    case DXGI_FORMAT_R16G16B16A16_TYPELESS: return DXGI_FORMAT_R16G16B16A16_FLOAT;
++    case DXGI_FORMAT_R10G10B10A2_TYPELESS: return DXGI_FORMAT_R10G10B10A2_UNORM;
++    case DXGI_FORMAT_R32G32B32A32_TYPELESS: return DXGI_FORMAT_R32G32B32A32_FLOAT;
++    default: return f;
++    }
++}
++
++template <typename T> T* GetParam(NVSDK_NGX_Parameter* params, const char* name)
++{
++    T* value = nullptr;
++    if (params->Get(name, &value) != NVSDK_NGX_Result_Success)
++        params->Get(name, (void**) &value);
++    return value;
++}
++
++} // namespace
++
++// ------------------------------------------------------------------ contexts
++std::unique_ptr<ASRFeatureDx12::Context> ASRFeatureDx12::CreateContext(uint32_t renderWidth, uint32_t renderHeight,
++                                                                       FfxmFsr2ShaderQualityMode quality)
++{
++    auto context = std::make_unique<Context>();
++    context->ctx = std::make_unique<FfxmFsr2Context>();
++    context->scratch.resize(ffxmGetScratchMemorySizeDX12());
++    context->renderWidth = renderWidth;
++    context->renderHeight = renderHeight;
++    context->quality = quality;
++
++    FfxmFsr2ContextDescription desc {};
++    auto err = ffxmGetInterfaceDX12(&desc.backendInterface, Device, context->scratch.data(), context->scratch.size());
++    if (err != FFXM_OK)
++    {
++        LOG_ERROR("Arm ASR: ffxmGetInterfaceDX12: {}", ErrorName(err));
++        return nullptr;
++    }
++
++    desc.qualityMode = quality;
++    desc.flags = ContextFlags();
++    desc.displaySize = { TargetWidth(), TargetHeight() };
++    // Sized for the actual render resolution rather than the display: ASR
++    // 25.06 degrades badly when renderSize < maxRenderSize (its own Vulkan
++    // backend shows the same on a synthetic test, ~8 dB PSNR in the quality
++    // preset), so a render-size change recreates the context instead.
++    desc.maxRenderSize = { renderWidth, renderHeight };
++    desc.fpMessage = AsrMessage;
++
++    LOG_INFO("Arm ASR: creating context {}x{} -> {}x{}, preset {}, flags {:#x}", renderWidth, renderHeight,
++             TargetWidth(), TargetHeight(), QualityName(quality), desc.flags);
++
++    ScopedSkipHeapCapture skipHeapCapture {};
++    err = ffxmFsr2ContextCreate(context->ctx.get(), &desc);
++    if (err != FFXM_OK)
++    {
++        LOG_ERROR("Arm ASR: ffxmFsr2ContextCreate: {}", ErrorName(err));
++        return nullptr;
++    }
++
++    return context;
++}
++
++void ASRFeatureDx12::DestroyContext(Context& context)
++{
++    if (context.ctx)
++        ffxmFsr2ContextDestroy(context.ctx.get());
++    context.ctx.reset();
++}
++
++void ASRFeatureDx12::TickRetired(bool flushAll)
++{
++    for (auto it = _retired.begin(); it != _retired.end();)
++    {
++        if (flushAll || it->framesLeft == 0)
++        {
++            DestroyContext(*it->context);
++            it = _retired.erase(it);
++        }
++        else
++        {
++            it->framesLeft--;
++            ++it;
++        }
++    }
++}
++
++// ------------------------------------------------------------------ output
++bool ASRFeatureDx12::EnsureOutputBuffer(ID3D12Resource* output)
++{
++    const auto od = output->GetDesc();
++    const DXGI_FORMAT format = TypelessOf(od.Format);
++
++    if (_outputBuffer != nullptr && _outputBufferFormat == format && _outputBufferWidth == TargetWidth() &&
++        _outputBufferHeight == TargetHeight())
++        return true;
++
++    if (_outputBuffer != nullptr)
++    {
++        _outputBuffer->Release();
++        _outputBuffer = nullptr;
++    }
++
++    D3D12_FEATURE_DATA_FORMAT_SUPPORT fs { TypedOf(od.Format) };
++    if (FAILED(Device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &fs, sizeof(fs))) ||
++        !(fs.Support1 & D3D12_FORMAT_SUPPORT1_RENDER_TARGET))
++    {
++        LOG_ERROR("Arm ASR: output format {} cannot be rendered to", (int) od.Format);
++        return false;
++    }
++
++    D3D12_HEAP_PROPERTIES heap {};
++    heap.Type = D3D12_HEAP_TYPE_DEFAULT;
++    D3D12_RESOURCE_DESC desc {};
++    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++    desc.Width = TargetWidth();
++    desc.Height = TargetHeight();
++    desc.DepthOrArraySize = 1;
++    desc.MipLevels = 1;
++    desc.Format = format;
++    desc.SampleDesc.Count = 1;
++    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
++
++    if (FAILED(Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_RENDER_TARGET,
++                                               nullptr, IID_PPV_ARGS(&_outputBuffer))))
++    {
++        LOG_ERROR("Arm ASR: output buffer creation failed ({}x{} fmt {})", TargetWidth(), TargetHeight(), (int) format);
++        return false;
++    }
++
++    _outputBuffer->SetName(L"ASR_Output");
++    _outputBufferFormat = format;
++    _outputBufferWidth = TargetWidth();
++    _outputBufferHeight = TargetHeight();
++    return true;
++}
++
++// ------------------------------------------------------------------ timing
++void ASRFeatureDx12::SetupTiming()
++{
++    const char* env = std::getenv("OPTI_ASR_TIMING");
++    _timingEnabled = env != nullptr && env[0] == '1';
++    if (!_timingEnabled)
++        return;
++
++    auto* queue = State::Instance().currentCommandQueue;
++    if (queue == nullptr || FAILED(queue->GetTimestampFrequency(&_timerFrequency)) || _timerFrequency == 0)
++    {
++        LOG_WARN("OPTI_ASR_TIMING set but no queue timestamp frequency; timing disabled");
++        _timingEnabled = false;
++        return;
++    }
++
++    D3D12_QUERY_HEAP_DESC qh {};
++    qh.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
++    qh.Count = 2 * TimingRing;
++
++    D3D12_HEAP_PROPERTIES rb {};
++    rb.Type = D3D12_HEAP_TYPE_READBACK;
++    D3D12_RESOURCE_DESC rd {};
++    rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++    rd.Width = (UINT64) qh.Count * sizeof(uint64_t);
++    rd.Height = 1;
++    rd.DepthOrArraySize = 1;
++    rd.MipLevels = 1;
++    rd.SampleDesc.Count = 1;
++    rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
++
++    if (FAILED(Device->CreateQueryHeap(&qh, IID_PPV_ARGS(&_timestampHeap))) ||
++        FAILED(Device->CreateCommittedResource(&rb, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
++                                               IID_PPV_ARGS(&_timestampReadback))))
++    {
++        LOG_WARN("Arm ASR: timestamp resources failed; timing disabled");
++        _timingEnabled = false;
++        return;
++    }
++
++    LOG_INFO("Arm ASR: GPU timing enabled, timestamp frequency {} Hz", _timerFrequency);
++}
++
++// Reads the slot written TimingRing evaluations ago (long retired), then
++// resolves this frame's pair into it.
++void ASRFeatureDx12::ResolveTiming(ID3D12GraphicsCommandList* cmdList)
++{
++    const uint32_t base = _timingSlot * 2;
++
++    auto now = std::chrono::steady_clock::now();
++    if (_timingLastEvaluate.time_since_epoch().count() != 0)
++    {
++        _timingWallMs += std::chrono::duration<double, std::milli>(now - _timingLastEvaluate).count();
++        _timingWallSamples++;
++    }
++    _timingLastEvaluate = now;
++
++    if (_frameCount >= (long) TimingRing)
++    {
++        uint64_t ts[2] {};
++        D3D12_RANGE r { (SIZE_T) base * sizeof(uint64_t), (SIZE_T) (base + 2) * sizeof(uint64_t) };
++        void* mapped = nullptr;
++        if (SUCCEEDED(_timestampReadback->Map(0, &r, &mapped)) && mapped != nullptr)
++        {
++            memcpy(ts, (const uint8_t*) mapped + r.Begin, sizeof(ts));
++            D3D12_RANGE none { 0, 0 };
++            _timestampReadback->Unmap(0, &none);
++        }
++
++        if (ts[1] > ts[0])
++        {
++            const double ms = (double) (ts[1] - ts[0]) * 1000.0 / (double) _timerFrequency;
++            _timingSumMs += ms;
++            _timingWorstMs = std::max(_timingWorstMs, ms);
++            _timingSamples++;
++        }
++
++        if (_timingSamples >= 300)
++        {
++            const double avg = _timingSumMs / _timingSamples;
++            const double wall = _timingWallSamples > 0 ? _timingWallMs / _timingWallSamples : 0.0;
++            LOG_INFO("Arm ASR {}x{} -> {}x{} ({}) over {} frames: {:.3f} ms/frame GPU (worst {:.3f}); frame {:.2f} ms "
++                     "= {:.1f} fps, upscaler is {:.1f}% of it",
++                     _context ? _context->renderWidth : 0, _context ? _context->renderHeight : 0, TargetWidth(),
++                     TargetHeight(), _context ? QualityName(_context->quality) : "?", _timingSamples, avg,
++                     _timingWorstMs, wall, wall > 0.0 ? 1000.0 / wall : 0.0, wall > 0.0 ? 100.0 * avg / wall : 0.0);
++            _timingSumMs = _timingWorstMs = 0.0;
++            _timingSamples = 0;
++            _timingWallMs = 0.0;
++            _timingWallSamples = 0;
++        }
++    }
++
++    cmdList->ResolveQueryData(_timestampHeap, D3D12_QUERY_TYPE_TIMESTAMP, base, 2, _timestampReadback,
++                              (UINT64) base * sizeof(uint64_t));
++    _timingSlot = (_timingSlot + 1) % TimingRing;
++}
++
++// ------------------------------------------------------------------ feature
++bool ASRFeatureDx12::InitInternal(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX_Parameter* InParameters)
++{
++    if (IsInited())
++        return true;
++
++    if (Device == nullptr)
++    {
++        LOG_ERROR("Arm ASR: no D3D12 device");
++        return false;
++    }
++
++    if (!ModuleLoaded())
++        return false;
++
++    ffxmSetLogCallbackDX12(BackendLog);
++
++    // Output scaling renders at a multiple of display size and downsamples
++    // afterwards; same rule as the other backends.
++    if (Config::Instance()->OutputScalingEnabled.value_or_default() &&
++        (LowResMV() || RenderWidth() == DisplayWidth()))
++    {
++        float ssMulti = std::clamp(Config::Instance()->OutputScalingMultiplier.value_or_default(), 0.5f, 3.0f);
++        Config::Instance()->OutputScalingMultiplier.set_volatile_value(ssMulti);
++        _targetWidth = static_cast<unsigned int>(DisplayWidth() * ssMulti);
++        _targetHeight = static_cast<unsigned int>(DisplayHeight() * ssMulti);
++    }
++    else
++    {
++        _targetWidth = DisplayWidth();
++        _targetHeight = DisplayHeight();
++    }
++
++    if (RenderWidth() == 0 || RenderHeight() == 0 || TargetWidth() == 0 || TargetHeight() == 0)
++    {
++        LOG_ERROR("Arm ASR: invalid dimensions {}x{} -> {}x{}", RenderWidth(), RenderHeight(), TargetWidth(),
++                  TargetHeight());
++        return false;
++    }
++
++    // Created here so a broken device or pipeline fails the init, which is
++    // where OptiScaler handles fallback; recreated in Evaluate if the render
++    // size or preset moves.
++    _context = CreateContext(RenderWidth(), RenderHeight(), ConfiguredQuality());
++    if (!_context)
++        return false;
++
++    SetupTiming();
++
++    SetInit(true);
++    return true;
++}
++
++bool ASRFeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX_Parameter* InParameters)
++{
++    if (!IsInited() || InCommandList == nullptr)
++        return false;
++
++    auto& cfg = *Config::Instance();
++
++    TickRetired(false);
++
++    auto* paramColor = GetParam<ID3D12Resource>(InParameters, NVSDK_NGX_Parameter_Color);
++    auto* paramVelocity = GetParam<ID3D12Resource>(InParameters, NVSDK_NGX_Parameter_MotionVectors);
++    auto* paramDepth = GetParam<ID3D12Resource>(InParameters, NVSDK_NGX_Parameter_Depth);
++    auto* paramOutput = GetParam<ID3D12Resource>(InParameters, NVSDK_NGX_Parameter_Output);
++
++    if (paramColor == nullptr || paramVelocity == nullptr || paramOutput == nullptr)
++    {
++        LOG_ERROR("Arm ASR: missing inputs: color {}, mv {}, output {}", paramColor != nullptr,
++                  paramVelocity != nullptr, paramOutput != nullptr);
++        return false;
++    }
++
++    // Depth feeds ASR's disocclusion and lock logic; without it (UE through
++    // Streamline without OptiPatcher) a null SRV reads zero and the result only
++    // degrades, as with SGSR2.
++    if (paramDepth == nullptr && _frameCount == 0)
++        LOG_WARN("Arm ASR: no depth buffer supplied; expect ghosting on disocclusion");
++
++    // ---------------------------------------------------------------- context
++    unsigned int renderWidth = 0, renderHeight = 0;
++    GetRenderResolution(InParameters, &renderWidth, &renderHeight);
++    if (renderWidth == 0 || renderHeight == 0)
++    {
++        renderWidth = RenderWidth();
++        renderHeight = RenderHeight();
++    }
++
++    // A larger render size or a new preset needs a new context right away. A
++    // smaller one still fits the current context (ASR only degrades there, see
++    // CreateContext), so dynamic-resolution games are not made to rebuild the
++    // context -- and its PSOs -- every time the size moves: only once it has
++    // held for a while.
++    const auto quality = ConfiguredQuality();
++    bool recreate = !_context || _context->quality != quality || renderWidth > _context->renderWidth ||
++                    renderHeight > _context->renderHeight;
++
++    if (!recreate && (renderWidth != _context->renderWidth || renderHeight != _context->renderHeight))
++    {
++        if (renderWidth == _pendingWidth && renderHeight == _pendingHeight)
++            recreate = ++_pendingFrames >= ResizeSettleFrames;
++        else
++        {
++            _pendingWidth = renderWidth;
++            _pendingHeight = renderHeight;
++            _pendingFrames = 0;
++        }
++    }
++    else
++    {
++        _pendingFrames = 0;
++    }
++
++    if (recreate)
++    {
++        auto fresh = CreateContext(renderWidth, renderHeight, quality);
++        if (!fresh)
++            return false;
++
++        if (_context)
++            _retired.push_back({ std::move(_context), RetireFrames });
++        _context = std::move(fresh);
++    }
++
++    if (!_loggedInputs)
++    {
++        _loggedInputs = true;
++        auto cd = paramColor->GetDesc();
++        auto vd = paramVelocity->GetDesc();
++        auto od = paramOutput->GetDesc();
++        LOG_INFO("Arm ASR inputs: color {}x{} fmt {}, mv {}x{} fmt {}, depth {}, output {}x{} fmt {} flags {:#x}, "
++                 "render {}x{} -> {}x{}",
++                 cd.Width, cd.Height, (int) cd.Format, vd.Width, vd.Height, (int) vd.Format,
++                 paramDepth ? (int) paramDepth->GetDesc().Format : -1, od.Width, od.Height, (int) od.Format,
++                 (uint32_t) od.Flags, renderWidth, renderHeight, TargetWidth(), TargetHeight());
++        LOG_INFO("  flags: DepthInverted={} JitteredMV={} LowResMV={} AutoExposure={} HDR={}", DepthInverted(),
++                 JitteredMV(), LowResMV(), AutoExposure(), IsHdr());
++    }
++
++    // ------------------------------------------------------------ input states
++    // The game's resources arrive in whatever state it left them in. Same
++    // defaults as the SGSR2 backend, which is what has been exercised on the
++    // Proton/vkd3d-proton/Turnip stack; the [...]ResourceBarrier keys override.
++    const auto colorState =
++        (D3D12_RESOURCE_STATES) cfg.ColorResourceBarrier.value_or(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++    const auto depthState = (D3D12_RESOURCE_STATES) cfg.DepthResourceBarrier.value_or(D3D12_RESOURCE_STATE_DEPTH_WRITE);
++    const auto mvState =
++        (D3D12_RESOURCE_STATES) cfg.MVResourceBarrier.value_or(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++    const auto outputState =
++        (D3D12_RESOURCE_STATES) cfg.OutputResourceBarrier.value_or(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++    constexpr auto readState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
++
++    ResourceBarrier(InCommandList, paramColor, colorState, readState);
++    if (paramDepth)
++        ResourceBarrier(InCommandList, paramDepth, depthState, readState);
++    ResourceBarrier(InCommandList, paramVelocity, mvState, readState);
++
++    FfxmFsr2DispatchDescription params {};
++    params.commandList = InCommandList;
++    params.color = ffxmGetResourceDX12(paramColor, FFXM_RESOURCE_STATE_COMPUTE_READ, L"ASR_Color");
++    params.motionVectors = ffxmGetResourceDX12(paramVelocity, FFXM_RESOURCE_STATE_COMPUTE_READ, L"ASR_MotionVectors");
++    if (paramDepth)
++        params.depth = ffxmGetResourceDX12(paramDepth, FFXM_RESOURCE_STATE_COMPUTE_READ, L"ASR_Depth");
++
++    // Exposure: a missing texture is fine, ASR then assumes exposure 1.
++    ID3D12Resource* paramExp = nullptr;
++    if (!AutoExposure())
++    {
++        paramExp = GetParam<ID3D12Resource>(InParameters, NVSDK_NGX_Parameter_ExposureTexture);
++        if (paramExp)
++        {
++            if (cfg.ExposureResourceBarrier.has_value())
++                ResourceBarrier(InCommandList, paramExp, (D3D12_RESOURCE_STATES) cfg.ExposureResourceBarrier.value(),
++                                readState);
++            params.exposure = ffxmGetResourceDX12(paramExp, FFXM_RESOURCE_STATE_COMPUTE_READ, L"ASR_Exposure");
++        }
++    }
++
++    // Reactive / transparency masks, following the FSR2 backends' rules.
++    auto* paramTransparency = GetParam<ID3D12Resource>(InParameters, "FSR.transparencyAndComposition");
++    auto* paramReactive = GetParam<ID3D12Resource>(InParameters, "FSR.reactive");
++    auto* paramBiasMask = GetParam<ID3D12Resource>(InParameters, NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask);
++    bool biasMaskTransitioned = false;
++
++    if (!cfg.DisableReactiveMask.value_or(paramReactive == nullptr && paramBiasMask == nullptr))
++    {
++        if (paramTransparency)
++            params.transparencyAndComposition =
++                ffxmGetResourceDX12(paramTransparency, FFXM_RESOURCE_STATE_COMPUTE_READ, L"ASR_Transparency");
++
++        if (paramReactive)
++        {
++            params.reactive = ffxmGetResourceDX12(paramReactive, FFXM_RESOURCE_STATE_COMPUTE_READ, L"ASR_Reactive");
++        }
++        else if (paramBiasMask)
++        {
++            cfg.DisableReactiveMask.set_volatile_value(false);
++
++            if (cfg.MaskResourceBarrier.has_value())
++            {
++                ResourceBarrier(InCommandList, paramBiasMask, (D3D12_RESOURCE_STATES) cfg.MaskResourceBarrier.value(),
++                                readState);
++                biasMaskTransitioned = true;
++            }
++
++            if (paramTransparency == nullptr && cfg.FsrUseMaskForTransparency.value_or_default())
++                params.transparencyAndComposition =
++                    ffxmGetResourceDX12(paramBiasMask, FFXM_RESOURCE_STATE_COMPUTE_READ, L"ASR_Transparency");
++
++            if (cfg.DlssReactiveMaskBias.value_or_default() > 0.0f && Bias->IsInit() &&
++                Bias->CreateBufferResource(Device, paramBiasMask, D3D12_RESOURCE_STATE_UNORDERED_ACCESS) &&
++                Bias->CanRender())
++            {
++                Bias->SetBufferState(InCommandList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++                if (Bias->Dispatch(InCommandList, paramBiasMask, cfg.DlssReactiveMaskBias.value_or_default(),
++                                   Bias->Buffer()))
++                {
++                    Bias->SetBufferState(InCommandList, readState);
++                    params.reactive = ffxmGetResourceDX12(Bias->Buffer(), FFXM_RESOURCE_STATE_COMPUTE_READ, L"ASR_Reactive");
++                }
++            }
++        }
++    }
++
++    // ------------------------------------------------------------------ output
++    const auto od = paramOutput->GetDesc();
++    const bool direct = (od.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) && !IsSrgb(od.Format) &&
++                        od.Width >= TargetWidth() && od.Height >= TargetHeight();
++
++    ID3D12Resource* asrOutput = paramOutput;
++    if (direct)
++    {
++        ResourceBarrier(InCommandList, paramOutput, outputState, D3D12_RESOURCE_STATE_RENDER_TARGET);
++    }
++    else
++    {
++        if (!EnsureOutputBuffer(paramOutput))
++        {
++            ResourceBarrier(InCommandList, paramColor, readState, colorState);
++            if (paramDepth)
++                ResourceBarrier(InCommandList, paramDepth, readState, depthState);
++            ResourceBarrier(InCommandList, paramVelocity, readState, mvState);
++            return false;
++        }
++        asrOutput = _outputBuffer; // lives in RENDER_TARGET between frames
++    }
++    params.output = ffxmGetResourceDX12(asrOutput, FFXM_RESOURCE_STATE_PIXEL_WRITE, L"ASR_Output");
++
++    _hasColor = true;
++    _hasMV = true;
++    _hasDepth = paramDepth != nullptr;
++    _hasExposure = params.exposure.resource != nullptr;
++    _hasTM = params.transparencyAndComposition.resource != nullptr;
++    _accessToReactiveMask = paramReactive != nullptr;
++    _hasOutput = true;
++
++    // ------------------------------------------------------------------ params
++    InParameters->Get(NVSDK_NGX_Parameter_Jitter_Offset_X, &params.jitterOffset.x);
++    InParameters->Get(NVSDK_NGX_Parameter_Jitter_Offset_Y, &params.jitterOffset.y);
++
++    // FSR2's convention, which NGX shares: vectors point from the current pixel
++    // to where it was, in texture units that MV_Scale turns into pixels. ASR
++    // divides by the render (or, for display-res vectors, display) size itself.
++    params.motionVectorScale = { 1.0f, 1.0f };
++    if (InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_X, &params.motionVectorScale.x) != NVSDK_NGX_Result_Success ||
++        InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &params.motionVectorScale.y) != NVSDK_NGX_Result_Success)
++    {
++        params.motionVectorScale = { 1.0f, 1.0f };
++        if (_frameCount == 0)
++            LOG_WARN("Arm ASR: no motion vector scale supplied, assuming 1");
++    }
++
++    params.renderSize = { renderWidth, renderHeight };
++
++    // Sharpening runs as OptiScaler's RCAS after the upscale (see
++    // IFeature_Dx12::Evaluate); ASR's own sharpened passes are not built.
++    params.enableSharpening = false;
++    params.sharpness = 0.0f;
++
++    int reset = 0;
++    InParameters->Get(NVSDK_NGX_Parameter_Reset, &reset);
++    params.reset = reset != 0;
++
++    GetCamera(InParameters, &params.cameraNear, &params.cameraFar, &params.cameraFovAngleVertical);
++    params.viewSpaceToMetersFactor = 1.0f;
++
++    if (!cfg.FsrUseFsrInputValues.value_or_default() ||
++        InParameters->Get("FSR.frameTimeDelta", &params.frameTimeDelta) != NVSDK_NGX_Result_Success)
++    {
++        if (InParameters->Get(NVSDK_NGX_Parameter_FrameTimeDeltaInMsec, &params.frameTimeDelta) !=
++                NVSDK_NGX_Result_Success ||
++            params.frameTimeDelta < 1.0f)
++            params.frameTimeDelta = (float) GetDeltaTime();
++    }
++
++    if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, &params.preExposure) != NVSDK_NGX_Result_Success ||
++        params.preExposure <= 0.0f)
++        params.preExposure = 1.0f;
++
++    if (_frameCount == 0)
++        LOG_INFO("Arm ASR: MV scale ({}, {}), camera near {} far {} vfov {} rad, preExposure {}, output {}",
++                 params.motionVectorScale.x, params.motionVectorScale.y, params.cameraNear, params.cameraFar,
++                 params.cameraFovAngleVertical, params.preExposure, direct ? "direct" : "via copy");
++
++    // ---------------------------------------------------------------- dispatch
++    if (_timingEnabled)
++        InCommandList->EndQuery(_timestampHeap, D3D12_QUERY_TYPE_TIMESTAMP, _timingSlot * 2);
++
++    auto err = ffxmFsr2ContextDispatch(_context->ctx.get(), &params);
++
++    if (_timingEnabled)
++        InCommandList->EndQuery(_timestampHeap, D3D12_QUERY_TYPE_TIMESTAMP, _timingSlot * 2 + 1);
++
++    if (err != FFXM_OK)
++        LOG_ERROR("Arm ASR: ffxmFsr2ContextDispatch: {}", ErrorName(err));
++
++    // ------------------------------------------------------------ output copy
++    if (direct)
++    {
++        ResourceBarrier(InCommandList, paramOutput, D3D12_RESOURCE_STATE_RENDER_TARGET, outputState);
++    }
++    else if (err == FFXM_OK)
++    {
++        ResourceBarrier(InCommandList, _outputBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET,
++                        D3D12_RESOURCE_STATE_COPY_SOURCE);
++        ResourceBarrier(InCommandList, paramOutput, outputState, D3D12_RESOURCE_STATE_COPY_DEST);
++
++        D3D12_TEXTURE_COPY_LOCATION dst {};
++        dst.pResource = paramOutput;
++        dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++        D3D12_TEXTURE_COPY_LOCATION src {};
++        src.pResource = _outputBuffer;
++        src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++        D3D12_BOX box { 0, 0, 0, std::min<UINT>(TargetWidth(), (UINT) od.Width), std::min<UINT>(TargetHeight(), od.Height), 1 };
++        InCommandList->CopyTextureRegion(&dst, 0, 0, 0, &src, &box);
++
++        ResourceBarrier(InCommandList, paramOutput, D3D12_RESOURCE_STATE_COPY_DEST, outputState);
++        ResourceBarrier(InCommandList, _outputBuffer, D3D12_RESOURCE_STATE_COPY_SOURCE,
++                        D3D12_RESOURCE_STATE_RENDER_TARGET);
++    }
++
++    // ------------------------------------------------------ restore the inputs
++    ResourceBarrier(InCommandList, paramColor, readState, colorState);
++    if (paramDepth)
++        ResourceBarrier(InCommandList, paramDepth, readState, depthState);
++    ResourceBarrier(InCommandList, paramVelocity, readState, mvState);
++    if (paramExp && cfg.ExposureResourceBarrier.has_value())
++        ResourceBarrier(InCommandList, paramExp, readState, (D3D12_RESOURCE_STATES) cfg.ExposureResourceBarrier.value());
++    if (biasMaskTransitioned)
++        ResourceBarrier(InCommandList, paramBiasMask, readState, (D3D12_RESOURCE_STATES) cfg.MaskResourceBarrier.value());
++
++    if (_timingEnabled)
++        ResolveTiming(InCommandList);
++
++    if (err != FFXM_OK)
++        return false;
++
++    _frameCount++;
++    return true;
++}
++
++ASRFeatureDx12::~ASRFeatureDx12()
++{
++    if (State::Instance().isShuttingDown)
++        return;
++
++    TickRetired(true);
++    if (_context)
++        DestroyContext(*_context);
++    _context.reset();
++
++    if (_outputBuffer)
++        _outputBuffer->Release();
++    if (_timestampHeap)
++        _timestampHeap->Release();
++    if (_timestampReadback)
++        _timestampReadback->Release();
++}
+diff --git a/OptiScaler/upscalers/asr/ASRFeature_Dx12.h b/OptiScaler/upscalers/asr/ASRFeature_Dx12.h
+new file mode 100644
+index 0000000..0c94679
+--- /dev/null
++++ b/OptiScaler/upscalers/asr/ASRFeature_Dx12.h
+@@ -0,0 +1,101 @@
++#pragma once
++
++#include "ASRFeature.h"
++#include <upscalers/IFeature_Dx12.h>
++
++#include <d3d12.h>
++#include <chrono>
++#include <memory>
++#include <vector>
++
++//============================================================================================================
++// Arm ASR on D3D12, through ffxm_dx12.cpp.
++//
++// Passes (per frame): luminance pyramid (compute), reconstruct previous depth,
++// depth clip (fragment), lock (compute), accumulate (fragment). Sharpening is
++// OptiScaler's own RCAS, as for SGSR2, so ASR's RCAS pass never runs.
++//
++// The accumulate pass writes the upscaled image as a render target. When the
++// output the caller hands over is not render-target capable (NGX outputs
++// usually are UAVs only), ASR renders into _outputBuffer and it is copied over.
++//============================================================================================================
++
++class ASRFeatureDx12 : public ASRFeature, public IFeature_Dx12
++{
++  private:
++    struct Context
++    {
++        std::unique_ptr<arm::FfxmFsr2Context> ctx;
++        std::vector<uint8_t> scratch;
++        uint32_t renderWidth = 0;
++        uint32_t renderHeight = 0;
++        arm::FfxmFsr2ShaderQualityMode quality = arm::FFXM_FSR2_SHADER_QUALITY_MODE_BALANCED;
++    };
++
++    // A context replaced mid-game (render size or preset change) may still have
++    // work in flight, so it is destroyed a few evaluations later instead.
++    struct Retired
++    {
++        std::unique_ptr<Context> context;
++        uint32_t framesLeft = 0;
++    };
++
++    static constexpr uint32_t RetireFrames = 8;
++    static constexpr uint32_t ResizeSettleFrames = 30;
++
++    // A smaller render size waiting to settle before the context is rebuilt.
++    uint32_t _pendingWidth = 0;
++    uint32_t _pendingHeight = 0;
++    uint32_t _pendingFrames = 0;
++
++    std::unique_ptr<Context> _context;
++    std::vector<Retired> _retired;
++
++    ID3D12Resource* _outputBuffer = nullptr;
++    DXGI_FORMAT _outputBufferFormat = DXGI_FORMAT_UNKNOWN;
++    uint32_t _outputBufferWidth = 0;
++    uint32_t _outputBufferHeight = 0;
++
++    bool _loggedInputs = false;
++
++    // GPU timing, opt-in via OPTI_ASR_TIMING=1 (same report shape as SGSR2's).
++    static constexpr uint32_t TimingRing = 4;
++    ID3D12QueryHeap* _timestampHeap = nullptr;
++    ID3D12Resource* _timestampReadback = nullptr;
++    bool _timingEnabled = false;
++    uint64_t _timerFrequency = 0;
++    uint32_t _timingSlot = 0;
++    double _timingSumMs = 0.0;
++    double _timingWorstMs = 0.0;
++    uint32_t _timingSamples = 0;
++    std::chrono::steady_clock::time_point _timingLastEvaluate {};
++    double _timingWallMs = 0.0;
++    uint32_t _timingWallSamples = 0;
++
++    std::unique_ptr<Context> CreateContext(uint32_t renderWidth, uint32_t renderHeight,
++                                           arm::FfxmFsr2ShaderQualityMode quality);
++    static void DestroyContext(Context& context);
++    void TickRetired(bool flushAll);
++
++    bool EnsureOutputBuffer(ID3D12Resource* output);
++    void SetupTiming();
++    void ResolveTiming(ID3D12GraphicsCommandList* cmdList);
++
++  protected:
++    bool InitInternal(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX_Parameter* InParameters) override;
++    bool EvaluateInternal(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX_Parameter* InParameters) override;
++
++  public:
++    ASRFeatureDx12(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters)
++        : ASRFeature(InHandleId, InParameters), IFeature_Dx12(InHandleId, InParameters),
++          IFeature(InHandleId, InParameters)
++    {
++    }
++
++    feature_version Version() override { return ASRFeature::Version(); }
++    Upscaler GetUpscalerType() const final { return Upscaler::ASR; }
++    API Api() const override { return IFeature_Dx12::Api(); }
++    bool IsWithDx12() final { return false; }
++
++    ~ASRFeatureDx12() override;
++};
+-- 
+2.55.0
+

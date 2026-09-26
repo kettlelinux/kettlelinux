@@ -1,0 +1,51 @@
+# Lutris, for aarch64 with Kettle's ARM64EC Wine (packages/wine) as its Wine.
+#
+# Lutris has no Wine, Proton or runtime builds for aarch64 (its API knows x86_64, i386 and
+# armv7), yet by default it downloads the x86 runtime and gives new Wine games GE-Proton
+# through umu. So:
+#   0001  on an architecture Lutris has no Wine builds for, default to the system Wine, and
+#         drop the Wine versions installer scripts pin (wine-ge-8-26-x86_64, ...) unless
+#         they are installed; the game then uses the configured (system) Wine
+#   skel/ new users' Lutris settings (~/.local/share/lutris): no runtime (lutris.conf,
+#         system.yml), system Wine and winetricks, and none of Lutris's downloaded x86
+#         DXVK/VKD3D/nvapi/d3d_extras, since our Wine has ARM64EC DXVK and vkd3d-proton built
+#         in (runners/wine.yml)
+# Not packaged: python-moddb (optional in Lutris; only ModDB-hosted installer downloads need
+# it, and 0.15 pulls in curl_cffi). gnome-desktop is optional too (falls back to xrandr).
+pkgname=lutris
+pkgver=0.5.22
+pkgrel=2
+pkgdesc='Open Gaming Platform'
+arch=(any)
+url='https://lutris.net'
+license=(GPL-3.0-only)
+depends=(cabextract curl gdk-pixbuf2 glib2 gobject-introspection-runtime gtk3 hicolor-icon-theme
+         mesa-utils 7zip pango psmisc python python-cairo python-certifi dbus-python
+         python-distro python-evdev python-gobject python-lxml python-pillow python-requests
+         python-urllib3 python-yaml unzip webkit2gtk-4.1 xdg-desktop-portal-kde xorg-xrandr
+         vulkan-tools wine winetricks)
+optdepends=('fluidsynth: MIDI music'
+            'python-pefile: icons of Windows executables'
+            'python-protobuf: Battle.net support')
+makedepends=(meson ninja)
+source=("$pkgname-$pkgver.tar.gz::https://github.com/lutris/lutris/archive/refs/tags/v$pkgver.tar.gz"
+        0001-system-wine-on-unsupported-arch.patch)
+sha256sums=('1001b215d68c7e450b74bcf11510adb3ac60074ed46d5a160eb851bafcc14c3c'
+            'd42363227d4c593e6917b0ab3dbd2a6d44f38aa2e3078d35992a838fb6956446')
+
+prepare() {
+  cd $pkgname-$pkgver
+  patch -Np1 -i ../0001-system-wine-on-unsupported-arch.patch
+}
+
+build() {
+  arch-meson $pkgname-$pkgver build
+  meson compile -C build
+}
+
+package() {
+  DESTDIR="$pkgdir" meson install -C build
+  local skel="$pkgdir/etc/skel/.local/share/lutris"
+  install -Dm644 "$startdir/skel/lutris.conf" "$startdir/skel/system.yml" -t "$skel"
+  install -Dm644 "$startdir/skel/wine.yml" -t "$skel/runners"
+}

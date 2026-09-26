@@ -8,6 +8,18 @@ LOCAL_REPO="$ROOT/out/repo/aarch64"
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Keep builds from taking over the machine: lowest CPU and idle I/O priority, and at most
+# JOBS cores (default half), set as CPU affinity so everything sizing itself with nproc
+# (makepkg's -j, upstream build scripts, make -j) follows it. Inherited by all children.
+be_nice() {
+  renice -n 19 -p $$ >/dev/null 2>&1 || true
+  ionice -c 3 -p $$ 2>/dev/null || true
+  local n; n=$(nproc)
+  JOBS="${JOBS:-$(( n > 2 ? n / 2 : 1 ))}"
+  [ "$JOBS" -lt "$n" ] && taskset -pc "0-$((JOBS - 1))" $$ >/dev/null 2>&1 || true
+  export JOBS
+}
+
 # Re-exec the calling script inside a user+mount+pid namespace (subuid-mapped fake root).
 enter_ns() {
   [ "${KETTLE_IN_NS:-}" = 1 ] && return 0

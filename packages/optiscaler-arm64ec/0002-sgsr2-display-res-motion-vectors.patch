@@ -1,0 +1,103 @@
+From dd3fd33c68afcee741c3a5894d3e4e6d1bd27347 Mon Sep 17 00:00:00 2001
+From: Kettle <kettle@localhost>
+Date: Fri, 25 Sep 2026 15:19:00 -0500
+Subject: [PATCH 2/2] sgsr2: fetch and scale display-resolution motion vectors
+ (NGX MVLowRes unset)
+
+---
+ OptiScaler/upscalers/sgsr2/SGSR2Feature.cpp | 20 +++++++++++++++-----
+ OptiScaler/upscalers/sgsr2/SGSR2Feature.h   |  9 ++++++++-
+ OptiScaler/upscalers/sgsr2/SGSR2_Shaders.h  | 10 +++++++++-
+ 3 files changed, 32 insertions(+), 7 deletions(-)
+
+diff --git a/OptiScaler/upscalers/sgsr2/SGSR2Feature.cpp b/OptiScaler/upscalers/sgsr2/SGSR2Feature.cpp
+index 094c356..73a7d4f 100644
+--- a/OptiScaler/upscalers/sgsr2/SGSR2Feature.cpp
++++ b/OptiScaler/upscalers/sgsr2/SGSR2Feature.cpp
+@@ -65,8 +65,17 @@ bool SGSR2Feature::UpdateSharedConstants(NVSDK_NGX_Parameter* InParameters)
+     // screen flow is radial and Y is exercised without needing a vertical
+     // camera move. Same walk, same save, detail retained in motion relative to
+     // a still frame: +2/h keeps 1.05, -2/h keeps 0.56.
+-    _constants.motionVectorScale[0] = -2.0f * mvScaleX / rw;
+-    _constants.motionVectorScale[1] = 2.0f * mvScaleY / rh;
++    //
++    // Display-resolution vectors (LowResMV unset) are in display pixels, so they convert with
++    // the display size, and are fetched at the display pixel under each render pixel.
++    const bool mvHighRes = !LowResMV() && (DisplayWidth() != RenderWidth() || DisplayHeight() != RenderHeight());
++    const float mw = mvHighRes ? (float) DisplayWidth() : rw;
++    const float mh = mvHighRes ? (float) DisplayHeight() : rh;
++    _constants.motionVectorScale[0] = -2.0f * mvScaleX / mw;
++    _constants.motionVectorScale[1] = 2.0f * mvScaleY / mh;
++    _constants.mvHighRes = mvHighRes ? 1u : 0u;
++    _constants.mvPosScale[0] = (float) DisplayWidth() / rw;
++    _constants.mvPosScale[1] = (float) DisplayHeight() / rh;
+ 
+     // Temporary tuning hook: lets the motion-vector convention be dialled in on
+     // a device without a rebuild. OPTI_SGSR2_MVX/MVY override the scale outright.
+@@ -79,9 +88,10 @@ bool SGSR2Feature::UpdateSharedConstants(NVSDK_NGX_Parameter* InParameters)
+     // the single place that convention lives. Report it once so a smeared or
+     // doubled image can be diagnosed without guessing.
+     if (_frameCount == 0)
+-        LOG_INFO("MV convention: NGX MV_Scale=({0}, {1}) render={2}x{3} -> motionVectorScale=({4}, {5})", mvScaleX,
+-                 mvScaleY, RenderWidth(), RenderHeight(), _constants.motionVectorScale[0],
+-                 _constants.motionVectorScale[1]);
++        LOG_INFO("MV convention: NGX MV_Scale=({0}, {1}) render={2}x{3} display={4}x{5} highResMV={6} -> "
++                 "motionVectorScale=({7}, {8})",
++                 mvScaleX, mvScaleY, RenderWidth(), RenderHeight(), DisplayWidth(), DisplayHeight(), mvHighRes,
++                 _constants.motionVectorScale[0], _constants.motionVectorScale[1]);
+ 
+     // Unused while motion comes from the MV texture, but keep it a well-formed
+     // identity so the shader's fallback path can never produce garbage.
+diff --git a/OptiScaler/upscalers/sgsr2/SGSR2Feature.h b/OptiScaler/upscalers/sgsr2/SGSR2Feature.h
+index 39f3fb2..1b830ba 100644
+--- a/OptiScaler/upscalers/sgsr2/SGSR2Feature.h
++++ b/OptiScaler/upscalers/sgsr2/SGSR2Feature.h
+@@ -51,9 +51,16 @@ struct alignas(16) SGSR2Constants
+     // Zero when the game supplies no depth buffer. Depth only feeds the
+     // disocclusion test, so the pass degrades rather than failing.
+     uint32_t hasDepth;
++
++    // Motion vectors at display resolution (NGX MVLowRes unset, e.g. UE's DLSS plugin, which
++    // dilates them to the output size by default): the Convert pass fetches each render
++    // pixel's vector at the display pixel under it, mvPosScale = display / render size.
++    float mvPosScale[2];
++    uint32_t mvHighRes;
++    uint32_t mvPad;
+ };
+ 
+-static_assert(sizeof(SGSR2Constants) == 160, "SGSR2Constants must match the HLSL cbuffer layout");
++static_assert(sizeof(SGSR2Constants) == 176, "SGSR2Constants must match the HLSL cbuffer layout");
+ 
+ class SGSR2Feature : public virtual IFeature
+ {
+diff --git a/OptiScaler/upscalers/sgsr2/SGSR2_Shaders.h b/OptiScaler/upscalers/sgsr2/SGSR2_Shaders.h
+index 00750e7..87abd71 100644
+--- a/OptiScaler/upscalers/sgsr2/SGSR2_Shaders.h
++++ b/OptiScaler/upscalers/sgsr2/SGSR2_Shaders.h
+@@ -76,6 +76,9 @@
+     "    uint2  depthSize;\n"                                                                                           \
+     "    float  reactiveStrength;\n"                                                                                    \
+     "    uint   hasDepth;\n"                                                                                          \
++    "    float2 mvPosScale;\n"                                                                                        \
++    "    uint   mvHighRes;\n"                                                                                         \
++    "    uint   mvPad;\n"                                                                                             \
+     "};\n"                                                                                                             \
+     "#ifdef VK_MODE\n"                                                                                                \
+     "[[vk::binding(1, 0)]]\n"                                                                                         \
+@@ -243,7 +246,12 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
+     // bounds and returns zero -- which is why motion vectors read as zero in
+     // every game, in every SRV slot, for any resource bound. InputColor.Load
+     // escaped it only because it already used InputPos.
+-    float2 rawMv = InputVelocity.Load(int3(InputPos, 0)).xy;
++    // Display-resolution vectors: read the one at the display pixel under this render pixel's
++    // (unjittered) centre, as FSR2's ComputeHrPosFromLrPos does.
++    int2 MvPos = int2(InputPos);
++    if (mvHighRes != 0u)
++        MvPos = int2(floor((float2(InputPos) + 0.5f - jitterOffset) * mvPosScale));
++    float2 rawMv = InputVelocity.Load(int3(MvPos, 0)).xy;
+ 
+     float2 motion = rawMv * motionVectorScale;
+ 
+-- 
+2.55.0
+

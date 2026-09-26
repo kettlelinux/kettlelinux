@@ -1,0 +1,58 @@
+--- a/lutris/runners/wine.py
++++ b/lutris/runners/wine.py
+@@ -63,6 +63,7 @@
+     get_system_wine_version,
+     get_wine_path_for_version,
+     is_esync_limit_set,
++    is_foreign_wine_version,
+     is_fsync_supported,
+     is_gstreamer_build,
+     is_winewayland_available,
+@@ -884,6 +885,9 @@
+         if installer.script.get(installer.runner):
+             version = installer.script[installer.runner].get("version")
+             version = normalize_version_architecture(version)
++            if version and is_foreign_wine_version(version):
++                logger.info("Installer asks for Wine %s, which isn't available here; using the configured Wine", version)
++                version = None
+         # If the installer is an extension, use the wine version from the base game
+         elif installer.requires:
+             db_game = get_game_by_field(installer.requires, field="installer_slug")
+@@ -916,7 +920,12 @@
+     def adjust_installer_runner_config(self, installer_runner_config: Dict[str, Any]) -> None:
+         version = installer_runner_config.get("version")
+         if version:
+-            installer_runner_config["version"] = normalize_version_architecture(version)
++            version = normalize_version_architecture(version)
++            if is_foreign_wine_version(version):
++                # keep the game on the configured Wine rather than pinning one we can't run
++                del installer_runner_config["version"]
++            else:
++                installer_runner_config["version"] = version
+ 
+     @classmethod
+     def get_runner_version_and_config(cls) -> Tuple[str, LutrisConfig]:
+--- a/lutris/util/wine/wine.py
++++ b/lutris/util/wine/wine.py
+@@ -240,9 +240,21 @@
+ 
+ def get_default_wine_version() -> str:
+     """Return the default version of wine."""
++    # No GE-Proton (umu) or Lutris Wine builds exist for this architecture: use the system's
++    if linux.LINUX_SYSTEM.arch is None and get_system_wine_version():
++        return "system"
+     return GE_PROTON_LATEST
+ 
+ 
++def is_foreign_wine_version(version: str) -> bool:
++    """True for a Wine version an installer asks for that this system can't run or download:
++    on an architecture Lutris has no Wine builds for (aarch64), GE-Proton (Latest) and any
++    version that isn't installed already."""
++    if linux.LINUX_SYSTEM.arch is not None:
++        return False
++    return version == GE_PROTON_LATEST or version not in get_installed_wine_versions()
++
++
+ def get_system_wine_version(wine_path: str = "wine") -> str:
+     """Return the version of Wine installed on the system."""
+     if wine_path != "wine" and not system.path_exists(wine_path):

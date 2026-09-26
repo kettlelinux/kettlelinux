@@ -1,0 +1,17 @@
+{
+  "defaultSettings": {
+    "wineVersion": {
+      "bin": "/usr/bin/wine",
+      "name": "Wine - Kettle (ARM64EC)",
+      "type": "wine",
+      "wineserver": "/usr/bin/wineserver"
+    },
+    "autoInstallDxvk": false,
+    "autoInstallVkd3d": false,
+    "autoInstallDxvkNvapi": false,
+    "eacRuntime": false,
+    "battlEyeRuntime": false,
+    "disableUMU": true
+  },
+  "version": "v0"
+}

@@ -15,6 +15,8 @@ NotifyAccess=all
 TimeoutStartSec=30
 TimeoutStopSec=10
 ExecStart=/usr/lib/kettle/gamescope-session
+# Withdraw the environment gamescope-onready published, so it doesn't leak into Plasma
+ExecStopPost=/usr/lib/kettle/gamescope-onready --unset
 # Xwayland runs with -core; don't SIGTERM it
 KillMode=mixed
 Environment=SRT_LOG_TO_JOURNAL=1

@@ -1,0 +1,25 @@
+# steamos-manager device config for the AYN Odin 2 Portal. The power controls themselves
+# (TDP, performance profiles, GPU clock, charge limit, fan control) are kettle-powerd's,
+# relayed through remotes.d/kettle-power.toml: configuring them here would make
+# steamos-manager write the same cpufreq/devfreq files and fight it.
+# Booted through U-Boot's EFI there is SMBIOS, and steamos-manager then matches on DMI only
+# (U-Boot names the family, not the Portal)
+[[device]]
+dmi.sys_vendor = "ayn"
+dmi.product_name = "AYN Odin 2"
+device = "odin2_portal"
+variant = "Portal"
+friendly_name = "AYN Odin 2 Portal"
+
+# Booted without SMBIOS (the ABL's \KERNEL)
+[[device]]
+dt.compatible = "ayn,odin2portal"
+device = "odin2_portal"
+variant = "Portal"
+friendly_name = "AYN Odin 2 Portal"
+
+# Steam lowers the TDP to this while it downloads in sleep; the rest of TdpLimit1 comes
+# from kettle-powerd
+[tdp_limit]
+method = "remote_interface"
+download_mode_limit = 5

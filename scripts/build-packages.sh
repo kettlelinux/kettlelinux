@@ -8,6 +8,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib.sh"
+be_nice
 enter_ns "$@"
 
 CHROOT="$ROOT/build/pkgroot"
@@ -25,7 +26,7 @@ if [ "$new" = 1 ]; then
   log "creating build chroot"
   pacman_root "$CHROOT" -Sy --needed base base-devel
   chroot "$CHROOT" useradd -m -u 1000 builder
-  echo "MAKEFLAGS=\"-j$(nproc)\"" >>"$CHROOT/etc/makepkg.conf"
+  echo 'MAKEFLAGS="-j$(nproc)"' >>"$CHROOT/etc/makepkg.conf"   # nproc follows be_nice's core limit
   sed -i 's/^OPTIONS=(\(.*\)debug/OPTIONS=(\1!debug/' "$CHROOT/etc/makepkg.conf"
 fi
 cp /etc/resolv.conf "$CHROOT/etc/resolv.conf"

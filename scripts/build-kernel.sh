@@ -12,7 +12,8 @@ source "$ROOT/kernel/kernel.conf"
 CACHE="$ROOT/cache"
 KSRC="$ROOT/build/linux-$KERNEL_VERSION-kettle"
 OUT="$ROOT/out/kernel"
-JOBS="${JOBS:-$(nproc)}"
+. "$ROOT/scripts/lib.sh"
+be_nice   # sets JOBS
 KMAKE=(make -C "$KSRC" ARCH=arm64 LLVM=1 -j"$JOBS")
 
 # The kernel needs bc; fall back to the timeconst-only shim if the host lacks it.

@@ -2,6 +2,9 @@
 # Runs inside gamescope once its Xwayland servers are up: publish the display
 # environment to the user manager, tell systemd we're ready (starts steam.service),
 # then stay alive for the lifetime of the session.
+# With --unset (gamescope-session.service ExecStopPost) it withdraws the same variables, so
+# they don't leak into the desktop session: the user manager outlives Game Mode, and Plasma
+# would otherwise start with Steam's cursor theme/size, the xim input method, gamescope's DISPLAY...
 vars=(DISPLAY GAMESCOPE_WAYLAND_DISPLAY XDG_SESSION_TYPE XCURSOR_THEME XCURSOR_SIZE
       SRT_URLOPEN_PREFER_STEAM STEAM_MULTIPLE_XWAYLANDS STEAM_USE_MANGOAPP
       STEAM_MANGOAPP_PRESETS_SUPPORTED STEAM_MANGOAPP_HORIZONTAL_SUPPORTED
@@ -9,6 +12,9 @@ vars=(DISPLAY GAMESCOPE_WAYLAND_DISPLAY XDG_SESSION_TYPE XCURSOR_THEME XCURSOR_S
       STEAM_GAMESCOPE_DYNAMIC_FPSLIMITER STEAM_GAMESCOPE_HAS_TEARING_SUPPORT
       STEAM_GAMESCOPE_TEARING_SUPPORTED STEAM_GAMESCOPE_NIS_SUPPORTED
       GAMESCOPE_STATS MANGOHUD_CONFIGFILE vk_xwayland_wait_ready QT_IM_MODULE GTK_IM_MODULE QT_QPA_PLATFORMTHEME)
+if [ "${1:-}" = --unset ]; then
+  exec systemctl --user unset-environment "${vars[@]}"
+fi
 systemctl --user import-environment "${vars[@]}"
 NOTIFY_SOCKET="$GAMESCOPE_READY_NOTIFY_SOCKET" systemd-notify --ready
 exec sleep infinity

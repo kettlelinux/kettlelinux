@@ -1,0 +1,15 @@
+{
+    "KPackageStructure": "Plasma/LookAndFeel",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Kettle Linux contributors"
+            }
+        ],
+        "Description": "Kettle Linux splash screen: a copper kettle with steam rising from the spout",
+        "Id": "org.kettle.splash",
+        "License": "BSD-3-Clause",
+        "Name": "Kettle",
+        "Version": "1.0"
+    }
+}

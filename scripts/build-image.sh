@@ -27,6 +27,7 @@ if [ "${KETTLE_IN_NS:-}" != 1 ]; then
   [ -d "$ROOT/out/firmware" ] || die "no firmware; run scripts/build-firmware.sh"
   [ -f "$LOCAL_REPO/kettle.db" ] || die "no local repo; run scripts/build-packages.sh"
 fi
+be_nice
 enter_ns "$@"
 
 # ---------------------------------------------------------------- inside the namespace
@@ -103,6 +104,9 @@ systemctl set-default graphical.target >/dev/null 2>&1
 # scheduler measured better -- Skyrim 9.0 W at 34.9 fps vs lavd 9.6-9.9 W at 33.6-34.3 fps,
 # idle 1.71 W vs 1.80 W (lavd holds the little cluster at max clock and sends ~5x the IPIs).
 systemctl enable steamos-manager kettle-mangoapp-tracefs >/dev/null 2>&1
+# kettle-powerd: CPU/GPU caps, power budget, fan and charge limit, behind Steam's own power
+# controls (steamos-manager remotes.d) and the Power plugin
+systemctl enable kettle-powerd >/dev/null 2>&1
 # Decky Loader (Game Mode plugins); its unit name is fixed by the loader itself
 systemctl enable plugin_loader >/dev/null 2>&1
 systemctl --global enable steamos-manager.service kettle-steam-bootstrap.service \

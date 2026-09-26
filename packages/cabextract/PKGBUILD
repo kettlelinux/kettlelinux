@@ -1,0 +1,22 @@
+# cabextract: Microsoft .CAB extractor, needed by winetricks and Lutris installers (no deckard
+# snapshot has it). Arch's recipe, from the release tarball.
+pkgname=cabextract
+pkgver=1.11
+pkgrel=1
+pkgdesc='A program to extract Microsoft cabinet (.CAB) files'
+arch=(aarch64)
+url='https://www.cabextract.org.uk/'
+license=(GPL-2.0-or-later)
+depends=(glibc)
+source=(https://www.cabextract.org.uk/$pkgname-$pkgver.tar.gz)
+sha256sums=('b5546db1155e4c718ff3d4b278573604f30dd64c3c5bfd4657cd089b823a3ac6')
+
+build() {
+  cd $pkgname-$pkgver
+  ./configure --prefix=/usr --sysconfdir=/etc --mandir=/usr/share/man
+  make
+}
+
+package() {
+  make DESTDIR="$pkgdir" -C $pkgname-$pkgver install
+}

@@ -5,10 +5,12 @@
 #                          a boil and a chime, rendered frame by frame (render-startup.py) and
 #                          encoded like Valve's own movies (VP9 + Opus, 1920x1080 at 60 fps).
 #                          run-steam puts it where Steam looks for overrides.
+#   kettle-plasma-splash   the Plasma (KSplash) splash screen: the boot splash's picture again,
+#                          as a QML scene (plasma/), so the desktop's startup matches the boot.
 pkgbase=kettle-branding
-pkgname=(kettle-plymouth-theme kettle-steam-startup)
+pkgname=(kettle-plymouth-theme kettle-steam-startup kettle-plasma-splash)
 pkgver=1.0.0
-pkgrel=1
+pkgrel=2
 arch=(any)
 license=(BSD-3-Clause)
 makedepends=(librsvg ffmpeg python)
@@ -20,6 +22,13 @@ build() {
   rsvg-convert "$startdir/art/wordmark.svg" -o wordmark.png
   rsvg-convert "$startdir/art/progress-track.svg" -o progress-track.png
   rsvg-convert "$startdir/art/progress-fill.svg" -o progress-fill.png
+
+  # Plasma splash art at twice its 1920x1080 size: the desktop runs at scale 1.5 on the Portal
+  mkdir -p plasma
+  rsvg-convert -w 640 "$startdir/art/kettle.svg" -o plasma/kettle.png
+  rsvg-convert -w 120 "$startdir/art/steam.svg" -o plasma/steam.png
+  rsvg-convert -z 2 "$startdir/art/wordmark.svg" -o plasma/wordmark.png
+  rsvg-convert "$startdir/art/glow.svg" -o plasma/glow.png
 
   python "$startdir/render-startup.py" "$startdir/art" startup.webm
 }
@@ -36,5 +45,18 @@ package_kettle-plymouth-theme() {
 package_kettle-steam-startup() {
   pkgdesc='Kettle Linux Steam startup movie'
   install -Dm644 startup.webm "$pkgdir/usr/share/kettle/steam/startup.webm"
+  install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}
+
+package_kettle-plasma-splash() {
+  pkgdesc='Kettle Linux Plasma splash screen'
+  depends=(plasma-workspace qt6-declarative)
+  local dir="$pkgdir/usr/share/plasma/look-and-feel/org.kettle.splash"
+  install -Dm644 "$startdir/plasma/metadata.json" -t "$dir"
+  install -Dm644 "$startdir/plasma/contents/splash/Splash.qml" -t "$dir/contents/splash"
+  install -Dm644 plasma/kettle.png plasma/steam.png plasma/wordmark.png plasma/glow.png \
+    -t "$dir/contents/splash/images"
+  # the default for every user, set in their ksplashrc at session start (see the script)
+  install -Dm644 "$startdir/plasma/kettle-splash.sh" -t "$pkgdir/etc/xdg/plasma-workspace/env"
   install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
 }

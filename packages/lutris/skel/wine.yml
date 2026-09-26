@@ -1,0 +1,9 @@
+wine:
+  version: system
+  system_winetricks: true
+  # Kettle's Wine has ARM64EC DXVK and vkd3d-proton built in; Lutris's own (downloaded, x86)
+  # would replace them in the prefix and run emulated
+  dxvk: false
+  vkd3d: false
+  dxvk_nvapi: false
+  d3d_extras: false

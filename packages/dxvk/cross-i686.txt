@@ -1,0 +1,16 @@
+[binaries]
+c = 'i686-w64-mingw32-clang'
+cpp = 'i686-w64-mingw32-clang++'
+ar = 'i686-w64-mingw32-ar'
+strip = 'i686-w64-mingw32-strip'
+windres = 'i686-w64-mingw32-windres'
+widl = 'i686-w64-mingw32-widl'
+
+[properties]
+needs_exe_wrapper = true
+
+[host_machine]
+system = 'windows'
+cpu_family = 'x86'
+cpu = 'x86'
+endian = 'little'

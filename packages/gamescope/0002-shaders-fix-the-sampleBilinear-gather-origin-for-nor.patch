@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Matthew Schwartz <matthew.schwartz@linux.dev>
+Date: Wed, 9 Sep 2026 23:40:23 -0700
+Subject: [PATCH 2/9] shaders: fix the sampleBilinear gather origin for
+ normalized coordinates
+
+sampleBilinear scales the pixel origin by the texture size before
+dividing it back out, so with normalized coordinates the gather lands a
+factor of scale away from the texel. Nothing reaches it today, every
+emulated-linear caller passes unnormalized coordinates where scale is
+one.
+
+Compute the origin in texels and normalize it once, which is the
+identity for the unnormalized callers.
+---
+ src/shaders/composite.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/shaders/composite.h b/src/shaders/composite.h
+index 229296e3..a62324e4 100644
+--- a/src/shaders/composite.h
++++ b/src/shaders/composite.h
+@@ -139,7 +139,7 @@ vec4 sampleBilinear(sampler2D tex, vec2 coord, uint colorspace, bool unnormalize
+     vec2 pixCoord = coord * scale - 0.5f;
+     vec2 originPixCoord = floor(pixCoord);
+ 
+-    vec2 gatherUV = (originPixCoord * scale + 1.0f) / scale;
++    vec2 gatherUV = (originPixCoord + 1.0f) / scale;
+ 
+     vec4 red   = textureGather(tex, gatherUV, 0);
+     vec4 green = textureGather(tex, gatherUV, 1);

@@ -1,0 +1,68 @@
+From f9861337b9f194d3e4352251971e2df57e4492db Mon Sep 17 00:00:00 2001
+From: Kettle <kettle@localhost>
+Date: Fri, 25 Sep 2026 15:19:00 -0500
+Subject: [PATCH 1/2] sgsr2: guard the upscale kernel's weight sum against
+ cancelling to zero
+
+---
+ OptiScaler/upscalers/sgsr2/SGSR2_Shaders.h | 23 ++++++++++++++++++++--
+ 1 file changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/OptiScaler/upscalers/sgsr2/SGSR2_Shaders.h b/OptiScaler/upscalers/sgsr2/SGSR2_Shaders.h
+index 3acf7e7..00750e7 100644
+--- a/OptiScaler/upscalers/sgsr2/SGSR2_Shaders.h
++++ b/OptiScaler/upscalers/sgsr2/SGSR2_Shaders.h
+@@ -374,6 +374,7 @@ float3 DecodeColor(uint sample32)
+     float  base         = saturate(baseoffset_dot * kernelbias2);                   \
+     float  weight       = FastLanczos(base);                                        \
+     Upsampledcw        += float4(samplecolor * weight, weight);                     \
++    UpsampledPos       += float4(samplecolor * max(weight, 0.0f), max(weight, 0.0f)); \
+     float  boxweight    = exp(baseoffset_dot * curvebias);                          \
+     rectboxmin          = min(rectboxmin, samplecolor);                             \
+     rectboxmax          = max(rectboxmax, samplecolor);                             \
+@@ -438,6 +439,8 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
+     }
+ 
+     float4 Upsampledcw  = float4(0.0f, 0.0f, 0.0f, 0.0f);
++    // The same taps with the negative Lanczos lobes left out; see the weight guard below.
++    float4 UpsampledPos = float4(0.0f, 0.0f, 0.0f, 0.0f);
+     float  kernelfactor = saturate(Wfactor + (float) reset);
+     float  biasmax      = Biasmax_viewportXScale - Biasmax_viewportXScale * kernelfactor;
+     float  biasmin      = max(1.0f, 0.3f + 0.3f * biasmax);
+@@ -488,6 +491,7 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
+         float  base           = saturate(baseoffset_dot * kernelbias2);
+         float  weight         = FastLanczos(base);
+         Upsampledcw          += float4(samplecolor * weight, weight);
++        UpsampledPos         += float4(samplecolor * max(weight, 0.0f), max(weight, 0.0f));
+         float  boxweight      = exp(baseoffset_dot * curvebias);
+         rectboxmin            = samplecolor;
+         rectboxmax            = samplecolor;
+@@ -515,8 +519,23 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
+     rectboxvar    *= rectboxweight;
+     rectboxvar     = sqrt(abs(rectboxvar - rectboxcenter * rectboxcenter));
+ 
+-    Upsampledcw.xyz = clamp(Upsampledcw.xyz / Upsampledcw.w, rectboxmin - 0.05f, rectboxmax + 0.05f);
+-    Upsampledcw.w   = Upsampledcw.w * (1.0f / 3.0f);
++    // Weight guard. The kernel is only ~0.67 render pixels wide while moving (kernelbias = the
++    // upscale ratio), and its taps can go negative, so at some sub-pixel phases the sum cancels
++    // to ~0 or below: every tap is out of reach at the corner phases. Dividing by it gave
++    // single black/white pixels, pinned to the colour box, in every third column wherever
++    // the frame's jitter put pixels on those phases -- vertical strips that move with each
++    // frame, strongest in dark areas (1279x720 -> 1920x1080, DRG). Use the non-negative taps
++    // there (the nearest sample if none reach), and never let a cancelled sum act as the new
++    // sample's weight: with none, history carries the pixel, as the reference intends.
++    float3 upsampled;
++    if (Upsampledcw.w > 0.5f * UpsampledPos.w)
++        upsampled = Upsampledcw.xyz / Upsampledcw.w;
++    else if (UpsampledPos.w > 1.0e-3f)
++        upsampled = UpsampledPos.xyz / UpsampledPos.w;
++    else
++        upsampled = DecodeColor(topleft.y);
++    Upsampledcw.xyz = clamp(upsampled, rectboxmin - 0.05f, rectboxmax + 0.05f);
++    Upsampledcw.w   = max(Upsampledcw.w, 0.0f) * (1.0f / 3.0f);
+ 
+     float OneMinusWfactor = 1.0f - Wfactor;
+     float baseupdate      = OneMinusWfactor - OneMinusWfactor * depthfactor;
+-- 
+2.55.0
+
