@@ -320,17 +320,26 @@ HOLO_ROOT_UUID=$ROOT_FSUUID HOLO_VAR_UUID=$VARA_FSUUID \
   /usr/lib/holo/holo-grub-mkimage --format=arm64-efi --output=$W/dst/EFI/steamos/grubaa64.efi
 EFI=$W/dst HOLO_ROOT_UUID=$ROOT_FSUUID HOLO_ROOT_PARTUUID=$(pu "$ROOT") HOLO_ROOT_PARTNUM=$(partnum "$ROOT") \
   HOLO_EFI_PARTUUID=$(pu "$EFIA") update-grub >/dev/null
-ps=$W/dst/SteamOS/partsets; mkdir -p "$ps"
-printf 'esp %s\nhome %s\n' "$(pu "$ESP")" "$(pu "$HOME_P")" >"$ps/shared"
-printf 'efi %s\nrootfs %s\nvar %s\n' "$(pu "$EFIA")" "$(pu "$ROOT")" "$(pu "$VARA")" >"$ps/A"
-printf 'efi %s\nrootfs %s\nvar %s\n' "$(pu "$EFIB")" "$(pu "$ROOTB")" "$(pu "$VARB")" >"$ps/B"
-cp "$ps/A" "$ps/self"; cp "$ps/B" "$ps/other"
-for l in esp:"$ESP" efi-A:"$EFIA" efi-B:"$EFIB" rootfs-A:"$ROOT" rootfs-B:"$ROOTB" \
-         var-A:"$VARA" var-B:"$VARB" home:"$HOME_P"; do
-  printf '%s %s\n' "${l%%:*}" "$(pu "${l#*:}")"
-done >"$ps/all"
+# both slots' partition sets on each efi partition: steamcl knows slot B by efi-B's "B" file,
+# which the first update doesn't write (it only fills in all, shared, self and other)
+partsets() {  # dir, self, other
+  local ps=$1/SteamOS/partsets l; mkdir -p "$ps"
+  printf 'esp %s\nhome %s\n' "$(pu "$ESP")" "$(pu "$HOME_P")" >"$ps/shared"
+  printf 'efi %s\nrootfs %s\nvar %s\n' "$(pu "$EFIA")" "$(pu "$ROOT")" "$(pu "$VARA")" >"$ps/A"
+  printf 'efi %s\nrootfs %s\nvar %s\n' "$(pu "$EFIB")" "$(pu "$ROOTB")" "$(pu "$VARB")" >"$ps/B"
+  cp "$ps/$2" "$ps/self"; cp "$ps/$3" "$ps/other"
+  for l in esp:"$ESP" efi-A:"$EFIA" efi-B:"$EFIB" rootfs-A:"$ROOT" rootfs-B:"$ROOTB" \
+           var-A:"$VARA" var-B:"$VARB" home:"$HOME_P"; do
+    printf '%s %s\n' "${l%%:*}" "$(pu "${l#*:}")"
+  done >"$ps/all"
+}
+partsets $W/dst A B
 umount $W/dst
 fsck.fat -n "$EFIA" >/dev/null || die "file system check of $EFIA failed; rerun with --reinstall"
+mount "$EFIB" $W/dst
+partsets $W/dst B A
+umount $W/dst
+fsck.fat -n "$EFIB" >/dev/null || die "file system check of $EFIB failed; rerun with --reinstall"
 
 # The ESP last: until steamcl is on it the internal install cannot be booted half-done.
 # steamcl-restricted keeps steamcl to this disk's slots (the SD card's are named A and B too).

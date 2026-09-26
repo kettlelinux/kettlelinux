@@ -217,15 +217,24 @@ install -m 0644 "$cl" "$STAGE/esp/EFI/steamos/steamcl.efi"
 install -m 0644 "$cl" "$STAGE/esp/EFI/BOOT/BOOTAA64.EFI"
 install -m 0644 "$RFS/usr/share/holo-efi/steamcl-version" "$STAGE/esp/EFI/steamos/"
 
-# slot A's partition sets (what holo-partsets would write: <link name> <partuuid>)
-ps="$STAGE/efi-A/SteamOS/partsets"; mkdir -p "$ps"
-printf 'esp %s\nhome %s\n' "$ESP_PARTUUID" "$HOME_PARTUUID" >"$ps/shared"
-printf 'efi %s\nrootfs %s\nvar %s\n' "$EFIA_PARTUUID" "$ROOTA_PARTUUID" "$VARA_PARTUUID" >"$ps/A"
-printf 'efi %s\nrootfs %s\nvar %s\n' "$EFIB_PARTUUID" "$ROOTB_PARTUUID" "$VARB_PARTUUID" >"$ps/B"
-cp "$ps/A" "$ps/self"; cp "$ps/B" "$ps/other"
-printf '%s %s\n' esp "$ESP_PARTUUID" efi-A "$EFIA_PARTUUID" efi-B "$EFIB_PARTUUID" \
-  rootfs-A "$ROOTA_PARTUUID" rootfs-B "$ROOTB_PARTUUID" var-A "$VARA_PARTUUID" \
-  var-B "$VARB_PARTUUID" home "$HOME_PARTUUID" >"$ps/all"
+# Both slots' partition sets (what holo-partsets would write: <link name> <partuuid>), on each
+# slot's efi partition. steamcl knows a slot by the file named after it (A or B) whose efi entry
+# is that partition, so efi-B needs its set before the first update writes it (Valve's
+# post-install only fills in all, shared, self and other).
+mkdir -p "$STAGE/efi-B"
+for slot in A B; do
+  ps="$STAGE/efi-$slot/SteamOS/partsets"; mkdir -p "$ps"
+  printf 'esp %s\nhome %s\n' "$ESP_PARTUUID" "$HOME_PARTUUID" >"$ps/shared"
+  printf 'efi %s\nrootfs %s\nvar %s\n' "$EFIA_PARTUUID" "$ROOTA_PARTUUID" "$VARA_PARTUUID" >"$ps/A"
+  printf 'efi %s\nrootfs %s\nvar %s\n' "$EFIB_PARTUUID" "$ROOTB_PARTUUID" "$VARB_PARTUUID" >"$ps/B"
+  printf '%s %s\n' esp "$ESP_PARTUUID" efi-A "$EFIA_PARTUUID" efi-B "$EFIB_PARTUUID" \
+    rootfs-A "$ROOTA_PARTUUID" rootfs-B "$ROOTB_PARTUUID" var-A "$VARA_PARTUUID" \
+    var-B "$VARB_PARTUUID" home "$HOME_PARTUUID" >"$ps/all"
+done
+cp "$STAGE/efi-A/SteamOS/partsets/A" "$STAGE/efi-A/SteamOS/partsets/self"
+cp "$STAGE/efi-A/SteamOS/partsets/B" "$STAGE/efi-A/SteamOS/partsets/other"
+cp "$STAGE/efi-B/SteamOS/partsets/B" "$STAGE/efi-B/SteamOS/partsets/self"
+cp "$STAGE/efi-B/SteamOS/partsets/A" "$STAGE/efi-B/SteamOS/partsets/other"
 
 chroot_umount "$RFS"; trap - EXIT
 rm -rf "$RFS"/var/cache/pacman/pkg/* "$RFS"/tmp/* "$RFS"/var/log/pacman.log "$RFS/home/kettle"
@@ -365,7 +374,7 @@ fat() {  # name, size MiB, label, dir
 }
 fat esp $ESP_MB KETTLE "$STAGE/esp"
 fat efi-A $EFI_MB EFI-A "$STAGE/efi-A"
-fat efi-B $EFI_MB EFI-B ""
+fat efi-B $EFI_MB EFI-B "$STAGE/efi-B"
 mke2fs -q -t ext4 -L var -U "$VARA_FSUUID" -d "$STAGE/var-A" "$WORK/var-A.ext4" "${VAR_MB}M"
 mke2fs -q -t ext4 -L var -U "$VARB_FSUUID" "$WORK/var-B.ext4" "${VAR_MB}M"
 

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Kettle Linux: Steam outside Game Mode (the desktop's autostart and menu entries, steam:// links).
+# The client picks its update channel from its command line: Game Mode's -steamdeck selects
+# steamdeck_stable, while Valve's deckard autostart (-silent -vrdisable -deckard) selects the
+# Steam Frame beta. Every switch between Desktop and Game Mode then re-downloaded (~560 MB) and
+# re-extracted (about a minute) the other client before Steam came up. As SteamOS's own
+# launcher does, always run it as a Steam Deck, with the -deckard (Steam Frame) flag left out.
+for a in "$@"; do
+  shift
+  [ "$a" = -deckard ] || set -- "$@" "$a"
+done
+exec /usr/lib/steam/steam -steamos3 -steampal -steamdeck "$@"

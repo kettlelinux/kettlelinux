@@ -1,0 +1,37 @@
+From 39a773841ec6c306a346d060adaf719f828ed82d Mon Sep 17 00:00:00 2001
+From: Kettle <kettle@localhost>
+Date: Sat, 26 Sep 2026 17:06:20 -0500
+Subject: [PATCH] rauc post-install: give the other efi both slots' partsets
+
+steamcl identifies a slot by the partset named after it (A, B) whose efi
+entry is that efi partition. configure_other_efi only copied all, shared,
+self and other, and only into an efi without partsets, so an image whose
+second efi partition was empty (or had just those) never booted slot B:
+steamcl found no B and kept starting A. Copy A and B when missing.
+---
+ atomic-update/rauc/post-install.sh.in | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/atomic-update/rauc/post-install.sh.in b/atomic-update/rauc/post-install.sh.in
+index 665bcec..c825a3e 100755
+--- a/atomic-update/rauc/post-install.sh.in
++++ b/atomic-update/rauc/post-install.sh.in
+@@ -114,6 +114,15 @@ configure_other_efi() {
+         fi
+     fi
+ 
++    # steamcl knows the slot by the partset named after it whose efi entry is this partition:
++    # make sure both slots' sets are there (an image may not have written them to the other efi)
++    for ident in "$keep_slot" "$update_slot"; do
++        if ! [ -e "$partsets/$ident" ] && [ -e "/efi/$PARTSETS_RELDIR/$ident" ]; then
++            log "Adding the '$ident' partset to the 'other' efi partsets"
++            cp "/efi/$PARTSETS_RELDIR/$ident" "$partsets/"
++        fi
++    done
++
+     ident=$update_slot
+     confdir=/esp/$BOOTCONF_RELDIR
+     bootconf=$confdir/${ident}.conf
+-- 
+2.55.0
+
