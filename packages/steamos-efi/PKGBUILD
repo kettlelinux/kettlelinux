@@ -7,7 +7,7 @@
 pkgname=steamos-efi
 _srctag=jupiter-20260824.1
 pkgver=${_srctag#jupiter-}
-pkgrel=1
+pkgrel=2
 pkgdesc='Stage 1 bootloader for SteamOS 3+ (A/B chainloader), Kettle Linux arm64 build'
 arch=(aarch64)
 url='https://gitlab.steamos.cloud/holo/steamos-efi'
@@ -18,18 +18,22 @@ options=(!strip)  # steamcl.efi is a PE image; the ELF helpers are stripped by t
 # Valve publishes the source (a bare clone of the repository) next to its packages
 source=("https://steamdeck-packages.steamos.cloud/archlinux-mirror/sources/holo-main/steamos-efi-20260824.1-3.src.tar.gz"
         0001-configure-build-for-arm64.patch
-        0002-steamcl-install-aarch64-removable-path.patch)
+        0002-steamcl-install-aarch64-removable-path.patch
+        0003-chainloader-arm64-stage-2-loader-path-and-PE-machine-type.patch)
 sha256sums=('dcfa1ae84ada58413c482bb56bfbcd1429aa0148dfec7a1172635e3b2f1aef18'
             '6b6fca5581d06180adc31722b625227d9b731e8f25955ccc9e48103e9c5c430b'
-            '81401828ccb85e6da4c6586bb544cbdcdd914c1fc5c979a44729c7efd95e644b')
+            '81401828ccb85e6da4c6586bb544cbdcdd914c1fc5c979a44729c7efd95e644b'
+            'e82cecf0aef219d771dc624c3e5bb6b88fdf7b3e8f0ea024c7d4c6eebe896787')
 
 prepare() {
   rm -rf "$pkgname-src"
   git clone -q "$srcdir/steamos-efi/steamos-efi" "$pkgname-src"
   git -C "$pkgname-src" checkout -q "$_srctag"
-  # Valve builds this for x86 only: the build and steamcl-install need small fixes for arm64
+  # Valve builds this for x86 only: the build, steamcl-install and the chainloader's loader
+  # path and PE machine check need small fixes for arm64
   local p
-  for p in 0001-configure-build-for-arm64.patch 0002-steamcl-install-aarch64-removable-path.patch; do
+  for p in 0001-configure-build-for-arm64.patch 0002-steamcl-install-aarch64-removable-path.patch \
+           0003-chainloader-arm64-stage-2-loader-path-and-PE-machine-type.patch; do
     git -C "$pkgname-src" apply "$srcdir/$p"
   done
 }

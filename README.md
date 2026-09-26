@@ -126,7 +126,9 @@ Pages, in a sidebar:
 - **Setup**: System Settings modules in their own windows (`kcmshell6`): password and account
   (`kcm_users`; the password starts as `kettle`, which also guards SSH and sudo), Wi-Fi,
   display, sound, power, game controllers, on-screen keyboard, language, date and time,
-  appearance, all settings
+  appearance, all settings; and an **SSH server** switch (`systemctl enable/disable --now
+  sshd`, authorized through the desktop's polkit password dialog) that shows the `ssh` command
+  with this device's addresses. Release images start with SSH off.
 - **Controls**: the gamepad controls above, the on-screen keyboard, Return to Game Mode
 - **Games**: Heroic, Lutris and Steam; adding their games to Game Mode; how Windows games run
 - **Gaming Extras**: optional apps, ticked and installed from Flathub for the user only

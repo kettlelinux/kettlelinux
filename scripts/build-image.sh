@@ -22,6 +22,10 @@
 #   KETTLE_RAUC_KEY/_CERT  release signing key and certificate (default: a development key in
 #                          cache/keys/, made on first use)
 #   KETTLE_NO_BUNDLE=1     skip the update bundle (faster; the image only)
+#   KETTLE_RELEASE=1       an image to hand out: WIFI_*, SSH_PUBKEY and USER_PASSWORD are ignored
+#                          (even from local.env), the SSH server is off by default (every copy
+#                          has the same password), and the image is also written compressed,
+#                          out/<name>.img.xz, with out/<name>.sha256
 # Wi-Fi and the SSH key go into this image's /var (its /etc overlay), never into the system
 # image or the bundle.
 set -euo pipefail
@@ -48,6 +52,12 @@ be_nice
 enter_ns "$@"
 
 # ---------------------------------------------------------------- inside the namespace
+RELEASE=${KETTLE_RELEASE:-0}
+SSHD=sshd
+if [ "$RELEASE" = 1 ]; then
+  unset WIFI_SSID WIFI_PSK SSH_PUBKEY USER_PASSWORD
+  SSHD=
+fi
 # the signing key: the release key if given, else a development key kept in cache/keys
 if [ -n "${KETTLE_RAUC_KEY:-}" ] || [ -n "${KETTLE_RAUC_CERT:-}" ]; then
   KEY="${KETTLE_RAUC_KEY:?KETTLE_RAUC_CERT set without KETTLE_RAUC_KEY}"
@@ -142,7 +152,7 @@ ln -sf /usr/share/zoneinfo/UTC /etc/localtime
 useradd -M -G wheel,video,input,audio,render -s /bin/bash kettle
 echo 'kettle:$USER_PASSWORD' | chpasswd
 passwd -l root >/dev/null
-systemctl enable NetworkManager sshd bluetooth systemd-timesyncd sddm >/dev/null 2>&1
+systemctl enable NetworkManager $SSHD bluetooth systemd-timesyncd sddm >/dev/null 2>&1
 systemctl set-default graphical.target >/dev/null 2>&1
 # SteamOS services: session switching (system + user daemon). scx_lavd (SteamOS's scheduler)
 # stays installed but off: on the SM8550's 3+4+1 big.LITTLE layout the kernel's energy-aware
@@ -387,6 +397,22 @@ put "$WORK/var-B.ext4" $off
 chown "$(stat -c %u:%g "$ROOT")" "$IMG" "$ROOT"/out/"$NAME".* 2>/dev/null || true
 rm -f "$WORK"/*.fat "$WORK"/*.ext4
 
+if [ "$RELEASE" = 1 ]; then
+  # nothing of the build machine's may be in an image that is handed out
+  up="$STAGE/var-A/lib/overlays/etc/upper"
+  [ -z "$(ls -A "$up/NetworkManager/system-connections" 2>/dev/null)" ] ||
+    die "release image has Wi-Fi connections in it"
+  [ ! -e "$up/ssh/authorized_keys.d" ] || die "release image has SSH keys in it"
+  [ ! -e "$RFS/etc/systemd/system/multi-user.target.wants/sshd.service" ] ||
+    die "release image starts the SSH server"
+  log "compressing ${IMG#"$ROOT"/}.xz"
+  rm -f "$IMG.xz"
+  xz -T"$JOBS" -6 -k "$IMG"
+  ( cd "$ROOT/out" && sha256sum "$NAME.img.xz" "$NAME.img" >"$NAME.sha256" )
+  chown "$(stat -c %u:%g "$ROOT")" "$IMG.xz" "$ROOT/out/$NAME.sha256" 2>/dev/null || true
+fi
+
 log "done: ${IMG#"$ROOT"/} ($(du -h --apparent-size "$IMG" | cut -f1))"
+[ "$RELEASE" != 1 ] || log "      ${IMG#"$ROOT"/}.xz ($(du -h "$IMG.xz" | cut -f1)), $NAME.sha256"
 [ "${KETTLE_NO_BUNDLE:-}" = 1 ] || log "      ${BUNDLE#"$ROOT"/} + ${NAME}.castr/ (publish: scripts/publish-update.sh)"
 [ -z "${warn_no_server:-}" ] || log "      no KETTLE_UPDATE_URL: this image has no update server"

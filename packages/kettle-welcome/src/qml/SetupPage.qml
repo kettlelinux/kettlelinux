@@ -30,6 +30,55 @@ BasePage {
         }
     }
 
+    Section {
+        title: "Remote access"
+        description: "An SSH server lets you log in to this device from another computer on your network, for copying files or using a terminal. Turn it on only when you need it, and change the password first: anyone on the network who knows it can log in. Changing this asks for your password."
+    }
+
+    Kirigami.AbstractCard {
+        Layout.fillWidth: true
+
+        contentItem: ColumnLayout {
+            spacing: Kirigami.Units.smallSpacing
+
+            RowLayout {
+                spacing: Kirigami.Units.largeSpacing
+
+                Kirigami.Icon {
+                    implicitWidth: Kirigami.Units.iconSizes.medium
+                    implicitHeight: implicitWidth
+                    source: "network-server"
+                    fallback: "network-wired"
+                }
+                QQC2.Switch {
+                    Layout.fillWidth: true
+                    text: "SSH server"
+                    checked: Backend.sshEnabled
+                    enabled: !Backend.sshBusy
+                    onToggled: {
+                        Backend.sshEnabled = checked;
+                        checked = Qt.binding(() => Backend.sshEnabled);
+                    }
+                }
+                QQC2.BusyIndicator {
+                    visible: Backend.sshBusy
+                    running: visible
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.medium
+                    Layout.preferredWidth: Layout.preferredHeight
+                }
+            }
+            QQC2.Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                opacity: 0.8
+                text: !Backend.sshEnabled ? "Off. Nothing on the network can log in to this device."
+                    : Backend.addresses.length > 0
+                        ? "On. From another computer: " + Backend.addresses.map(a => "<b>ssh " + Backend.userName + "@" + a + "</b>").join(" or ")
+                        : "On. Connect to a network to log in from another computer."
+            }
+        }
+    }
+
     Section { title: "Device" }
 
     TileGrid {

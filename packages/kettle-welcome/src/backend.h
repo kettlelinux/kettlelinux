@@ -10,7 +10,7 @@
 class QQuickWindow;
 
 // What the QML side can't do itself: start apps and settings modules, remember the "show at
-// login" choice, set what the device starts up in, and run welcome-flatpak (Gaming Extras)
+// login" choice, set what the device starts up in, switch the SSH server, and run welcome-flatpak (Gaming Extras)
 // without blocking the UI.
 class Backend : public QObject
 {
@@ -22,6 +22,12 @@ class Backend : public QObject
     Q_PROPERTY(QString screenshotDir READ screenshotDir CONSTANT)
     // steamos-manager's default login mode: game | desktop, empty while unknown
     Q_PROPERTY(QString bootMode READ bootMode WRITE setBootMode NOTIFY bootModeChanged)
+    // the SSH server (sshd.service) enabled and running; sshBusy while a change is pending
+    Q_PROPERTY(bool sshEnabled READ sshEnabled WRITE setSshEnabled NOTIFY sshChanged)
+    Q_PROPERTY(bool sshBusy READ sshBusy NOTIFY sshChanged)
+    // this device's IPv4 addresses, for "ssh user@address"
+    Q_PROPERTY(QStringList addresses READ addresses NOTIFY sshChanged)
+    Q_PROPERTY(QString userName READ userName CONSTANT)
 
 public:
     explicit Backend(const QString &screenshotDir, QObject *parent = nullptr);
@@ -33,6 +39,11 @@ public:
     QString screenshotDir() const { return m_screenshotDir; }
     QString bootMode() const { return m_bootMode; }
     void setBootMode(const QString &mode);
+    bool sshEnabled() const { return m_sshEnabled; }
+    void setSshEnabled(bool enabled);
+    bool sshBusy() const { return m_sshBusy; }
+    QStringList addresses() const;
+    QString userName() const { return QString::fromLocal8Bit(qgetenv("USER")); }
 
     Q_INVOKABLE bool hasApp(const QString &desktopId) const;
     Q_INVOKABLE void launchApp(const QString &desktopId);
@@ -51,6 +62,7 @@ Q_SIGNALS:
     void installedAppsChanged();
     void installStatusChanged();
     void bootModeChanged();
+    void sshChanged();
     // a second start (menu entry, Gaming Extras entry) asks the open window to show a page
     void pageRequested(const QString &page);
 
@@ -58,6 +70,7 @@ private:
     void run(const QString &program, const QStringList &args, std::function<void(int, const QString &, const QString &)> done);
     void runHelper(const QStringList &args, std::function<void(int, const QString &, const QString &)> done);
     void refreshBootMode();
+    void refreshSsh();
     void pollStatus();
     void setInstallStatus(const QString &status);
 
@@ -65,5 +78,7 @@ private:
     QStringList m_installedApps;
     QString m_installStatus = QStringLiteral("idle");
     QString m_bootMode;
+    bool m_sshEnabled = false;
+    bool m_sshBusy = false;
     QTimer m_poll;
 };
