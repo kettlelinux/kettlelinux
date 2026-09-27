@@ -1,0 +1,22 @@
+#!/bin/bash
+# Kettle Linux: after a wake-up, bring the built-in gamepad back if its driver (rsinput) failed
+# to resume. Its microcontroller sometimes doesn't answer the driver's handshake right after
+# sleep ("MCU version handshake timed out", then "failed to resume: error -110"), and the pad
+# stays dead until the driver is bound to it again, which redoes the handshake.
+[ "$1" = post ] || exit 0
+drv=/sys/bus/serial/drivers/rsinput
+[ -d "$drv" ] || exit 0
+# the kernel log since this sleep began: did the pad fail to resume?
+failed() { dmesg | tac | sed '/PM: suspend entry\|kettle-rsinput: rebinding/q' | grep -q "$1"; }
+failed 'rsinput.*failed to resume' || exit 0
+for dev in $(ls -d "$drv"/serial* 2>/dev/null | xargs -rn1 basename); do
+  for try in 1 2 3; do
+    echo "kettle-rsinput: rebinding $dev (try $try)" >/dev/kmsg
+    echo "$dev" >"$drv/unbind" 2>/dev/null
+    sleep 1
+    echo "$dev" >"$drv/bind" 2>/dev/null
+    sleep 2
+    failed 'rsinput.*\(did not acknowledge\|handshake timed out\)' || break
+  done
+done
+exit 0

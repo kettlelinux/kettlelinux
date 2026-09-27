@@ -187,7 +187,7 @@ ROOTA_PARTUUID=$(uuid) ROOTB_PARTUUID=$(uuid)
 VARA_PARTUUID=$(uuid) VARB_PARTUUID=$(uuid) HOME_PARTUUID=$(uuid)
 ROOT_FSUUID=$(uuid) VARA_FSUUID=$(uuid) VARB_FSUUID=$(uuid) HOME_FSUUID=$(uuid)
 volid() { printf '%08X' $((RANDOM << 16 | RANDOM)); }
-ESP_MB=256 EFI_MB=64 ROOTFS_MB=12288 VAR_MB=256
+ESP_MB=512 EFI_MB=64 ROOTFS_MB=12288 VAR_MB=256
 
 log "boot: steamcl, slot A's GRUB, \\KERNEL and extlinux"
 mkdir -p "$STAGE"/{esp,efi-A,var-A} "$RFS/mnt/stage"
@@ -389,12 +389,15 @@ fi
 
 # ---------------------------------------------------------------- disk image
 log "disk image"
-fat() {  # name, size MiB, label, dir
+fat() {  # name, size MiB, label, dir, sectors per cluster (default: mkfs.vfat's choice)
   rm -f "$WORK/$1.fat"
-  mkfs.vfat -F 32 -n "$3" -i "$(volid)" -C "$WORK/$1.fat" $(($2 * 1024)) >/dev/null
+  mkfs.vfat -F 32 ${5:+-s $5} -n "$3" -i "$(volid)" -C "$WORK/$1.fat" $(($2 * 1024)) >/dev/null
   if [ -n "$4" ] && [ -n "$(ls -A "$4")" ]; then mcopy -s -i "$WORK/$1.fat" "$4"/* ::/; fi
 }
-fat esp $ESP_MB KETTLE "$STAGE/esp"
+# The esp as the SD card images that the ROCKNIX ABL boots (ROCKNIX, ArmadaOS) have it: FAT32
+# with 4 KiB clusters, which needs 512 MiB. On a 256 MiB esp with mkfs.vfat's 512-byte clusters
+# the ABL found no volume on the card ("No bootable image found").
+fat esp $ESP_MB KETTLE "$STAGE/esp" 8
 fat efi-A $EFI_MB EFI-A "$STAGE/efi-A"
 fat efi-B $EFI_MB EFI-B "$STAGE/efi-B"
 mke2fs -q -t ext4 -L var -U "$VARA_FSUUID" -d "$STAGE/var-A" "$WORK/var-A.ext4" "${VAR_MB}M"
@@ -412,9 +415,10 @@ truncate -s $(( (1 + ESP_MB + 2 * EFI_MB + ROOTFS_MB + 2 * VAR_MB + HOME_MB + 1)
 ESP=C12A7328-F81F-11D2-BA4B-00A0C93EC93B DATA=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7
 ROOTT=B921B045-1DF0-41C3-AF44-4C6F280D3FAE LINUX=0FC63DAF-8483-4772-8E79-3D69D8477DE4
 HOMET=933AC7E1-2EB4-4F13-B844-0E14E2AEF915
+# first-lba 34 (right after the partition entries), as in ROCKNIX's SD card images
 sfdisk -q "$IMG" <<EOF
 label: gpt
-first-lba: 2048
+first-lba: 34
 start=${off}MiB, size=${ESP_MB}MiB, type=$ESP, uuid=$ESP_PARTUUID, name=KETTLE, attrs="LegacyBIOSBootable"
 size=${EFI_MB}MiB, type=$DATA, uuid=$EFIA_PARTUUID, name=efi-A
 size=${EFI_MB}MiB, type=$DATA, uuid=$EFIB_PARTUUID, name=efi-B

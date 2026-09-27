@@ -25,7 +25,7 @@ install next to Android alike):
 
 | # | Label | Type | Size | Holds |
 |---|---|---|---|---|
-| 1 | `esp` | FAT | 256 MiB (internal: 512) | `\EFI\BOOT\BOOTAA64.EFI` = steamcl, `\SteamOS\conf\{A,B}.conf` (boot state); also the older boot paths (below) |
+| 1 | `esp` | FAT | 512 MiB | `\EFI\BOOT\BOOTAA64.EFI` = steamcl, `\SteamOS\conf\{A,B}.conf` (boot state); also the older boot paths (below) |
 | 2 | `efi-A` | FAT | 64 MiB | slot A's GRUB (`\EFI\steamos\grubaa64.efi` + `grub.cfg`) and `\SteamOS\partsets` |
 | 3 | `efi-B` | FAT | 64 MiB | the same for slot B |
 | 4 | `rootfs-A` | btrfs, read-only | 12 GiB | the system, including the kernel (`/boot/Image`, dtbs, initramfs) |

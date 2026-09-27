@@ -1,0 +1,7 @@
+# Kettle Linux: keep the Adreno 740 powered between frames (runtime PM "on"). When it powers
+# down, the GMU sometimes fails to power it back up ("Timeout waiting for GMU OOB set GPU_SET"),
+# the GPU then runs with its state lost (a CP fault at address 0) and the driver's recovery can
+# hang the display for good. With the GPU kept powered there were none in hours of use, games
+# included; the cost is some battery while idle. A workaround until the kernel's GMU wake-up is
+# fixed; system sleep still powers it off.
+ACTION=="add|bind", SUBSYSTEM=="platform", KERNEL=="3d00000.gpu", ATTR{power/control}="on"
