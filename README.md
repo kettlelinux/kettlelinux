@@ -345,3 +345,10 @@ Debugging: `busctl introspect org.kettlelinux.Power1 /org/kettlelinux/Power1`,
 SM8550's TrustZone has no PSCI SYSTEM_SUSPEND, so there is no deep/S3; the target is s2idle
 (`mem_sleep_default=s2idle`, systemd `MemorySleepMode=s2idle`) with the wake-source and
 cluster-sleep patches in `20-sm8550` (02xx, 10xx). Not yet validated on a Portal by anyone.
+
+## License
+Kettle Linux's own work (the build scripts, device overlay, `kettle-*` packages and docs) is
+under the BSD 3-Clause License, in [LICENSE](LICENSE). Everything built from other projects keeps
+its upstream license: the patches in `kernel/patches/` and `packages/*/` are under the license
+of the project they patch (the kernel's GPL-2.0-only, Valve's SteamOS packages' GPL-2.0+ and
+LGPL-2.1+, and so on), and each PKGBUILD's `license=` says what the package it builds is under.
