@@ -35,6 +35,26 @@ async function get(path) {
   return res.json();
 }
 
+// Release notes as upload-image.sh stores them: "## " headings, "- " bullets, plain lines
+function renderNotes(text) {
+  const box = el("div", { className: "notes" }, el("h4", { textContent: "Release notes" }));
+  let list = null;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line.startsWith("- ") || line.startsWith("* ")) {
+      if (!list) box.append(list = el("ul"));
+      list.append(el("li", { textContent: line.slice(2) }));
+      continue;
+    }
+    list = null;
+    if (!line) continue;
+    box.append(line.startsWith("#")
+      ? el("h5", { textContent: line.replace(/^#+\s*/, "") })
+      : el("p", { textContent: line }));
+  }
+  return box;
+}
+
 async function loadRelease() {
   const box = document.getElementById("release");
   try {
@@ -66,6 +86,7 @@ async function loadRelease() {
       parts.push(el("p", { className: "small" }, "Older: ", ...older.flatMap((o, i) => [
         i ? " · " : "", el("a", { href: `${DOWNLOADS}/${o.file}`, textContent: o.buildid })])));
     }
+    if (img.notes) parts.push(renderNotes(img.notes));
     box.replaceChildren(...parts);
   } catch (e) {
     box.replaceChildren(el("p", {}, "Couldn't load the download list. Try again later, or ask in the ",

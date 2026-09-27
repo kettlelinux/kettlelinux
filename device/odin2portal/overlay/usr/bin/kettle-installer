@@ -153,10 +153,93 @@ do_backup() {
   [ "$kind" = essentials ] && args+=(--essentials)
   check_power || return 0
   if run "Backing up the internal storage" backup "${args[@]}"; then
-    info "$RESULT\n\nThe backup is on this SD card only. Copy the folder to a computer as well: it is gone if the card is lost or reflashed."
+    if ask_gui "$RESULT\n\nThe backup is on this SD card only, and it is gone if the card is lost or reflashed. Copy it to a USB drive now, to keep it somewhere safe?" "Copy to a USB drive" "Later"; then
+      copy_backup "$(ls -d "$BACKUPS"/*/ 2>/dev/null | sort | tail -1 | sed 's:/$::')"
+    fi
   else
     failed "The backup"
   fi
+}
+
+# saved_backups: the complete backups on the SD card, newest first, as choose rows
+saved_backups() {
+  local d kind date
+  for d in $(ls -d "$BACKUPS"/*/ 2>/dev/null | sort -r); do
+    d=${d%/}
+    [ -f "$d/SHA256SUMS" ] || continue
+    kind=$(sed -n 's/^kind=//p' "$d/manifest"); kind=${kind:-full}
+    date=$(sed -n 's/^date=//p' "$d/manifest" | cut -c1-16 | tr T ' ')
+    printf '%s\n%s\n%s\n' "$d" "$date, $kind" "$(du -sh "$d" 2>/dev/null | cut -f1) in ${d##*/}"
+  done
+}
+
+# Where the desktop mounts USB drives and other cards
+MEDIA=/run/media/$USER
+
+# copy_backup <dir>: copy a backup off the SD card (to a USB drive, usually), then check the copy
+# against the backup's checksums before giving it its final name
+copy_backup() {
+  local src=$1 dest target need avail fstype pid
+  need=$(du -sb "$src" | cut -f1)
+  ask_gui "Connect a USB drive with $(gib "$need") GiB free, then choose a folder on it.\n\nThe drive should be formatted exFAT or NTFS: FAT32 cannot hold files over 4 GiB. A network share or any folder that is not on this SD card works too." "Choose folder" || return 0
+  dest=$("${Z[@]}" --file-selection --directory --filename="$( [ -d "$MEDIA" ] && echo "$MEDIA/" || echo "$HOME/")" 2>/dev/null) || return 0
+  case "$(findmnt -no SOURCE -T "$dest")" in
+    /dev/mmcblk*) error "That folder is on this SD card, which is what the copy should protect against.\n\nChoose a folder on a USB drive or another disk."; return 0 ;;
+  esac
+  fstype=$(findmnt -no FSTYPE -T "$dest")
+  if [[ $fstype == vfat || $fstype == msdos ]] && [ -n "$(find "$src" -type f -size +4194303k)" ]; then
+    error "That drive is formatted FAT32, which cannot hold files over 4 GiB, and this backup has some.\n\nReformat the drive as exFAT (Partition Manager, or any computer) and try again."
+    return 0
+  fi
+  avail=$(df -B1 --output=avail "$dest" | tail -1)
+  if [ "$avail" -lt "$need" ]; then
+    error "Not enough space there: the backup needs $(gib "$need") GiB, $(gib "$avail") GiB is free."
+    return 0
+  fi
+  target="$dest/kettle-ufs-backup-${src##*/}"
+  if [ -e "$target" ]; then info "There is already a copy of this backup there:\n$target"; return 0; fi
+
+  rm -rf "$target.partial"
+  mkdir "$target.partial" || { error "Could not create a folder in $dest."; return 0; }
+  cp -r --no-preserve=all "$src/." "$target.partial/" 2>"$TMP/copy.err" &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    echo $(( $(du -sb "$target.partial" | cut -f1) * 99 / need ))
+    sleep 2
+  done | "${Z[@]}" --progress --auto-close --no-cancel --text="Copying the backup to $dest..." 2>/dev/null
+  if ! wait "$pid" || ! sync -f "$target.partial"; then
+    rm -rf "$target.partial"
+    error "The copy failed:\n\n$(tail -3 "$TMP/copy.err")"
+    return 0
+  fi
+
+  # read every file back and compare it with the backup's own checksums
+  echo 1 >"$TMP/verify.rc"
+  (
+    n=$(wc -l <"$target.partial/SHA256SUMS") i=0
+    while read -r sum f; do
+      echo "# Checking the copy: $f"
+      [ "$(sha256sum "$target.partial/$f" | cut -d' ' -f1)" = "$sum" ] || exit 0
+      i=$((i + 1)); echo $(( i * 100 / (n + 1) ))
+    done <"$target.partial/SHA256SUMS"
+    cmp -s "$src/manifest" "$target.partial/manifest" && echo 0 >"$TMP/verify.rc"
+    echo 100
+  ) | "${Z[@]}" --progress --auto-close --no-cancel --text="Checking the copy..." 2>/dev/null
+  if [ "$(cat "$TMP/verify.rc")" != 0 ]; then
+    rm -rf "$target.partial"
+    error "The copy does not match the backup, so it was deleted. The drive may be faulty: try another one."
+    return 0
+  fi
+  mv "$target.partial" "$target" && sync -f "$target"
+  info "<b>The backup is copied and checked.</b>\n\n$target\n\nEject the drive in the file manager before unplugging it. To restore from it later, connect the drive and choose <i>Restore a backup</i>, then <i>From a USB drive or another folder</i>."
+}
+
+do_copy() {
+  local rows dir
+  mapfile -t rows < <(saved_backups)
+  if [ ${#rows[@]} = 0 ]; then info "There are no backups on this SD card."; return 0; fi
+  dir=$(choose "Which backup should be copied off the SD card?\n\nBackups are kept in $BACKUPS on this card." "${rows[@]}") || return 0
+  [ -n "$dir" ] && copy_backup "$dir"
 }
 
 do_install() {
@@ -226,7 +309,7 @@ Do not power off or remove the SD card until it has finished." "Erase Android da
   • With the SD card inserted, the card's system starts instead.
   • Android's next start resets its data and runs its setup. If it shows \"Cannot load Android system\", choose <i>Factory data reset</i>.
   • It updates itself like this SD card's system does (Settings, System in Game Mode).
-  • The backup is in $BACKUPS on this SD card: copy it to a computer as well.
+  • The backup is in $BACKUPS on this SD card. Copy it to a USB drive too (<i>Copy a backup to a USB drive</i> in the Kettle Installer).
   • To undo, run the Kettle Installer from the SD card again."
     exit 0
   else
@@ -269,17 +352,19 @@ do_uninstall() {
 }
 
 do_restore() {
-  local opts=() d kind date dir what
-  for d in $(ls -d "$BACKUPS"/*/ 2>/dev/null | sort -r); do
-    d=${d%/}
-    [ -f "$d/SHA256SUMS" ] || continue
-    kind=$(sed -n 's/^kind=//p' "$d/manifest"); kind=${kind:-full}
-    date=$(sed -n 's/^date=//p' "$d/manifest" | cut -c1-16 | tr T ' ')
-    opts+=("$d" "$date, $kind" "$(du -sh "$d" 2>/dev/null | cut -f1) in ${d##*/}")
-  done
-  if [ ${#opts[@]} = 0 ]; then info "There are no backups on this SD card."; return 0; fi
-  dir=$(choose "Which backup should be written back to the internal storage?" "${opts[@]}") || return 0
+  local rows dir what
+  mapfile -t rows < <(saved_backups)
+  dir=$(choose "Which backup should be written back to the internal storage?" "${rows[@]}" \
+    other "From a USB drive or another folder" "A backup copied off the SD card earlier") || return 0
   [ -n "$dir" ] || return 0
+  if [ "$dir" = other ]; then
+    dir=$("${Z[@]}" --file-selection --directory --filename="$( [ -d "$MEDIA" ] && echo "$MEDIA/" || echo "$HOME/")" 2>/dev/null) || return 0
+    if [ ! -f "$dir/manifest" ] || [ ! -f "$dir/SHA256SUMS" ]; then
+      error "That folder is not a Kettle backup. Choose the folder that holds <i>manifest</i>, <i>SHA256SUMS</i> and the <i>lun*.img.zst</i> files (named kettle-ufs-backup-&lt;date&gt; when copied by the Kettle Installer)."
+      return 0
+    fi
+    [[ $dir != *[$'\t\n']* ]] || { error "The folder's name has a tab or line break in it: rename it and try again."; return 0; }
+  fi
   if grep -qx kind=essentials "$dir/manifest"; then
     what="Android and the partition table go back to how they were then, and any internal Kettle Linux is removed. This is an essentials backup, so <b>Android's apps and data are erased</b> and it sets itself up again."
   else
@@ -309,20 +394,24 @@ while :; do
     none) action=$(choose "Kettle Linux is running from the SD card. What would you like to do?" \
             install "Install to internal storage" "Next to Android: dual boot, or Kettle Linux first" \
             backup "Back up the internal storage" "To this SD card, without installing anything" \
-            restore "Restore a backup" "Put the internal storage back to an earlier backup") ;;
+            restore "Restore a backup" "Put the internal storage back to an earlier backup" \
+            copy "Copy a backup to a USB drive" "Keep a backup safe off this SD card") ;;
     installed) action=$(choose "Kettle Linux is installed on the internal storage. What would you like to do?" \
             reinstall "Reinstall the internal system" "Replace it with a copy of this SD card's system" \
             uninstall "Remove from internal storage" "Give the space back to Android" \
             backup "Back up the internal storage" "To this SD card" \
-            restore "Restore a backup" "Put the internal storage back to an earlier backup") ;;
+            restore "Restore a backup" "Put the internal storage back to an earlier backup" \
+            copy "Copy a backup to a USB drive" "Keep a backup safe off this SD card") ;;
     old) action=$(choose "An older Kettle Linux (from before system updates) is on the internal storage. Remove it, then install this version. What would you like to do?" \
             uninstall "Remove it" "Give the space back to Android, then install again" \
             backup "Back up the internal storage" "To this SD card" \
-            restore "Restore a backup" "Put the internal storage back to an earlier backup") ;;
+            restore "Restore a backup" "Put the internal storage back to an earlier backup" \
+            copy "Copy a backup to a USB drive" "Keep a backup safe off this SD card") ;;
     *) action=$(choose "An installation to the internal storage did not finish (it cannot start yet). What would you like to do?" \
             reinstall "Finish the installation" "Copy this SD card's system to it again" \
             uninstall "Remove it" "Give the space back to Android" \
-            restore "Restore a backup" "Put the internal storage back to an earlier backup") ;;
+            restore "Restore a backup" "Put the internal storage back to an earlier backup" \
+            copy "Copy a backup to a USB drive" "Keep a backup safe off this SD card") ;;
   esac || exit 0
   case "$action" in
     install) do_install ;;
@@ -330,6 +419,7 @@ while :; do
     uninstall) do_uninstall ;;
     backup) do_backup ;;
     restore) do_restore ;;
+    copy) do_copy ;;
     *) exit 0 ;;
   esac
   load_plan   # the storage (or the backups) may have changed

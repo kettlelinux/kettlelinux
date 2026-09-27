@@ -2,9 +2,14 @@
 # Upload a release SD card image to the bucket behind KETTLE_UPDATE_URL, for the website's
 # Download section, and list it in downloads/releases.json.
 #
-# Usage: scripts/upload-image.sh out/kettle-<buildid>-<variant>.img.xz
+# Usage: scripts/upload-image.sh out/kettle-<buildid>-<variant>.img.xz [NOTES]
 #   (made by KETTLE_RELEASE=1 scripts/build-image.sh, with <name>.sha256 and
 #   <name>.manifest.json beside it)
+#   NOTES   the build's release notes, shown under the website's download button (default
+#           releases/<buildid>.md; "## " headings, "- " bullets and plain lines). Without one, an
+#           entry already in the index keeps its notes.
+# Running it again for a build already up only rewrites the index (rclone skips the unchanged
+# image), which is how notes are changed after the fact.
 #
 # Env (also read from ./local.env, gitignored):
 #   KETTLE_UPDATE_REMOTE   rclone remote and bucket, e.g. r2:kettle-updates (docs/UPDATES.md)
@@ -38,6 +43,10 @@ be_nice
 
 manifest="$(cat "$dir/$name.manifest.json")"
 variant="$(jq -r .variant <<<"$manifest")"
+notes_file="${2:-$ROOT/releases/$(jq -r .buildid <<<"$manifest").md}"
+if [ -f "$notes_file" ]; then notes="$(cat "$notes_file")"
+elif [ -n "${2:-}" ]; then die "no notes file $notes_file"
+else notes=""; log "no ${notes_file#"$ROOT"/}: keeping the notes already in the index, if any"; fi
 sum() { awk -v f="$1" '$2 == f || $2 == "*" f { print $1 }' "$dir/$name.sha256"; }
 sha_xz="$(sum "$name.img.xz")" sha_img="$(sum "$name.img")"
 [ -n "$sha_xz" ] || die "$name.sha256 has no line for $name.img.xz"
@@ -60,11 +69,14 @@ entry="$(jq -n --argjson m "$manifest" --arg name "$name" --arg variant "$varian
   --arg file "downloads/$variant/$name.img.xz" --arg sums "downloads/$variant/$name.sha256" \
   --argjson size "$(stat -c %s "$xzimg")" --argjson image_size "$(stat -c %s "$dir/$name.img" 2>/dev/null || echo null)" \
   --arg sha256 "$sha_xz" --arg sha256_img "$sha_img" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg notes "$notes" \
   '{name: $name, variant: $variant, version: $m.version, buildid: $m.buildid,
     branch: ($m.default_update_branch // $m.branch), date: $date, file: $file, sha256: $sha256,
-    size: $size, image_size: $image_size, sha256_img: (if $sha256_img == "" then null else $sha256_img end), sums: $sums}')"
+    size: $size, image_size: $image_size, sha256_img: (if $sha256_img == "" then null else $sha256_img end), sums: $sums,
+    notes: (if $notes == "" then null else $notes end)}')"
 new="$(jq --argjson e "$entry" \
-  '.images = ([.images[] | select(.name != $e.name)] + [$e]
+  '(first(.images[] | select(.name == $e.name) | .notes) // null) as $old
+   | .images = ([.images[] | select(.name != $e.name)] + [$e + {notes: ($e.notes // $old)}]
               | sort_by(.buildid | split(".") | map(tonumber)) | reverse)' <<<"$current")"
 kept="$(jq --argjson n "$KEEP" '.images = .images[:$n]' <<<"$new")"
 
