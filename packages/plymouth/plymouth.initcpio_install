@@ -1,0 +1,37 @@
+#!/bin/bash
+# Kettle Linux: the boot splash from the initramfs, so the logo replaces the firmware's as soon
+# as the display driver is up instead of after the root file system is mounted. The theme
+# and its plugin come from plymouthd's configuration (Theme=kettle, a script theme).
+
+build() {
+    local plugins=/usr/lib/plymouth theme module f
+
+    add_dir /dev/pts
+    add_dir /run/plymouth
+    add_binary /usr/bin/plymouthd
+    add_binary /usr/bin/plymouth
+
+    add_file /etc/os-release
+    add_file /etc/plymouth/plymouthd.conf
+    add_file /usr/share/plymouth/plymouthd.defaults
+
+    theme=$(sed -n 's/^Theme=//p' /etc/plymouth/plymouthd.conf /usr/share/plymouth/plymouthd.defaults | head -1)
+    module=$(sed -n 's/^ModuleName=//p' "/usr/share/plymouth/themes/$theme/$theme.plymouth")
+    for f in "/usr/share/plymouth/themes/$theme"/*; do
+        [ -f "$f" ] && add_file "$f"
+    done
+    add_binary "$plugins/$module.so"
+    # the fallbacks (no theme, or plymouth.enable=0 / the verbose boot entries' details view)
+    add_file /usr/share/plymouth/themes/text/text.plymouth
+    add_file /usr/share/plymouth/themes/details/details.plymouth
+    add_binary "$plugins/text.so"
+    add_binary "$plugins/details.so"
+    add_binary "$plugins/renderers/drm.so"
+    add_binary "$plugins/renderers/frame-buffer.so"
+
+    add_runscript
+}
+
+help() {
+    echo "Starts the Plymouth boot splash from the initramfs."
+}

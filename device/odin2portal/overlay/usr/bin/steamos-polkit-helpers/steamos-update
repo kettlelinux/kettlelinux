@@ -1,0 +1,32 @@
+#!/bin/bash
+# Kettle Linux: the OS update command Steam runs (Settings > System, and first-time setup),
+# with SteamOS's conventions: "check" only asks; no argument installs the newest update,
+# printing its progress; exit 0 = an update is available / was installed (reboot to use it),
+# 7 = no update available, anything else = failure. Valve's own script isn't published; this
+# drives the same update service, atomupd-daemon, through its client, atomupd-manager.
+set -uo pipefail
+NO_UPDATE=7
+
+# Steam asks whether repeated calls are recognised as the same update; they are not
+[ "${1:-}" = --supports-duplicate-detection ] && exit 1
+
+out=$(atomupd-manager check 2>&1); rc=$?
+if [ $rc -ne 0 ]; then
+  printf '%s\n' "$out" >&2
+  exit 1
+fi
+if grep -q '^No update available' <<<"$out"; then
+  echo "No update available"
+  exit $NO_UPDATE
+fi
+id=$(sed -n '/^Updates available:/,/^$/ s/^ID: \([^ ]*\).*/\1/p' <<<"$out" | head -n 1)
+if [ -z "$id" ]; then
+  printf '%s\n' "$out" >&2
+  exit 1
+fi
+echo "Update available: $id"
+[ "${1:-}" = check ] && exit 0
+
+# atomupd-manager redraws one progress line ("\r\e[K\r12.34%  3m05s"); Steam reads lines
+stdbuf -o0 atomupd-manager update "$id" 2>&1 |
+  stdbuf -o0 tr '\r' '\n' | sed -u -e 's/\x1b\[K//g' -e '/^[[:space:]]*$/d'

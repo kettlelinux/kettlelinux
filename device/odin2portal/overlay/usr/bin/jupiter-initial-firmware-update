@@ -1,0 +1,5 @@
+#!/bin/bash
+# Kettle Linux: Steam asks this Steam Deck command at first-time setup whether a "day one"
+# firmware update has to run first ("check": exit 7 if so). There is none on this device.
+echo "No initial firmware update for this device" >&2
+exit 0

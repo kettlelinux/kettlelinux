@@ -1,0 +1,25 @@
+#!/bin/bash
+# Kettle Linux: in front of Valve's steamos-atomupd-client for atomupd-daemon (first on its PATH,
+# atomupd.service.d/kettle-no-server.conf). An image built without an update server
+# (KETTLE_UPDATE_URL) points at updates.kettle.invalid, so every update check fails; Steam's
+# first-time setup takes that failure as "unable to download the required update" and cannot
+# go on. For such an image, answer a plain update check the way the client does when the
+# server has nothing newer: no output, success. Everything else goes to the real client.
+config=/etc/steamos-atomupd/client.conf query=
+args=("$@")
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -c|--config) config=${2:-}; shift ;;
+    --config=*) config=${1#--config=} ;;
+    --query-only) query=1 ;;
+    --update-file|--update-file=*|--update-from-url|--update-from-url=*) query= ; break ;;
+  esac
+  shift
+done
+if [ -n "$query" ] && [ -r "$config" ] &&
+   sed -n 's/^[[:space:]]*MetaUrl[[:space:]]*=[[:space:]]*//p' "$config" |
+     grep -Eq '^https?://[^/]*\.invalid(:[0-9]+)?(/|$)'; then
+  echo "kettle: this image has no update server; reporting no update" >&2
+  exit 0
+fi
+exec /usr/bin/steamos-atomupd-client "${args[@]}"

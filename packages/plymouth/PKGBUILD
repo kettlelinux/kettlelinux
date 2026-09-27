@@ -1,13 +1,14 @@
 # Plymouth boot splash, which no deckard snapshot ships. Based on Arch's PKGBUILD for the same
 # release; 24.004.60 matches the era of deckard's libraries (Arch has moved to 26.x).
-# There is no initramfs (the boot.img ramdisk is empty), so plymouthd starts from the root
-# file system (plymouth-start.service, sysinit) and the mkinitcpio hooks are left out; it
-# quits before SDDM starts Game Mode (sddm.service is After=plymouth-quit.service). The DRM
+# plymouthd starts from the initramfs (Kettle's own mkinitcpio hook, "plymouth" in HOOKS), so
+# the splash comes up as soon as the display driver is; it quits before SDDM starts Game Mode
+# (sddm.service is After=plymouth-quit.service), keeping its last frame on screen until the
+# next one (Kettle's plymouth-quit drop-in: --retain-splash). The DRM
 # renderer follows the panel's "panel orientation" property, so the Portal's 270 degree
 # panel shows the splash in landscape. Default theme: kettle (packages/kettle-plymouth-theme).
 pkgname=plymouth
 pkgver=24.004.60
-pkgrel=2
+pkgrel=3
 pkgdesc='Graphical boot splash screen'
 arch=(aarch64)
 url='https://www.freedesktop.org/wiki/Software/Plymouth/'
@@ -17,9 +18,13 @@ depends=(bash cairo fontconfig freetype2 glibc libdrm libevdev libpng libxkbcomm
 makedepends=(meson)
 backup=(etc/plymouth/plymouthd.conf)
 source=(https://www.freedesktop.org/software/plymouth/releases/$pkgname-$pkgver.tar.xz
-        0001-drm-leave-gamma-alone.patch)
+        0001-drm-leave-gamma-alone.patch
+        plymouth.initcpio_install
+        plymouth.initcpio_hook)
 sha256sums=('f3f7841358c98f5e7b06a9eedbdd5e6882fd9f38bbd14a767fb083e3b55b1c34'
-            'e1a002317c02dbebad6717454b6443a08c735d85d7b70e15777759bd0792e228')
+            'e1a002317c02dbebad6717454b6443a08c735d85d7b70e15777759bd0792e228'
+            '54cd3ebc316ccf25b0ee8d7ca6e75691d8ec79e083f0a2b6a66bcba218896910'
+            '95e78c198427846702c657cb2283d6fb31d7edee571211c1af3ca5939912777e')
 
 prepare() {
   cd $pkgname-$pkgver
@@ -45,4 +50,6 @@ build() {
 package() {
   meson install -C build --destdir "$pkgdir"
   rm -r "$pkgdir/run"
+  install -Dm644 plymouth.initcpio_install "$pkgdir/usr/lib/initcpio/install/plymouth"
+  install -Dm644 plymouth.initcpio_hook "$pkgdir/usr/lib/initcpio/hooks/plymouth"
 }

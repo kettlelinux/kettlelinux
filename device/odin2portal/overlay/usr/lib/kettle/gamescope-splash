@@ -1,0 +1,42 @@
+#!/bin/bash
+# Kettle Linux: Game Mode's first screen. Plymouth's splash ends when Game Mode starts, and
+# gamescope then shows black until Steam draws (minutes, when the Steam client still has to be
+# downloaded); this shows the same logo in between. Started in the background by gamescope-onready.
+#
+# In Steam mode gamescope only shows windows that carry a Steam app id, and picks among them from
+# what Steam tells it on the X root; before Steam is up, nothing does. So the splash window is
+# tagged as Steam's own (app id 769) and named as the base layer (GAMESCOPECTRL_BASELAYER_WINDOW).
+# It ends as soon as any other window can take the screen (the Steam client, or its bootstrapper's
+# Wi-Fi and update dialogs), once Steam has set its base layer, or after 10 minutes.
+set -u
+name="Kettle Linux"   # the QML window's title
+QT_QPA_PLATFORM=xcb QT_QUICK_BACKEND=software QT_IM_MODULE= \
+  qml6 /usr/share/kettle/gamescope-splash.qml >/dev/null 2>&1 &
+splash=$!
+wid=
+focusable() {   # "window appid pid" per line
+  xprop -root GAMESCOPE_FOCUSABLE_WINDOWS 2>/dev/null | sed -n 's/.*= //p' | tr -d ' ' |
+    tr ',' '\n' | paste -d' ' - - -
+}
+for _ in $(seq 1200); do
+  kill -0 "$splash" 2>/dev/null || break
+  if [ -z "$wid" ]; then
+    if xprop -name "$name" -f STEAM_GAME 32c -set STEAM_GAME 769 2>/dev/null; then
+      wid=$(focusable | awk -v p="$splash" '$3 == p { print $1; exit }')
+      [ -n "$wid" ] && xprop -root -f GAMESCOPECTRL_BASELAYER_WINDOW 32c \
+        -set GAMESCOPECTRL_BASELAYER_WINDOW "$wid"
+    fi
+  elif focusable | awk -v p="$splash" '$3 != p { found = 1 } END { exit !found }' ||
+       xprop -root GAMESCOPECTRL_BASELAYER_APPID 2>/dev/null | grep -q '= [0-9]'; then
+    sleep 1   # let the new window's first frame through before the logo goes
+    break
+  fi
+  sleep 0.5
+done
+if [ -n "$wid" ] &&
+   xprop -root GAMESCOPECTRL_BASELAYER_WINDOW 2>/dev/null | grep -q "= $wid\$"; then
+  xprop -root -remove GAMESCOPECTRL_BASELAYER_WINDOW
+fi
+kill "$splash" 2>/dev/null
+wait "$splash" 2>/dev/null
+exit 0

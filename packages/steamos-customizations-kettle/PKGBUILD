@@ -22,13 +22,13 @@
 pkgname=steamos-customizations-kettle
 _srctag=jupiter-20260914.1
 pkgver=${_srctag#jupiter-}
-pkgrel=6
+pkgrel=7
 pkgdesc='SteamOS atomic A/B system (Valve steamos-customizations) for Kettle Linux'
 arch=(aarch64)
 url='https://gitlab.steamos.cloud/holo/steamos-customizations'
 license=(LGPL-2.1-or-later BSD-3-Clause)
 depends=(e2fsprogs gptfdisk rsync util-linux mkinitcpio btrfs-progs dosfstools exfatprogs jq python
-         grub steamos-efi rauc desync steamos-atomupd-client atomupd-daemon)
+         grub steamos-efi rauc desync steamos-atomupd-client atomupd-daemon plymouth)
 makedepends=(git systemd)
 backup=(etc/mkinitcpio.conf.d/20-kettle.conf)
 _update_url=https://updates.kettle.invalid  # no update server yet: the image build sets the real one
@@ -63,7 +63,7 @@ sha256sums=('1df4fcaf6af7713b8b885031eeeae0489d9cd6cd71593f93c589f89775547489'
             'ce52557046321350447f2da5650b4bae16a35cd0c451929c6fa1471e7bdf73f4'
             '260db9fb661f59f3898007f786901402fb4c7e625d0e1629c7fdd5e653094e65'
             '4f61a4f3a9f058ce65227cd7e607ba8c2162b1a070a3071c89517bdba2b67889'
-            '63c8a727e10cf35d79772ca5b3c11f2f15c9de9c2ee598bb1e57c6b10f518fa6'
+            'ebda901acd2fe3a33034af9753aa87c22d867793251f462e7932c1a81ee9c491'
             '545638e85db9e487c1d03f3bad4206e5e4272c017daf5c29c726b319f2c87627'
             'f338627672b10c5e4cf4c9944f47a019d7b1741943faa8ce5ec3e1e58b9ecfd1'
             '1e4e26e2113dcf58b4876e16826b4b09b2fb3271dfd95d309af3743b372f36aa'
