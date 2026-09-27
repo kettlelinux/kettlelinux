@@ -1,0 +1,109 @@
+# Installing Kettle Linux
+
+Kettle Linux runs from a microSD card in the AYN Odin 2 Portal. Android on the internal storage
+stays as it is, and you can start either one. The only change to the device itself is a one-time
+bootloader swap, below, so it can start Linux.
+
+Kettle is early and in active development. Check the known issues in the release notes on
+[kettlelinux.org](https://kettlelinux.org) before you start.
+
+## What you need
+
+- An AYN Odin 2 Portal
+- A microSD card of **32 GB or more**. Games are installed to it too, so bigger and faster
+  (A2 / U3) is better. Everything on it is erased.
+- A computer to write the card from (Windows, macOS or Linux)
+- Root in Android (Magisk) or an ADB root shell, for the one-time bootloader step
+
+## 1. Install the ROCKNIX bootloader (once)
+
+The Portal's stock bootloader (ABL) only starts Android. The ROCKNIX ABL adds a menu that can
+start Linux from the SD card, and still starts Android. You only do this once; Kettle updates
+never touch it.
+
+Get the latest release from [github.com/ROCKNIX/abl](https://github.com/ROCKNIX/abl)
+(tested: v1.1.8). Then, in Android:
+
+1. Copy the release's scripts and its `abl_signed-*.elf` to the device.
+2. **Back up the stock ABL first:** run `backup_abl.sh`. It writes `abl_a.img` and `abl_b.img`.
+   Copy both **off the device** (to a computer or cloud storage): they are the only way back to
+   the stock bootloader.
+3. Run `flash_abl.sh`. It writes the ROCKNIX ABL to both `abl_a` and `abl_b`.
+
+`restore_backup_abl.sh` puts the stock bootloader back at any time.
+
+## 2. Download and check the image
+
+Download the latest image, `kettle-<build>-odin2portal.img.xz` (about 4 GB), from
+[kettlelinux.org](https://kettlelinux.org). The page shows its SHA-256 checksum. To check the
+download, compare it with:
+
+- **Linux / macOS:** `sha256sum kettle-*.img.xz` (macOS: `shasum -a 256 kettle-*.img.xz`)
+- **Windows (PowerShell):** `Get-FileHash kettle-*.img.xz`
+
+If they differ, download it again.
+
+## 3. Write it to the microSD card
+
+You don't need to unpack the `.img.xz` first: these tools read it as it is.
+
+- **Any system:** [balenaEtcher](https://etcher.balena.io) or
+  [Raspberry Pi Imager](https://www.raspberrypi.com/software/) (*Choose OS*, *Use custom*).
+  Pick the image, pick the card, write.
+- **Linux, from a terminal:** find the card with `lsblk` (check the size: the command
+  overwrites whatever you point it at), then
+
+  ```sh
+  xzcat kettle-*.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
+  ```
+
+## 4. First start
+
+1. Put the card in the Portal. Hold **Vol−** while powering on to open the ROCKNIX ABL menu,
+   and set:
+   - **Device model:** Odin 2 Portal
+   - **Boot source:** SD
+   - **Boot mode:** Linux
+2. The first start takes a little longer than later ones: Kettle sets itself up on the
+   rest of the card (the space for games and your files, and a second system slot for updates).
+3. Kettle starts in **Game Mode**, Steam's handheld interface. Connect to Wi-Fi and sign in to
+   Steam as on a Steam Deck.
+4. For the desktop, choose *Switch to Desktop* in Steam's power menu. **Kettle Welcome** opens
+   there (it's also in the app menu): use it to set a new password (every copy starts with user `kettle`, password
+   `kettle`), to turn on SSH if you want it (it's off), and for controls help and extra apps.
+   *Return to Gaming Mode* on the desktop goes back.
+
+## Updates
+
+Kettle updates like SteamOS: in Game Mode, *Settings*, *System*, *Check for updates*. An update
+installs into the second system slot while you keep playing and takes effect on the next start.
+Your games, settings and files are kept. (Starting through the ROCKNIX ABL always starts the
+newest system; going back to the previous one automatically when an update fails to start only
+works when the card is started through UEFI, not the ABL's direct start.)
+
+You only need to write a new image to the card to start over from scratch.
+
+## Starting Android
+
+Hold **Vol+** while powering on, or set **Boot mode: Android** in the ABL menu (**Vol−**).
+Android is exactly as you left it.
+
+## Writing a new image over an existing Kettle card
+
+Writing an image erases the whole card: your games, files and settings, and any **backups of
+the internal storage** the Kettle Installer made (they're kept on the card, in
+`/home/.kettle/ufs-backup`). Copy those off first: *Copy a backup to a USB drive* in the Kettle
+Installer (builds after 20260927.4), or put the card in a Linux computer and copy the folder from its `home` partition.
+
+## Installing to the internal storage
+
+Once Kettle runs from the card, the Kettle Installer (in Desktop Mode) can also install it to
+the internal storage next to Android, so it runs without the card. It backs up the internal
+storage first. See [INTERNAL-INSTALL.md](INTERNAL-INSTALL.md) before you do: it erases
+Android's apps and data.
+
+## Problems
+
+Check the [issues](https://github.com/kettlelinux/kettlelinux/issues) first, and open a new
+one if yours isn't there. Say which build you run (`BUILD_ID` in `cat /etc/os-release`) and attach the output of `sudo dmesg` and
+`journalctl -b` from Konsole in Desktop Mode.

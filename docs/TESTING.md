@@ -18,27 +18,10 @@ Partition 1 also has the GPT *LegacyBIOSBootable* attribute, which older U-Boot
 `load mmc 1:1 ${kernel_addr_r} Image; load mmc 1:1 ${fdt_addr_r} dtbs/qcom/qcs8550-ayn-odin2portal.dtb; setenv bootargs "<append line from extlinux.conf>"; booti ${kernel_addr_r} - ${fdt_addr_r}`
 (check the SD device number with `mmc list`).
 
-## If you use the ROCKNIX ABL
+## 1. Bootloader
 
-The test image boots from the microSD card. Android on internal storage is not touched,
-but booting Linux requires replacing the stock bootloader (ABL) with ROCKNIX's once.
-
-### One-time: install the ROCKNIX ABL (from Android)
-
-Needs root in Android (Magisk) or an ADB root shell. Releases: https://github.com/ROCKNIX/abl
-(tested reference: v1.1.8).
-
-1. Copy the release's scripts + `abl_signed-*.elf` to the device.
-2. **Back up the stock ABL first** — `backup_abl.sh` writes `abl_a.img`/`abl_b.img`.
-   Copy both backups *off the device* (PC/cloud). They are the only way back to stock.
-3. Run `flash_abl.sh`. It writes `/dev/block/by-name/abl_a` and `abl_b`.
-4. Undo at any time with `restore_backup_abl.sh`.
-
-Boot controls with the ROCKNIX ABL:
-- Hold **Vol−** at power-on: ABL menu. Set **Device model = Odin 2 Portal** (all AYN boards
-  report the same msm-id/board-id; the kernel carries every SM8550 DTB and the ABL picks by
-  this setting), **Boot source = SD**, **Boot mode = Linux**.
-- **Vol+** at power-on (or Boot mode = Android) boots Android as before.
+Booting from the SD card with the ROCKNIX ABL (installing it, and its Vol− menu settings) is
+in [INSTALL.md](INSTALL.md), the user guide. This page is for testing your own builds.
 
 ## 2. Write the image
 
@@ -48,7 +31,8 @@ WIFI_SSID='MyNetwork' WIFI_PSK='secret' scripts/build-image.sh   # Wi-Fi optiona
 sudo dd if=out/kettle-YYYYMMDD.N-odin2portal.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
-Check `/dev/sdX` with `lsblk` first — dd overwrites the whole target. The card needs 32 GB or
+Check `/dev/sdX` with `lsblk` first — dd overwrites the whole target. (A downloaded
+`.img.xz`: `xzcat` it into the same dd, or see [INSTALL.md](INSTALL.md).) The card needs 32 GB or
 more. On first boot the system creates slot B and `/home` in the rest of the card (the SteamOS
 layout, [UPDATES.md](UPDATES.md)); that first start takes a little longer.
 
