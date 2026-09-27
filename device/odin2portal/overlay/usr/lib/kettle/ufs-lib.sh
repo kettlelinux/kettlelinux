@@ -50,6 +50,10 @@ start_log() {
     exec > >(tee -a "$LOG") 2>&1
   fi
   echo "# $0 $* ($(date -Is))" >>"$LOG"
+  # A command failing under set -e would otherwise end the tool without a word to the wizard
+  # (its output only goes to the log). Subshells ($(...), pipes) leave it to the main shell.
+  set -E
+  trap '[ "$BASH_SUBSHELL" != 0 ] || { trap - ERR; die "unexpected failure: $BASH_COMMAND (${BASH_SOURCE[0]##*/} line $LINENO)"; }' ERR
 }
 
 need_root() { [ "$(id -u)" = 0 ] || die "run as root (sudo $0)"; }

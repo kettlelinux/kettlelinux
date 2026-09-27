@@ -87,10 +87,10 @@ for p in "${plan[@]}"; do
     end=$((skip_off + skip_len))
     say "writing LUN $lun ($dev), before userdata"
     zstd -q -dc "$DIR/lun$lun.img.zst" |
-      dd of="$dev" bs=4M oflag=direct conv=fsync status=progress 2> >(dd_pct "$skip_off")
+      dd of="$dev" bs=4M iflag=fullblock oflag=direct conv=fsync status=progress 2> >(dd_pct "$skip_off")
     say "writing LUN $lun ($dev), after userdata"
     zstd -q -dc "$DIR/lun$lun-tail.img.zst" |
-      dd of="$dev" bs=4M oflag=direct,seek_bytes seek="$end" conv=fsync status=progress 2> >(dd_pct "$((size - end))")
+      dd of="$dev" bs=4M iflag=fullblock oflag=direct,seek_bytes seek="$end" conv=fsync status=progress 2> >(dd_pct "$((size - end))")
     say "clearing Android's userdata"
     blkdiscard -f -o "$skip_off" -l "$skip_len" "$dev" 2>/dev/null ||
       note "trim not supported; clearing the start of userdata only"
@@ -98,7 +98,7 @@ for p in "${plan[@]}"; do
   else
     say "writing LUN $lun ($dev)"
     zstd -q -dc "$DIR/lun$lun.img.zst" |
-      dd of="$dev" bs=4M oflag=direct conv=fsync status=progress 2> >(dd_pct "$size")
+      dd of="$dev" bs=4M iflag=fullblock oflag=direct conv=fsync status=progress 2> >(dd_pct "$size")
   fi
   blockdev --rereadpt "$dev" 2>/dev/null || partx -u "$dev" 2>/dev/null || true
 done

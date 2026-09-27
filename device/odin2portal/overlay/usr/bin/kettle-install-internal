@@ -111,6 +111,11 @@ if pgrep -x steam >/dev/null; then
 fi
 
 copy_b=$home_b; [ "$NO_GAMES" = 1 ] || copy_b=$((home_b + games_b))
+# slot A is written uncompressed (this mkfs.btrfs can't compress --rootdir): it must fit, with
+# a tenth for btrfs metadata
+sys_b=$(du -sbx / | cut -f1)
+[ $(( sys_b + sys_b / 10 )) -le $(( ROOTFS_MIB * 1024**2 )) ] ||
+  die "this system ($(( sys_b / 1024**2 )) MiB of files) does not fit a ${ROOTFS_MIB} MiB slot uncompressed; nothing was changed"
 [ "$STATE" != old ] || die "an older Kettle install (from before system updates) is on the internal storage; remove it first (kettle-uninstall-internal) and install again"
 
 if [ "$REINSTALL" = 1 ]; then
@@ -179,7 +184,7 @@ EOF
     tool="$(dirname "$0")/kettle-backup-ufs"; [ -x "$tool" ] || tool=kettle-backup-ufs
     if [ "$PROGRESS" = 1 ]; then "$tool" "${bargs[@]}" "$BACKUP" >&3; else "$tool" "${bargs[@]}" "$BACKUP"; fi ||
       die "backup failed; nothing was changed"
-    matching_backups | grep -q "^$BACKUP " || die "the new backup does not check out; nothing was changed"
+    grep -q "^$BACKUP " <(matching_backups) || die "the new backup does not check out; nothing was changed"
   fi
   note "backup: $BACKUP"
 fi
@@ -188,7 +193,7 @@ fi
 bk=/var/lib/kettle/ufs-partition-table-$(date +%Y%m%d-%H%M%S).sfdisk
 mkdir -p /var/lib/kettle
 sfdisk -d "$DISK" >"$bk"
-ls /esp >/dev/null 2>&1; mountpoint -q /esp && cp "$bk" /esp/ 2>/dev/null || true
+ls /esp >/dev/null 2>&1 || true; mountpoint -q /esp && cp "$bk" /esp/ 2>/dev/null || true
 say "saved partition table to $bk (also on the SD card's esp)"
 
 relabel() {
@@ -221,23 +226,30 @@ if [ "$REINSTALL" = 0 ]; then
   udevadm settle
   find_parts
   excl=(-e "^$UD :"); for p in $(kettle_parts); do excl+=(-e "^$p :"); done
-  if ! diff <(grep -v "^$UD :" "$bk") <(sfdisk -d "$DISK" | grep -v "${excl[@]}"); then
+  # userdata must keep its start and have exactly the new size
+  ud_now=$(sfdisk -d "$DISK" | awk -F'[ ,=]+' -v p="$UD" '$1 == p {
+    for (i = 1; i < NF; i++) { if ($i == "start") s = $(i + 1); if ($i == "size") z = $(i + 1) }
+    print s + 0, z + 0 }')
+  if [ "$ud_now" != "$ud_start $ud_size" ] ||
+     ! diff <(grep -v "^$UD :" "$bk") <(sfdisk -d "$DISK" | grep -v "${excl[@]}"); then
     sfdisk -q --no-reread "$DISK" <"$bk"; partx -u "$DISK" || true
     die "the new partition table changed more than userdata; the old one was put back (nothing else was changed)"
   fi
-  for p in "$ESP" "$EFIA" "$EFIB" "$ROOT" "$ROOTB" "$VARA" "$VARB" "$HOME_P"; do
-    [ -b "$p" ] || die "new partitions did not appear (reboot and run --reinstall)"
-  done
+  # userdata no longer matches its file system: clear it now, before anything else can stop
+  # the install (a --reinstall to finish it never touches Android)
   say "clearing Android userdata so Android sets itself up again"
   blkdiscard -f "$UD" 2>/dev/null || true
   dd if=/dev/zero of="$UD" bs=1M count=8 conv=fsync status=none
   request_android_wipe
+  for p in "$ESP" "$EFIA" "$EFIB" "$ROOT" "$ROOTB" "$VARA" "$VARB" "$HOME_P"; do
+    [ -b "$p" ] || die "new partitions did not appear (reboot and run --reinstall)"
+  done
   trap - INT TERM HUP
 else
-  [ "$(blkid -s PARTLABEL -o value "$ROOT")" = "$PARTIAL_LABEL" ] || relabel "$ROOT" "$PARTIAL_LABEL"
+  [ "$(blkid -c /dev/null -s PARTLABEL -o value "$ROOT")" = "$PARTIAL_LABEL" ] || relabel "$ROOT" "$PARTIAL_LABEL"
 fi
 
-pu() { blkid -s PARTUUID -o value "$1"; }
+pu() { blkid -c /dev/null -s PARTUUID -o value "$1"; }
 fsuuid() { cat /proc/sys/kernel/random/uuid; }
 ROOT_FSUUID=$(fsuuid) VARA_FSUUID=$(fsuuid)
 
