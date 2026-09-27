@@ -97,16 +97,65 @@ has no extlinux and always boots through steamcl).
 4. On reboot steamcl starts the new slot. If it never reaches the desktop or Game Mode, the
    old slot boots again.
 
-The update server is static files (see `scripts/publish-update.sh`):
-
-```
-<meta>/kettle/<variant>/<arch>/<branch>/…   builds.json per branch (what atomupd reads)
-<images>/…/kettle-<buildid>-<variant>.raucb  the bundle
-<images>/…/kettle-<buildid>-<variant>.castr  desync chunk store
-```
-
 `KETTLE_UPDATE_URL` (in `local.env`) is baked into the image at build time; without it the
-image has no update server and updates come as new images.
+image has no update server and updates come as new images. Kettle's is
+`https://updates.kettlelinux.org`. It can't change for images already out there, so it is the
+project's own domain, whichever host is behind it.
+
+## Update server
+
+The update server is static files (made by `scripts/publish-update.sh`):
+
+```
+meta/kettle/<variant>/<arch>/<branch>/…      builds.json per branch (what atomupd reads)
+images/…/kettle-<buildid>-<variant>.raucb    the bundle (signed; about 2 MB)
+images/…/kettle-<buildid>-<variant>.castr/   desync chunk store (about 3 GB, 50,000 chunks)
+store/                                       the chunks of every release, once
+```
+
+A device installs a bundle with `rauc install <url>.raucb`, and RAUC fetches its chunks from
+`<url>.castr/`. Consecutive releases share almost all of them (about 94% between two builds a
+day apart), so a device downloads only a few hundred MB per update. The server keeps each chunk
+once, in `store/`, and answers `images/…/<name>.castr/<chunk>` from `store/<chunk>`: a URL
+rewrite on the server, so devices, bundles and offline `rauc install file.raucb` (with
+`file.castr/` beside it) are unchanged. (RAUC's `[casync] storepath` would do this on the device
+instead, but it replaces the bundle's own store everywhere, offline installs included.)
+
+The server doesn't have to be trusted: a bundle installs only if it is signed with the Kettle
+key (below). A compromised server could only withhold updates.
+
+**Hosting: Cloudflare R2** behind `updates.kettlelinux.org`. R2 doesn't charge for downloads,
+which is what an update server mostly does (updates, and the 4 GB images for new installs);
+storage is about $0.015/GB a month. One-time setup:
+
+1. Add `kettlelinux.org` to Cloudflare (free plan) and point the domain's nameservers at
+   Cloudflare's in Namecheap. `kettlelinux.com` too, redirected to `.org`.
+2. R2: create a bucket (e.g. `kettle-updates`); under its settings, *Custom Domains*, connect
+   `updates.kettlelinux.org`. Leave the public `r2.dev` URL off.
+3. The chunk rewrite: *Rules > Transform Rules > Rewrite URL*, for the zone:
+   - when (expression editor): `http.request.uri.path wildcard "/images/*.castr/*"`
+   - path, dynamic: `wildcard_replace(http.request.uri.path, "/images/*.castr/*", "/store/${2}")`
+4. R2 API token (*Manage R2 API Tokens*, Object Read & Write, this bucket only), then
+   `rclone config`: an `s3` remote named `r2`, provider `Cloudflare`, the token's key ID and
+   secret, endpoint `https://<account id>.r2.cloudflarestorage.com`, `no_check_bucket = true`.
+5. In `local.env`: `KETTLE_UPDATE_URL=https://updates.kettlelinux.org` and
+   `KETTLE_UPDATE_REMOTE=r2:kettle-updates`.
+
+Check the rewrite once something is uploaded: a chunk path from a published release's
+`.castr/` should answer 200 under both `/images/…` and `/store/…`:
+
+```
+curl -sI https://updates.kettlelinux.org/images/<variant>/<version>/<name>.castr/0000/<chunk>.cacnk
+```
+
+**Releasing:** `scripts/publish-update.sh out/kettle-<buildid>-<variant>.raucb [branch]`, then
+`scripts/upload-update.sh`. The upload sends only new chunks, bundles before `meta/`, so no
+device is pointed at a release that isn't all there. Chunks and bundles are cached for good
+(`immutable`); `meta/` for a minute. Chunks of removed releases stay in `store/` for now.
+
+Another host works the same way: any static file server with the same rewrite (nginx:
+`rewrite ^/images/.+?\.castr/(.*)$ /store/$1 last;`), or with the tree copied as is, `.castr/`
+directories included.
 
 ## Signing
 

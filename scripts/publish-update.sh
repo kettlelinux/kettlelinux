@@ -7,7 +7,10 @@
 # The tree (KETTLE_UPDATE_DIR, default out/update-server) is static files; copy all of it to
 # the server behind KETTLE_UPDATE_URL, as is:
 #   images/<variant>/<version>/kettle-<buildid>-<variant>.{raucb,castr/,manifest.json}
+#   store/…  every release's chunks, once (reflinked, so free on btrfs)
 #   meta/…   what steamos-atomupd-client asks for: per image, the update to take next
+# The tree works as is from any static server; scripts/upload-update.sh uploads it without the
+# per-release .castr/ directories, and the server answers those from store/ (docs/UPDATES.md).
 # The meta files come from Valve's own server tool (steamos-atomupd's staticserver), run over
 # every release in images/, so publishing again (or removing a release) rewrites them all.
 # Releases on stable are offered to beta and main followers too, as on SteamOS.
@@ -43,6 +46,8 @@ mkdir -p "$dest"
 rm -rf "$dest/$name".{raucb,castr,manifest.json}
 cp --reflink=auto "$bundle" "$dest/"
 cp -r --reflink=auto "$base.castr" "$dest/"
+mkdir -p "$TREE/store"
+cp -rn --reflink=auto "$base.castr/." "$TREE/store/"
 jq --arg b "$branch" '.branch = $b | .default_update_branch = $b' <<<"$manifest" >"$dest/$name.manifest.json"
 
 # Valve's staticserver, in the build chroot (it has steamos-atomupd and its Python modules)
@@ -82,5 +87,5 @@ umount "$TOOLS/mnt/tree"; chroot_umount "$TOOLS"; trap - EXIT
 rm -f "$TREE/.server.conf" "$TREE/meta/.lockfile.lock"
 chown -R "$(stat -c %u:%g "$ROOT")" "$TREE" 2>/dev/null || true
 
-log "done. Upload ${TREE#"$ROOT"/}/ (meta/ and images/) to the update server."
+log "done. Upload it with scripts/upload-update.sh (or copy ${TREE#"$ROOT"/}/ to the server as is)."
 log "  releases: $(find "$TREE/images" -name '*.manifest.json' | wc -l), meta files: $(find "$TREE/meta" -name '*.json' | wc -l)"
