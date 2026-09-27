@@ -10,7 +10,8 @@ Android. Run it from the SD card system with the charger connected.
 | **Kettle Linux first** | Android keeps 16 GiB (enough to start and set up); Kettle Linux gets the rest |
 | **Reinstall the internal system** | replaces it with a fresh copy of the SD card's system; Android untouched |
 | **Remove from internal storage** | deletes Kettle's partitions and grows Android's back, keeping Android's data or resetting it |
-| **Back up / Restore** | image the internal storage to the SD card, or write a backup back |
+| **Back up / Restore** | image the internal storage to the SD card, or write a backup back (from the card or a USB drive) |
+| **Copy a backup to a USB drive** | copies a backup off the SD card and checks the copy against its checksums |
 
 Afterwards the device starts the internal Kettle Linux when no SD card is inserted, and the
 card's system when one is (U-Boot tries the SD card first). Android starts as before.
@@ -46,7 +47,12 @@ now (same partition tables, same device). It makes one first, or reuses one alre
 
 The wizard samples the storage to estimate each size and only offers what fits on the card.
 Backups go to `/home/.kettle/ufs-backup/<date>` on the SD card and are **lost if the card
-is reflashed**, so copy the folder to a computer too. (Kettle builds from before system updates
+is lost or reflashed**, so keep a copy elsewhere. The card's `home` partition isn't readable
+from Windows or macOS, so copy it from the device: *Copy a backup to a USB drive* in the
+installer (also offered right after a backup) writes `kettle-ufs-backup-<date>` to a folder you
+pick, reads every file back against the backup's `SHA256SUMS`, and deletes the copy if anything
+differs. The drive needs exFAT or NTFS (a full backup's LUN 0 file is usually over FAT32's 4 GiB
+limit). *Restore a backup*, *From a USB drive or another folder* restores from such a copy. (Kettle builds from before system updates
 kept them in `/var/lib/kettle/ufs-backup`: copy those off the old card before flashing a new
 image.) Each one records the SoC serial, and
 restoring it on any other device is refused, because calibration data belongs to one unit.
