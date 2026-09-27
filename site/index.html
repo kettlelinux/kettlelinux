@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kettle Linux</title>
+  <meta name="description" content="A SteamOS-like Linux distro for the AYN Odin 2 Portal: Valve's arm64 Steam client, Game Mode, a Plasma desktop and atomic A/B updates.">
+  <meta property="og:title" content="Kettle Linux">
+  <meta property="og:description" content="A SteamOS-like Linux distro for the AYN Odin 2 Portal.">
+  <link rel="icon" href="kettle.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="hero">
+    <img class="logo" src="kettle.svg" alt="" width="128" height="128">
+    <h1><img src="wordmark.svg" alt="Kettle Linux" width="332" height="48"></h1>
+    <p class="tagline">A SteamOS-like Linux distro for the <strong>AYN Odin 2 Portal</strong>.</p>
+    <p class="sub">Valve's arm64 Steam client, a handheld Game Mode, a Plasma desktop and atomic A/B updates, on a patched mainline kernel.</p>
+    <div class="actions">
+      <a class="btn primary" href="#download">Download</a>
+      <a class="btn" href="https://github.com/kettlelinux/kettlelinux">GitHub</a>
+      <a class="btn" href="https://github.com/kettlelinux/kettlelinux/wiki">Wiki</a>
+    </div>
+    <p class="status">Early and in active development. Check the known issues below before you flash.</p>
+  </header>
+
+  <main>
+    <section id="download">
+      <h2>Download</h2>
+      <div id="release" class="card">
+        <p class="muted">Loading the latest release…</p>
+      </div>
+      <p class="muted small">
+        Write the image to a 32&nbsp;GB or larger microSD card. Booting it needs the ROCKNIX ABL; Android on
+        internal storage is left alone. Follow the
+        <a href="https://github.com/kettlelinux/kettlelinux/blob/main/docs/TESTING.md">flashing guide</a>.
+        Once installed, updates come through Steam's own <em>Check for updates</em>.
+      </p>
+    </section>
+
+    <section id="features">
+      <h2>What you get</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>SteamOS experience</h3>
+          <p>Valve's arm64 Steam client with its handheld Game Mode, and switching between Game Mode and Desktop.</p>
+        </div>
+        <div class="card">
+          <h3>Atomic A/B updates</h3>
+          <p>Signed images installed from Steam, a read-only root, and automatic fallback if an update fails to boot.</p>
+        </div>
+        <div class="card">
+          <h3>Mainline kernel</h3>
+          <p>Linux 7.2 with a pinned patch stack for the panel, gamepad, LEDs, haptics, microSD, Wi-Fi and suspend.</p>
+        </div>
+        <div class="card">
+          <h3>Per-game extras</h3>
+          <p>Frame generation, SGSR, Arm ASR and FSR 2 upscaling through Decky plugins, all off until you enable them for a game.</p>
+        </div>
+        <div class="card">
+          <h3>Power control</h3>
+          <p>TDP, performance profiles, GPU clock and per-game fan curves from Steam's Performance panel.</p>
+        </div>
+        <div class="card">
+          <h3>Games outside Steam</h3>
+          <p>ARM64EC Wine with FEX, DXVK and vkd3d-proton, plus Lutris and Heroic built for arm64.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="issues">
+      <div class="section-head">
+        <h2>Latest issues</h2>
+        <a href="https://github.com/kettlelinux/kettlelinux/issues">All issues →</a>
+      </div>
+      <ul id="issue-list" class="issues">
+        <li class="muted">Loading issues…</li>
+      </ul>
+      <p class="small"><a href="https://github.com/kettlelinux/kettlelinux/issues/new">Report a problem</a> (attach <code>dmesg</code> and <code>journalctl -b</code>).</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>Kettle Linux's own work is under the <a href="https://github.com/kettlelinux/kettlelinux/blob/main/LICENSE">BSD 3-Clause License</a>; everything built from other projects keeps its upstream license.</p>
+    <p>Built on ROCKNIX, SteamOS, Mesa, KDE Plasma, FEX, Wine and many more. <a href="https://github.com/kettlelinux/kettlelinux#thanks">Thanks, all.</a></p>
+    <p class="muted">Not affiliated with Valve or AYN.</p>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+</html>

@@ -3,9 +3,28 @@
 # runs one of the internal-storage tools. Anything that writes runs as a transient system unit,
 # so closing the wizard or losing the desktop session cannot stop it half way; the unit name
 # also keeps two of them from running at once.
+#
+# "serve" is the wizard's session: pkexec'd once when the wizard opens (so one password prompt),
+# it then takes requests on stdin, one per line with tab-separated words (a command below and its
+# options), and answers each on stdout with the tool's own output, its errors as "@err <line>",
+# and "@exit <status>". It ends when the wizard closes its end.
 set -euo pipefail
 cmd=${1:?}; shift
 case "$cmd" in
+  serve)
+    echo "@ready"
+    while IFS=$'\t' read -r -a req; do
+      [ ${#req[@]} -gt 0 ] || continue
+      rc=0 err=$(mktemp)
+      case "${req[0]}" in
+        # stdin is the wizard's request stream: not for the tool (systemd-run --pipe passes it on)
+        plan|install|backup|restore|uninstall) "$0" "${req[@]}" </dev/null 2>"$err" || rc=$? ;;
+        *) echo "unknown command ${req[0]}" >"$err"; rc=2 ;;
+      esac
+      sed 's/^/@err /' "$err"; rm -f "$err"
+      echo "@exit $rc"
+    done
+    exit 0 ;;
   plan) exec /usr/bin/kettle-install-internal --plan ;;
   install) tool=kettle-install-internal ;;
   backup) tool=kettle-backup-ufs ;;

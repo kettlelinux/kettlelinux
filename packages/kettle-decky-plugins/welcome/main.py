@@ -190,9 +190,24 @@ class Plugin:
 
     async def first_run(self) -> bool:
         """True exactly once: the first time this is asked (the welcome page opens then)."""
-        if _read_json(WELCOME, {}).get("seen"):
+        state = _read_json(WELCOME, {})
+        if state.get("seen"):
             return False
-        _write_json(WELCOME, {"seen": True})
+        state["seen"] = True   # keeping the rest (claim_default's record)
+        _write_json(WELCOME, state)
+        return True
+
+    async def claim_default(self, name: str) -> bool:
+        """True the first time a Kettle default for a Steam setting is asked for: the frontend
+        applies it then, once, so a later change in Steam's Settings sticks."""
+        state = _read_json(WELCOME, {})
+        done = state.get("defaults", [])
+        if not isinstance(done, list):
+            done = []
+        if name in done:
+            return False
+        state["defaults"] = done + [name]
+        _write_json(WELCOME, state)
         return True
 
     async def applied_fixes(self) -> list[str]:

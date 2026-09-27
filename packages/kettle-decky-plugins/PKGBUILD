@@ -12,7 +12,7 @@
 pkgbase=kettle-decky-plugins
 pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome kettle-decky-power)
 pkgver=1.12.0
-pkgrel=1
+pkgrel=4
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
