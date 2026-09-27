@@ -1,0 +1,20 @@
+#!/bin/sh
+# Kettle Linux: the image carries only Steam's bootstrapper; the client itself is downloaded on
+# first start. Started before the network is up, the bootstrapper gives up ("Steam needs to be
+# online to update") and only tries again at its next background check, minutes later, with
+# nothing on screen. When the network comes up, restart Steam for a user whose bootstrapper is in
+# that state, so the download starts right away.
+case "$2" in
+  up) ;;
+  connectivity-change) [ "${CONNECTIVITY_STATE:-}" = FULL ] || exit 0 ;;
+  *) exit 0 ;;
+esac
+for log in /home/*/.local/share/Steam/logs/bootstrap_log.txt; do
+  [ -f "$log" ] || continue
+  tail -n 3 "$log" | grep -q 'Steam needs to be online' || continue
+  user=$(stat -c %U "$log") || continue
+  systemctl --user -M "$user@" -q is-active steam.service 2>/dev/null || continue
+  logger -t kettle-steam-online "network is up: restarting Steam for $user to download the client"
+  systemctl --user -M "$user@" --no-block restart steam.service
+done
+exit 0

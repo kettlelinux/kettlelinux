@@ -1,0 +1,11 @@
+// Kettle Linux: what Steam does for the user in Game Mode, where no password prompt can be
+// shown: the time zone (first-time setup, Settings) and the OS update branch. Valve's rules
+// allow the branch switch for their user, "steamos"; Kettle's user is "kettle".
+polkit.addRule(function(action, subject) {
+    if (subject.user === "kettle" && subject.active && subject.local &&
+        (action.id === "org.freedesktop.timedate1.set-timezone" ||
+         action.id === "com.steampowered.atomupd1.switch-variant-or-branch")) {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

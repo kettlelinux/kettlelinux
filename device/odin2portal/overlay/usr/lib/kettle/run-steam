@@ -5,10 +5,17 @@
 #                           this is also what makes the desktop launcher /usr/bin/steam work
 set -euo pipefail
 root="$HOME/.local/share/Steam"
-if [ ! -x "$root/steamrtarm64/steam" ] && [ ! -x "$root/linuxarm64/steam" ]; then
+# The first unpack (705 MB, a few minutes on an SD card) runs behind the boot splash
+# (kettle-steam-unpack.service). The marker is written only once it has finished: an unpack
+# cut short (power off) is done again, over the partial one, instead of starting a broken client.
+unpacked="$root/.kettle-unpacked"
+if [ ! -e "$unpacked" ]; then
   echo "kettle: unpacking Steam bootstrap into $root"
   mkdir -p "$root"
+  rm -f "$root/.install-complete"
   tar -xf /usr/lib/steam/steam.tar.zst -C "$root"
+  sync -f "$root"
+  touch "$unpacked"
 fi
 # Valve's steam-health-check (steam.service pre-start) treats a missing sentinel as a broken
 # install and re-unpacks the bootstrap over it; the client updates itself from there

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runs inside gamescope once its Xwayland servers are up: publish the display
-# environment to the user manager, tell systemd we're ready (starts steam.service),
-# then stay alive for the lifetime of the session.
+# environment to the user manager, show the logo until Steam is up (gamescope-splash), tell
+# systemd we're ready (starts steam.service), then stay alive for the lifetime of the session.
 # With --unset (gamescope-session.service ExecStopPost) it withdraws the same variables, so
 # they don't leak into the desktop session: the user manager outlives Game Mode, and Plasma
 # would otherwise start with Steam's cursor theme/size, the xim input method, gamescope's DISPLAY...
@@ -16,5 +16,7 @@ if [ "${1:-}" = --unset ]; then
   exec systemctl --user unset-environment "${vars[@]}"
 fi
 systemctl --user import-environment "${vars[@]}"
+# the logo, until Steam's own screen is up (gamescope shows black before that)
+/usr/lib/kettle/gamescope-splash &
 NOTIFY_SOCKET="$GAMESCOPE_READY_NOTIFY_SOCKET" systemd-notify --ready
 exec sleep infinity

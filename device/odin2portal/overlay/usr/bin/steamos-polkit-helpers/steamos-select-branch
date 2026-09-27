@@ -1,0 +1,12 @@
+#!/bin/bash
+# Kettle Linux: the OS update branch, for Steam (Settings > System > OS Update Channel), with
+# SteamOS's options: -c prints the branch followed, -l lists the branches, BRANCH switches to it.
+# Valve's own script isn't published; this goes through atomupd-daemon (atomupd-manager).
+set -u
+case "${1:-}" in
+  -c|"") exec atomupd-manager tracked-branch ;;
+  -l) exec atomupd-manager list-branches ;;
+  -h|--help) echo "Usage: ${0##*/} -c | -l | BRANCH"; exit 0 ;;
+  -*) echo "${0##*/}: unknown option $1" >&2; exit 1 ;;
+  *) exec atomupd-manager switch-to-branch "$1" ;;
+esac

@@ -1,0 +1,18 @@
+[Unit]
+Description=Unpack the Steam client (first start)
+# Before user sessions are allowed, so the boot splash stays up and Game Mode starts with a
+# complete client; the user unit kettle-steam-bootstrap.service then only links it
+After=holo-create-homedir.service home.mount
+Requires=home.mount
+Before=systemd-user-sessions.service
+ConditionPathExists=!/home/kettle/.local/share/Steam/.kettle-unpacked
+
+[Service]
+Type=oneshot
+User=kettle
+ExecStartPre=-/usr/bin/plymouth display-message --text="Setting up Steam for the first start..."
+ExecStart=/usr/lib/kettle/run-steam --bootstrap
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=multi-user.target

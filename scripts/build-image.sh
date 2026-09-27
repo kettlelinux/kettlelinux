@@ -158,7 +158,7 @@ systemctl set-default graphical.target >/dev/null 2>&1
 # stays installed but off: on the SM8550's 3+4+1 big.LITTLE layout the kernel's energy-aware
 # scheduler measured better -- Skyrim 9.0 W at 34.9 fps vs lavd 9.6-9.9 W at 33.6-34.3 fps,
 # idle 1.71 W vs 1.80 W (lavd holds the little cluster at max clock and sends ~5x the IPIs).
-systemctl enable steamos-manager kettle-mangoapp-tracefs >/dev/null 2>&1
+systemctl enable steamos-manager kettle-mangoapp-tracefs kettle-steam-unpack >/dev/null 2>&1
 # kettle-powerd: CPU/GPU caps, power budget, fan and charge limit, behind Steam's own power
 # controls (steamos-manager remotes.d) and the Power plugin
 systemctl enable kettle-powerd >/dev/null 2>&1
@@ -177,14 +177,15 @@ mkdir -p "$ROOT/out"
 cp "$RFS/etc/steamos-atomupd/manifest.json" "$ROOT/out/$NAME.manifest.json"
 
 # ---------------------------------------------------------------- partitions
-# Slot A is built now; rootfs-B and home are created by systemd-repart on first boot (their
-# definitions go into this image's /etc overlay), so the image stays one slot's size. Every
-# partition UUID is fixed here: the slot partition sets, the bootloaders and repart agree.
+# Slot A and a small /home are built now. On first boot systemd-repart grows home to fill the
+# card and creates rootfs-B after it (their definitions go into this image's /etc overlay), so
+# the image stays one slot's size. Every partition UUID is fixed here: the slot partition sets,
+# the bootloaders and repart agree.
 uuid() { cat /proc/sys/kernel/random/uuid; }
 ESP_PARTUUID=$(uuid) EFIA_PARTUUID=$(uuid) EFIB_PARTUUID=$(uuid)
 ROOTA_PARTUUID=$(uuid) ROOTB_PARTUUID=$(uuid)
 VARA_PARTUUID=$(uuid) VARB_PARTUUID=$(uuid) HOME_PARTUUID=$(uuid)
-ROOT_FSUUID=$(uuid) VARA_FSUUID=$(uuid) VARB_FSUUID=$(uuid)
+ROOT_FSUUID=$(uuid) VARA_FSUUID=$(uuid) VARB_FSUUID=$(uuid) HOME_FSUUID=$(uuid)
 volid() { printf '%08X' $((RANDOM << 16 | RANDOM)); }
 ESP_MB=256 EFI_MB=64 ROOTFS_MB=12288 VAR_MB=256
 
@@ -203,6 +204,26 @@ holo-bootconf --conf-dir /mnt/stage/esp/SteamOS/conf config --image A \
 kettle-boot-legacy --root / --esp /mnt/stage/esp --efi-partuuid $EFIA_PARTUUID
 EOF
 umount "$RFS/mnt/stage"; rmdir "$RFS/mnt/stage"
+
+# /home comes in the image, with kettle's home directory as holo-create-homedir makes it and the
+# Steam client (2.5 GB in 14,000 files) already unpacked: written while the card is flashed
+# instead of on the device's first boot, which on an SD card took minutes. The first boot only
+# grows it to fill the card. After a factory reset (/home formatted), holo-create-homedir and
+# kettle-steam-unpack.service make both again.
+log "home: kettle's home directory, with the Steam client unpacked"
+install -d "$STAGE/home"
+mount --bind "$STAGE/home" "$RFS/home"
+trap 'umount "$RFS/home" 2>/dev/null || true; chroot_umount "$RFS"' EXIT
+chroot "$RFS" /bin/bash -euo pipefail -s <<'EOF'
+/usr/lib/holo/holo-create-homedir 1000 >/dev/null
+s=/home/kettle/.local/share/Steam
+install -d "$s"
+tar -xf /usr/lib/steam/steam.tar.zst -C "$s" --no-same-owner
+touch "$s/.kettle-unpacked"   # what run-steam and kettle-steam-unpack.service look for
+chown -R 1000:1000 /home/kettle
+EOF
+umount "$RFS/home"
+trap 'chroot_umount "$RFS"' EXIT
 
 # steamcl on the esp, where steamcl-install puts it (and at the firmware's fallback path).
 # steamcl-restricted keeps it to the slots on its own disk: without it, steamcl on the SD card
@@ -267,7 +288,8 @@ SizeMinBytes=${ROOTFS_MB}M
 SizeMaxBytes=${ROOTFS_MB}M
 EOF
 cat >"$up/repart.d/90-home.conf" <<EOF
-# /home, created on first boot in the rest of the card
+# /home, grown on first boot to the rest of the card (less rootfs-B, which goes after it);
+# home.mount grows the filesystem (systemd-growfs). Format= only applies if it were missing.
 [Partition]
 Type=home
 Label=home
@@ -377,14 +399,19 @@ fat efi-A $EFI_MB EFI-A "$STAGE/efi-A"
 fat efi-B $EFI_MB EFI-B "$STAGE/efi-B"
 mke2fs -q -t ext4 -L var -U "$VARA_FSUUID" -d "$STAGE/var-A" "$WORK/var-A.ext4" "${VAR_MB}M"
 mke2fs -q -t ext4 -L var -U "$VARB_FSUUID" "$WORK/var-B.ext4" "${VAR_MB}M"
+# home: its files and a tenth more, plus 256 MiB (grown to the card on first boot)
+HOME_MB=$(( $(du -sm "$STAGE/home" | cut -f1) * 11 / 10 + 256 ))
+mke2fs -q -t ext4 -L home -U "$HOME_FSUUID" -E root_owner=0:0 -d "$STAGE/home" \
+  "$WORK/home.ext4" "${HOME_MB}M"
 
 mkdir -p "$ROOT/out"; rm -f "$IMG"
 off=1
-truncate -s $(( (1 + ESP_MB + 2 * EFI_MB + ROOTFS_MB + 2 * VAR_MB + 1) * 1024 * 1024 )) "$IMG"
+truncate -s $(( (1 + ESP_MB + 2 * EFI_MB + ROOTFS_MB + 2 * VAR_MB + HOME_MB + 1) * 1024 * 1024 )) "$IMG"
 # The esp keeps the GPT name KETTLE (older bootloaders look for it; holo-partsets knows the esp
 # by its type) and LegacyBIOSBootable (U-Boot's extlinux scan).
 ESP=C12A7328-F81F-11D2-BA4B-00A0C93EC93B DATA=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7
 ROOTT=B921B045-1DF0-41C3-AF44-4C6F280D3FAE LINUX=0FC63DAF-8483-4772-8E79-3D69D8477DE4
+HOMET=933AC7E1-2EB4-4F13-B844-0E14E2AEF915
 sfdisk -q "$IMG" <<EOF
 label: gpt
 first-lba: 2048
@@ -394,6 +421,7 @@ size=${EFI_MB}MiB, type=$DATA, uuid=$EFIB_PARTUUID, name=efi-B
 size=${ROOTFS_MB}MiB, type=$ROOTT, uuid=$ROOTA_PARTUUID, name=rootfs-A
 size=${VAR_MB}MiB, type=$LINUX, uuid=$VARA_PARTUUID, name=var-A
 size=${VAR_MB}MiB, type=$LINUX, uuid=$VARB_PARTUUID, name=var-B
+size=${HOME_MB}MiB, type=$HOMET, uuid=$HOME_PARTUUID, name=home
 EOF
 put() { dd if="$1" of="$IMG" bs=1M seek="$2" conv=notrunc,sparse status=none; }
 put "$WORK/esp.fat" $off;   off=$((off + ESP_MB))
@@ -402,7 +430,8 @@ put "$WORK/efi-B.fat" $off; off=$((off + EFI_MB))
 [ "$(stat -c %s "$ROOTFS_IMG")" -le $((ROOTFS_MB * 1048576)) ] || die "system image larger than its slot"
 put "$ROOTFS_IMG" $off;     off=$((off + ROOTFS_MB))
 put "$WORK/var-A.ext4" $off; off=$((off + VAR_MB))
-put "$WORK/var-B.ext4" $off
+put "$WORK/var-B.ext4" $off; off=$((off + VAR_MB))
+put "$WORK/home.ext4" $off
 chown "$(stat -c %u:%g "$ROOT")" "$IMG" "$ROOT"/out/"$NAME".* 2>/dev/null || true
 rm -f "$WORK"/*.fat "$WORK"/*.ext4
 

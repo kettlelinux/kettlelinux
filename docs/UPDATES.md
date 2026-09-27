@@ -36,10 +36,16 @@ install next to Android alike):
 
 SteamOS also has `verity-A`/`verity-B` for dm-verity; Kettle leaves them out for now.
 
-The SD card image carries partitions 1-4, 6 and 7 only, so it is one slot's size (about 13 GiB);
-on first boot `systemd-repart` creates `rootfs-B` and `home` in the rest of the card, from
-definitions in the image's `/etc` overlay (with the partition UUIDs the slot configuration
-already names). An internal install is partitioned in full by the Kettle Installer, and
+The SD card image carries one slot and a small `home` (about 16 GiB in all), with the Steam
+client already unpacked in `/home/kettle`, so flashing the card does that writing rather than
+the device's first boot. On first boot `systemd-repart` grows `home` to the rest of the card and
+creates `rootfs-B` after it, from definitions in the image's `/etc` overlay (with the partition
+UUIDs the slot configuration already names), and `systemd-growfs` grows the filesystem. On the
+card the partition numbers therefore differ from the table (`var-A` 5, `var-B` 6, `home` 7,
+`rootfs-B` 8); partitions are found by UUID, and each slot's GRUB reads its number when it is
+written.
+
+An internal install is partitioned in full by the Kettle Installer, and
 `systemd-repart` is switched off there (it must never touch the Android disk; the image also
 runs it only when the root filesystem is on the SD card).
 

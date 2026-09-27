@@ -1,0 +1,7 @@
+#!/bin/bash
+# Kettle Linux: sets the time zone Steam's first-time setup and Settings pick. timedated checks
+# the zone name; polkit lets the active local user do this without a password
+# (/usr/share/polkit-1/rules.d/50-kettle-steamos-helpers.rules).
+set -eu
+[ $# -eq 1 ] || { echo "Usage: ${0##*/} ZONE" >&2; exit 1; }
+exec timedatectl set-timezone "$1"

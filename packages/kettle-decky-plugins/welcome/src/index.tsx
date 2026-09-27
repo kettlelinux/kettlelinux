@@ -265,18 +265,41 @@ function Content() {
   );
 }
 
+// ELoginState.Success in Steam's client API (@decky/ui's steam-client/User)
+const SIGNED_IN = 7;
+
+// Runs fn once, when someone is signed in to Steam (at once if already). Plugins load before
+// Steam's first-time setup and sign-in: opening the welcome page then took Steam off its setup
+// pages (language, network, time zone), and it went straight on to sign-in after.
+function whenSignedIn(fn: () => void): () => void {
+  let done = false;
+  let reg: { unregister: () => void } | null = null;
+  reg = SteamClient.User.RegisterForLoginStateChange((account: string, state: number) => {
+    if (done || !account || state !== SIGNED_IN) return;
+    done = true;
+    fn();
+    // the callback can run before the registration call returns
+    setTimeout(() => reg?.unregister(), 0);
+  });
+  return () => reg?.unregister();
+}
+
 export default definePlugin(() => {
   routerHook.addRoute(ROUTE, Page);
-  // Steam's UI is up once plugins load, but give Game Mode's home screen a moment
-  firstRun()
-    .then((first) => first && setTimeout(openWelcome, 3000))
-    .catch(() => {});
+  // after sign-in, and a moment for Game Mode's home screen to come up
+  const stopWaiting = whenSignedIn(() =>
+    firstRun()
+      .then((first) => first && setTimeout(openWelcome, 3000))
+      .catch(() => {}));
   applyGameFixes().catch((e) => console.error("Welcome: game fixes failed", e));
   return {
     name: "Welcome",
     titleView: <div className={staticClasses.Title}>Welcome</div>,
     content: <Content />,
     icon: <FaHandSparkles />,
-    onDismount: () => routerHook.removeRoute(ROUTE),
+    onDismount: () => {
+      stopWaiting();
+      routerHook.removeRoute(ROUTE);
+    },
   };
 });

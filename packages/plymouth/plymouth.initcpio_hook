@@ -1,0 +1,17 @@
+#!/usr/bin/ash
+# Kettle Linux: start the boot splash as early as the display allows (see the install hook).
+# plymouthd waits for the DRM device itself (it ignores the firmware's simpledrm framebuffer);
+# the root file system's plymouth-start.service finds it running and leaves it be.
+
+run_earlyhook() {
+    udevadm trigger --action=add --subsystem-match=graphics --subsystem-match=drm \
+        --subsystem-match=tty >/dev/null 2>&1
+    udevadm settle --timeout=5 >/dev/null 2>&1
+    plymouthd --mode=boot --pid-file=/run/plymouth/pid --attach-to-session
+    plymouth show-splash
+}
+
+run_latehook() {
+    # load the rest of plymouth (fonts for messages, other plugins) from the real root
+    plymouth update-root-fs --new-root-dir=/new_root
+}
