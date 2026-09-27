@@ -89,7 +89,11 @@ flatpak
 # icons and default-browser setting (packages/kettle-firefox-desktop)
 firefox
 kettle-firefox-desktop
+# fonts: noto-fonts covers Latin, Greek, Cyrillic, Arabic, Thai and more; -cjk is Chinese,
+# Japanese and Korean (Steam's language picker names each language in its own script, and CJK
+# names showed as empty boxes without it), as on SteamOS
 noto-fonts
+noto-fonts-cjk
 noto-fonts-emoji
 # built by us (packages/): Display Settings
 kscreen
