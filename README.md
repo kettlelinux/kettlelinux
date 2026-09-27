@@ -39,6 +39,7 @@ own *Check for updates*.
 
 ## Getting started
 
+- **Download:** [kettlelinux.org](https://kettlelinux.org)
 - **Flashing and testing:** [docs/TESTING.md](docs/TESTING.md)
 - **Building from source:** [Building](https://github.com/kettlelinux/kettlelinux/wiki/Building)
   (x86_64 Linux host, no root needed)

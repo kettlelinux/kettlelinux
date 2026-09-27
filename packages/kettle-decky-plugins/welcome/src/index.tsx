@@ -22,6 +22,7 @@ type BootMode = "game" | "desktop";
 
 const status = callable<[], Status>("status");
 const firstRun = callable<[], boolean>("first_run");
+const claimDefault = callable<[name: string], boolean>("claim_default");
 const install = callable<[id: string], void>("install");
 const bootMode = callable<[], BootMode | null>("boot_mode");
 const setBootMode = callable<[mode: BootMode], void>("set_boot_mode");
@@ -265,32 +266,55 @@ function Content() {
   );
 }
 
-// ELoginState.Success in Steam's client API (@decky/ui's steam-client/User)
-const SIGNED_IN = 7;
+// Steam's UI sets App.m_CurrentUser once someone is signed in. (The login state numbers that
+// RegisterForLoginStateChange reports don't match @decky/ui's ELoginState on this client: it
+// reports 5, "WaitingForServerResponse" there, while signed in.)
+const signedIn = () => !!(window as any).App?.m_CurrentUser;
 
 // Runs fn once, when someone is signed in to Steam (at once if already). Plugins load before
 // Steam's first-time setup and sign-in: opening the welcome page then took Steam off its setup
 // pages (language, network, time zone), and it went straight on to sign-in after.
 function whenSignedIn(fn: () => void): () => void {
   let done = false;
-  let reg: { unregister: () => void } | null = null;
-  reg = SteamClient.User.RegisterForLoginStateChange((account: string, state: number) => {
-    if (done || !account || state !== SIGNED_IN) return;
+  const check = () => {
+    if (done || !signedIn()) return;
     done = true;
+    stop();
     fn();
-    // the callback can run before the registration call returns
-    setTimeout(() => reg?.unregister(), 0);
-  });
-  return () => reg?.unregister();
+  };
+  // login state changes say when to look; the timer covers a change that sets the user later
+  const reg = SteamClient.User.RegisterForLoginStateChange(() => setTimeout(check, 0));
+  const timer = setInterval(check, 2000);
+  const stop = () => {
+    clearInterval(timer);
+    reg?.unregister();
+  };
+  setTimeout(check, 0);
+  return stop;
+}
+
+// Kettle's defaults for Steam settings that have no system-wide configuration: Steam keeps them
+// in its UI's own storage, so they are set here, through the same call as its Settings page,
+// once per device (claim_default), and a later change in Settings sticks.
+function applySteamDefaults() {
+  // Settings > System > Show battery percentage (Steam's default: off)
+  const settings = (window as any).settingsStore;
+  if (typeof settings?.SetBatteryPreferences === "function") {
+    claimDefault("battery-percentage")
+      .then((first) => first && settings.SetBatteryPreferences({ bShowBatteryPercentage: true }))
+      .catch((e) => console.error("Welcome: battery percentage default failed", e));
+  }
 }
 
 export default definePlugin(() => {
   routerHook.addRoute(ROUTE, Page);
   // after sign-in, and a moment for Game Mode's home screen to come up
-  const stopWaiting = whenSignedIn(() =>
+  const stopWaiting = whenSignedIn(() => {
+    applySteamDefaults();
     firstRun()
       .then((first) => first && setTimeout(openWelcome, 3000))
-      .catch(() => {}));
+      .catch(() => {});
+  });
   applyGameFixes().catch((e) => console.error("Welcome: game fixes failed", e));
   return {
     name: "Welcome",

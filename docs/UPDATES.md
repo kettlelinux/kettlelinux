@@ -153,6 +153,22 @@ curl -sI https://updates.kettlelinux.org/images/<variant>/<version>/<name>.castr
 device is pointed at a release that isn't all there. Chunks and bundles are cached for good
 (`immutable`); `meta/` for a minute. Chunks of removed releases stay in `store/` for now.
 
+**SD card images** for new installs are in the same bucket, under `downloads/`, and the website
+(kettlelinux.org, `site/`) lists them from `downloads/releases.json`. Build with
+`KETTLE_RELEASE=1 scripts/build-image.sh`, then
+`scripts/upload-image.sh out/kettle-<buildid>-<variant>.img.xz`. It uploads the image and its
+`.sha256`, adds it to the index and keeps the newest three (`KETTLE_KEEP_IMAGES`), deleting
+older ones. The website reads the index from another origin, so the bucket needs a CORS policy
+once (R2 bucket *Settings > CORS Policy*):
+
+```json
+[{ "AllowedOrigins": ["https://kettlelinux.org", "http://localhost:8000"],
+   "AllowedMethods": ["GET", "HEAD"], "AllowedHeaders": ["*"], "MaxAgeSeconds": 3600 }]
+```
+
+and, so a cached copy without CORS headers is never served, a *Cache Rule* bypassing the cache
+for `http.request.uri.path eq "/downloads/releases.json"` (it's 2 KB and cached a minute anyway).
+
 Another host works the same way: any static file server with the same rewrite (nginx:
 `rewrite ^/images/.+?\.castr/(.*)$ /store/$1 last;`), or with the tree copied as is, `.castr/`
 directories included.

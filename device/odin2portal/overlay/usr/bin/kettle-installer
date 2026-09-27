@@ -4,13 +4,38 @@
 #
 # Runs as the desktop user and only asks and explains; the work is done as root by
 # kettle-install-internal, kettle-backup-ufs, kettle-restore-ufs and kettle-uninstall-internal
-# through pkexec (/usr/lib/kettle/ufs-helper), which report progress back with --progress.
+# through the root helper (/usr/lib/kettle/ufs-helper serve), which they report progress back to
+# with --progress. The helper is started once, through pkexec, when the wizard opens: one
+# password prompt, before any other window.
 set -uo pipefail
 . /usr/lib/kettle/ufs-lib.sh
 
 HELPER=/usr/lib/kettle/ufs-helper
 Z=(zenity --title="Kettle Installer" --width=620)
-TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+TMP=$(mktemp -d); trap 'exec 5>&- 6<&-; rm -rf "$TMP"' EXIT
+
+# Start the helper: requests go to it on fd 5, its answers come back on fd 6 (ufs-helper). Exits
+# quietly if the password prompt is dismissed.
+start_helper() {
+  mkfifo "$TMP/to" "$TMP/from"
+  pkexec "$HELPER" serve <"$TMP/to" >"$TMP/from" 2>"$TMP/helper.err" &
+  local pid=$! l=
+  exec 5>"$TMP/to" 6<"$TMP/from"
+  if IFS= read -r l <&6 && [ "$l" = "@ready" ]; then return 0; fi
+  local rc=0; wait "$pid" || rc=$?
+  case "$rc" in
+    126|127) exit 0 ;;   # password dialog dismissed
+    *) error "Could not start the installer's system helper:\n\n$(tail -3 "$TMP/helper.err")"; exit 1 ;;
+  esac
+}
+# req <helper command and options>: send one request; its answer follows on fd 6, ending with
+# "@exit <status>"
+req() {
+  local w
+  for w in "$@"; do [[ $w != *[$'\t\n']* ]] || { echo "bad argument: $w" >&2; return 1; }; done
+  local IFS=$'\t'
+  printf '%s\n' "$*" >&5
+}
 
 gib() { echo $(( ($1 + 512 * 1024**2) / 1024**3 )); }
 info() { "${Z[@]}" --info --text="$1" 2>/dev/null; }
@@ -32,13 +57,21 @@ choose() {
 backup_need() { echo $(( $1 + $1 / 10 + 2 * 1024**3 )); }
 
 load_plan() {
-  { pkexec "$HELPER" plan >"$TMP/plan" 2>"$TMP/plan.err"; echo $? >"$TMP/plan.rc"; echo 100; } |
+  : >"$TMP/plan"; : >"$TMP/plan.err"; echo 1 >"$TMP/plan.rc"
+  { req plan &&
+      while IFS= read -r l <&6; do
+        case "$l" in
+          "@exit "*) echo "${l#@exit }" >"$TMP/plan.rc"; break ;;
+          "@err "*) printf '%s\n' "${l#@err }" >>"$TMP/plan.err" ;;
+          *) printf '%s\n' "$l" >>"$TMP/plan" ;;
+        esac
+      done
+    echo 100; } |
     "${Z[@]}" --progress --pulsate --auto-close --no-cancel --text="Checking the internal storage..." 2>/dev/null
-  case "$(cat "$TMP/plan.rc")" in
-    0) ;;
-    126|127) exit 0 ;;   # password dialog dismissed
-    *) error "Could not read the internal storage:\n\n$(tail -3 "$TMP/plan.err")"; exit 1 ;;
-  esac
+  if [ "$(cat "$TMP/plan.rc")" != 0 ]; then
+    error "Could not read the internal storage:\n\n$(tail -3 "$TMP/plan.err" "$TMP/helper.err" 2>/dev/null)"
+    exit 1
+  fi
   p() { sed -n "s/^$1=//p" "$TMP/plan" | head -1; }
   STATE=$(p state) DISK_B=$(p disk) UD_B=$(p userdata) SPACE_B=$(p space)
   SYS_B=$(p system) GAMES_B=$(p games) FREE_B=$(p free)
@@ -46,29 +79,32 @@ load_plan() {
   mapfile -t MATCHING < <(sed -n 's/^backup=//p' "$TMP/plan")
 }
 
-# run <what> <helper command and options>: run a tool with a progress window.
+# run <what> <helper command and options>: run a tool with a progress window, which closes by
+# itself at the end; the caller then shows the result in a dialog of its own.
 # Sets RESULT (its last @done or @error text); returns its exit status.
 run() {
   local what=$1; shift
-  rm -f "$TMP/done" "$TMP/error"
-  pkexec "$HELPER" "$@" --progress --yes 2>"$TMP/run.err" | (
+  rm -f "$TMP/done" "$TMP/error"; : >"$TMP/run.err"; echo 1 >"$TMP/run.rc"
+  req "$@" --progress --yes || { RESULT="invalid request"; return 1; }
+  (
     trap '' PIPE   # keep reading even if the window goes away, so the tool never blocks
     out() { printf '%s\n' "$1" 2>/dev/null || true; }
-    while IFS= read -r l; do
+    while IFS= read -r l <&6; do
       case "$l" in
+        "@exit "*) echo "${l#@exit }" >"$TMP/run.rc"; break ;;
+        "@err "*) printf '%s\n' "${l#@err }" >>"$TMP/run.err" ;;
         "@step "*) out "# ${l#@step }"; out 0 ;;
         "@pct "*) out "${l#@pct }" ;;
         "@done "*) printf '%s\n' "${l#@done }" >"$TMP/done" ;;
         "@error "*) printf '%s\n' "${l#@error }" >"$TMP/error" ;;
       esac
     done
-    if [ -s "$TMP/error" ]; then out "# Failed: $(cat "$TMP/error")"; else out "# Finished"; out 100; fi
-  ) | "${Z[@]}" --progress --no-cancel --percentage=0 --text="$what..." 2>/dev/null
-  local rc=${PIPESTATUS[0]}
+    out 100
+  ) | "${Z[@]}" --progress --auto-close --no-cancel --percentage=0 --text="$what..." 2>/dev/null
+  local rc; rc=$(cat "$TMP/run.rc")
   if [ "$rc" = 0 ]; then RESULT=$(cat "$TMP/done" 2>/dev/null)
   elif [ -s "$TMP/error" ]; then RESULT=$(cat "$TMP/error")
-  elif [ "$rc" = 126 ] || [ "$rc" = 127 ]; then RESULT="Cancelled at the password prompt; nothing was changed."
-  else RESULT=$(tail -3 "$TMP/run.err"); fi
+  else RESULT=$(tail -3 "$TMP/run.err" "$TMP/helper.err" 2>/dev/null); fi
   return "$rc"
 }
 failed() {
@@ -266,6 +302,7 @@ case "$(findmnt -no SOURCE /)" in
 esac
 [ -b "$DISK" ] || { error "No internal storage found ($DISK)."; exit 1; }
 
+start_helper
 load_plan
 while :; do
   case "$STATE" in
