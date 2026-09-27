@@ -82,9 +82,9 @@ You don't need to unpack the `.img.xz` first: these tools read it as it is.
 
 Kettle updates like SteamOS: in Game Mode, *Settings*, *System*, *Check for updates*. An update
 installs into the second system slot while you keep playing and takes effect on the next start.
-Your games, settings and files are kept. (Starting through the ROCKNIX ABL always starts the
-newest system; going back to the previous one automatically when an update fails to start only
-works when the card is started through UEFI, not the ABL's direct start.)
+Your games, settings and files are kept. With U-Boot, if an update fails to start, the device
+goes back to the version that worked. The ROCKNIX ABL always starts the newest version, so
+there it doesn't go back by itself.
 
 You only need to write a new image to the card to start over from scratch.
 
