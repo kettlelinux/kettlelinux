@@ -2,7 +2,8 @@
 
 Kettle Linux runs from a microSD card in the AYN Odin 2 Portal. Android on the internal storage
 stays as it is, and you can start either one. The only change to the device itself is a one-time
-bootloader swap, below, so it can start Linux.
+bootloader swap, below, so it can start Linux. If your Portal already runs the ROCKNIX ABL or
+U-Boot (from ROCKNIX or another Linux distro, for example), skip that step.
 
 Kettle is early and in active development. Check the known issues in the release notes on
 [kettlelinux.org](https://kettlelinux.org) before you start.
@@ -13,9 +14,13 @@ Kettle is early and in active development. Check the known issues in the release
 - A microSD card of **32 GB or more**. Games are installed to it too, so bigger and faster
   (A2 / U3) is better. Everything on it is erased.
 - A computer to write the card from (Windows, macOS or Linux)
-- Root in Android (Magisk) or an ADB root shell, for the one-time bootloader step
+- Root in Android (Magisk) or an ADB root shell, for the one-time bootloader step (not needed
+  if you already have the ROCKNIX ABL or U-Boot)
 
 ## 1. Install the ROCKNIX bootloader (once)
+
+**Skip this step** if your Portal already has the ROCKNIX ABL or U-Boot: Kettle's card works
+with both as they are. Go on to step 2.
 
 The Portal's stock bootloader (ABL) only starts Android. The ROCKNIX ABL adds a menu that can
 start Linux from the SD card, and still starts Android. You only do this once; Kettle updates
@@ -59,18 +64,18 @@ You don't need to unpack the `.img.xz` first: these tools read it as it is.
 
 ## 4. First start
 
-1. Put the card in the Portal. Hold **Vol−** while powering on to open the ROCKNIX ABL menu,
-   and set:
-   - **Device model:** Odin 2 Portal
-   - **Boot source:** SD
-   - **Boot mode:** Linux
+1. Put the card in the Portal and start it from the card:
+   - **ROCKNIX ABL:** hold **Vol−** while powering on to open its menu, and set
+     **Device model:** Odin 2 Portal, **Boot source:** SD, **Boot mode:** Linux.
+   - **U-Boot:** start from the SD card as you would any other card. Kettle's card has the
+     `extlinux.conf` and EFI loader U-Boot looks for.
 2. The first start takes a little longer than later ones: Kettle sets itself up on the
    rest of the card (the space for games and your files, and a second system slot for updates).
 3. Kettle starts in **Game Mode**, Steam's handheld interface. Connect to Wi-Fi and sign in to
    Steam as on a Steam Deck.
 4. For the desktop, choose *Switch to Desktop* in Steam's power menu. **Kettle Welcome** opens
-   there (it's also in the app menu): use it to set a new password (every copy starts with user `kettle`, password
-   `kettle`), to turn on SSH if you want it (it's off), and for controls help and extra apps.
+   there (it's also in the app menu): use it to set a new password (every copy starts with
+   user `kettle`, password `kettle`), to turn on SSH if you want it (it's off), and for controls help and extra apps.
    *Return to Gaming Mode* on the desktop goes back.
 
 ## Updates
@@ -85,8 +90,9 @@ You only need to write a new image to the card to start over from scratch.
 
 ## Starting Android
 
-Hold **Vol+** while powering on, or set **Boot mode: Android** in the ABL menu (**Vol−**).
-Android is exactly as you left it.
+With the ROCKNIX ABL, hold **Vol+** while powering on, or set **Boot mode: Android** in its menu
+(**Vol−**). With U-Boot, start Android the way your setup does. Android is exactly as you left
+it.
 
 ## Writing a new image over an existing Kettle card
 
