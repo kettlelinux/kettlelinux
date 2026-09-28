@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QStringList>
+#include <QVariantMap>
 #include <QTimer>
 
 #include <functional>
@@ -28,6 +29,9 @@ class Backend : public QObject
     // this device's IPv4 addresses, for "ssh user@address"
     Q_PROPERTY(QStringList addresses READ addresses NOTIFY sshChanged)
     Q_PROPERTY(QString userName READ userName CONSTANT)
+    // kettle-android-games (package kettle-lepton) is installed; androidBusy while it runs
+    Q_PROPERTY(bool hasAndroidGames READ hasAndroidGames CONSTANT)
+    Q_PROPERTY(bool androidBusy READ androidBusy NOTIFY androidBusyChanged)
 
 public:
     explicit Backend(const QString &screenshotDir, QObject *parent = nullptr);
@@ -44,6 +48,8 @@ public:
     bool sshBusy() const { return m_sshBusy; }
     QStringList addresses() const;
     QString userName() const { return QString::fromLocal8Bit(qgetenv("USER")); }
+    bool hasAndroidGames() const;
+    bool androidBusy() const { return m_androidBusy; }
 
     Q_INVOKABLE bool hasApp(const QString &desktopId) const;
     Q_INVOKABLE void launchApp(const QString &desktopId);
@@ -57,6 +63,10 @@ public:
 
     Q_INVOKABLE bool saveScreenshot(QQuickWindow *window, const QString &name);
 
+    // kettle-android-games COMMAND ARG (add FILE, fdroid-search TEXT, fdroid-add PACKAGE); its
+    // JSON result arrives in androidResult. One command at a time.
+    Q_INVOKABLE void androidGames(const QString &command, const QString &arg);
+
 Q_SIGNALS:
     void showAtLoginChanged();
     void installedAppsChanged();
@@ -65,6 +75,8 @@ Q_SIGNALS:
     void sshChanged();
     // a second start (menu entry, Gaming Extras entry) asks the open window to show a page
     void pageRequested(const QString &page);
+    void androidBusyChanged();
+    void androidResult(const QString &command, const QVariantMap &result);
 
 private:
     void run(const QString &program, const QStringList &args, std::function<void(int, const QString &, const QString &)> done);
@@ -80,5 +92,6 @@ private:
     QString m_bootMode;
     bool m_sshEnabled = false;
     bool m_sshBusy = false;
+    bool m_androidBusy = false;
     QTimer m_poll;
 };

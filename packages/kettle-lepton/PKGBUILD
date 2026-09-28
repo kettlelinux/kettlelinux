@@ -9,13 +9,15 @@
 # 0001 (ours) shows the 2D window by default (no headset); 0002 (ours) passes Steam Input's
 #   virtual gamepads into the container. lepton-kettle puts a steamvr stand-in on the
 #   launcher's PATH (the Frame's steamvr helper only answers where SteamVR lives).
+# kettle-android-games (ours) adds an .apk to Steam set to this tool, from the command line,
+# Kettle Welcome's Android page, or Dolphin's right-click menu; it also searches F-Droid.
 # Gamescope needs 0010 of packages/gamescope to bring the Android window to the front.
 #
 # Built with upstream Rust (build time only), as packages/inputplumber: the apk-info-extractor's
 # locked crates need a newer compiler than the snapshot's 1.78.
 pkgname=kettle-lepton
 pkgver=3.0.3
-pkgrel=2
+pkgrel=4
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Android games in Steam through Valve Lepton (Kettle Linux compatibility tool)'
@@ -25,7 +27,7 @@ license=(MIT BSD-3-Clause)
 # host side of the launcher: rootless podman with pasta networking, adb for installing the
 # .apk, and Valve's Android builds of Mesa (turnip) and the Vulkan layers it overlays into the
 # container from /usr/share/guestos/android
-depends=(bash podman passt crun conmon catatonit containers-common fuse-overlayfs
+depends=(bash python libnotify podman passt crun conmon catatonit containers-common fuse-overlayfs
          inotify-tools android-platform-tools attr jq zstd
          deckard-mesa-android-aarch64 deckard-vulkan-layers-android-aarch64)
 makedepends=(git)
@@ -37,7 +39,9 @@ source=("lepton::git+https://gitlab.steamos.cloud/frame-public/lepton.git#tag=v$
         lepton-kettle
         steamvr
         compatibilitytool.vdf
-        toolmanifest.vdf)
+        toolmanifest.vdf
+        kettle-android-games
+        kettle-add-android-game.desktop)
 noextract=("rust-$_rust-aarch64-unknown-linux-gnu.tar.xz")
 sha256sums=('SKIP'
             '0b514a8cc1cbcd939bff0f151661fe58b6ea5c7a7f645a5098c69e32e8c1e0a2'
@@ -46,7 +50,9 @@ sha256sums=('SKIP'
             '1d4720144a3d023191fc741e4096f098121631990ec89e584a4a9748ec6b353f'
             'e4c2e8bbcac361770f1d9479aacbe9e90bb9e13c0f2c91d694e0d1e72887e0e7'
             '9254fa985690b9e4b0cd11e511868a46e09acda2db434b616f0a552cce3afc5b'
-            'ffaaded8988303bb552cf862addca3f45b2a88ccbed99d937611b27fc7b8d8c4')
+            'ffaaded8988303bb552cf862addca3f45b2a88ccbed99d937611b27fc7b8d8c4'
+            'ab0b53459524ed88ce6fb397f741d8745d898ed6e4b18433506b1c97731e86d5'
+            '9fa93f8589aa91fe749611460e0288876d8f4a98cdcb6d1036a243fbf09b649e')
 
 prepare() {
   rm -rf rust-dist rust && mkdir rust-dist
@@ -81,6 +87,10 @@ package() {
   # Steam compatibility tool
   install -Dm755 "$srcdir/lepton-kettle" -t "$tool"
   install -Dm644 "$srcdir/compatibilitytool.vdf" "$srcdir/toolmanifest.vdf" -t "$tool"
+
+  # adding games (ours)
+  install -Dm755 "$srcdir/kettle-android-games" -t "$pkgdir/usr/bin"
+  install -Dm644 "$srcdir/kettle-add-android-game.desktop" -t "$pkgdir/usr/share/kio/servicemenus"
 
   install -Dm644 ../LICENSES/compat_tool.md "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

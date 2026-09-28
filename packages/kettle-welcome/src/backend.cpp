@@ -3,6 +3,8 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QNetworkInterface>
 #include <QProcess>
 #include <QQuickWindow>
@@ -16,6 +18,7 @@ namespace
 {
 const QString helper = QStringLiteral(KETTLE_LIBDIR "/welcome-flatpak");
 const QString steamosctl = QStringLiteral("steamosctl");
+const QString androidGamesHelper = QStringLiteral("/usr/bin/kettle-android-games");
 
 KConfigGroup settings()
 {
@@ -219,6 +222,29 @@ void Backend::run(const QString &program, const QStringList &args, std::function
         }
     });
     p->start(program, args);
+}
+
+bool Backend::hasAndroidGames() const
+{
+    return QFileInfo(androidGamesHelper).isExecutable();
+}
+
+void Backend::androidGames(const QString &command, const QString &arg)
+{
+    if (m_androidBusy)
+        return;
+    m_androidBusy = true;
+    Q_EMIT androidBusyChanged();
+    run(androidGamesHelper, {command, arg}, [this, command](int, const QString &out, const QString &err) {
+        QVariantMap result = QJsonDocument::fromJson(out.toUtf8()).object().toVariantMap();
+        if (result.isEmpty()) {
+            result.insert(QStringLiteral("ok"), false);
+            result.insert(QStringLiteral("error"), err.isEmpty() ? QStringLiteral("kettle-android-games failed.") : err);
+        }
+        m_androidBusy = false;
+        Q_EMIT androidBusyChanged();
+        Q_EMIT androidResult(command, result);
+    });
 }
 
 bool Backend::saveScreenshot(QQuickWindow *window, const QString &name)
