@@ -14,14 +14,14 @@
 # kettle-android-games (ours) adds an .apk to Steam set to this tool, from the command line,
 # Kettle Welcome's Android page, or Dolphin's right-click menu; it also searches F-Droid, and,
 # opt-in, downloads games from Google Play with apkeep, once the user has signed in to Google
-# in Firefox and pasted the one-time token, as apkeep documents.
+# in Firefox as apkeep documents (the one-time token is read from the Firefox profile).
 # Gamescope needs 0010 of packages/gamescope to bring the Android window to the front.
 #
 # Built with upstream Rust (build time only), as packages/inputplumber: the apk-info-extractor's
 # locked crates need a newer compiler than the snapshot's 1.78.
 pkgname=kettle-lepton
 pkgver=3.0.3
-pkgrel=5
+pkgrel=6
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Android games in Steam through Valve Lepton (Kettle Linux compatibility tool)'
@@ -58,7 +58,7 @@ sha256sums=('SKIP'
             'e4c2e8bbcac361770f1d9479aacbe9e90bb9e13c0f2c91d694e0d1e72887e0e7'
             '9254fa985690b9e4b0cd11e511868a46e09acda2db434b616f0a552cce3afc5b'
             'ffaaded8988303bb552cf862addca3f45b2a88ccbed99d937611b27fc7b8d8c4'
-            '72206fa8bfbabddc17bce46ffb1d8b53e9abcedf22bb024036133b9b3d45a744'
+            '11a72526a3ff74fe7d2a278166329cc268995a1d5233d86132b7c47269a2d008'
             '9fa93f8589aa91fe749611460e0288876d8f4a98cdcb6d1036a243fbf09b649e')
 
 prepare() {
