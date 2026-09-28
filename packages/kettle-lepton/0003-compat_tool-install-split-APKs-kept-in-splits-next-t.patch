@@ -1,0 +1,34 @@
+From 94397ebb562db4d7d413fbfcf3e3ff98af615b79 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Mon, 28 Sep 2026 18:01:30 -0500
+Subject: [PATCH] compat_tool: install split APKs kept in splits/ next to the
+ game's APK
+
+---
+ compat_tool/liblepton/liblepton.sh | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/compat_tool/liblepton/liblepton.sh b/compat_tool/liblepton/liblepton.sh
+index ddec9ca..3d615a0 100755
+--- a/compat_tool/liblepton/liblepton.sh
++++ b/compat_tool/liblepton/liblepton.sh
+@@ -528,7 +528,15 @@ function install_app()
+                 fi
+             fi
+         fi
+-        if ! "$ADB" -P "${TEMP_PORT}" -s localhost:"${ADB_PORT}" install -g "${APK_PATH}"; then
++        # A game Google Play delivers as an app bundle comes as a base APK plus split APKs
++        # (native code, screen density, language, install-time assets), kept in splits/ next
++        # to the base APK: install them together.
++        local SPLIT_PATHS=( $(compgen -G "$(dirname "${APK_PATH}")/splits/*.apk") )
++        local INSTALL_CMD=(install -g "${APK_PATH}")
++        if (( ${#SPLIT_PATHS[@]} > 0 )); then
++            INSTALL_CMD=(install-multiple -g "${APK_PATH}" "${SPLIT_PATHS[@]}")
++        fi
++        if ! "$ADB" -P "${TEMP_PORT}" -s localhost:"${ADB_PORT}" "${INSTALL_CMD[@]}"; then
+             println "App installation failed!"
+             # We dump logcat if the container exits in less than <30s but just to
+             # be safe (in case the startup took longer for some reason), we set
+-- 
+2.55.0
+
