@@ -10,7 +10,7 @@
 # the snapshot's 1.78.
 pkgname=inputplumber
 pkgver=0.81.0
-pkgrel=3
+pkgrel=4
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Input router and remapper daemon (Steam Deck controller emulation for AYN handhelds)'
@@ -30,7 +30,7 @@ sha256sums=('804ff31b6b67efe266f21cc752282b1defe14b34916261d0600da1b6094a21a7'
             '0b514a8cc1cbcd939bff0f151661fe58b6ea5c7a7f645a5098c69e32e8c1e0a2'
             'fda1ae4bfb045bb67e047ac73be99037079e753e268ce35c50db91c4dc2d57c1'
             'ad506a8243e42f39e79dd0e2e0a2fb54a8a60cad18a162c44598862578e41fe4'
-            '2734fe4240223d9e04cfc93da1b66d1fe36dda12c929da30dd7060e72908e81b')
+            '2cb3955e5d30d85589ddce8cd260851e60367b18e8b44c0b09e9250cf5518ee8')
 
 prepare() {
   rm -rf rust-dist rust && mkdir rust-dist

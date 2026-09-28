@@ -1,6 +1,7 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
-# Kettle Linux: upstream's rsinput_type1.yaml (the Portal's map) plus the Thor's AYN key as
-# Quick Access, like the button below the right stick. Used by 40-kettle-thor.yaml.
+# Kettle Linux: upstream's rsinput_type1.yaml (the Portal's map) with the Thor's face buttons
+# mapped by their labels, plus the AYN key as Quick Access, like the button below the right
+# stick. Used by 40-kettle-thor.yaml.
 version: 2
 kind: CapabilityMap
 name: AYN Thor (Kettle)
@@ -87,11 +88,30 @@ mapping:
       gamepad:
         button: RightPaddle1
 
-  # Kernel reports NORTH/WEST by physical position, but Xbox layout 
-  # relies on these swapped. This results in NORTH/WEST swapped in
-  # evtest, but produces expected behaviour in games.
+  # The Thor's face buttons are labelled Nintendo-style (A right, B bottom, X top, Y left), and
+  # Steam follows the labels here: the button marked A is Steam's A, and so on. (The Portal's
+  # rsinput1 map follows the Xbox layout by position, which on the Thor swapped A/B and X/Y.)
+  - name: A Button
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_EAST
+          value_type: button
+    target_event:
+      gamepad:
+        button: South
 
-  - name: West Button
+  - name: B Button
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_SOUTH
+          value_type: button
+    target_event:
+      gamepad:
+        button: East
+
+  - name: X Button
     source_events:
       - evdev:
           event_type: KEY
@@ -99,9 +119,9 @@ mapping:
           value_type: button
     target_event:
       gamepad:
-        button: West
+        button: North
 
-  - name: North Button
+  - name: Y Button
     source_events:
       - evdev:
           event_type: KEY
@@ -109,6 +129,6 @@ mapping:
           value_type: button
     target_event:
       gamepad:
-        button: North
+        button: West
 
 filtered_events: []

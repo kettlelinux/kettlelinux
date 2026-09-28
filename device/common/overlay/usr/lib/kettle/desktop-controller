@@ -1,5 +1,6 @@
 #!/usr/bin/python3
-"""Desktop-mode controller: drive the Plasma pointer and keyboard from the Portal gamepad.
+"""Desktop-mode controller: drive the Plasma pointer and keyboard from the built-in gamepad.
+Buttons go by their labels (the Thor's face buttons sit elsewhere than the Portal's: FACE).
 
 Mouse mode grabs the rsinput pad (so desktop games don't also see it) and replays it through
 two uinput devices. Hold Select+Start to toggle mouse mode off for games run from the desktop.
@@ -48,6 +49,21 @@ PRECISE_BUTTON = e.BTN_TR
 MOUSE_BUTTONS = [e.BTN_LEFT, e.BTN_RIGHT, e.BTN_MIDDLE]
 KEYS = sorted({k for k in BUTTON_KEYS.values() if k not in MOUSE_BUTTONS}
               | {k for c in TAP_CHORDS.values() for k in c})
+
+
+def compatible():
+    try:
+        with open("/proc/device-tree/compatible", "rb") as f:
+            return f.read().decode(errors="replace").split("\0")
+    except OSError:
+        return []
+
+
+# The tables above follow the buttons' labels on the Portal (Xbox-style: A bottom, B right,
+# X left, Y top). The Thor's are labelled Nintendo-style (A right, B bottom, X top, Y left):
+# its codes are turned into the Portal's for the same labels.
+FACE = ({e.BTN_EAST: e.BTN_SOUTH, e.BTN_SOUTH: e.BTN_EAST, e.BTN_NORTH: e.BTN_WEST,
+         e.BTN_WEST: e.BTN_NORTH} if "ayn,thor" in compatible() else {})
 
 
 def log(msg):
@@ -156,7 +172,7 @@ class Controller:
                      if c in abs_caps}
         self.axes.update({c: Axis(abs_caps[c], centered=False) for c in TRIGGER_KEYS
                           if c in abs_caps})
-        self.held = set(pad.active_keys())
+        self.held = {FACE.get(k, k) for k in pad.active_keys()}
         self.combo_used = False  # Select+Start were held together: no taps on release
         self.combo_since = None
         self.rem = [0.0, 0.0, 0.0, 0.0]  # sub-unit remainders: x, y, wheel, hwheel
@@ -187,6 +203,7 @@ class Controller:
     def on_key(self, code, value):
         if value == 2:  # autorepeat; the compositor repeats keys itself
             return
+        code = FACE.get(code, code)
         (self.held.add if value else self.held.discard)(code)
         if code in COMBO:
             if COMBO <= self.held:
