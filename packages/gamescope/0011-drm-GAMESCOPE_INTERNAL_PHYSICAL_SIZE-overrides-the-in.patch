@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Mon, 28 Sep 2026 17:54:41 -0500
+Subject: [PATCH] DRM: GAMESCOPE_INTERNAL_PHYSICAL_SIZE overrides the internal
+ panel's size
+
+Clients see the internal panel's physical size from the DRM connector,
+and Steam picks its UI scale from it. A panel driver's size can make
+that scale too large for the screen: the AYN Thor's top panel reports
+136x68 mm, and Steam's Game Mode UI came out cut off at 1920x1080.
+
+GAMESCOPE_INTERNAL_PHYSICAL_SIZE=WxH (millimetres) reports that size for
+the internal panel instead. External displays keep their own.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/Backends/DRMBackend.cpp | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index fefef79e..a2857a92 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -1170,11 +1170,26 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
+ 	// Don't allow rollback of mode_id after connector change
+ 	drm->current.mode_id = drm->pending.mode_id;
+ 
+-	const struct wlserver_output_info wlserver_output_info = {
++	struct wlserver_output_info wlserver_output_info = {
+ 		.description = description,
+ 		.phys_width = (int) best->GetModeConnector()->mmWidth,
+ 		.phys_height = (int) best->GetModeConnector()->mmHeight,
+ 	};
++
++	// The built-in panel's physical size as clients see it, "WxH" in millimetres: Steam picks
++	// its UI scale from it, and a panel driver's size can make that too large for the screen
++	if ( best->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL )
++	{
++		int nWidth = 0, nHeight = 0;
++		const char *pszSize = getenv( "GAMESCOPE_INTERNAL_PHYSICAL_SIZE" );
++		if ( pszSize && sscanf( pszSize, "%dx%d", &nWidth, &nHeight ) == 2 && nWidth > 0 && nHeight > 0 )
++		{
++			drm_log.infof( "internal panel: reporting %dx%d mm instead of %dx%d mm",
++				nWidth, nHeight, wlserver_output_info.phys_width, wlserver_output_info.phys_height );
++			wlserver_output_info.phys_width = nWidth;
++			wlserver_output_info.phys_height = nHeight;
++		}
++	}
+ 	wlserver_lock();
+ 	wlserver_set_output_info(&wlserver_output_info);
+ 	wlserver_unlock();
+-- 
+2.55.0
+
