@@ -209,7 +209,8 @@ BasePage {
     }
 
     // Signing in is apkeep's documented way: Google's embedded setup page, in Firefox, sets a
-    // one-time oauth_token cookie, which kettle-android-games trades for a long-lived token.
+    // one-time oauth_token cookie, which kettle-android-games reads from Firefox's profile and
+    // trades for a long-lived token.
     ColumnLayout {
         Layout.fillWidth: true
         visible: !page.playEmail
@@ -228,31 +229,22 @@ BasePage {
         QQC2.Label {
             Layout.fillWidth: true
             wrapMode: Text.Wrap
-            text: "2. In Firefox, press F12, open Storage, then Cookies, then accounts.google.com, and copy the value of oauth_token. It starts with oauth2_4/ and works once, for a few minutes."
-        }
-        QQC2.TextField {
-            id: emailField
-            Layout.fillWidth: true
-            placeholderText: "The Google account's email address"
-            inputMethodHints: Qt.ImhEmailCharactersOnly | Qt.ImhNoAutoUppercase
+            text: "2. Wait a few seconds, come back here and finish. The sign-in is picked up from Firefox. If you're asked for it, enter the account's email address first."
         }
         RowLayout {
             Layout.fillWidth: true
 
             QQC2.TextField {
-                id: tokenField
+                id: emailField
                 Layout.fillWidth: true
-                placeholderText: "oauth2_4/…"
-                inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText
+                placeholderText: "Email address (only if asked)"
+                inputMethodHints: Qt.ImhEmailCharactersOnly | Qt.ImhNoAutoUppercase
             }
             QQC2.Button {
                 text: "Finish sign-in"
                 icon.name: "dialog-ok"
-                enabled: !Backend.androidBusy && emailField.text.trim().length > 0 && tokenField.text.trim().length > 0
-                onClicked: {
-                    page.run("play-signin", emailField.text.trim() + " " + tokenField.text.trim());
-                    tokenField.text = "";
-                }
+                enabled: !Backend.androidBusy
+                onClicked: page.run("play-signin", emailField.text.trim())
             }
         }
     }

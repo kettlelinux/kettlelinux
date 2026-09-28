@@ -8,9 +8,11 @@
   kettle-android-games fdroid-search TEXT    search F-Droid
   kettle-android-games fdroid-add PACKAGE    download an F-Droid app and add it
   kettle-android-games play-status           whether a Google account is signed in
-  kettle-android-games play-signin EMAIL TOKEN
+  kettle-android-games play-signin [EMAIL] [TOKEN]
                                              sign in to Google with the one-time oauth_token
-                                             from accounts.google.com/EmbeddedSetup
+                                             from accounts.google.com/EmbeddedSetup; without a
+                                             token, it's taken from Firefox after the user
+                                             signed in there
   kettle-android-games play-signout          forget the Google account
   kettle-android-games play-add APP          download a game from Google Play (its link or
                                              package name) and add it
@@ -26,15 +28,21 @@ where Lepton (Kettle) installs them together with it.
 The Google Play download is opt-in and unofficial: it uses apkeep with the Google account the
 user signs in with, and the device profile of an Android 11 arm64 phone so Google Play hands
 out builds Lepton's Android 11 can run. Signing in is apkeep's documented way: the user signs
-in on Google's embedded setup page in Firefox and copies the oauth_token cookie it sets; it's
-traded once for a long-lived token, kept in ~/.config/kettle-lepton/google-play.ini.
+in on Google's embedded setup page in Firefox, which sets a one-time oauth_token cookie; it's
+traded once for a long-lived token, kept in ~/.config/kettle-lepton/google-play.ini. Rather
+than have the user copy the cookie out of Firefox's developer tools (hard on a handheld),
+play-signin reads it from the Firefox profile: cookies.sqlite, or, as Google's is a session
+cookie, the session store Firefox writes every 15 seconds. The account's email comes from
+Firefox's form history of Google's sign-in box, unless given.
 """
 import base64
+import glob
 import json
 import os
 import re
 import shutil
 import socket
+import sqlite3
 import struct
 import subprocess
 import sys
@@ -551,28 +559,132 @@ def cmd_play_status(_=None):
     return {"signed_in": bool(account), "email": account[0] if account else ""}
 
 
+FIREFOX_PROFILES = ["~/.mozilla/firefox/*", "~/.config/mozilla/firefox/*",
+                    "~/.var/app/org.mozilla.firefox/.mozilla/firefox/*",
+                    "~/.var/app/org.mozilla.firefox/config/mozilla/firefox/*"]
+
+
+def _lz4_block(src, size):
+    out, i = bytearray(), 0
+    while i < len(src):
+        token = src[i]
+        i += 1
+        n = token >> 4
+        if n == 15:
+            while True:
+                i, n = i + 1, n + src[i]
+                if src[i - 1] != 255:
+                    break
+        out += src[i:i + n]
+        i += n
+        if i >= len(src):
+            break
+        off = src[i] | src[i + 1] << 8
+        i += 2
+        n = token & 15
+        if n == 15:
+            while True:
+                i, n = i + 1, n + src[i]
+                if src[i - 1] != 255:
+                    break
+        start = len(out) - off
+        for k in range(n + 4):
+            out.append(out[start + k])
+    return bytes(out[:size])
+
+
+def _read_mozlz4(path):
+    data = open(path, "rb").read()
+    if data[:8] != b"mozLz40\0":
+        raise ValueError("not mozlz4")
+    return json.loads(_lz4_block(data[12:], struct.unpack("<I", data[8:12])[0]))
+
+
+def _firefox_sqlite(profile, name, query):
+    """Rows from a Firefox database, read from a copy: Firefox keeps it locked while running."""
+    if not os.path.exists(os.path.join(profile, name)):
+        return []
+    with tempfile.TemporaryDirectory() as tmp:
+        for suffix in ("", "-wal"):
+            if os.path.exists(os.path.join(profile, name + suffix)):
+                shutil.copyfile(os.path.join(profile, name + suffix), os.path.join(tmp, name + suffix))
+        try:
+            db = sqlite3.connect(os.path.join(tmp, name))
+            try:
+                return db.execute(query).fetchall()
+            finally:
+                db.close()
+        except sqlite3.Error:
+            return []
+
+
+def firefox_google_signin():
+    """([oauth tokens, newest first], email or None) from the Firefox profiles, newest first."""
+    profiles = [p for pattern in FIREFOX_PROFILES for p in glob.glob(os.path.expanduser(pattern))
+                if os.path.isdir(p)]
+    profiles.sort(key=lambda p: -max((os.path.getmtime(os.path.join(p, f)) for f in
+                                      ("cookies.sqlite", "sessionstore-backups") if
+                                      os.path.exists(os.path.join(p, f))), default=0))
+    tokens, email = [], None
+    for profile in profiles:
+        for (value,) in _firefox_sqlite(profile, "cookies.sqlite",
+                                        "SELECT value FROM moz_cookies WHERE name = 'oauth_token' AND "
+                                        "host LIKE '%accounts.google.com' ORDER BY creationTime DESC"):
+            tokens.append(value)
+        for store in ("sessionstore-backups/recovery.jsonlz4", "sessionstore.jsonlz4"):
+            try:
+                cookies = _read_mozlz4(os.path.join(profile, store)).get("cookies", [])
+            except (OSError, ValueError, struct.error, IndexError):
+                continue
+            tokens += [c.get("value", "") for c in cookies if c.get("name") == "oauth_token"
+                       and c.get("host", "").endswith("accounts.google.com")]
+        if email is None:
+            rows = _firefox_sqlite(profile, "formhistory.sqlite",
+                                   "SELECT value FROM moz_formhistory WHERE fieldname = 'identifier' "
+                                   "ORDER BY lastUsed DESC LIMIT 1")
+            email = rows[0][0].strip() if rows else None
+    tokens = [t for i, t in enumerate(tokens) if t.startswith("oauth2_4/") and t not in tokens[:i]]
+    if email and "@" not in email:
+        email += "@gmail.com"
+    return tokens, email
+
+
 def cmd_play_signin(arg):
-    """arg: "EMAIL OAUTH_TOKEN"."""
-    email, _, token = arg.strip().partition(" ")
-    email, token = email.strip(), token.strip()
-    if "@" not in email:
-        raise Refused("Enter the email address of the Google account you signed in with.")
-    if not token.startswith("oauth2_4/"):
-        raise Refused("That isn't the sign-in token: copy the value of the oauth_token cookie, "
-                      "which starts with oauth2_4/.")
+    """arg: "[EMAIL] [OAUTH_TOKEN]"; what's missing comes from Firefox."""
+    email, token = None, None
+    for word in arg.split():
+        if word.startswith("oauth2_4/"):
+            token = word
+        elif "@" in word:
+            email = word
+        else:
+            raise Refused("Enter the whole email address of the Google account, like name@gmail.com.")
     if not shutil.which("apkeep"):
         raise Refused("apkeep isn't installed.")
-    r = subprocess.run(["apkeep", "-e", email, "--oauth-token", token,
-                        "-o", "device=" + PLAY_DEVICE],
-                       capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120)
-    m = re.search(r"AAS Token: (\S+)", r.stdout)
-    if not m:
-        raise Refused("Google didn't accept the token for %s. The token works only once and for a "
-                      "few minutes: sign in again and copy the new one." % email)
+    tokens = [token] if token else []
+    if not token:
+        tokens, found_email = firefox_google_signin()
+        email = email or found_email
+        if not tokens:
+            raise Refused("Firefox doesn't have the Google sign-in yet. Sign in on the page that "
+                          "opened, wait a few seconds after it finishes, then try again.")
+    if not email:
+        raise Refused("Enter the email address of the Google account you signed in with.")
+    aas = None
+    for t in tokens[:3]:
+        r = subprocess.run(["apkeep", "-e", email, "--oauth-token", t, "-o", "device=" + PLAY_DEVICE],
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120)
+        m = re.search(r"AAS Token: (\S+)", r.stdout)
+        if m:
+            aas = m.group(1)
+            break
+    if not aas:
+        raise Refused("Google didn't accept the sign-in for %s. The sign-in works only once and for a "
+                      "few minutes: open Google sign-in again, sign in, and try again." % email)
     os.makedirs(os.path.dirname(PLAY_CONFIG), exist_ok=True)
     fd = os.open(PLAY_CONFIG + ".part", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
-        f.write("[google]\nemail = %s\naas_token = %s\n" % (email, m.group(1)))
+        f.write("[google]\nemail = %s\naas_token = %s\n" % (email, aas))
     os.replace(PLAY_CONFIG + ".part", PLAY_CONFIG)
     return {"signed_in": True, "email": email}
 
@@ -643,7 +755,7 @@ def main(argv):
     if args and args[0] in ("play-status", "play-signout"):
         args = args[:1] + [""]
     elif args and args[0] == "play-signin":
-        args = args[:1] + [" ".join(args[1:])]
+        args = args[:1] + [" ".join(args[1:])]  # optional EMAIL and TOKEN
     if len(args) != 2 or args[0] not in commands:
         print(__doc__.strip(), file=sys.stderr)
         return 2
