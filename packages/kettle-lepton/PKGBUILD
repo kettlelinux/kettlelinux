@@ -7,17 +7,21 @@
 # (app 3029110), which lepton-kettle uses in place and asks Steam to install when missing.
 #
 # 0001 (ours) shows the 2D window by default (no headset); 0002 (ours) passes Steam Input's
-#   virtual gamepads into the container. lepton-kettle puts a steamvr stand-in on the
-#   launcher's PATH (the Frame's steamvr helper only answers where SteamVR lives).
+#   virtual gamepads into the container; 0003 (ours) installs the split APKs of a game Google
+#   Play delivers as an app bundle, kept in splits/ next to its APK. lepton-kettle puts a
+#   steamvr stand-in on the launcher's PATH (the Frame's steamvr helper only answers where
+#   SteamVR lives).
 # kettle-android-games (ours) adds an .apk to Steam set to this tool, from the command line,
-# Kettle Welcome's Android page, or Dolphin's right-click menu; it also searches F-Droid.
+# Kettle Welcome's Android page, or Dolphin's right-click menu; it also searches F-Droid, and,
+# opt-in, downloads games from Google Play with apkeep, once the user has signed in to Google
+# in Firefox and pasted the one-time token, as apkeep documents.
 # Gamescope needs 0010 of packages/gamescope to bring the Android window to the front.
 #
 # Built with upstream Rust (build time only), as packages/inputplumber: the apk-info-extractor's
 # locked crates need a newer compiler than the snapshot's 1.78.
 pkgname=kettle-lepton
 pkgver=3.0.3
-pkgrel=4
+pkgrel=5
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Android games in Steam through Valve Lepton (Kettle Linux compatibility tool)'
@@ -29,13 +33,15 @@ license=(MIT BSD-3-Clause)
 # container from /usr/share/guestos/android
 depends=(bash python libnotify podman passt crun conmon catatonit containers-common fuse-overlayfs
          inotify-tools android-platform-tools attr jq zstd
-         deckard-mesa-android-aarch64 deckard-vulkan-layers-android-aarch64)
+         deckard-mesa-android-aarch64 deckard-vulkan-layers-android-aarch64
+         apkeep)
 makedepends=(git)
 options=(!lto)  # makepkg's GCC LTO objects in zstd-sys don't link into the Rust binary
 source=("lepton::git+https://gitlab.steamos.cloud/frame-public/lepton.git#tag=v$pkgver"
         "https://static.rust-lang.org/dist/$_rustdate/rust-$_rust-aarch64-unknown-linux-gnu.tar.xz"
         0001-compat_tool-show-the-2D-window-by-default.patch
         0002-compat_tool-pass-Steam-Input-s-virtual-gamepads-into.patch
+        0003-compat_tool-install-split-APKs-kept-in-splits-next-t.patch
         lepton-kettle
         steamvr
         compatibilitytool.vdf
@@ -47,11 +53,12 @@ sha256sums=('SKIP'
             '0b514a8cc1cbcd939bff0f151661fe58b6ea5c7a7f645a5098c69e32e8c1e0a2'
             'b73955c080723a1de72a0a88edd006cd68769d3fd2f20bc3b3db6d94e5529fc8'
             'a7b2864c6f3c0199c17b329f26b45dcee8ec2dfe9320585e384084408de8f8ac'
+            'c77c79f100351f62537ff1c70eed1756112a2187e6104c88a95e2791d67d4538'
             '1d4720144a3d023191fc741e4096f098121631990ec89e584a4a9748ec6b353f'
             'e4c2e8bbcac361770f1d9479aacbe9e90bb9e13c0f2c91d694e0d1e72887e0e7'
             '9254fa985690b9e4b0cd11e511868a46e09acda2db434b616f0a552cce3afc5b'
             'ffaaded8988303bb552cf862addca3f45b2a88ccbed99d937611b27fc7b8d8c4'
-            'ab0b53459524ed88ce6fb397f741d8745d898ed6e4b18433506b1c97731e86d5'
+            '72206fa8bfbabddc17bce46ffb1d8b53e9abcedf22bb024036133b9b3d45a744'
             '9fa93f8589aa91fe749611460e0288876d8f4a98cdcb6d1036a243fbf09b649e')
 
 prepare() {

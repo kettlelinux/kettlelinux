@@ -7,17 +7,32 @@
                                              Steam shortcut using "Lepton (Kettle)"
   kettle-android-games fdroid-search TEXT    search F-Droid
   kettle-android-games fdroid-add PACKAGE    download an F-Droid app and add it
+  kettle-android-games play-status           whether a Google account is signed in
+  kettle-android-games play-signin EMAIL TOKEN
+                                             sign in to Google with the one-time oauth_token
+                                             from accounts.google.com/EmbeddedSetup
+  kettle-android-games play-signout          forget the Google account
+  kettle-android-games play-add APP          download a game from Google Play (its link or
+                                             package name) and add it
 
 Every command prints one JSON object ({"ok": true, ...} or {"ok": false, "error": ...}) and
 exits 0 or 1. Shortcuts are added through the running Steam client (its CEF remote debugging
 port, which Kettle enables for Decky), so Steam must be running.
 
-.xapk files are unpacked when they hold a single APK (plus OBB data). Split APKs (base plus
-config APKs) can't be installed by Lepton and are refused.
+.xapk and .apks files are unpacked: the base APK, its split APKs (an app bundle's native code,
+screen density and language parts) and OBB data. Splits go to splits/ next to the game's APK,
+where Lepton (Kettle) installs them together with it.
+
+The Google Play download is opt-in and unofficial: it uses apkeep with the Google account the
+user signs in with, and the device profile of an Android 11 arm64 phone so Google Play hands
+out builds Lepton's Android 11 can run. Signing in is apkeep's documented way: the user signs
+in on Google's embedded setup page in Firefox and copies the oauth_token cookie it sets; it's
+traded once for a long-lived token, kept in ~/.config/kettle-lepton/google-play.ini.
 """
 import base64
 import json
 import os
+import re
 import shutil
 import socket
 import struct
@@ -34,6 +49,10 @@ CEF = ("127.0.0.1", 8080)
 FDROID = "https://f-droid.org"
 FDROID_SEARCH = "https://search.f-droid.org/api/search_apps?q="
 USER_AGENT = "kettle-android-games"
+PLAY_CONFIG = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+                           "kettle-lepton", "google-play.ini")
+PLAY_DEVICE = "poco_f1"  # Android 11 (Lepton's), arm64, Adreno
+PLAY_PACKAGE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$")
 
 
 class Refused(Exception):
@@ -172,7 +191,7 @@ def resolve_icon_paths(table, strings, rid, depth=0):
 
 # ---------------------------------------------------------------- APK inspection
 
-def inspect_apk(path):
+def inspect_apk(path, splits=()):
     try:
         z = zipfile.ZipFile(path)
     except (zipfile.BadZipFile, OSError) as e:
@@ -184,6 +203,7 @@ def inspect_apk(path):
     manifest = next((a for n, a in elements if n == "manifest"), {})
     app = next((a for n, a in elements if n == "application"), {})
     package = (manifest.get("package") or (None, None, None))[2]
+    split_name = (manifest.get("split") or (None, None, None))[2]
     version = (manifest.get(ATTR_VERSION_NAME) or (None, None, None))[2]
     meta = {}
     for n, a in elements:
@@ -207,9 +227,12 @@ def inspect_apk(path):
         label = lab[2] if lab[0] == 0x03 else resolve_string(table, strings, lab[1]) if lab[0] == 0x01 else None
     ic = app.get(ATTR_ICON)
     if ic and ic[0] == 0x01:
+        # an app bundle keeps its icons in the screen density splits
+        where = [(path, names)] + [(sp, set(zipfile.ZipFile(sp).namelist())) for sp in splits]
         for p in resolve_icon_paths(table, strings, ic[1]):
-            if p.endswith(".png") and p in names:
-                icon = p
+            found = next((f for f, n in where if p in n), None) if p.endswith(".png") else None
+            if found:
+                icon = (found, p)
                 break
     return {
         "package": package,
@@ -218,39 +241,58 @@ def inspect_apk(path):
         "abis": abis,
         "arm64": arm64,
         "split": split_required,
+        "split_name": split_name,
         "google_services": uses_gms,
         "icon": icon,
     }
 
 
-def check_runnable(info):
+def check_runnable(info, splits=()):
     if not info["package"]:
         raise Refused("The app has no package name.")
+    if info["split_name"]:
+        raise Refused("This is one part (%s) of a game split into several APK files, not the game "
+                      "itself." % info["split_name"])
     if not info["arm64"]:
         raise Refused("%s has no 64-bit ARM (arm64-v8a) code, only %s, so it can't run on this device."
                       % (info["name"], ", ".join(info["abis"])))
-    if info["split"]:
-        raise Refused("%s is split into several APK files (an app bundle). Lepton installs single APKs "
-                      "only; look for a universal APK of it." % info["name"])
+    if info["split"] and not splits:
+        raise Refused("%s is split into several APK files (an app bundle) and this is only its base. "
+                      "Add the .xapk or .apks file that holds all of them, or a universal APK."
+                      % info["name"])
+    if splits:
+        abis = {n.split("/")[1] for sp in splits for n in zipfile.ZipFile(sp).namelist()
+                if n.startswith("lib/") and n.count("/") >= 2}
+        if abis and "arm64-v8a" not in abis:
+            raise Refused("%s has no 64-bit ARM (arm64-v8a) code, only %s, so it can't run on this "
+                          "device." % (info["name"], ", ".join(sorted(abis))))
 
 
-def unpack_xapk(path, workdir):
-    """A single-APK .xapk: extract the APK and its OBB files. Returns (apk path, [obb paths])."""
+def split_apk_set(apks):
+    """(base, [splits]) of an app bundle's APK files: the base is the one that isn't a split."""
+    base = [a for a in apks if not inspect_apk(a)["split_name"]]
+    if len(base) != 1:
+        raise Refused("Couldn't tell which APK file is the game (%d candidates)." % len(base))
+    return base[0], [a for a in apks if a != base[0]]
+
+
+def unpack_bundle(path, workdir):
+    """An .xapk or .apks file: extract its APKs and OBB files. Returns (apk, [splits], [obbs])."""
     try:
         z = zipfile.ZipFile(path)
     except (zipfile.BadZipFile, OSError) as e:
-        raise Refused("Not an XAPK file (%s)." % e)
-    apks = [n for n in z.namelist() if n.endswith(".apk") and "/" not in n]
-    if len(apks) != 1:
-        raise Refused("This XAPK holds %d APK files (a split app). Lepton installs single APKs only."
-                      % len(apks))
-    z.extract(apks[0], workdir)
-    obbs = []
+        raise Refused("Not an XAPK or APKS file (%s)." % e)
+    apks, obbs = [], []
     for n in z.namelist():
-        if n.lower().endswith(".obb"):
-            z.extract(n, workdir)
-            obbs.append(os.path.join(workdir, n))
-    return os.path.join(workdir, apks[0]), obbs
+        low = n.lower()
+        if low.endswith(".apk") and "/" not in n:
+            apks.append(z.extract(n, workdir))
+        elif low.endswith(".obb"):
+            obbs.append(z.extract(n, workdir))
+    if not apks:
+        raise Refused("This file holds no APK.")
+    apk, splits = split_apk_set(apks)
+    return apk, splits, obbs
 
 
 # ---------------------------------------------------------------- Steam (CEF remote debugging)
@@ -345,31 +387,68 @@ def cmd_inspect(path):
 
 def cmd_add(path, notify=False):
     path = os.path.abspath(path)
-    with tempfile.TemporaryDirectory() as tmp:
-        obbs = []
-        apk = path
-        if path.lower().endswith(".xapk"):
-            apk, obbs = unpack_xapk(path, tmp)
-        info = inspect_apk(apk)
-        check_runnable(info)
+    if not path.lower().endswith((".xapk", ".apks")):
+        return add_game(path, [], [], notify)
+    with work_dir() as tmp:
+        apk, splits, obbs = unpack_bundle(path, tmp)
+        return add_game(apk, splits, obbs, notify, move=True)
 
-        folder = os.path.join(GAMES_DIR, info["package"])
-        os.makedirs(folder, exist_ok=True)
-        target = os.path.join(folder, info["package"] + ".apk")
-        if os.path.abspath(apk) != target:
-            shutil.copyfile(apk, target + ".part")
-            os.replace(target + ".part", target)
-        if obbs:
-            obb_dir = os.path.join(folder, "obb")
-            os.makedirs(obb_dir, exist_ok=True)
-            for o in obbs:
-                shutil.copyfile(o, os.path.join(obb_dir, os.path.basename(o)))
 
-        icon_path = None
-        if info["icon"]:
-            icon_path = os.path.join(folder, "icon.png")
-            with zipfile.ZipFile(target) as z, open(icon_path, "wb") as f:
-                f.write(z.read(info["icon"]))
+def work_dir():
+    """A temporary folder on the games' drive: games can be gigabytes, too big for /tmp."""
+    os.makedirs(GAMES_DIR, exist_ok=True)
+    return tempfile.TemporaryDirectory(dir=GAMES_DIR, prefix=".work-")
+
+
+def _copy(src, dst, move=False):
+    if os.path.abspath(src) == dst:
+        return
+    if move:
+        os.replace(src, dst)
+    else:
+        shutil.copyfile(src, dst + ".part")
+        os.replace(dst + ".part", dst)
+
+
+def add_game(apk, splits, obbs, notify=False, move=False):
+    """Put the game in ~/Games/Android/<package>/ (APK, splits/, obb/) and add it to Steam."""
+    info = inspect_apk(apk)
+    folder = os.path.join(GAMES_DIR, info["package"] or "unknown")
+    target = os.path.join(folder, "%s.apk" % info["package"])
+    split_dir = os.path.join(folder, "splits")
+    in_place = os.path.abspath(apk) == target
+    if in_place and not splits and os.path.isdir(split_dir):
+        # re-adding a game from its own folder keeps its splits
+        splits = sorted(os.path.join(split_dir, n) for n in os.listdir(split_dir) if n.endswith(".apk"))
+    info = inspect_apk(apk, splits)
+    check_runnable(info, splits)
+
+    icon = None
+    if info["icon"]:
+        src, info["icon"] = info["icon"]
+        with zipfile.ZipFile(src) as z:
+            icon = z.read(info["icon"])
+
+    os.makedirs(folder, exist_ok=True)
+    _copy(apk, target, move)
+    if not (in_place and splits and all(os.path.dirname(sp) == split_dir for sp in splits)):
+        # an update replaces all the splits; Lepton installs whatever is in splits/
+        shutil.rmtree(split_dir, ignore_errors=True)
+        if splits:
+            os.makedirs(split_dir)
+            for sp in splits:
+                _copy(sp, os.path.join(split_dir, os.path.basename(sp)), move)
+    if obbs:
+        obb_dir = os.path.join(folder, "obb")
+        os.makedirs(obb_dir, exist_ok=True)
+        for o in obbs:
+            _copy(o, os.path.join(obb_dir, os.path.basename(o)), move)
+
+    icon_path = None
+    if icon:
+        icon_path = os.path.join(folder, "icon.png")
+        with open(icon_path, "wb") as f:
+            f.write(icon)
 
     appid_file = os.path.join(folder, ".steam-appid")
     known = None
@@ -453,11 +532,118 @@ def cmd_fdroid_add(package):
     raise last_error or Refused("No build of %s can run on this device." % package)
 
 
+# ---------------------------------------------------------------- Google Play (opt-in, apkeep)
+
+def _play_account():
+    """(email, aas token) from the saved sign-in, or None."""
+    try:
+        text = open(PLAY_CONFIG).read()
+    except OSError:
+        return None
+    values = dict(re.findall(r"^\s*(email|aas_token)\s*=\s*(\S+)\s*$", text, re.M))
+    if values.get("email") and values.get("aas_token"):
+        return values["email"], values["aas_token"]
+    return None
+
+
+def cmd_play_status(_=None):
+    account = _play_account()
+    return {"signed_in": bool(account), "email": account[0] if account else ""}
+
+
+def cmd_play_signin(arg):
+    """arg: "EMAIL OAUTH_TOKEN"."""
+    email, _, token = arg.strip().partition(" ")
+    email, token = email.strip(), token.strip()
+    if "@" not in email:
+        raise Refused("Enter the email address of the Google account you signed in with.")
+    if not token.startswith("oauth2_4/"):
+        raise Refused("That isn't the sign-in token: copy the value of the oauth_token cookie, "
+                      "which starts with oauth2_4/.")
+    if not shutil.which("apkeep"):
+        raise Refused("apkeep isn't installed.")
+    r = subprocess.run(["apkeep", "-e", email, "--oauth-token", token,
+                        "-o", "device=" + PLAY_DEVICE],
+                       capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120)
+    m = re.search(r"AAS Token: (\S+)", r.stdout)
+    if not m:
+        raise Refused("Google didn't accept the token for %s. The token works only once and for a "
+                      "few minutes: sign in again and copy the new one." % email)
+    os.makedirs(os.path.dirname(PLAY_CONFIG), exist_ok=True)
+    fd = os.open(PLAY_CONFIG + ".part", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("[google]\nemail = %s\naas_token = %s\n" % (email, m.group(1)))
+    os.replace(PLAY_CONFIG + ".part", PLAY_CONFIG)
+    return {"signed_in": True, "email": email}
+
+
+def cmd_play_signout(_=None):
+    try:
+        os.remove(PLAY_CONFIG)
+    except FileNotFoundError:
+        pass
+    return {"signed_in": False, "email": ""}
+
+
+def play_package(ref):
+    """The package name in a Google Play link (play.google.com/store/apps/details?id=..., market://)
+    or a bare package name."""
+    ref = ref.strip()
+    if "://" in ref:
+        ids = urllib.parse.parse_qs(urllib.parse.urlparse(ref).query).get("id", [])
+        ref = ids[0] if ids else ""
+    if not PLAY_PACKAGE.match(ref):
+        raise Refused("That isn't a Google Play link or package name (like com.example.game).")
+    return ref
+
+
+def cmd_play_add(ref):
+    package = play_package(ref)
+    account = _play_account()
+    if not account:
+        raise Refused("Sign in to Google Play first.")
+    with work_dir() as tmp:
+        try:
+            r = subprocess.run(["apkeep", "-a", package, "-d", "google-play", "-i", PLAY_CONFIG,
+                                "-o", "device=%s,split_apk=true,include_additional_files=true" % PLAY_DEVICE,
+                                "--accept-tos", "-r", "1", tmp],
+                               capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=4 * 3600)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise Refused("The download from Google Play failed (%s)." % e)
+        out = r.stdout + r.stderr
+        if "downloaded successfully" not in out:
+            if "Could not log in" in out or "Terms of Service" in out:
+                raise Refused("Google Play didn't accept the saved sign-in. Sign out and sign in again.")
+            if "Invalid app response" in out:
+                raise Refused("Google Play didn't hand out %s. It may be a paid game this account hasn't "
+                              "bought, not offered in your country, or not offered for Android 11 phones."
+                              % package)
+            raise Refused("The download of %s from Google Play failed: %s" % (
+                package, (out.strip().splitlines() or ["no output"])[-1]))
+        folder = os.path.join(tmp, package)
+        if os.path.isdir(folder):
+            files = [os.path.join(folder, n) for n in sorted(os.listdir(folder))]
+        else:
+            files = [os.path.join(tmp, n) for n in sorted(os.listdir(tmp))]
+        apks = [f for f in files if f.endswith(".apk")]
+        obbs = [f for f in files if f.endswith(".obb")]
+        if not apks:
+            raise Refused("Google Play sent no APK for %s." % package)
+        apk, splits = split_apk_set(apks)
+        return add_game(apk, splits, obbs, move=True)
+
+
 def main(argv):
     notify = "--notify" in argv
     args = [a for a in argv if a != "--notify"]
     commands = {"inspect": cmd_inspect, "add": lambda p: cmd_add(p, notify),
-                "fdroid-search": cmd_fdroid_search, "fdroid-add": cmd_fdroid_add}
+                "fdroid-search": cmd_fdroid_search, "fdroid-add": cmd_fdroid_add,
+                "play-status": cmd_play_status, "play-signin": cmd_play_signin,
+                "play-signout": cmd_play_signout, "play-add": cmd_play_add}
+    if args and args[0] in ("play-status", "play-signout"):
+        args = args[:1] + [""]
+    elif args and args[0] == "play-signin":
+        args = args[:1] + [" ".join(args[1:])]
     if len(args) != 2 or args[0] not in commands:
         print(__doc__.strip(), file=sys.stderr)
         return 2
