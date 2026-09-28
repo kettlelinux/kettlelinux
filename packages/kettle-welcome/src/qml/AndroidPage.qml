@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// Android games: add an .apk (or a single-APK .xapk) to Steam set to run with Lepton (Kettle),
-// or find one on F-Droid. The work is done by kettle-android-games (package kettle-lepton).
+// Android games: add an .apk (or an .xapk/.apks bundle) to Steam set to run with Lepton (Kettle),
+// find one on F-Droid, or, opt-in, download one from Google Play with the user's Google account.
+// The work is done by kettle-android-games (package kettle-lepton).
 import QtCore
 import QtQuick
 import QtQuick.Controls as QQC2
@@ -16,17 +17,27 @@ BasePage {
 
     title: "Android"
     heading: "Android games"
-    description: "Android games run in Steam through Lepton, the Android layer Valve made for the Steam Frame. Add an APK file or pick a game from F-Droid, and it appears in your Steam library, ready to play in Game Mode with the built-in controls."
+    description: "Android games run in Steam through Lepton, the Android layer Valve made for the Steam Frame. Add an APK file, pick a game from F-Droid, or download one from Google Play, and it appears in your Steam library, ready to play in Game Mode with the built-in controls."
 
     // the last result: {ok, error} or the added game
     property var result: null
     property var searchResults: []
     property string lastCommand: ""
+    // the Google account signed in for Google Play downloads ("" when none)
+    property string playEmail: ""
+
+    Component.onCompleted: Backend.androidGames("play-status", "")
 
     Connections {
         target: Backend
         function onAndroidResult(command, res) {
-            if (command === "fdroid-search") {
+            if (command === "play-status" || command === "play-signout") {
+                page.playEmail = res.ok ? res.email : "";
+            } else if (command === "play-signin") {
+                if (res.ok)
+                    page.playEmail = res.email;
+                page.result = res.ok ? null : res;
+            } else if (command === "fdroid-search") {
                 page.searchResults = res.ok ? res.apps : [];
                 page.result = res.ok ? null : res;
             } else {
@@ -44,7 +55,7 @@ BasePage {
     FileDialog {
         id: fileDialog
         title: "Add an Android game"
-        nameFilters: ["Android games (*.apk *.xapk)"]
+        nameFilters: ["Android games (*.apk *.xapk *.apks)"]
         currentFolder: "file://" + StandardPaths.writableLocation(StandardPaths.DownloadLocation)
         onAccepted: page.run("add", decodeURIComponent(selectedFile.toString().replace(/^file:\/\//, "")))
     }
@@ -53,7 +64,7 @@ BasePage {
         Tile {
             iconName: "document-open"
             title: "Add an APK file"
-            subtitle: "An Android game you downloaded (.apk, or an .xapk with one APK). It's copied to Games/Android in your home folder."
+            subtitle: "An Android game you downloaded (.apk, .xapk or .apks). It's copied to Games/Android in your home folder."
             enabled: !Backend.androidBusy
             onClicked: fileDialog.open()
         }
@@ -68,7 +79,7 @@ BasePage {
     RowLayout {
         Layout.fillWidth: true
         spacing: Kirigami.Units.largeSpacing
-        visible: Backend.androidBusy || page.result !== null
+        visible: (Backend.androidBusy && page.lastCommand !== "") || page.result !== null
 
         QQC2.BusyIndicator {
             visible: Backend.androidBusy
@@ -84,6 +95,9 @@ BasePage {
                 if (Backend.androidBusy)
                     return page.lastCommand === "fdroid-search" ? "Searching F-Droid…"
                         : page.lastCommand === "fdroid-add" ? "Downloading from F-Droid and adding to Steam…"
+                        : page.lastCommand === "play-signin" ? "Signing in to Google Play…"
+                        : page.lastCommand === "play-add" ? "Downloading from Google Play and adding to Steam… Big games take a while."
+                        : page.lastCommand === "play-status" || page.lastCommand === "" ? ""
                         : "Adding to Steam…";
                 const r = page.result;
                 if (!r)
@@ -172,7 +186,104 @@ BasePage {
     }
 
     Section {
+        title: "Google Play (optional)"
+        description: "Download games you own on Google Play, or free ones, with your Google account. Google doesn't support this: it uses apkeep, an unofficial downloader, and signing in agrees to Google Play's Terms of Service for it. Google may restrict accounts it finds using unofficial downloaders, so a second Google account is the safer choice. The sign-in is kept only on this device."
+    }
+
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: Kirigami.Units.largeSpacing
+
+        QQC2.Label {
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            text: page.playEmail ? "Signed in as " + page.playEmail + "." : "Not signed in."
+        }
+        QQC2.Button {
+            visible: !!page.playEmail
+            text: "Sign out"
+            icon.name: "system-log-out"
+            enabled: !Backend.androidBusy
+            onClicked: page.run("play-signout", "")
+        }
+    }
+
+    // Signing in is apkeep's documented way: Google's embedded setup page, in Firefox, sets a
+    // one-time oauth_token cookie, which kettle-android-games trades for a long-lived token.
+    ColumnLayout {
+        Layout.fillWidth: true
+        visible: !page.playEmail
+        spacing: Kirigami.Units.largeSpacing
+
+        QQC2.Label {
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            text: "1. Open Google's sign-in page in Firefox and sign in. At the end the page may stay blank or keep loading; that's expected."
+        }
+        QQC2.Button {
+            text: "Open Google sign-in"
+            icon.name: "internet-web-browser"
+            onClicked: Qt.openUrlExternally("https://accounts.google.com/EmbeddedSetup")
+        }
+        QQC2.Label {
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            text: "2. In Firefox, press F12, open Storage, then Cookies, then accounts.google.com, and copy the value of oauth_token. It starts with oauth2_4/ and works once, for a few minutes."
+        }
+        QQC2.TextField {
+            id: emailField
+            Layout.fillWidth: true
+            placeholderText: "The Google account's email address"
+            inputMethodHints: Qt.ImhEmailCharactersOnly | Qt.ImhNoAutoUppercase
+        }
+        RowLayout {
+            Layout.fillWidth: true
+
+            QQC2.TextField {
+                id: tokenField
+                Layout.fillWidth: true
+                placeholderText: "oauth2_4/…"
+                inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText
+            }
+            QQC2.Button {
+                text: "Finish sign-in"
+                icon.name: "dialog-ok"
+                enabled: !Backend.androidBusy && emailField.text.trim().length > 0 && tokenField.text.trim().length > 0
+                onClicked: {
+                    page.run("play-signin", emailField.text.trim() + " " + tokenField.text.trim());
+                    tokenField.text = "";
+                }
+            }
+        }
+    }
+
+    RowLayout {
+        Layout.fillWidth: true
+        visible: !!page.playEmail
+
+        QQC2.TextField {
+            id: playField
+            Layout.fillWidth: true
+            placeholderText: "Google Play link or package name, e.g. com.example.game"
+            onAccepted: if (text.trim().length > 0 && !Backend.androidBusy) page.run("play-add", text.trim())
+        }
+        QQC2.Button {
+            text: "Download and add"
+            icon.name: "download"
+            enabled: !Backend.androidBusy && playField.text.trim().length > 0
+            onClicked: page.run("play-add", playField.text.trim())
+        }
+    }
+
+    QQC2.Button {
+        visible: !!page.playEmail
+        text: "Find games on Google Play"
+        icon.name: "internet-web-browser"
+        onClicked: Qt.openUrlExternally("https://play.google.com/store/games")
+    }
+
+    Section {
         title: "What runs"
-        description: "Games built for 64-bit ARM phones, which is most of them. Not supported: games that need Google Play services or a Google sign-in, games split into several APK files (app bundles), and games made only for x86. Each game keeps its own saves. In the Files app you can also right-click an APK file and choose Add to Steam as Android game."
+        description: "Games built for 64-bit ARM phones running Android 11 or older, which is most of them. Not supported: games that need Google Play services, a Google sign-in or Google Play purchases inside the game, games that download extra data through Google Play after starting, and games made only for x86. Each game keeps its own saves. In the Files app you can also right-click an APK file and choose Add to Steam as Android game."
     }
 }
