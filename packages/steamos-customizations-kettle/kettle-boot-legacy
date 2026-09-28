@@ -6,18 +6,22 @@
 #
 #   kettle-boot-legacy SLOT
 #       after an update (the RAUC post-install hook, as .../post-install.d/50-kettle-boot-legacy):
-#       the kernel from SLOT's root filesystem, onto the mounted esp
-#   kettle-boot-legacy --root DIR --esp DIR --efi-partuuid UUID
-#       building an image: the kernel from DIR/boot, onto the esp tree DIR
+#       the kernel from SLOT's root filesystem, onto the mounted esp (each of \KERNEL and
+#       extlinux only if it is there already)
+#   kettle-boot-legacy --root DIR --esp DIR --efi-partuuid UUID [--no-extlinux]
+#       building an image, or installing to the internal storage (\KERNEL only: U-Boot tries
+#       extlinux before EFI, and the internal install boots through steamcl, with fallback): the
+#       kernel from DIR/boot, onto the esp tree DIR
 set -euo pipefail
 
-root= esp=/esp efi_partuuid= slot= tmpmnt=
+root= esp=/esp efi_partuuid= slot= tmpmnt= extlinux=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --root) root=$2; shift 2 ;;
     --esp) esp=$2; shift 2 ;;
     --efi-partuuid) efi_partuuid=$2; shift 2 ;;
-    -*) echo "usage: $0 SLOT | --root DIR --esp DIR --efi-partuuid UUID" >&2; exit 2 ;;
+    --no-extlinux) extlinux=0; shift ;;
+    -*) echo "usage: $0 SLOT | --root DIR --esp DIR --efi-partuuid UUID [--no-extlinux]" >&2; exit 2 ;;
     *) slot=$1; shift ;;
   esac
 done
@@ -33,12 +37,13 @@ if [ -n "$slot" ]; then
   mount -o ro "$parts/rootfs" "$tmpmnt"
   root=$tmpmnt
   ls "$esp" >/dev/null  # esp.mount is an automount
-  # only where these bootloaders are in use (the SD card image); an internal install boots
-  # through EFI alone
+  # only where these bootloaders are in use: the SD card image, and internal installs made
+  # with \KERNEL (kettle-install-internal; older ones get it with its --boot-files)
   if [ ! -e "$esp/KERNEL" ] && [ ! -e "$esp/extlinux/extlinux.conf" ]; then
     echo "kettle-boot-legacy: no \\KERNEL or extlinux on $esp; nothing to do"
     exit 0
   fi
+  [ -e "$esp/extlinux/extlinux.conf" ] || extlinux=0
 fi
 [ -n "$root" ] && [ -n "$efi_partuuid" ] || { echo "missing --root/--efi-partuuid" >&2; exit 2; }
 
@@ -52,8 +57,6 @@ boot=$root/boot
 
 # build it all next to the old files, then swap them in: the esp is never left half-written
 stage=$(mktemp -d "$esp/.kettle-boot.XXXXXX")
-cp "$boot/Image" "$boot/initramfs-linux.img" "$stage/"
-mkdir -p "$stage/dtbs" && cp -r "$boot/dtbs/." "$stage/dtbs/"
 
 # \KERNEL for the ROCKNIX ABL: gzip(Image) with every SM8550 dtb appended (the ABL picks one by
 # its Device model setting), the initramfs, the splash command line
@@ -65,6 +68,9 @@ python3 /usr/lib/kettle/mkbootimg.py --kernel "$stage/kernel.gz" \
 rm "$stage/kernel.gz"
 printf '%s  KERNEL\n' "$(md5sum "$stage/KERNEL" | cut -d' ' -f1)" >"$stage/KERNEL.md5"
 
+if [ "$extlinux" = 1 ]; then
+cp "$boot/Image" "$boot/initramfs-linux.img" "$stage/"
+mkdir -p "$stage/dtbs" && cp -r "$boot/dtbs/." "$stage/dtbs/"
 mkdir -p "$stage/extlinux"
 cat >"$stage/extlinux/extlinux.conf" <<CFG
 default kettle
@@ -92,7 +98,9 @@ rm -rf "$esp/dtbs.old"; [ -d "$esp/dtbs" ] && mv "$esp/dtbs" "$esp/dtbs.old"
 mv "$stage/dtbs" "$esp/dtbs"; rm -rf "$esp/dtbs.old"
 mkdir -p "$esp/extlinux"
 mv -f "$stage/extlinux/extlinux.conf" "$esp/extlinux/extlinux.conf"
+fi
 mv -f "$stage/KERNEL" "$esp/KERNEL"
 mv -f "$stage/KERNEL.md5" "$esp/KERNEL.md5"
 sync -f "$esp/KERNEL" 2>/dev/null || sync
-echo "kettle-boot-legacy: \\KERNEL and extlinux now boot ${slot:-this image} ($kver)"
+what='\KERNEL now boots'; [ "$extlinux" = 0 ] || what='\KERNEL and extlinux now boot'
+echo "kettle-boot-legacy: $what ${slot:-this image} ($kver)"

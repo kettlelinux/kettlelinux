@@ -78,10 +78,13 @@ slot and boots it when the menu times out (2 minutes). This is Valve's behaviour
 **Older boot paths.** The ROCKNIX ABL (`\KERNEL`) and U-Boot's extlinux (`\extlinux\extlinux.conf`)
 can't choose between slots. Kettle keeps them on the `esp` and rewrites them to the newly
 installed slot at the end of each update (`kettle-boot-legacy`), so they get every update but
-have no automatic fallback. For fallback, boot through EFI (U-Boot EFI, or the ABL's EFI
-chainload). U-Boot usually tries extlinux before EFI: if the Portal's U-Boot does, the SD card
-system boots without fallback until extlinux is dropped from the image (an internal install
-has no extlinux and always boots through steamcl).
+have no automatic fallback. For fallback, boot through EFI (U-Boot EFI, or the ROCKNIX ABL's
+EFI chainload up to v1.1.8; v1.1.9 dropped it and only starts `\KERNEL`). U-Boot usually tries
+extlinux before EFI: if the Portal's U-Boot does, the SD card system boots without fallback
+until extlinux is dropped from the image. An internal install has `\KERNEL` (for the ROCKNIX
+ABL; `kettle-install-internal --boot-files` adds it to older installs) but no extlinux, so
+U-Boot always boots it through steamcl; `kettle-boot-legacy` refreshes each of the two only
+where it is already on the `esp`.
 
 ## Updating
 

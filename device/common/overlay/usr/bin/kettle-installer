@@ -334,6 +334,15 @@ do_reinstall() {
   fi
 }
 
+do_boot_files() {
+  ask_gui "<b>Update the internal install's boot files</b>\n\nThe ROCKNIX ABL from v1.1.9 on starts Linux from a kernel file on the internal storage, which older internal installs don't have: without it, the ABL shows <i>No bootable image found</i>. This writes it for the newest installed version. Nothing else is changed." "Update boot files" || return 0
+  if run "Writing the boot files" install --boot-files; then
+    info "$RESULT.\n\nPower off and remove the SD card to start the internal install."
+  else
+    failed "Writing the boot files"
+  fi
+}
+
 do_uninstall() {
   local mode args=()
   mode=$(choose "<b>Remove Kettle Linux from the internal storage</b>\n\nThe internal Kettle system and everything in it (games too) is deleted and its space goes back to Android. The SD card is not touched." \
@@ -398,6 +407,7 @@ while :; do
             copy "Copy a backup to a USB drive" "Keep a backup safe off this SD card") ;;
     installed) action=$(choose "Kettle Linux is installed on the internal storage. What would you like to do?" \
             reinstall "Reinstall the internal system" "Replace it with a copy of this SD card's system" \
+            bootfiles "Repair the boot files" "If the ROCKNIX ABL says No bootable image found" \
             uninstall "Remove from internal storage" "Give the space back to Android" \
             backup "Back up the internal storage" "To this SD card" \
             restore "Restore a backup" "Put the internal storage back to an earlier backup" \
@@ -416,6 +426,7 @@ while :; do
   case "$action" in
     install) do_install ;;
     reinstall) do_reinstall ;;
+    bootfiles) do_boot_files ;;
     uninstall) do_uninstall ;;
     backup) do_backup ;;
     restore) do_restore ;;

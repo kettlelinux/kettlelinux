@@ -9,12 +9,21 @@ Android. Run it from the SD card system with the charger connected.
 | **Dual boot** | Android keeps the size you pick (16 GiB up); Kettle Linux gets the rest |
 | **Kettle Linux first** | Android keeps 16 GiB (enough to start and set up); Kettle Linux gets the rest |
 | **Reinstall the internal system** | replaces it with a fresh copy of the SD card's system; Android untouched |
+| **Repair the boot files** | writes `\KERNEL` for the newest installed version, for installs made before it was part of the install (below) |
 | **Remove from internal storage** | deletes Kettle's partitions and grows Android's back, keeping Android's data or resetting it |
 | **Back up / Restore** | image the internal storage to the SD card, or write a backup back (from the card or a USB drive) |
 | **Copy a backup to a USB drive** | copies a backup off the SD card and checks the copy against its checksums |
 
 Afterwards the device starts the internal Kettle Linux when no SD card is inserted, and the
 card's system when one is (U-Boot tries the SD card first). Android starts as before.
+
+**ROCKNIX ABL.** From v1.1.9 the ROCKNIX ABL starts no EFI program: with *Boot source:
+Internal* it starts `\KERNEL` from the internal install's boot partition, which the installer
+writes and updates keep on the newest version. Like the SD card with this ABL, it has no
+automatic fallback when an update doesn't start (U-Boot, which starts steamcl, has). Installs
+made before `\KERNEL` was written there stop at *No bootable image found*: start the SD card
+(*Boot source: SDcard*) and choose **Repair the boot files** in the Kettle Installer, or run
+`sudo kettle-install-internal --boot-files`.
 
 The internal install uses the same partition layout as the SD card image and updates itself the
 same way (see [UPDATES.md](UPDATES.md)); there is no need to reinstall it for a new version.
@@ -93,6 +102,7 @@ The wizard runs these tools; they also work on their own (`--help` for all optio
 sudo kettle-backup-ufs [--essentials]
 sudo kettle-install-internal [--android-size GB | --android-minimal] [--backup full|essentials|DIR] [--no-games]
 sudo kettle-install-internal --reinstall
+sudo kettle-install-internal --boot-files
 sudo kettle-uninstall-internal [--wipe-android]
 sudo kettle-restore-ufs [--all-luns] /home/.kettle/ufs-backup/<date>
 ```
@@ -104,6 +114,8 @@ changes) unless `--all-luns` is given. Only use that if the firmware LUNs themse
 
 - steamcl and GRUB started by U-Boot from the UFS (no SD card inserted), and an update of the
   internal install.
+- The ROCKNIX ABL v1.1.9 starting the internal install's `\KERNEL` (*Boot source: Internal*),
+  and `--boot-files` on an existing install.
 
 - Stock AYN ABL and the ROCKNIX ABL acting on the recovery `--wipe_data` request in `misc`
   (the fallback is Android's own "Cannot load Android system" prompt).

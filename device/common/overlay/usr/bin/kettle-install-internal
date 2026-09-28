@@ -6,6 +6,8 @@
 # U-Boot (loader_a/b); U-Boot's EFI boot order is the SD card ("mmc 0") first, then the UFS
 # LUNs ("scsi 0".."scsi 7"), loading \EFI\BOOT\BOOTAA64.EFI (steamcl) from an ESP.
 # So: with an SD card inserted the SD system boots, without one the internal install does.
+# The ROCKNIX ABL from v1.1.9 on loads no EFI program: it starts \KERNEL (an Android boot.img,
+# kettle-boot-legacy) from the internal ESP instead, which updates then keep on the newest slot.
 #
 # Layout on /dev/sda (LUN 0) after install, the SD card image's SteamOS A/B layout (see
 # docs/UPDATES.md), so the internal install gets system updates the same way:
@@ -34,12 +36,15 @@
 #        sudo kettle-install-internal --reinstall [--no-games] [--yes]
 #            (copy this system into an existing or interrupted internal install again, as a
 #            fresh slot A; Android is not touched. Installed systems update themselves.)
+#        sudo kettle-install-internal --boot-files
+#            (write \KERNEL for the newest installed slot onto an existing internal install's
+#            ESP: installs made before it was written there, for the ROCKNIX ABL v1.1.9+)
 #        sudo kettle-install-internal --plan    (facts for the wizard, key=value; read only)
 set -euo pipefail
 . /usr/lib/kettle/ufs-lib.sh
 
 ANDROID_GB=64
-REINSTALL=0 NO_GAMES=0 PLAN=0 BACKUP=""
+REINSTALL=0 NO_GAMES=0 PLAN=0 BOOT_FILES=0 BACKUP=""
 ARGS=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -47,11 +52,12 @@ while [ $# -gt 0 ]; do
     --android-minimal) ANDROID_GB=$MIN_ANDROID_GB ;;
     --backup) BACKUP="${2:?}"; shift ;;
     --reinstall) REINSTALL=1 ;;
+    --boot-files) BOOT_FILES=1 ;;
     --no-games) NO_GAMES=1 ;;
     --plan) PLAN=1 ;;
     --progress) PROGRESS=1 ;;
     --yes) YES=1 ;;
-    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,42p' "$0"; exit 0 ;;
     *) die "unknown option $1" ;;
   esac
   shift
@@ -60,7 +66,7 @@ done
 need_root
 need_sd_root
 # slot A is a block copy of the running system image: it must not change while it is read
-holo-readonly status >/dev/null 2>&1 ||
+[ "$BOOT_FILES" = 1 ] || holo-readonly status >/dev/null 2>&1 ||
   die "this system's root file system is writable (holo-readonly disable); run 'sudo holo-readonly enable' and reboot first"
 need_ufs_disk
 SS=$(blockdev --getss "$DISK")
@@ -76,6 +82,45 @@ find_parts() {
   ROOTB=$(part_by_label rootfs-B) VARA=$(part_by_label var-A) VARB=$(part_by_label var-B)
   HOME_P=$(part_by_label home)
 }
+pu() { blkid -c /dev/null -s PARTUUID -o value "$1"; }
+# \KERNEL on the ESP mounted at $1 for the slot whose root is mounted at $2 and whose efi
+# partition is $3, for the ROCKNIX ABL. No extlinux: U-Boot would take it over steamcl's EFI
+# boot, which falls back to the other slot when an update does not start.
+boot_files() {
+  kettle-boot-legacy --root "$2" --esp "$1" --efi-partuuid "$(pu "$3")" --no-extlinux >/dev/null
+}
+
+if [ "$BOOT_FILES" = 1 ]; then
+  [ "$STATE" = installed ] || die "no finished internal install to write boot files for"
+  find_parts
+  [ -n "$ESP" ] && [ -n "$EFIA" ] && [ -n "$EFIB" ] && [ -n "$ROOTB" ] ||
+    die "the internal install is incomplete; reinstall it from the Kettle Installer"
+  inhibit "Writing the internal install's boot files" "${ARGS[@]}"
+  start_log install-internal "${ARGS[@]}"
+  none_mounted "$DISK" || die "a partition of $DISK is mounted"
+  W=/run/kettle-install
+  mkdir -p $W/src $W/dst
+  cleanup() { umount $W/dst 2>/dev/null || true; umount $W/src 2>/dev/null || true; }
+  trap cleanup EXIT
+  # the newest installed slot (highest build ID): the one the last update pointed \KERNEL at.
+  # rootfs-B is empty until the first update.
+  read -r id slot < <(
+    for s in A:"$ROOT" B:"$ROOTB"; do
+      mount -o ro "${s#*:}" $W/src 2>/dev/null || continue
+      b=$(sed -n 's/^BUILD_ID=//p' $W/src/usr/lib/os-release)
+      umount $W/src
+      [ -z "$b" ] || echo "$b ${s%%:*}"
+    done | sort -V | tail -1) || die "no installed system found on the internal storage"
+  if [ "$slot" = A ]; then root=$ROOT efi=$EFIA; else root=$ROOTB efi=$EFIB; fi
+  say "writing the boot files for slot $slot (build $id)"
+  mount -o ro "$root" $W/src
+  mount "$ESP" $W/dst
+  boot_files $W/dst $W/src "$efi"
+  umount $W/dst; umount $W/src
+  fsck.fat -n "$ESP" >/dev/null || die "file system check of $ESP failed"
+  done_msg "The internal install's boot files now start slot $slot (build $id)"
+  exit 0
+fi
 read -r home_b games_b < <(copy_bytes) || die "could not measure what to copy from /home"
 
 if [ "$PLAN" = 1 ]; then
@@ -249,7 +294,6 @@ else
   [ "$(blkid -c /dev/null -s PARTLABEL -o value "$ROOT")" = "$PARTIAL_LABEL" ] || relabel "$ROOT" "$PARTIAL_LABEL"
 fi
 
-pu() { blkid -c /dev/null -s PARTUUID -o value "$1"; }
 fsuuid() { cat /proc/sys/kernel/random/uuid; }
 ROOT_FSUUID=$(fsuuid) VARA_FSUUID=$(fsuuid)
 
@@ -368,6 +412,8 @@ mkdir -p $W/dst/SteamOS/conf
 holo-bootconf --conf-dir $W/dst/SteamOS/conf create --image A >/dev/null
 holo-bootconf --conf-dir $W/dst/SteamOS/conf config --image A \
   --set title "Kettle Linux-A-${VERSION_ID:-}-${BUILD_ID:-}" --set comment "${BUILD_ID:-}" >/dev/null
+# \KERNEL for the ROCKNIX ABL (v1.1.9+ starts no EFI program): slot A is this system's copy
+boot_files $W/dst / "$EFIA"
 # the fallback path U-Boot loads: written last, it makes the install bootable
 install -m 0644 /usr/lib/holo-efi/aarch64-efi/steamcl.efi $W/dst/EFI/BOOT/BOOTAA64.EFI
 umount $W/dst

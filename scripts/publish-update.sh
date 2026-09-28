@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Add a built release to the update server tree and regenerate what devices read from it.
 #
-# Usage: scripts/publish-update.sh out/kettle-<buildid>-odin2portal.raucb [BRANCH]
+# Usage: scripts/publish-update.sh out/kettle-<buildid>-<device>.raucb [BRANCH]
 #   BRANCH   stable, beta or main (default: the branch the build was made for)
 #
 # The tree (KETTLE_UPDATE_DIR, default out/update-server) is static files; copy all of it to
@@ -41,6 +41,14 @@ variant="$(jq -r .variant <<<"$manifest")" version="$(jq -r .version <<<"$manife
 [ -n "$branch" ] || branch="$(jq -r '.default_update_branch // .branch' <<<"$manifest")"
 
 dest="$TREE/images/$variant/$version"
+# Valve's server tool refuses two releases with the same version and build ID, whatever their
+# variant: each device's builds need build IDs of their own (KETTLE_BUILD_ID)
+buildid="$(jq -r .buildid <<<"$manifest")"
+for m in "$TREE"/images/*/"$version"/*.manifest.json; do
+  [ -e "$m" ] && [ "$(basename "$m")" != "$name.manifest.json" ] || continue
+  [ "$(jq -r .buildid "$m")" != "$buildid" ] ||
+    die "build $buildid ($version) is already published as $(basename "${m%.manifest.json}"); rebuild with another KETTLE_BUILD_ID"
+done
 log "publishing $name on $branch -> ${dest#"$ROOT"/}"
 mkdir -p "$dest"
 rm -rf "$dest/$name".{raucb,castr,manifest.json}
@@ -60,12 +68,16 @@ build_pacman_conf "$PACMAN_CONF"
 pacman_root "$TOOLS" -Sy --needed steamos-atomupd-client python-pyinotify python-semantic-version >/dev/null
 mkdir -p "$TOOLS/mnt/tree" "$TREE/meta"
 mount --bind "$TREE" "$TOOLS/mnt/tree"
+# every device with releases in the tree (images/<variant>/): a variant left out gets no meta
+# files, and its devices' update check fails (Steam: "unable to download the required updates")
+variants="$(find "$TREE/images" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | paste -sd' ')"
+log "variants: $variants"
 cat >"$TREE/.server.conf" <<EOF
 [Images]
 PoolDir = /mnt/tree/images
 Product = steamos
 Release = kettle
-Variants = odin2portal
+Variants = $variants
 Branches = stable beta main
 Archs = aarch64
 # a branch may have no releases yet (stable, while Kettle is in beta)
@@ -77,7 +89,7 @@ beta = stable
 main = beta stable
 
 [Images.ProvideRemoteInfoConfig.aarch64]
-Variants = odin2portal
+Variants = $variants
 Branches = stable beta main
 EOF
 # (Valve's steamos-atomupd is built for Python 3.12, the snapshot's Python is 3.11: see docs/UPDATES.md)
