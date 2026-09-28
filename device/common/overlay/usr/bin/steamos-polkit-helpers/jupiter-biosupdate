@@ -1,0 +1,8 @@
+#!/bin/bash
+# Kettle Linux: the firmware (BIOS) update command Steam runs next to its OS update check
+# ("check": is there an update; no argument: apply it). There are no firmware updates for this
+# device, so both say so and exit 0, as Valve's steamos-firmware-update does for hardware it has
+# no updates for ("No updates configured for this vendor"). Without this command Steam's
+# firmware check failed (exit 127), and Steam reported the whole update check as failed.
+echo "No firmware updates for this device" >&2
+exit 0
