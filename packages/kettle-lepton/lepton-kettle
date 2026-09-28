@@ -1,0 +1,46 @@
+#!/bin/bash
+# Lepton (Kettle): the Steam compatibility tool Steam runs for an Android game (.apk).
+# Valve's Lepton launcher, built from source (/usr/lib/kettle-lepton), runs on the Android
+# image and baked system data of Steam's own Lepton (app 3029110, downloaded by Steam), so
+# nothing Android is redistributed here. The launcher finds both next to itself, so a
+# per-user tool directory links the two together.
+set -euo pipefail
+
+LIB=/usr/lib/kettle-lepton
+LEPTON_APPID=3029110
+STEAM_ROOT="${HOME}/.local/share/Steam"
+TOOL="${XDG_DATA_HOME:-${HOME}/.local/share}/kettle-lepton/tool"
+
+# Steam's Lepton, in any Steam library
+find_steam_lepton() {
+  local libs=("$STEAM_ROOT") vdf="$STEAM_ROOT/steamapps/libraryfolders.vdf" lib
+  if [ -f "$vdf" ]; then
+    while IFS= read -r lib; do libs+=("$lib"); done \
+      < <(sed -n 's/^[[:space:]]*"path"[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$vdf")
+  fi
+  for lib in "${libs[@]}"; do
+    if [ -d "$lib/steamapps/common/Lepton/images/rootfs" ] && [ -d "$lib/steamapps/common/Lepton/sysbake" ]; then
+      echo "$lib/steamapps/common/Lepton"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if ! steam_lepton="$(find_steam_lepton)"; then
+  echo "lepton-kettle: Steam's Lepton (app $LEPTON_APPID) is not installed; asking Steam to install it." >&2
+  steam -ifrunning "steam://install/$LEPTON_APPID" >/dev/null 2>&1 || true
+  exit 1
+fi
+
+mkdir -p "$TOOL"
+ln -sfn "$LIB/lepton" "$TOOL/lepton"
+ln -sfn "$LIB/liblepton" "$TOOL/liblepton"
+ln -sfn "$LIB/version.txt" "$TOOL/version.txt"
+ln -sfn "$steam_lepton/images" "$TOOL/images"
+ln -sfn "$steam_lepton/sysbake" "$TOOL/sysbake"
+ln -sfn "$steam_lepton/sysbake.xattrs" "$TOOL/sysbake.xattrs"
+
+# No VR runtime on a handheld: the steamvr stand-in answers Lepton's path queries
+export PATH="$LIB/bin:$PATH"
+exec "$TOOL/lepton" "$@"
