@@ -15,12 +15,14 @@
 #   by keeping sgsr_filter at Valve's value 9.
 # 0009 (ours) adds the steam_sharp_filter convar: which filter Steam's Sharp runs
 #   (default sgsr; `gamescopectl steam_sharp_filter fsr` gives FSR 1 back).
+# 0010 (ours) reports mapped xdg-shell windows to Steam as focusable (app IDs, and windows
+#   under a synthetic id), so native Wayland games (Lepton's Android window) come to the front.
 #
 # To follow a newer deckard gamescope, move _commit to the one its `gamescopectl version`
 # names and drop whichever of 0001-0008 it already contains.
 pkgname=gamescope
 pkgver=3.16.28
-pkgrel=2.1
+pkgrel=2.3
 _commit=e383171ff1c0f7b5b37f05f2bb67f7c5282b087f
 pkgdesc='gaming shell based on Xwayland, powered by Vulkan and DRM (deckard + Kettle Linux, SGSR 1)'
 arch=(aarch64)
@@ -44,7 +46,8 @@ source=("git+https://github.com/ValveSoftware/gamescope.git#commit=$_commit"
         0006-steamcompmgr-add-scaling_filter-and-scaling_sharpnes.patch
         0007-render-run-RCAS-at-one-pixel-per-thread-on-Adreno.patch
         0008-render-add-composite_timing-GPU-timestamps-per-filte.patch
-        0009-steamcompmgr-let-steam_sharp_filter-pick-what-Steam-.patch)
+        0009-steamcompmgr-let-steam_sharp_filter-pick-what-Steam-.patch
+        0010-steamcompmgr-report-mapped-xdg-shell-windows-to-Stea.patch)
 sha256sums=('SKIP'
             'SKIP'
             'a34b30f8c58881f29a632ae1b4c8d7fbd7ba8c1ae6509d2b85afe362cad6de93'
@@ -56,7 +59,8 @@ sha256sums=('SKIP'
             '1032de0841a9c094eaa23ae8525e01cd40e434bcc59860d644bc2e7d393b176e'
             '80033171760f0037bf53bb8e85981d7f98df1b096d581cf299dd7de61f1831b0'
             'e86a0fc74acaf2aba19d0667b37e510c68de079953524e6d9c0f35c45835b814'
-            '44e2a8b91e89a6b82ec87008748a75fcc29c785a0a1a20c4ee6ec159c8ba92c6')
+            '44e2a8b91e89a6b82ec87008748a75fcc29c785a0a1a20c4ee6ec159c8ba92c6'
+            'f69f69b132bc9ddda103c794e9d7340c4732c2b8ee8a6f1a42a65793b163fb40')
 
 prepare() {
   cd gamescope
