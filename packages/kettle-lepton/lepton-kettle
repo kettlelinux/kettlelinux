@@ -35,8 +35,15 @@ fi
 
 mkdir -p "$TOOL"
 ln -sfn "$LIB/lepton" "$TOOL/lepton"
-ln -sfn "$LIB/liblepton" "$TOOL/liblepton"
 ln -sfn "$LIB/version.txt" "$TOOL/version.txt"
+# The launcher reaches images/ and sysbake/ as liblepton/../, which the kernel resolves
+# physically: liblepton must be a real directory here, its entries links into $LIB.
+[ -L "$TOOL/liblepton" ] && rm "$TOOL/liblepton"
+mkdir -p "$TOOL/liblepton"
+find "$TOOL/liblepton" -mindepth 1 -maxdepth 1 -type l -delete
+for entry in "$LIB"/liblepton/*; do
+  ln -sfn "$entry" "$TOOL/liblepton/${entry##*/}"
+done
 ln -sfn "$steam_lepton/images" "$TOOL/images"
 ln -sfn "$steam_lepton/sysbake" "$TOOL/sysbake"
 ln -sfn "$steam_lepton/sysbake.xattrs" "$TOOL/sysbake.xattrs"
