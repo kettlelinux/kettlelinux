@@ -1,7 +1,18 @@
 #!/usr/bin/env python3
-# minimal shim: only implements kernel/time/timeconst.bc for kernel builds on hosts without bc
-import sys, math
-hz=int(sys.stdin.read().strip())
+# minimal shim for kernel builds on hosts without bc: the two things the arm64 build asks of it
+#  - kernel/time/timeconst.bc (Kbuild): "echo $HZ | bc -q timeconst.bc"
+#  - lib/build_OID_registry: "echo 'ibase=10; obase=2; N' | bc", N in base 2 (without this, the
+#    OID table the kernel parses X.509 certificates and PKCS#7 signatures with came out wrong)
+# Anything else is an error, not a guess.
+import sys, math, re
+inp=sys.stdin.read().strip()
+m=re.fullmatch(r"ibase=10;\s*obase=2;\s*(\d+)", inp)
+if m:
+    print(format(int(m.group(1)), "b"))
+    sys.exit(0)
+if not re.fullmatch(r"\d+", inp) or not any(a.endswith("timeconst.bc") for a in sys.argv[1:]):
+    sys.exit("tools/bc shim: unsupported input %r (args %r); install bc" % (inp, sys.argv[1:]))
+hz=int(inp)
 fmul=lambda b,n,d:(2**b*n+d-1)//d
 def fadj(b,n,d):
     d=d//math.gcd(n,d); return 2**b*(d-1)//d

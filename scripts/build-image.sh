@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# Build a Kettle Linux release for the Odin 2 Portal — rootless: the SD card image and the
-# signed update bundle made from the same system image. See docs/UPDATES.md for the layout.
+# Build a Kettle Linux release for one device — rootless: the SD card image and the signed
+# update bundle made from the same system image. See docs/UPDATES.md for the layout.
 #
 # Runs itself inside a user+mount+pid namespace (subuid-mapped fake root) with a
 # namespace-local binfmt_misc entry for tools/qemu-aarch64-static, so pacman can
 # install into an aarch64 root and run package scriptlets/hooks in a chroot.
 #
 # Inputs: out/kernel (scripts/build-kernel.sh), our local repo (scripts/build-packages.sh)
-# Output: out/kettle-<buildid>-odin2portal.img     SD card image (SteamOS partition layout, slot A)
-#         out/kettle-<buildid>-odin2portal.raucb   update bundle (RAUC, casync), with its chunk
-#         out/kettle-<buildid>-odin2portal.castr/  store; publish with scripts/publish-update.sh
+# Output: out/kettle-<buildid>-<device>.img     SD card image (SteamOS partition layout, slot A)
+#         out/kettle-<buildid>-<device>.raucb   update bundle (RAUC, casync), with its chunk
+#         out/kettle-<buildid>-<device>.castr/  store; publish with scripts/publish-update.sh
 #
 # Env (also read from ./local.env, gitignored):
+#   KETTLE_DEVICE          the device to build for, a directory under device/ (default: odin2portal;
+#                          also: thor)
 #   WIFI_SSID / WIFI_PSK   preconfigure Wi-Fi (NetworkManager) for SSH access
 #   SSH_PUBKEY             public key file to authorize for user kettle
 #   USER_PASSWORD          password for user "kettle" (default: kettle); part of the system
@@ -35,8 +37,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$ROOT/build/image"
 RFS="$WORK/rootfs"
 STAGE="$WORK/stage"
-DEVICE="$ROOT/device/odin2portal"
-VARIANT=odin2portal
+# The device: device/common/overlay plus its own overlay, packages and settings (device.conf)
+VARIANT="${KETTLE_DEVICE:-odin2portal}"
+DEVICE="$ROOT/device/$VARIANT"
+[ "$VARIANT" != common ] && [ -f "$DEVICE/device.conf" ] || die "no device '$VARIANT' (device/*/device.conf)"
+. "$DEVICE/device.conf"
 VERSION="$(sed -e 's/#.*//' -e '/^\s*$/d' "$ROOT/image/version")"
 BUILD_ID="${KETTLE_BUILD_ID:-$(date +%Y%m%d).1}"
 BRANCH="${KETTLE_BRANCH:-beta}"
@@ -83,8 +88,8 @@ rm -rf "$WORK"
 mkdir -p "$RFS" "$STAGE" "$PKG_CACHE"
 chroot_mount "$RFS"
 
-mapfile -t PKGS < <(sed -e 's/#.*//' -e '/^\s*$/d' "$ROOT/image/packages.txt")
-log "installing ${#PKGS[@]} packages (kettle + deckard mash-20240428.1 + release-0.4 hotfixes)"
+mapfile -t PKGS < <(sed -e 's/#.*//' -e '/^\s*$/d' "$ROOT/image/packages.txt" "$DEVICE/packages.txt")
+log "installing ${#PKGS[@]} packages for the $MODEL (kettle + deckard mash-20240428.1 + release-0.4 hotfixes)"
 pacman_root "$RFS" --logfile "$WORK/pacman.log" -Sy --needed "${PKGS[@]}"
 install -m 0644 "$ROOT/image/pacman.conf" "$RFS/etc/pacman.conf"
 # The host's pacman 7 records %INSTALLED_DB%, which the image's pacman 6.1 warns about
@@ -100,10 +105,21 @@ install -d "$RFS/boot/dtbs/qcom"
 install -m 0644 "$ROOT/out/kernel/boot/Image" "$RFS/boot/Image"
 install -m 0644 "$ROOT"/out/kernel/boot/dtbs/qcom/*.dtb "$RFS/boot/dtbs/qcom/"
 
-log "applying device overlay"
+log "applying overlays: common, $VARIANT"
 # --no-preserve=ownership: new files become root-owned; never chown -R package dirs
+cp -a --no-preserve=ownership "$ROOT/device/common/overlay/." "$RFS/"
 cp -a --no-preserve=ownership "$DEVICE/overlay/." "$RFS/"
 chmod 0750 "$RFS/etc/sudoers.d"; chmod 0440 "$RFS"/etc/sudoers.d/*
+# this device's devicetree for GRUB and extlinux
+sed -i "s|^DTB=@DTB@\$|DTB=$DTB|" "$RFS/usr/lib/kettle/boot.conf"
+grep -qx "DTB=$DTB" "$RFS/usr/lib/kettle/boot.conf" || die "boot.conf: DTB not set"
+[ -f "$RFS/boot/dtbs/$DTB" ] || die "no $DTB in out/kernel"
+# this device's update compatible (RAUC) and update variant (steamos-atomupd, which also offers
+# the variants in client.conf); steamos-customizations-kettle ships the Portal's
+sed -i "s|^compatible=.*|compatible=$RAUC_COMPATIBLE|" "$RFS/etc/rauc/system.conf"
+sed -i "s|^Variants = .*|Variants = $VARIANT|" "$RFS/usr/lib/steamos-atomupd/client.conf"
+grep -qx "compatible=$RAUC_COMPATIBLE" "$RFS/etc/rauc/system.conf" || die "rauc system.conf: compatible not set"
+grep -qx "Variants = $VARIANT" "$RFS/usr/lib/steamos-atomupd/client.conf" || die "atomupd client.conf: variant not set"
 
 # What the update client and the About pages read (steamos-atomupd: ID, VERSION_CODENAME,
 # VARIANT_ID, VERSION_ID, BUILD_ID). ID stays steamos, as the Steam client knows it.
@@ -115,7 +131,7 @@ ID_LIKE=arch
 VERSION_ID=$VERSION
 VERSION_CODENAME=kettle
 BUILD_ID=$BUILD_ID
-VARIANT="AYN Odin 2 Portal"
+VARIANT="$MODEL"
 VARIANT_ID=$VARIANT
 STEAMOS_DEFAULT_UPDATE_BRANCH=$BRANCH
 ANSI_COLOR="38;2;205;127;50"
@@ -352,10 +368,10 @@ if [ "${KETTLE_NO_BUNDLE:-}" != 1 ]; then
   ln "$ROOTFS_IMG" "$B/content/rootfs.img" 2>/dev/null || cp "$ROOTFS_IMG" "$B/content/rootfs.img"
   cat >"$B/content/manifest.raucm" <<EOF
 [update]
-compatible=kettle-aarch64
+compatible=$RAUC_COMPATIBLE
 version=$VERSION
 build=$BUILD_ID
-description=Kettle Linux $VERSION ($BUILD_ID) for the $VARIANT
+description=Kettle Linux $VERSION ($BUILD_ID) for the $MODEL
 
 [bundle]
 format=verity

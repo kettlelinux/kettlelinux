@@ -35,6 +35,9 @@ COMPONENTS = os.path.join(decky.DECKY_USER_HOME, ".local", "share", "kettle", "c
 INSTALLED = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "installed.json")
 WELCOME = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "welcome.json")
 FIXES = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "fixes.json")  # game fixes applied (src/fixes.ts)
+# Steam's accounts on this device, written once someone first signs in
+LOGIN_USERS = os.path.join(decky.DECKY_USER_HOME, ".local", "share", "Steam", "config", "loginusers.vdf")
+_STEAMID = re.compile(r'^\s*"7656\d{13}"\s*$', re.M)
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _ARCHIVES = ("zip", "tar", "file", "files")
 _NAME = re.compile(r"[\w.-]+")
@@ -187,6 +190,16 @@ class Plugin:
                 "error": job["error"] if job else None,
             })
         return {"components": comps}
+
+    async def signed_in(self) -> bool:
+        """True once an account has signed in to Steam on this device (it is then in
+        loginusers.vdf). Steam's UI can't say: App.m_CurrentUser is set during first-time setup,
+        before sign-in, and the welcome page opened on top of it."""
+        try:
+            with open(LOGIN_USERS, encoding="utf-8", errors="replace") as f:
+                return bool(_STEAMID.search(f.read()))
+        except OSError:
+            return False
 
     async def first_run(self) -> bool:
         """True exactly once: the first time this is asked (the welcome page opens then)."""

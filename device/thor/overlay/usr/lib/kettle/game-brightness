@@ -1,0 +1,36 @@
+#!/usr/bin/python3
+# Game Mode brightness on the Thor. Steam's brightness slider drives the first backlight it finds,
+# the bottom panel's (DSI0, ae94000.dsi.0), which gamescope has switched off: Game Mode runs on
+# the top panel alone. This follows the bottom backlight and sets the top one's (DSI1,
+# ae96000.dsi.0) to the same share of its range. Run by kettle-game-brightness.service while
+# Game Mode runs; 61-kettle-thor-backlight.rules makes the top one writable for the video group.
+import sys
+import time
+
+BL = "/sys/class/backlight/"
+SRC, DST = BL + "ae94000.dsi.0/", BL + "ae96000.dsi.0/"
+
+
+def read(path):
+    with open(path) as f:
+        return int(f.read())
+
+
+def main():
+    src_max, dst_max = read(SRC + "max_brightness"), read(DST + "max_brightness")
+    last = None
+    while True:
+        try:
+            v = read(SRC + "brightness")
+            if v != last:
+                with open(DST + "brightness", "w") as f:
+                    f.write(str(round(v * dst_max / src_max)))
+                last = v
+        except OSError as e:
+            print(f"game-brightness: {e}", file=sys.stderr, flush=True)
+            time.sleep(2)
+        time.sleep(0.2)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,6 @@
+# The Thor's own packages, added to image/packages.txt (built by us, packages/)
+
+# firmware: DSPs, audio topology, GPU, Wi-Fi, Bluetooth (packages/kettle-firmware-ayn)
+kettle-firmware-thor
+# ALSA UCM profile for the "AYN-Thor" card (packages/kettle-ucm-ayn)
+kettle-ucm-thor

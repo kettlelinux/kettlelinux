@@ -10,6 +10,9 @@ own *Check for updates*.
 > **Status:** early and in active development. Kettle boots on hardware with working display,
 > audio, Wi-Fi, controls, Game Mode and Desktop Mode. Several features are built but not yet
 > tested on a Portal. See [Project Status](https://github.com/kettlelinux/kettlelinux/wiki/Project-Status).
+>
+> **AYN Thor** (same SoC, two screens): builds, not yet tested on hardware.
+> See [docs/THOR.md](docs/THOR.md).
 
 **Documentation lives in the [wiki](https://github.com/kettlelinux/kettlelinux/wiki).**
 
@@ -53,7 +56,8 @@ Kettle Linux is built on the work of many projects and people. Thank you all.
 **Device support and kernel**
 - [ROCKNIX](https://github.com/ROCKNIX): SM8550 kernel patches, the Odin 2 device trees,
   [extra firmware](https://github.com/ROCKNIX/extra-firmware) and the [ABL](https://github.com/ROCKNIX/abl)
-- Teguh Sobirin: the Odin 2 family device trees
+- Teguh Sobirin: the Odin 2 family and Thor device trees
+- Luke Johnson (ROCKNIX): the Thor's ALSA UCM profile
 - [pocknix-os](https://github.com/shuuri-labs/pocknix-os): suspend, UFS and SD patches
 - Aaron Kling: the upstream "Support AYN QCS8550 Devices" series
 - Manivannan Sadhasivam (via NovaDeck), Armada and Thorch: kernel fixes carried in our patch stack
@@ -96,7 +100,7 @@ The provenance of every kernel patch is in [kernel/patches/README.md](kernel/pat
 and each PKGBUILD in [packages/](packages/) links its upstream.
 
 ## License
-Kettle Linux's own work (the build scripts, device overlay, `kettle-*` packages and docs) is
+Kettle Linux's own work (the build scripts, device overlays, `kettle-*` packages and docs) is
 under the BSD 3-Clause License, in [LICENSE](LICENSE). Everything built from other projects keeps
 its upstream license: the patches in `kernel/patches/` and `packages/*/` are under the license
 of the project they patch (the kernel's GPL-2.0-only, Valve's SteamOS packages' GPL-2.0+ and

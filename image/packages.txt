@@ -1,5 +1,7 @@
 # Basic hardware-test image: console + SSH, with tools to exercise display/GPU,
 # input, audio, Wi-Fi/BT and suspend. (Steam session comes later.)
+# Packages for every device; each device adds its own (firmware, UCM profile) in
+# device/<device>/packages.txt.
 
 base
 sudo
@@ -25,13 +27,9 @@ openssh
 bluez
 bluez-utils
 
-# Portal firmware (DSPs, audio topology, GPU, Wi-Fi, Bluetooth), built by us (packages/)
-kettle-firmware-odin2portal
-
-# audio; the Portal's UCM profile is ours (packages/kettle-ucm-odin2portal)
+# audio; each device's UCM profile is ours (device/<device>/packages.txt)
 alsa-utils
 alsa-ucm-conf
-kettle-ucm-odin2portal
 pipewire
 pipewire-alsa
 pipewire-pulse
@@ -121,7 +119,7 @@ deckard-gamescope-layer-x86_64
 deckard-vulkan-layers-linux-aarch64
 xdg-desktop-portal-gamescope
 steamos-manager
-# The Portal's pad as a Steam Deck controller in Game Mode (built by us, packages/inputplumber;
+# The AYN pad as a Steam Deck controller in Game Mode (built by us, packages/inputplumber;
 # started and stopped with Game Mode by kettle-inputplumber.service)
 inputplumber
 # System updates as on SteamOS: A/B slots, steamcl + per-slot GRUB, RAUC bundles checked by
@@ -129,7 +127,7 @@ inputplumber
 # packages/steamos-customizations-kettle); see docs/UPDATES.md
 steamos-customizations-kettle
 # Game Mode power button: short press = Steam's sleep, long press = Steam's power menu
-# (its hwdb already tags the Portal's pmic_pwrkey; Game Mode only, see its kettle.conf drop-in)
+# (its hwdb already tags the SM8550's pmic_pwrkey; Game Mode only, see its kettle.conf drop-in)
 steamos-powerbuttond
 scx-scheds
 holo-cursors

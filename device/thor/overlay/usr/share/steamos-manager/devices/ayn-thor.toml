@@ -1,0 +1,34 @@
+# steamos-manager device config for the AYN Thor. The power controls themselves (TDP,
+# performance profiles, GPU clock, charge limit, fan control) are kettle-powerd's, relayed
+# through remotes.d/kettle-power.toml: configuring them here would make steamos-manager write
+# the same cpufreq/devfreq files and fight it.
+# Booted through U-Boot's EFI there is SMBIOS, and steamos-manager then matches on DMI only.
+# The U-Boot on Thors reports the Odin 2's product ("AYN Odin 2", seen on a Thor), which can't
+# tell the two apart: this file is in the Thor's image only (device/thor/overlay), and the
+# Portal's in the Portal's. A U-Boot that names the Thor itself is covered too.
+[[device]]
+dmi.sys_vendor = "ayn"
+dmi.product_name = "AYN Odin 2"
+device = "thor"
+variant = "Thor"
+friendly_name = "AYN Thor"
+
+[[device]]
+dmi.sys_vendor = "ayn"
+dmi.product_name = "AYN Thor"
+device = "thor"
+variant = "Thor"
+friendly_name = "AYN Thor"
+
+# Booted without SMBIOS (the ABL's \KERNEL)
+[[device]]
+dt.compatible = "ayn,thor"
+device = "thor"
+variant = "Thor"
+friendly_name = "AYN Thor"
+
+# Steam lowers the TDP to this while it downloads in sleep; the rest of TdpLimit1 comes
+# from kettle-powerd
+[tdp_limit]
+method = "remote_interface"
+download_mode_limit = 5

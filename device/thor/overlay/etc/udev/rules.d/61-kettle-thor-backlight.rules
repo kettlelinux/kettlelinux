@@ -1,0 +1,4 @@
+# The top panel's backlight (DSI1) writable for the video group: kettle-game-brightness.service
+# passes Steam's Game Mode brightness on to it (Steam drives the bottom panel's, the first one)
+SUBSYSTEM=="backlight", KERNEL=="ae96000.dsi.0", \
+  RUN+="/usr/bin/chgrp video /sys%p/brightness", RUN+="/usr/bin/chmod g+w /sys%p/brightness"

@@ -69,6 +69,8 @@ sha256sums=('1df4fcaf6af7713b8b885031eeeae0489d9cd6cd71593f93c589f89775547489'
             '1e4e26e2113dcf58b4876e16826b4b09b2fb3271dfd95d309af3743b372f36aa'
             'bd900a5b052362bfed378e6ef6fb6c5f3ee843cf69aefbbbf947954faaa4b405')
 
+# RAUC_COMPATIBLE and ATOMUPD_VARIANTS_LIST are the Portal's: the image build sets each device's
+# in /etc/rauc/system.conf and client.conf (device/<device>/device.conf)
 _make() {
   make prefix=/usr sbindir=/usr/bin libexecdir=/usr/lib \
     GRUB_BINARY_RELPATH=EFI/steamos/grubaa64.efi \

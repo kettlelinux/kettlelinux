@@ -467,3 +467,5 @@
 &spk_amp_r {
 	firmware-name = "qcom/sm8550/ayn/thor/aw883xx_acf.bin";
 };
+
+#include "qcs8550-ayn-fan.dtsi"

@@ -1,0 +1,11 @@
+[Unit]
+Description=Bottom touchscreen off in Game Mode (AYN Thor)
+# Game Mode runs on the top screen only; the desktop uses both
+PartOf=gamescope-session.target
+Before=gamescope-session.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/kettle/bottom-touch off
+ExecStop=/usr/lib/kettle/bottom-touch on

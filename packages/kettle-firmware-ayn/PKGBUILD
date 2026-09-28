@@ -1,15 +1,17 @@
-# Firmware for the AYN Odin 2 Portal, only the files its drivers and device tree ask for:
+# Firmware for AYN's SM8550 handhelds, one package per device, only the files its drivers and
+# device tree ask for:
 #  - ROCKNIX extra-firmware (pinned commit): ADSP/CDSP, the amplifier and audio topology,
 #    WCN7850 Wi-Fi (ath12k), the video decoder
 #  - Arch linux-firmware-qcom/-atheros (Valve's deckard mirror): A740 GPU (SQE/GMU/zap) and
 #    Bluetooth (HMT)
 # Valve's own linux-firmware-deckard is ignored (image/pacman.conf); these files are ours alone.
-pkgname=kettle-firmware-odin2portal
+pkgbase=kettle-firmware-ayn
+pkgname=(kettle-firmware-odin2portal kettle-firmware-thor)
 _extra_rev=e1eb71af80427aa1fec1659d2967f7ba8bef83b5
 _linux_fw=20260221-1
 pkgver=${_linux_fw%-*}.${_extra_rev:0:8}
-pkgrel=1
-pkgdesc='Firmware for the AYN Odin 2 Portal (DSPs, audio, GPU, Wi-Fi, Bluetooth)'
+pkgrel=2
+pkgdesc='Firmware for AYN SM8550 handhelds (DSPs, audio, GPU, Wi-Fi, Bluetooth)'
 arch=(any)
 url='https://github.com/ROCKNIX/extra-firmware'
 license=(LicenseRef-linux-firmware LicenseRef-proprietary)
@@ -26,14 +28,16 @@ sha256sums=('SKIP'
             'd7d520aa66b66004e2de1632ce80c16539b6058d0e6bdef5f66ca6e6ef6a26bd'
             '59e0a43b634246312db82bc0e4944faee72cc846fb71ab918e5a13135d7837d1')
 
-package() {
+# $1: the device's directory under qcom/sm8550/ayn/ (its ADSP firmware and amplifier tuning, as
+# its device tree names them), $2: its audio topology (the sound card's name)
+_package() {
   local fw="$pkgdir/usr/lib/firmware"
   install -d "$fw"
   (cd "$srcdir/extra-firmware/SM8550" && cp --parents -t "$fw" \
     ath12k/WCN7850/hw2.0/{amss,board-2,m3,regdb}.bin \
     qcom/sm8550/ayn/{cdsp,cdsp_dtb}.mbn \
-    qcom/sm8550/ayn/odin2portal/* \
-    qcom/sm8550/AYN-Odin2-tplg.bin \
+    "qcom/sm8550/ayn/$1"/* \
+    "qcom/sm8550/$2-tplg.bin" \
     qcom/vpu/vpu30_p4.mbn)
 
   bsdtar -xf "$srcdir/linux-firmware-qcom-$_linux_fw-any.pkg.tar.zst" -C "$pkgdir" \
@@ -45,4 +49,16 @@ package() {
     'usr/lib/firmware/qca/hmtbtfw20.tlv*' 'usr/lib/firmware/qca/hmtnv20*' \
     'usr/share/licenses/linux-firmware-atheros/*'
   find "$pkgdir" -type d -exec chmod 755 {} + && find "$fw" -type f -exec chmod 644 {} +
+}
+
+package_kettle-firmware-odin2portal() {
+  pkgdesc='Firmware for the AYN Odin 2 Portal (DSPs, audio, GPU, Wi-Fi, Bluetooth)'
+  conflicts=(kettle-firmware-thor)
+  _package odin2portal AYN-Odin2
+}
+
+package_kettle-firmware-thor() {
+  pkgdesc='Firmware for the AYN Thor (DSPs, audio, GPU, Wi-Fi, Bluetooth)'
+  conflicts=(kettle-firmware-odin2portal)
+  _package thor AYN-Thor
 }
