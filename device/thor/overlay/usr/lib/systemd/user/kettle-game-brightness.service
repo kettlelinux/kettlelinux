@@ -1,0 +1,9 @@
+[Unit]
+Description=Steam's brightness slider on the top screen in Game Mode (AYN Thor)
+PartOf=gamescope-session.target
+After=gamescope-session.service
+
+[Service]
+ExecStart=/usr/lib/kettle/game-brightness
+Restart=on-failure
+RestartSec=2

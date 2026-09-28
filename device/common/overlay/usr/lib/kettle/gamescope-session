@@ -1,5 +1,5 @@
 #!/bin/bash
-# gamescope on the Portal's DSI panel (DRM backend), SteamOS-style.
+# gamescope on the device's built-in panel (DRM backend), SteamOS-style.
 set -u
 tmpdir="$(mktemp -p "$XDG_RUNTIME_DIR" -d -t gamescope.XXXXXXX)"
 stats="$tmpdir/stats.pipe"; mkfifo "$stats"
@@ -31,8 +31,11 @@ export STEAM_ENABLE_VOLUME_HANDLER=1
 export vk_xwayland_wait_ready=false
 export QT_IM_MODULE=xim GTK_IM_MODULE=xim QT_QPA_PLATFORMTHEME=kde
 
-# Per-device/user overrides (e.g. GAMESCOPE_EXTRA_ARGS="--force-orientation normal")
-for f in /etc/kettle/gamescope.conf "$HOME/.config/kettle/gamescope.conf"; do
+# The device's settings (its overlay's /usr/lib/kettle/gamescope.conf), then local and user
+# overrides (e.g. GAMESCOPE_EXTRA_ARGS="--force-orientation normal"):
+#   GAMESCOPE_ORIENTATION  how the panel is mounted (default: left, the Portal's 270 degree panel)
+#   GAMESCOPE_OUTPUT       the connector to use (default: gamescope's choice)
+for f in /usr/lib/kettle/gamescope.conf /etc/kettle/gamescope.conf "$HOME/.config/kettle/gamescope.conf"; do
   [ -r "$f" ] && . "$f"
 done
 
@@ -41,6 +44,7 @@ args=(
   --xwayland-count 2
   -T "$stats"
   --force-orientation "${GAMESCOPE_ORIENTATION:-left}"   # 1080x1920 portrait panel -> 1920x1080
+  ${GAMESCOPE_OUTPUT:+--prefer-output "$GAMESCOPE_OUTPUT"}
   --default-touch-mode 4
   --hide-cursor-delay 3000
   --fade-out-duration 200

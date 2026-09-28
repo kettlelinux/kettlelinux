@@ -1,0 +1,62 @@
+# kettle-powerd's description of the AYN Thor (QCS8550). Same SoC, fan and battery charger as
+# the Odin 2 Portal, so this starts as a copy of odin2portal.toml: the frequency tables and
+# sysfs names are the SoC's and the shared dtsi's; the power figures (tdp_*, charge limit) are
+# the Portal's and still need measuring on a Thor, which also powers a second screen. Caps
+# between frequency steps round down.
+
+[cpu]
+# cpufreq policies, smallest cluster first. cpu0 can't be taken offline.
+clusters = [
+  { name = "little", policy = 0, cpus = [0, 1, 2] },
+  { name = "mid", policy = 3, cpus = [3, 4, 5, 6] },
+  { name = "prime", policy = 7, cpus = [7] },
+]
+
+[gpu]
+devfreq = "/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu"
+# busy percentage (kernel patch 40-kettle/1110)
+load = "/sys/kernel/debug/dri/0/perf_now"
+# lowest clock offered for a fixed (manual) GPU clock, MHz
+manual_min_mhz = 220
+
+[fan]
+hwmon = "pwmfan"
+cooling_device = "pwm-fan"
+# Custom curves always run the fan at full speed from here, whatever the curve says (C)
+full_speed_temp = 90
+# The device tree curve (cooling-levels 0 30 45 60 70 90 120 150 of 255, one level per
+# 5 C from 50 C), as percent: the starting point for a custom curve
+default_curve = [[45, 0], [50, 12], [60, 24], [70, 35], [80, 59], [90, 100]]
+
+[power]
+battery = "battery"
+charger = "qcom-battmgr-usb"
+# Share of the charger's input power that reaches the system and battery
+charger_efficiency = 0.9
+# Steam's TDP slider: whole-device draw in watts (screen included); max means no limit
+tdp_min = 4
+tdp_max = 18
+# Off until tested: the Portal's charger firmware doesn't answer qcom_battmgr's charge limit
+# request (BATTMGR_CHG_CTRL_LIMIT_EN times out), and the Thor's may be the same. The kernel
+# clamps the end threshold to 55..100.
+charge_limit = false
+charge_limit_min = 55
+
+# Steam's performance profiles (Quick Access > Performance). Caps in kHz / MHz; a cluster
+# left out runs up to its highest frequency.
+[[profile]]
+name = "Performance"
+
+[[profile]]
+name = "Balanced"
+little = 1785600
+mid = 2323200
+prime = 2476800
+gpu_mhz = 615
+
+[[profile]]
+name = "Powersave"
+little = 1459200
+mid = 1785600
+prime = 1843200
+gpu_mhz = 475

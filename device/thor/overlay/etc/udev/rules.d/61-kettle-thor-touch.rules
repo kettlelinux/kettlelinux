@@ -1,0 +1,18 @@
+# The Thor's two touchscreens (edt-ft5x06, named by their dts label)
+#  - touchscreens only: their BTN_TOUCH otherwise makes them look like keyboards too, and the
+#    wlroots seat in gamescope then took one for the keyboard (ROCKNIX 61-thor-ft5x06.hwdb)
+#  - each mapped to its own screen in the desktop (KWin reads WL_OUTPUT). The top panel is on
+#    DSI1 and the bottom one on DSI0: DSI-2 and DSI-1, as msm registers DSI0 first.
+#  - both back in their panels' own (portrait) orientation, as the Portal's touchscreen reports:
+#    the Thor's dts swaps and inverts the axes (touchscreen-swapped-x-y, -inverted-x), and
+#    gamescope and KWin then rotated them a second time, with the screen. The matrix undoes it
+#    (x = 1 - y, y = x); ROCKNIX's Thor quirk uses the same one.
+#  - the bottom one's "inhibited" flag writable by the input group, so Game Mode can turn it off
+#    (kettle-bottom-touch.service)
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="*_touchscreen", \
+  ENV{ID_INPUT_KEYBOARD}="0", ENV{ID_INPUT_TOUCHSCREEN}="1", \
+  ENV{LIBINPUT_CALIBRATION_MATRIX}="0 -1 1 1 0 0"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="top_touchscreen", ENV{WL_OUTPUT}="DSI-2"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="bottom_touchscreen", ENV{WL_OUTPUT}="DSI-1"
+SUBSYSTEM=="input", KERNEL=="input*", ATTR{name}=="bottom_touchscreen", \
+  RUN+="/usr/bin/chgrp input /sys%p/inhibited", RUN+="/usr/bin/chmod g+w /sys%p/inhibited"

@@ -22,6 +22,7 @@ type BootMode = "game" | "desktop";
 
 const status = callable<[], Status>("status");
 const firstRun = callable<[], boolean>("first_run");
+const signedIn = callable<[], boolean>("signed_in");
 const claimDefault = callable<[name: string], boolean>("claim_default");
 const install = callable<[id: string], void>("install");
 const bootMode = callable<[], BootMode | null>("boot_mode");
@@ -266,21 +267,27 @@ function Content() {
   );
 }
 
-// Steam's UI sets App.m_CurrentUser once someone is signed in. (The login state numbers that
-// RegisterForLoginStateChange reports don't match @decky/ui's ELoginState on this client: it
-// reports 5, "WaitingForServerResponse" there, while signed in.)
-const signedIn = () => !!(window as any).App?.m_CurrentUser;
-
 // Runs fn once, when someone is signed in to Steam (at once if already). Plugins load before
 // Steam's first-time setup and sign-in: opening the welcome page then took Steam off its setup
-// pages (language, network, time zone), and it went straight on to sign-in after.
+// pages (language, network, time zone), and it went straight on to sign-in after. Steam's UI
+// has no reliable signed-in state (App.m_CurrentUser is set before sign-in, and the login state
+// numbers RegisterForLoginStateChange reports don't match @decky/ui's ELoginState on this
+// client), so the backend answers from Steam's list of accounts that have signed in.
 function whenSignedIn(fn: () => void): () => void {
   let done = false;
+  let asking = false;
   const check = () => {
-    if (done || !signedIn()) return;
-    done = true;
-    stop();
-    fn();
+    if (done || asking) return;
+    asking = true;
+    signedIn()
+      .then((yes) => {
+        if (!yes || done) return;
+        done = true;
+        stop();
+        fn();
+      })
+      .catch(() => {})
+      .finally(() => (asking = false));
   };
   // login state changes say when to look; the timer covers a change that sets the user later
   const reg = SteamClient.User.RegisterForLoginStateChange(() => setTimeout(check, 0));

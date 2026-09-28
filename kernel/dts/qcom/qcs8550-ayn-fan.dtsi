@@ -1,0 +1,293 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Kettle Linux: the fan curve in the kernel, for the AYN SM8550 boards (included at the end of
+ * each board's dts, after qcs8550-ayn-common.dtsi). The common dtsi (ROCKNIX) defines fan trip points but no
+ * cooling-maps: ROCKNIX drives pwm1 from a userspace daemon, and without one the fan sits
+ * at the boot duty cycle forever -- spinning at idle, never ramping under load. Bind the
+ * pwm-fan to those trips (step_wise): off below 50 C, one cooling level per 5 C up to 80 C
+ * on the CPU clusters, and the top three levels for the prime-core and GPU hotspots.
+ */
+&{/thermal-zones/cpuss0-thermal} {
+	cooling-maps {
+		fan0 {
+			trip = <&cpuss0_fan0>;
+			cooling-device = <&pwm_fan 1 1>;
+		};
+		fan1 {
+			trip = <&cpuss0_fan1>;
+			cooling-device = <&pwm_fan 2 2>;
+		};
+		fan2 {
+			trip = <&cpuss0_fan2>;
+			cooling-device = <&pwm_fan 3 3>;
+		};
+		fan3 {
+			trip = <&cpuss0_fan3>;
+			cooling-device = <&pwm_fan 4 4>;
+		};
+		fan4 {
+			trip = <&cpuss0_fan4>;
+			cooling-device = <&pwm_fan 5 5>;
+		};
+		fan5 {
+			trip = <&cpuss0_fan5>;
+			cooling-device = <&pwm_fan 6 6>;
+		};
+		fan6 {
+			trip = <&cpuss0_fan6>;
+			cooling-device = <&pwm_fan 7 7>;
+		};
+	};
+};
+
+&{/thermal-zones/cpuss1-thermal} {
+	cooling-maps {
+		fan0 {
+			trip = <&cpuss1_fan0>;
+			cooling-device = <&pwm_fan 1 1>;
+		};
+		fan1 {
+			trip = <&cpuss1_fan1>;
+			cooling-device = <&pwm_fan 2 2>;
+		};
+		fan2 {
+			trip = <&cpuss1_fan2>;
+			cooling-device = <&pwm_fan 3 3>;
+		};
+		fan3 {
+			trip = <&cpuss1_fan3>;
+			cooling-device = <&pwm_fan 4 4>;
+		};
+		fan4 {
+			trip = <&cpuss1_fan4>;
+			cooling-device = <&pwm_fan 5 5>;
+		};
+		fan5 {
+			trip = <&cpuss1_fan5>;
+			cooling-device = <&pwm_fan 6 6>;
+		};
+		fan6 {
+			trip = <&cpuss1_fan6>;
+			cooling-device = <&pwm_fan 7 7>;
+		};
+	};
+};
+
+&{/thermal-zones/cpuss2-thermal} {
+	cooling-maps {
+		fan0 {
+			trip = <&cpuss2_fan0>;
+			cooling-device = <&pwm_fan 1 1>;
+		};
+		fan1 {
+			trip = <&cpuss2_fan1>;
+			cooling-device = <&pwm_fan 2 2>;
+		};
+		fan2 {
+			trip = <&cpuss2_fan2>;
+			cooling-device = <&pwm_fan 3 3>;
+		};
+		fan3 {
+			trip = <&cpuss2_fan3>;
+			cooling-device = <&pwm_fan 4 4>;
+		};
+		fan4 {
+			trip = <&cpuss2_fan4>;
+			cooling-device = <&pwm_fan 5 5>;
+		};
+		fan5 {
+			trip = <&cpuss2_fan5>;
+			cooling-device = <&pwm_fan 6 6>;
+		};
+		fan6 {
+			trip = <&cpuss2_fan6>;
+			cooling-device = <&pwm_fan 7 7>;
+		};
+	};
+};
+
+&{/thermal-zones/cpuss3-thermal} {
+	cooling-maps {
+		fan0 {
+			trip = <&cpuss3_fan0>;
+			cooling-device = <&pwm_fan 1 1>;
+		};
+		fan1 {
+			trip = <&cpuss3_fan1>;
+			cooling-device = <&pwm_fan 2 2>;
+		};
+		fan2 {
+			trip = <&cpuss3_fan2>;
+			cooling-device = <&pwm_fan 3 3>;
+		};
+		fan3 {
+			trip = <&cpuss3_fan3>;
+			cooling-device = <&pwm_fan 4 4>;
+		};
+		fan4 {
+			trip = <&cpuss3_fan4>;
+			cooling-device = <&pwm_fan 5 5>;
+		};
+		fan5 {
+			trip = <&cpuss3_fan5>;
+			cooling-device = <&pwm_fan 6 6>;
+		};
+		fan6 {
+			trip = <&cpuss3_fan6>;
+			cooling-device = <&pwm_fan 7 7>;
+		};
+	};
+};
+
+&{/thermal-zones/cpu7-top-thermal} {
+	cooling-maps {
+		fan0 {
+			trip = <&cpu7_top_fan0>;
+			cooling-device = <&pwm_fan 5 5>;
+		};
+		fan1 {
+			trip = <&cpu7_top_fan1>;
+			cooling-device = <&pwm_fan 6 6>;
+		};
+		fan2 {
+			trip = <&cpu7_top_fan2>;
+			cooling-device = <&pwm_fan 7 7>;
+		};
+	};
+};
+
+&{/thermal-zones/gpuss-0-thermal} {
+	cooling-maps {
+		fan0 {
+			trip = <&gpuss0_fan0>;
+			cooling-device = <&pwm_fan 5 5>;
+		};
+		fan1 {
+			trip = <&gpuss0_fan1>;
+			cooling-device = <&pwm_fan 6 6>;
+		};
+		fan2 {
+			trip = <&gpuss0_fan2>;
+			cooling-device = <&pwm_fan 7 7>;
+		};
+	};
+};
+
+&{/thermal-zones/gpuss-1-thermal} {
+	cooling-maps {
+		fan0 {
+			trip = <&gpuss1_fan0>;
+			cooling-device = <&pwm_fan 5 5>;
+		};
+		fan1 {
+			trip = <&gpuss1_fan1>;
+			cooling-device = <&pwm_fan 6 6>;
+		};
+		fan2 {
+			trip = <&gpuss1_fan2>;
+			cooling-device = <&pwm_fan 7 7>;
+		};
+	};
+};
+
+&{/thermal-zones/gpuss-2-thermal} {
+	cooling-maps {
+		fan0 {
+			trip = <&gpuss2_fan0>;
+			cooling-device = <&pwm_fan 5 5>;
+		};
+		fan1 {
+			trip = <&gpuss2_fan1>;
+			cooling-device = <&pwm_fan 6 6>;
+		};
+		fan2 {
+			trip = <&gpuss2_fan2>;
+			cooling-device = <&pwm_fan 7 7>;
+		};
+	};
+};
+
+&{/thermal-zones/gpuss-3-thermal} {
+	cooling-maps {
+		fan0 {
+			trip = <&gpuss3_fan0>;
+			cooling-device = <&pwm_fan 5 5>;
+		};
+		fan1 {
+			trip = <&gpuss3_fan1>;
+			cooling-device = <&pwm_fan 6 6>;
+		};
+		fan2 {
+			trip = <&gpuss3_fan2>;
+			cooling-device = <&pwm_fan 7 7>;
+		};
+	};
+};
+
+&{/thermal-zones/gpuss-4-thermal} {
+	cooling-maps {
+		fan0 {
+			trip = <&gpuss4_fan0>;
+			cooling-device = <&pwm_fan 5 5>;
+		};
+		fan1 {
+			trip = <&gpuss4_fan1>;
+			cooling-device = <&pwm_fan 6 6>;
+		};
+		fan2 {
+			trip = <&gpuss4_fan2>;
+			cooling-device = <&pwm_fan 7 7>;
+		};
+	};
+};
+
+&{/thermal-zones/gpuss-5-thermal} {
+	cooling-maps {
+		fan0 {
+			trip = <&gpuss5_fan0>;
+			cooling-device = <&pwm_fan 5 5>;
+		};
+		fan1 {
+			trip = <&gpuss5_fan1>;
+			cooling-device = <&pwm_fan 6 6>;
+		};
+		fan2 {
+			trip = <&gpuss5_fan2>;
+			cooling-device = <&pwm_fan 7 7>;
+		};
+	};
+};
+
+&{/thermal-zones/gpuss-6-thermal} {
+	cooling-maps {
+		fan0 {
+			trip = <&gpuss6_fan0>;
+			cooling-device = <&pwm_fan 5 5>;
+		};
+		fan1 {
+			trip = <&gpuss6_fan1>;
+			cooling-device = <&pwm_fan 6 6>;
+		};
+		fan2 {
+			trip = <&gpuss6_fan2>;
+			cooling-device = <&pwm_fan 7 7>;
+		};
+	};
+};
+
+&{/thermal-zones/gpuss-7-thermal} {
+	cooling-maps {
+		fan0 {
+			trip = <&gpuss7_fan0>;
+			cooling-device = <&pwm_fan 5 5>;
+		};
+		fan1 {
+			trip = <&gpuss7_fan1>;
+			cooling-device = <&pwm_fan 6 6>;
+		};
+		fan2 {
+			trip = <&gpuss7_fan2>;
+			cooling-device = <&pwm_fan 7 7>;
+		};
+	};
+};

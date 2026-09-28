@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""kettle-powerd: power, clocks, fan and charging on the Odin 2 Portal.
+"""kettle-powerd: power, clocks, fan and charging on AYN's SM8550 handhelds.
 
 The one writer of CPU/GPU frequency caps, the fan and the battery charge limit. It serves
 Steam's power controls through steamos-manager's remote interfaces (remotes.d/kettle-power.toml):
@@ -28,11 +28,11 @@ import warnings
 from gi.repository import Gio, GLib
 
 # Newer PyGObject deprecates register_object with Python callables and unix_signal_add; both
-# still work, and the Portal's 3.48 has no replacement for either
+# still work, and the image's 3.48 has no replacement for either
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 ROOT = os.environ.get("KETTLE_POWER_SYSROOT", "")  # fake sysfs prefix for testing
-CONFIG = os.environ.get("KETTLE_POWER_CONFIG", "/usr/share/kettle-power/odin2portal.toml")
+CONFIG_DIR = "/usr/share/kettle-power"
 STATE = os.environ.get("KETTLE_POWER_STATE", "/var/lib/kettle-power/state.json")
 BUS = Gio.BusType.SESSION if os.environ.get("KETTLE_POWER_BUS") == "session" else Gio.BusType.SYSTEM
 BUS_NAME = "org.kettlelinux.Power1"
@@ -47,6 +47,30 @@ FAN_HYST = 3  # C: the fan slows down only once the temperature is this far belo
 
 def log(msg):
     print(msg, file=sys.stderr, flush=True)
+
+
+def config_path():
+    """The device's description: KETTLE_POWER_CONFIG, else the file named after the device tree's
+    first compatible that has one ("ayn,thor" -> thor.toml)."""
+    if os.environ.get("KETTLE_POWER_CONFIG"):
+        return os.environ["KETTLE_POWER_CONFIG"]
+    try:
+        with open(ROOT + "/proc/device-tree/compatible", "rb") as f:
+            compatible = f.read().decode(errors="replace").split("\0")
+    except OSError:
+        compatible = []
+    for c in compatible:
+        path = f"{CONFIG_DIR}/{c.split(',')[-1]}.toml"
+        if c and os.path.exists(path):
+            return path
+    sys.exit(f"kettle-powerd: no description for this device ({', '.join(filter(None, compatible))}) in {CONFIG_DIR}")
+
+
+def load_config():
+    path = config_path()
+    log(f"device: {path}")
+    with open(path, "rb") as f:
+        return tomllib.load(f)
 
 
 def read(path, default=None):
@@ -200,8 +224,7 @@ def curve_pct(curve, temp):
 
 class Daemon:
     def __init__(self):
-        with open(CONFIG, "rb") as f:
-            self.cfg = tomllib.load(f)
+        self.cfg = load_config()
         self.hw = Hardware(self.cfg)
         pw = self.cfg["power"]
         self.profiles = {p["name"]: p for p in self.cfg.get("profile", [])}
@@ -707,8 +730,7 @@ INTROSPECTION = f"""<node>
 
 def main():
     if "--restore" in sys.argv[1:]:
-        with open(CONFIG, "rb") as f:
-            restore(Hardware(tomllib.load(f)))
+        restore(Hardware(load_config()))
         return
     Daemon().run()
 

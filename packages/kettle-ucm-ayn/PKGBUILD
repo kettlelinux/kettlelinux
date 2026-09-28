@@ -1,28 +1,53 @@
-# ALSA UCM profile for the AYN Odin 2 family (card "AYN-Odin2"), from ROCKNIX's alsa-ucm-conf
-# patches. Only new files: Valve's alsa-ucm-conf stays untouched.
-pkgname=kettle-ucm-odin2portal
+# ALSA UCM profiles for AYN's SM8550 handhelds, one package per device, from ROCKNIX's
+# alsa-ucm-conf patches (distribution @ 5607f6e1): card "AYN-Odin2" (Odin 2 family, the Portal)
+# and card "AYN-Thor". Only new files: Valve's alsa-ucm-conf stays untouched.
+pkgbase=kettle-ucm-ayn
+pkgname=(kettle-ucm-odin2portal kettle-ucm-thor)
 pkgver=1.0.0
-pkgrel=1
-pkgdesc='ALSA UCM profile for the AYN Odin 2 Portal'
+pkgrel=3
+pkgdesc='ALSA UCM profiles for AYN SM8550 handhelds'
 arch=(any)
 license=(BSD-3-Clause)
 depends=(alsa-ucm-conf)
 makedepends=(git)
 source=(0001_Add-AYN-Odin2.patch
-        0002_AYN-Odin2---Add-EFI-boot-compatibility.patch)
+        0002_AYN-Odin2---Add-EFI-boot-compatibility.patch
+        0005_Add-AYN-Thor.patch)
 sha256sums=('6424dbaf259d0ccd073e010e48e3b69157aa859059e39842a8178fbf202f9efc'
-            'ef394db0e834afb55ef20c315c15d3b4c452f951954cf61e1469f2c0c4650dbe')
+            'ef394db0e834afb55ef20c315c15d3b4c452f951954cf61e1469f2c0c4650dbe'
+            'bf04dc835232b8dde16f85c8462fc2f3c6de6b179889d8c05bc46030a6071c7f')
 
 build() {
   rm -rf ucm && git init -q ucm
   local p
   for p in "${source[@]}"; do git -C ucm apply "$srcdir/$p"; done
   # alsa-lib looks up conf.d/<driver>/<card longname>.conf. Booted via EFI the longname is
-  # "ayn-AYNOdin2" (DMI vendor-product); the patches only alias "AYN-Odin2" and "ayn-AYNOdin2-".
+  # DMI vendor-product ("ayn-AYNOdin2", "ayn-AYNThor"); the patches only alias the card names
+  # and the same with a trailing "-".
   ln -sf ../../AYN/Odin2/AYN-Odin2.conf ucm/ucm2/conf.d/sm8550/ayn-AYNOdin2.conf
+  ln -sf ../../AYN/Thor/AYN-Thor.conf ucm/ucm2/conf.d/sm8550/ayn-AYNThor.conf
 }
 
-package() {
-  install -d "$pkgdir/usr/share/alsa"
-  cp -a --no-preserve=ownership "$srcdir/ucm/ucm2" "$pkgdir/usr/share/alsa/"
+# $1: the profile's directory under ucm2/AYN, $2...: its names in conf.d/sm8550
+_package() {
+  local ucm="$pkgdir/usr/share/alsa/ucm2" dir=$1 n; shift
+  install -d "$ucm/AYN" "$ucm/conf.d/sm8550"
+  cp -a --no-preserve=ownership "$srcdir/ucm/ucm2/AYN/$dir" "$ucm/AYN/"
+  for n in "$@"; do
+    cp -a --no-preserve=ownership "$srcdir/ucm/ucm2/conf.d/sm8550/$n.conf" "$ucm/conf.d/sm8550/"
+  done
+}
+
+package_kettle-ucm-odin2portal() {
+  pkgdesc='ALSA UCM profile for the AYN Odin 2 Portal'
+  _package Odin2 AYN-Odin2 ayn-AYNOdin2- ayn-AYNOdin2
+}
+
+package_kettle-ucm-thor() {
+  pkgdesc='ALSA UCM profile for the AYN Thor'
+  _package Thor AYN-Thor ayn-AYNThor- ayn-AYNThor
+  # The U-Boot on Thors reports the same SMBIOS product as the Odin 2's ("AYN Odin 2"), so
+  # booted through EFI the Thor's card is "ayn-AYNOdin2" too (seen on a Thor): the Portal's
+  # alias, pointing at the Thor's profile here (the two packages conflict)
+  ln -s ../../AYN/Thor/AYN-Thor.conf "$pkgdir/usr/share/alsa/ucm2/conf.d/sm8550/ayn-AYNOdin2.conf"
 }

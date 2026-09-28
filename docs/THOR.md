@@ -1,0 +1,70 @@
+# AYN Thor
+
+The Thor has the same SoC as the Odin 2 Portal (QCS8550), so it shares the kernel, the
+userspace and almost all of the Portal's configuration. What it adds is a second screen, a lid
+and the AYN key. **Nothing here has run on a Thor yet**: it builds, and the list below is what
+to check first on hardware.
+
+## Building
+```sh
+scripts/build-kernel.sh                  # the same kernel; its Thor DTB was always built
+scripts/build-packages.sh kettle-firmware-ayn kettle-ucm-ayn kettle-power inputplumber
+KETTLE_DEVICE=thor scripts/build-image.sh   # -> out/kettle-<build>-thor.img (+ .raucb)
+```
+`KETTLE_DEVICE` can also go in `local.env`. Without it the build is for the Portal, as before.
+
+## What is different from the Portal
+| Area | Thor | Where |
+|---|---|---|
+| Device tree | `qcs8550-ayn-thor.dts` (ROCKNIX), with the kernel fan curve now shared with the Portal (`qcs8550-ayn-fan.dtsi`) | `kernel/dts/qcom/` |
+| Firmware | `ayn/thor/*` ADSP, amplifier tuning, `AYN-Thor-tplg.bin` | `kettle-firmware-thor` (`packages/kettle-firmware-ayn`) |
+| Audio | card `AYN-Thor` (`ayn-AYNOdin2` under EFI), internal mic on DMIC3 (ROCKNIX `0005_Add-AYN-Thor.patch`) | `kettle-ucm-thor` (`packages/kettle-ucm-ayn`) |
+| Power | `thor.toml`, picked by the device tree's compatible; power figures copied from the Portal | `packages/kettle-power` |
+| Steam's device | steamos-manager `ayn-thor.toml` (DMI "AYN Odin 2" as the Thor's U-Boot reports it, "AYN Thor", DT `ayn,thor`), in the Thor's image only | `device/thor/overlay/usr/share/steamos-manager` |
+| Brightness | Steam's slider (bottom panel's backlight) passed on to the top panel in Game Mode | `device/thor/overlay` (`kettle-game-brightness`) |
+| Controller | Steam Deck target as on the Portal, plus the AYN key as Quick Access | `packages/inputplumber/40-kettle-thor.yaml` |
+| Game Mode | top screen only (orientation `right`, output found by its 1080x1920 mode); the bottom touchscreen is off while Game Mode runs | `device/thor/overlay` |
+| Desktop Mode | both screens, bottom one centred under the top one, each touchscreen mapped to its own screen | `device/thor/overlay` |
+| Updates | RAUC compatible `kettle-aarch64-thor`, update variant `thor`: Portal and Thor bundles are refused on each other | `device/thor/device.conf` |
+
+## Verified on a Thor
+Booted from SD through U-Boot's EFI (GRUB loads `qcs8550-ayn-thor.dtb`):
+- Every device found (`kettle-hwcheck`): both panels, both touchscreens, gamepad, AYN key, lid
+  switch, LEDs, haptics, fan, battery, Wi-Fi, Bluetooth, ADSP/CDSP, turnip Vulkan.
+- Connectors: top panel (DSI1) `DSI-2`, bottom (DSI0) `DSI-1`. Game Mode runs on `DSI-2`;
+  gamescope switches the bottom panel off (no CRTC, backlight powered down).
+- Touch: the Thor's dts swaps and inverts the touch axes, which the Portal's doesn't (the kernel
+  reports 1920x1080 for the 1080x1920 top panel), so taps landed rotated;
+  `LIBINPUT_CALIBRATION_MATRIX` in `61-kettle-thor-touch.rules` turns them back to the panels'
+  own orientation. The bottom touchscreen is off in Game Mode.
+- Audio: the Thor's U-Boot reports the Odin 2's SMBIOS product ("AYN Odin 2"), so its card is
+  `ayn-AYNOdin2` under EFI; `kettle-ucm-thor` aliases that to the Thor's profile. Speaker path
+  and internal mic checked.
+- Steam's device: for the same reason steamos-manager can't tell the two apart by DMI; each
+  image carries only its own device file (`device/*/overlay/usr/share/steamos-manager`).
+- Brightness: Steam's slider drives the first backlight, the bottom panel's (`ae94000.dsi.0`,
+  off in Game Mode); `kettle-game-brightness.service` passes it on to the top panel's
+  (`ae96000.dsi.0`).
+- Controller: InputPlumber builds "AYN Thor (Kettle)" from the pad and the AYN key, Deck target.
+- Power: `kettle-powerd` uses `thor.toml`; the TDP limit works on the charger (stress-ng at 5 W
+  caps the clusters at 1344/1785/1977 MHz). The kernel fan curve works (`qcs8550-ayn-fan.dtsi`).
+- Suspend: `kettle-suspendtest` freezer, devices and RTC-woken s2idle stages, and a 5-cycle
+  `systemctl suspend` soak; pad, touchscreens, panel and Wi-Fi fine after.
+- Internal storage matches what the Kettle Installer expects (UFS LUN 0 `/dev/sda`, userdata
+  last, `loader_a/b`, `misc`).
+
+## Still to check, by hand
+1. **The ROCKNIX ABL path**: whether its *Device model* setting offers a Thor (all AYN boards
+   report the same msm-id and board-id).
+2. **microSD speed.** The Thor stays on the stock `sdhc_2` node (SD High-Speed, ~13 MB/s); the
+   Odin 2 family's SDR104 node (`qcs8550-ayn-odin2-sd.dtsi`, ~85 MB/s) was never tested on a
+   Thor. Try it with a known-good card to fall back to: an SD boot needs the slot to work.
+3. **Touch by hand**, both screens, Game Mode and desktop, and the desktop's screen layout.
+4. **Brightness by eye**: Steam's slider on the top screen; the low end (the Portal's panel
+   needed a floor, `40-kettle/1120`).
+5. **Buttons**: the AYN key as Quick Access, the lid (logind's default: suspend on close), power
+   key suspend and wake.
+6. **Power on battery**: `kettle-powertest`; the right TDP range for the Thor (`thor.toml` has
+   the Portal's 4-18 W), charge limit support.
+7. **Headphones** and the speakers by ear.
+8. **Internal install** with the Kettle Installer.

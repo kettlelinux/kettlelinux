@@ -1,0 +1,6 @@
+# The Portal's own packages, added to image/packages.txt (built by us, packages/)
+
+# firmware: DSPs, audio topology, GPU, Wi-Fi, Bluetooth (packages/kettle-firmware-ayn)
+kettle-firmware-odin2portal
+# ALSA UCM profile for the "AYN-Odin2" card (packages/kettle-ucm-ayn)
+kettle-ucm-odin2portal

@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+# Kettle Linux: the Thor's pad as a Steam Deck controller, as on the Portal. Sorts before
+# upstream's 50-ayn_thor.yaml (Xbox Elite target), which then finds the pad already in use.
+# kettle-thor (kettle-thor-capability-map.yaml): the Portal's rsinput1 map plus the AYN key,
+# which upstream's ayn2 map sends as QuickAccess2, a button the Deck target doesn't have.
+version: 1
+kind: CompositeDevice
+name: AYN Thor (Kettle)
+
+options:
+  auto_manage: true
+
+matches:
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
+        - name: compatible
+          value: ayn,thor*
+
+source_devices:
+  - group: gamepad
+    capability_map_id: kettle-thor
+    evdev:
+      name: AYN Odin2 Gamepad
+      phys_path: rsinput-gamepad/input0
+      vendor_id: "2020"
+      product_id: "3001"
+      handler: event*
+
+  # the AYN key (KEY_F24), a gpio-keys device of its own in the Thor's dts
+  - group: gamepad
+    capability_map_id: kettle-thor
+    evdev:
+      name: gpio-keys-ayn
+      handler: event*
+
+target_devices:
+  - deck

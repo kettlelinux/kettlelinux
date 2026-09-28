@@ -3,7 +3,8 @@
 # relayed through remotes.d/kettle-power.toml: configuring them here would make
 # steamos-manager write the same cpufreq/devfreq files and fight it.
 # Booted through U-Boot's EFI there is SMBIOS, and steamos-manager then matches on DMI only
-# (U-Boot names the family, not the Portal)
+# (U-Boot names the family, not the Portal; the Thor's reports the same): this file is in the
+# Portal's image only (device/odin2portal/overlay)
 [[device]]
 dmi.sys_vendor = "ayn"
 dmi.product_name = "AYN Odin 2"
