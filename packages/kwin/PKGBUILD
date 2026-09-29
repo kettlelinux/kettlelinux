@@ -1,0 +1,45 @@
+# deckard's KWin (Arch's 6.2.5-3, unpatched: deckard's 6.2.5-3.1 carries none of Valve's Steam
+# Deck patches) with one fix: KWin nested in an X server as a window (its X11 windowed
+# backend, as the Thor's bottom-screen shell runs in its gamescope's Xwayland) selected raw XI2
+# touch events but only handles the plain ones, so it never got a touch (Armada's patch).
+# pkgrel 3.2 replaces deckard's 3.1.
+pkgname=kwin
+pkgver=6.2.5
+pkgrel=3.2
+pkgdesc='An easy to use, but flexible, composited Window Manager'
+arch=(aarch64)
+url='https://kde.org/plasma-desktop/'
+license=(LGPL-2.0-or-later)
+depends=(breeze gcc-libs glibc plasma-activities kauth kcmutils kcolorscheme kconfig
+         kconfigwidgets kcoreaddons kcrash kdbusaddons kdeclarative kdecoration kglobalaccel
+         kglobalacceld kguiaddons ki18n kidletime kirigami kitemmodels knewstuff knotifications
+         kpackage kquickcharts kscreenlocker kservice ksvg kwayland kwidgetsaddons kwindowsystem
+         kxmlgui lcms2 libcanberra libdisplay-info libdrm libei libepoxy libinput libpipewire
+         libqaccessibilityclient-qt6 libx11 libxcb libxcvt libxi libxkbcommon libxkbcommon-x11
+         mesa pipewire-session-manager libplasma qt6-5compat qt6-base qt6-declarative
+         qt6-multimedia qt6-sensors qt6-svg qt6-tools qt6-wayland systemd-libs wayland
+         xcb-util-cursor xcb-util-keysyms xcb-util-wm)
+makedepends=(cmake ninja extra-cmake-modules krunner plasma-wayland-protocols python
+             wayland-protocols xorg-xwayland)
+install=$pkgname.install
+source=(https://download.kde.org/stable/plasma/$pkgver/$pkgname-$pkgver.tar.xz
+        0001-x11-windowed-select-the-touch-events-it-handles.patch)
+sha256sums=('5cc450a6e41105c8c49929b72550b331237f96aafb294690f4707bdc5f776848'
+            '8ed5b019fc2237af7f1643a5eee58ecaa6f02273bf3b12638a8ccc3413b95310')
+
+prepare() {
+  patch -d $pkgname-$pkgver -p1 --fuzz=0 <0001-x11-windowed-select-the-touch-events-it-handles.patch
+}
+
+build() {
+  cmake -B build -S $pkgname-$pkgver -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_INSTALL_LIBEXECDIR=lib \
+    -DBUILD_TESTING=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}

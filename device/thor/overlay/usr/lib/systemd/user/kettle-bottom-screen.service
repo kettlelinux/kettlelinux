@@ -1,0 +1,17 @@
+[Unit]
+Description=Touch shell on the bottom screen in Game Mode (AYN Thor)
+# Game Mode's gamescope leases the bottom screen (gamescope.conf); it has made the lease by the
+# time it reports ready
+PartOf=gamescope-session.target
+After=gamescope-session.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Slice=session.slice
+ExecStart=/usr/lib/kettle/bottom-screen
+Restart=on-failure
+RestartSec=2
+# gamescope's Xwayland runs with -core; don't SIGTERM it
+KillMode=mixed
+TimeoutStopSec=5

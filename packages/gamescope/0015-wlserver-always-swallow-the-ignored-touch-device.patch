@@ -1,0 +1,46 @@
+From 7cce3920d82ea27294cbe9d171114266f1664dc6 Mon Sep 17 00:00:00 2001
+From: virtudude <virtudude@protonmail.com>
+Date: Mon, 28 Sep 2026 18:27:44 -0500
+Subject: [PATCH 15/16] wlserver: always swallow the ignored touch device
+
+The --ignore-touch-device digitizer belongs to whoever leases its panel.
+Dropping it only while a lease is held lets touches on the otherwise dark
+panel land in Steam whenever nothing holds the lease. Swallow it always;
+a companion that asked for touch still receives it over the lease socket.
+
+Based-on: https://github.com/armada-os/armada/blob/main/packages/gamescope/patches/0014-wlserver-always-swallow-ignored-touch-device.patch
+---
+ src/wlserver.cpp | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+index a9edbe18..48da21a1 100644
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -454,7 +454,7 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
+ 	struct wlserver_touch *touch = wl_container_of( listener, touch, down );
+ 	struct wlr_touch_down_event *event = (struct wlr_touch_down_event *) data;
+ 
+-	if ( touch->bIgnoreWhileLeased && g_nActiveLeaseClients.load() > 0 )
++	if ( touch->bIgnoreWhileLeased )
+ 	{
+ 		drm_lease_send_touch( DrmLeaseEventType::Down, event->x, event->y, event->touch_id, event->time_msec );
+ 		return;
+@@ -469,7 +469,7 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
+ 	struct wlserver_touch *touch = wl_container_of( listener, touch, up );
+ 	struct wlr_touch_up_event *event = (struct wlr_touch_up_event *) data;
+ 
+-	if ( touch->bIgnoreWhileLeased && g_nActiveLeaseClients.load() > 0 )
++	if ( touch->bIgnoreWhileLeased )
+ 	{
+ 		drm_lease_send_touch( DrmLeaseEventType::Up, 0.0, 0.0, event->touch_id, event->time_msec );
+ 		return;
+@@ -483,7 +483,7 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
+ 	struct wlserver_touch *touch = wl_container_of( listener, touch, motion );
+ 	struct wlr_touch_motion_event *event = (struct wlr_touch_motion_event *) data;
+ 
+-	if ( touch->bIgnoreWhileLeased && g_nActiveLeaseClients.load() > 0 )
++	if ( touch->bIgnoreWhileLeased )
+ 	{
+ 		drm_lease_send_touch( DrmLeaseEventType::Motion, event->x, event->y, event->touch_id, event->time_msec );
+ 		return;

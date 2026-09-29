@@ -1,5 +1,5 @@
 [Unit]
-Description=Steam's brightness slider on the top screen in Game Mode (AYN Thor)
+Description=Steam's brightness slider on both screens in Game Mode (AYN Thor)
 PartOf=gamescope-session.target
 After=gamescope-session.service
 

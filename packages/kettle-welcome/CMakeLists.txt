@@ -49,3 +49,6 @@ install(TARGETS kettle-welcome ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
 install(PROGRAMS welcome-flatpak DESTINATION ${KETTLE_LIBDIR})
 install(FILES org.kettle.Welcome.desktop org.kettle.GamingExtras.desktop DESTINATION ${KDE_INSTALL_APPDIR})
 install(FILES org.kettle.Welcome.autostart.desktop DESTINATION ${KDE_INSTALL_AUTOSTARTDIR} RENAME org.kettle.Welcome.desktop)
+# a shortcut on the Plasma desktop, next to steamdeck-kde-presets' Return to Gaming Mode: new home
+# directories get it from /etc/skel (executable, so Plasma runs it without asking)
+install(PROGRAMS org.kettle.Welcome.desktop DESTINATION /etc/skel/Desktop RENAME Welcome.desktop)
