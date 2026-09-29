@@ -2,16 +2,18 @@
 # bottom screen in Game Mode (device/thor: bottom-shell). It only runs there, so it is no login
 # session, and its kded modules go: kded loads them in the desktop too, where they'd run the
 # mobile first-start wizard and plasma-mobile-envmanager (which rewrites kwinrc/kdeglobals;
-# bottom-shell runs it itself, on the bottom screen's own config). Bluetooth's quick setting needs bluez-qt, which deckard lacks; the rest of what the
-# shell uses (plasma-nm, plasma-pa, milou, kscreenlocker) is part of the desktop already.
+# bottom-shell runs it itself, on the bottom screen's own config). bluez-qt (packages/bluez-qt;
+# deckard lacks it) is a hard dependency: the shell's QML module imports it, and without it none
+# of the shell's own types load. The rest of what the shell uses (plasma-nm, plasma-pa, milou,
+# kscreenlocker) is part of the desktop already.
 pkgname=plasma-mobile
 pkgver=6.2.5
-pkgrel=1
+pkgrel=2
 pkgdesc='Phone shell for Plasma'
 arch=(aarch64)
 url='https://invent.kde.org/plasma/plasma-mobile'
 license=(GPL-2.0-or-later LGPL-2.0-or-later)
-depends=(gcc-libs glibc kcmutils kconfig kcoreaddons kdbusaddons kglobalaccel ki18n kio
+depends=(bluez-qt gcc-libs glibc kcmutils kconfig kcoreaddons kdbusaddons kglobalaccel ki18n kio
          kirigami kirigami-addons kitemmodels kjobwidgets knotifications kpackage kpipewire
          kscreenlocker kservice ksvg kwayland kwin layer-shell-qt libepoxy libkscreen libplasma
          libxcb milou modemmanager-qt networkmanager-qt plasma-activities plasma-nano plasma-nm

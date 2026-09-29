@@ -9,7 +9,8 @@ to check first on hardware.
 ```sh
 scripts/build-kernel.sh                  # the same kernel; its Thor DTB was always built
 scripts/build-packages.sh kettle-firmware-ayn kettle-ucm-ayn kettle-power inputplumber gamescope
-scripts/build-packages.sh networkmanager-qt modemmanager-qt plasma-nano kwin plasma-mobile
+scripts/build-packages.sh bluez-qt networkmanager-qt modemmanager-qt pulseaudio-qt plasma-pa \
+  plasma-nano kwin plasma-mobile
 KETTLE_DEVICE=thor scripts/build-image.sh   # -> out/kettle-<build>-thor.img (+ .raucb)
 ```
 `KETTLE_DEVICE` can also go in `local.env`. Without it the build is for the Portal, as before.
@@ -66,12 +67,17 @@ shell (`usr/lib/kettle/bottom-screen`, `bottom-shell`). The same mechanism as Ba
   over the lease socket. KWin nested in an X server needed a fix to take touches at all
   (`packages/kwin`).
 - Its settings stay apart from the desktop's (`~/.config/kettle/bottom-shell`), and it runs
-  on its own session bus, so nothing in it handles brightness or suspend next to Steam.
+  on its own session bus, so nothing in it handles brightness or suspend next to Steam. Its
+  caches are its own too (`~/.cache/kettle/bottom-shell`): KDE's app database would otherwise
+  be one file for both. The shell is scaled 2x (`BOTTOM_SHELL_SCALE`), set in its KWin's output
+  settings: nested in X, KWin's `--scale` enlarges its window instead.
 - `GAMESCOPE_BOTTOM_SCREEN=0` in `~/.config/kettle/gamescope.conf` leaves the bottom screen off,
   as before. So does any failure to lease it: the bottom gamescope then exits.
 - Plasma Mobile is built at deckard's Plasma version (6.2.5), which needed networkmanager-qt
-  and modemmanager-qt at deckard's KF6 version (6.14; deckard ships 6.1). Its Bluetooth quick
-  setting needs bluez-qt, which deckard lacks.
+  and modemmanager-qt at deckard's KF6 version (6.14; deckard ships 6.1), bluez-qt (which
+  deckard lacks: the shell's QML module imports it, and without it none of the shell loads),
+  and plasma-pa 6.2.5 with pulseaudio-qt (deckard's plasma-pa is 6.0.4, whose QML API the
+  shell's volume controls outgrew). plasma-pa 6.2.5 is the desktop's volume applet too.
 
 ## Still to check, by hand
 1. **The ROCKNIX ABL path**: whether its *Device model* setting offers a Thor (all AYN boards
