@@ -1,5 +1,5 @@
 #!/bin/bash
-# Staged s2idle suspend test for the Odin 2 Portal, to locate a resume hang.
+# Staged s2idle suspend test, to locate a resume hang.
 #
 #   sudo kettle-suspendtest            run the next untried stage
 #   sudo kettle-suspendtest status     show results so far (e.g. after a forced reboot)

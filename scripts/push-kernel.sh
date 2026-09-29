@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install out/kernel onto a running Portal over SSH (no reflash), into the running slot:
+# Install out/kernel onto a running device over SSH (no reflash), into the running slot:
 #   /boot/Image + dtbs, /usr/lib/modules/<release>, a new initramfs (/boot/initramfs-linux.img)
 # The slot's GRUB already boots /boot/Image; \KERNEL and extlinux on the SD card's esp are
 # rebuilt too (kettle-boot-legacy). The previous kernel stays as /boot/Image.prev.

@@ -1,0 +1,4 @@
+# The Thor's own checks, sourced by kettle-hwcheck's summary (chk NAME COMMAND...)
+chk "panels (DSI)"             bash -c 'for c in /sys/class/drm/card*-DSI-*; do [ "$(cat $c/status)" = connected ] && echo -n "${c##*/card[0-9]-} $(head -1 $c/modes)  "; done'
+chk "lid switch (hall sensor)" bash -c 'grep -m1 "^N:.*gpio-keys-lid" /proc/bus/input/devices'
+chk "AYN key"                  bash -c 'grep -m1 "^N:.*gpio-keys-ayn" /proc/bus/input/devices'

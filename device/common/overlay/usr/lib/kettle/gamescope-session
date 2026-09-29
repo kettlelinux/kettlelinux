@@ -33,7 +33,8 @@ export QT_IM_MODULE=xim GTK_IM_MODULE=xim QT_QPA_PLATFORMTHEME=kde
 
 # The device's settings (its overlay's /usr/lib/kettle/gamescope.conf), then local and user
 # overrides (e.g. GAMESCOPE_EXTRA_ARGS="--force-orientation normal"):
-#   GAMESCOPE_ORIENTATION  how the panel is mounted (default: left, the Portal's 270 degree panel)
+#   GAMESCOPE_ORIENTATION  how the panel is mounted: left/right turn a portrait panel to landscape
+#                          (default: none, the panel's own orientation)
 #   GAMESCOPE_OUTPUT       the connector to use (default: gamescope's choice)
 #   GAMESCOPE_LEASE_OUTPUT a second screen's connector, leased to the screen's own gamescope
 #                          (kettle-bottom-screen.service) while Game Mode runs
@@ -50,7 +51,7 @@ args=(
   --steam --mangoapp
   --xwayland-count 2
   -T "$stats"
-  --force-orientation "${GAMESCOPE_ORIENTATION:-left}"   # 1080x1920 portrait panel -> 1920x1080
+  ${GAMESCOPE_ORIENTATION:+--force-orientation "$GAMESCOPE_ORIENTATION"}
   ${GAMESCOPE_OUTPUT:+--prefer-output "$GAMESCOPE_OUTPUT"}
   ${GAMESCOPE_LEASE_OUTPUT:+--lease-connector "$GAMESCOPE_LEASE_OUTPUT"}
   ${GAMESCOPE_LEASE_TOUCH:+--ignore-touch-device "$GAMESCOPE_LEASE_TOUCH"}

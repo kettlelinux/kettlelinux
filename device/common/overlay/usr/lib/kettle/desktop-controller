@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 """Desktop-mode controller: drive the Plasma pointer and keyboard from the built-in gamepad.
-Buttons go by their labels (the Thor's face buttons sit elsewhere than the Portal's: FACE).
+Buttons go by their labels (FACE: where the face buttons sit is the device's FACE_BUTTONS).
 
 Mouse mode grabs the rsinput pad (so desktop games don't also see it) and replays it through
 two uinput devices. Hold Select+Start to toggle mouse mode off for games run from the desktop.
@@ -22,7 +22,9 @@ import time
 import evdev
 from evdev import ecodes as e
 
-PAD_NAME = "AYN Odin2 Gamepad"
+import kettle_device
+
+PAD_NAME = kettle_device.conf.get("PAD_NAME", "")
 TICK = 1 / 125
 DEADZONE = 0.12
 POINTER_SPEED = 1400.0  # px/s at full deflection
@@ -51,19 +53,11 @@ KEYS = sorted({k for k in BUTTON_KEYS.values() if k not in MOUSE_BUTTONS}
               | {k for c in TAP_CHORDS.values() for k in c})
 
 
-def compatible():
-    try:
-        with open("/proc/device-tree/compatible", "rb") as f:
-            return f.read().decode(errors="replace").split("\0")
-    except OSError:
-        return []
-
-
-# The tables above follow the buttons' labels on the Portal (Xbox-style: A bottom, B right,
-# X left, Y top). The Thor's are labelled Nintendo-style (A right, B bottom, X top, Y left):
-# its codes are turned into the Portal's for the same labels.
+# The tables above follow Xbox-style labels (A bottom, B right, X left, Y top). A device whose
+# buttons are labelled Nintendo-style (A right, B bottom, X top, Y left; FACE_BUTTONS=nintendo in
+# its device.conf) has its codes turned into these for the same labels.
 FACE = ({e.BTN_EAST: e.BTN_SOUTH, e.BTN_SOUTH: e.BTN_EAST, e.BTN_NORTH: e.BTN_WEST,
-         e.BTN_WEST: e.BTN_NORTH} if "ayn,thor" in compatible() else {})
+         e.BTN_WEST: e.BTN_NORTH} if kettle_device.conf.get("FACE_BUTTONS") == "nintendo" else {})
 
 
 def log(msg):

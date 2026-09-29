@@ -2,8 +2,8 @@
 
 The Thor has the same SoC as the Odin 2 Portal (QCS8550), so it shares the kernel, the
 userspace and almost all of the Portal's configuration. What it adds is a second screen, a lid
-and the AYN key. **Nothing here has run on a Thor yet**: it builds, and the list below is what
-to check first on hardware.
+and the AYN key. What has been checked on a Thor and what hasn't is below. How the Thor's files
+are kept apart from the Portal's, and what both share: [PORTING.md](PORTING.md).
 
 ## Building
 ```sh

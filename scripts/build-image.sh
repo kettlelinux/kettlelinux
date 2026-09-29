@@ -12,8 +12,8 @@
 #         out/kettle-<buildid>-<device>.castr/  store; publish with scripts/publish-update.sh
 #
 # Env (also read from ./local.env, gitignored):
-#   KETTLE_DEVICE          the device to build for, a directory under device/ (default: odin2portal;
-#                          also: thor)
+#   KETTLE_DEVICE          the device to build for, a directory under device/ (default:
+#                          odin2portal); docs/PORTING.md has what a device directory holds
 #   WIFI_SSID / WIFI_PSK   preconfigure Wi-Fi (NetworkManager) for SSH access
 #   SSH_PUBKEY             public key file to authorize for user kettle
 #   USER_PASSWORD          password for user "kettle" (default: kettle); part of the system
@@ -42,6 +42,13 @@ VARIANT="${KETTLE_DEVICE:-odin2portal}"
 DEVICE="$ROOT/device/$VARIANT"
 [ "$VARIANT" != common ] && [ -f "$DEVICE/device.conf" ] || die "no device '$VARIANT' (device/*/device.conf)"
 . "$DEVICE/device.conf"
+for v in MODEL DTB RAUC_COMPATIBLE PAD_NAME FACE_BUTTONS; do
+  [ -n "${!v:-}" ] || die "device/$VARIANT/device.conf: $v not set (docs/PORTING.md)"
+done
+[[ "$FACE_BUTTONS" =~ ^(xbox|nintendo)$ ]] || die "device/$VARIANT/device.conf: FACE_BUTTONS is xbox or nintendo"
+# no Portal defaults for another device's screen: each device says how Game Mode drives it
+[ -f "$DEVICE/overlay/usr/lib/kettle/gamescope.conf" ] ||
+  die "device/$VARIANT has no overlay/usr/lib/kettle/gamescope.conf (docs/PORTING.md)"
 VERSION="$(sed -e 's/#.*//' -e '/^\s*$/d' "$ROOT/image/version")"
 BUILD_ID="${KETTLE_BUILD_ID:-$(date +%Y%m%d).1}"
 BRANCH="${KETTLE_BRANCH:-beta}"
@@ -110,6 +117,11 @@ log "applying overlays: common, $VARIANT"
 cp -a --no-preserve=ownership "$ROOT/device/common/overlay/." "$RFS/"
 cp -a --no-preserve=ownership "$DEVICE/overlay/." "$RFS/"
 chmod 0750 "$RFS/etc/sudoers.d"; chmod 0440 "$RFS"/etc/sudoers.d/*
+# the device's settings, for scripts on the device (kettle_device.py, or sourced from shell)
+{ echo "# device/$VARIANT/device.conf, installed by scripts/build-image.sh"
+  echo "DEVICE=$VARIANT"
+  cat "$DEVICE/device.conf"; } >"$RFS/usr/lib/kettle/device.conf"
+chmod 0644 "$RFS/usr/lib/kettle/device.conf"
 # this device's devicetree for GRUB and extlinux
 sed -i "s|^DTB=@DTB@\$|DTB=$DTB|" "$RFS/usr/lib/kettle/boot.conf"
 grep -qx "DTB=$DTB" "$RFS/usr/lib/kettle/boot.conf" || die "boot.conf: DTB not set"

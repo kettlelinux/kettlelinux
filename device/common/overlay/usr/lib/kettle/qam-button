@@ -22,7 +22,9 @@ from urllib.parse import urlparse
 import evdev
 from evdev import ecodes as e
 
-PAD_NAME = "AYN Odin2 Gamepad"
+import kettle_device
+
+PAD_NAME = kettle_device.conf.get("PAD_NAME", "")
 QAM_BUTTON = e.BTN_BACK
 CEF = "http://127.0.0.1:8080/json"
 CEF_TIMEOUT = 2  # s
