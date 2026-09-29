@@ -13,7 +13,7 @@
 # (org.kettle.GamingExtras.desktop: kettle-welcome --page extras).
 pkgname=kettle-welcome
 pkgver=2.0.0
-pkgrel=6
+pkgrel=7
 pkgdesc='Kettle Linux welcome and setup hub for the desktop'
 arch=(aarch64)
 license=(BSD-3-Clause)
