@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Service
+MimeType=application/vnd.android.package-archive;application/xapk-package-archive;
+Actions=addToSteam;
+X-KDE-Priority=TopLevel
+
+[Desktop Action addToSteam]
+Name=Add to Steam as Android game
+Icon=steam
+Exec=kettle-android-games add --notify %f

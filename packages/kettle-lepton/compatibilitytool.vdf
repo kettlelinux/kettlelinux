@@ -1,0 +1,13 @@
+"compatibilitytools"
+{
+  "compat_tools"
+  {
+    "lepton-kettle"
+    {
+      "install_path" "."
+      "display_name" "Lepton (Kettle)"
+      "from_oslist" "android"
+      "to_oslist" "linux"
+    }
+  }
+}

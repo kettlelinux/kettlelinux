@@ -1,0 +1,11 @@
+#!/bin/bash
+# Stand-in for the Steam Frame's steamvr helper, on Lepton's PATH only (lepton-kettle). With no
+# VR runtime, Lepton gets empty directories to mount at /data/steamvr/{runtime,logs,config}.
+base="${XDG_DATA_HOME:-$HOME/.local/share}/kettle-lepton/steamvr"
+case "${1:-}" in
+  path) dir=$base/runtime ;;
+  logpath) dir=$base/logs ;;
+  configpath) dir=$base/config ;;
+  *) echo "steamvr: not available on Kettle Linux: $*" >&2; exit 1 ;;
+esac
+mkdir -p "$dir" && echo "$dir"
