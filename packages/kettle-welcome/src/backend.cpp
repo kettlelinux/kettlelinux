@@ -3,9 +3,13 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QNetworkInterface>
 #include <QProcess>
 #include <QQuickWindow>
+
+#include <memory>
 
 #include <KConfigGroup>
 #include <KIO/ApplicationLauncherJob>
@@ -16,6 +20,7 @@ namespace
 {
 const QString helper = QStringLiteral(KETTLE_LIBDIR "/welcome-flatpak");
 const QString steamosctl = QStringLiteral("steamosctl");
+const QString androidGamesHelper = QStringLiteral("/usr/bin/kettle-android-games");
 
 KConfigGroup settings()
 {
@@ -203,13 +208,27 @@ void Backend::runHelper(const QStringList &args, std::function<void(int, const Q
     run(helper, args, std::move(done));
 }
 
-void Backend::run(const QString &program, const QStringList &args, std::function<void(int, const QString &, const QString &)> done)
+void Backend::run(const QString &program, const QStringList &args, std::function<void(int, const QString &, const QString &)> done,
+                  std::function<void(const QByteArray &)> stderrLine)
 {
     auto *p = new QProcess(this);
-    connect(p, &QProcess::finished, this, [p, done](int code, QProcess::ExitStatus status) {
+    // with stderrLine, stderr is read as it comes; what's left of it goes to done
+    auto err = std::make_shared<QByteArray>();
+    if (stderrLine) {
+        connect(p, &QProcess::readyReadStandardError, this, [p, err, stderrLine] {
+            err->append(p->readAllStandardError());
+            qsizetype nl;
+            while ((nl = err->indexOf('\n')) >= 0) {
+                stderrLine(err->left(nl));
+                err->remove(0, nl + 1);
+            }
+        });
+    }
+    connect(p, &QProcess::finished, this, [p, err, done](int code, QProcess::ExitStatus status) {
+        err->append(p->readAllStandardError());
         done(status == QProcess::NormalExit ? code : -1,
              QString::fromUtf8(p->readAllStandardOutput()).trimmed(),
-             QString::fromUtf8(p->readAllStandardError()).trimmed());
+             QString::fromUtf8(*err).trimmed());
         p->deleteLater();
     });
     connect(p, &QProcess::errorOccurred, this, [p, program, done](QProcess::ProcessError e) {
@@ -219,6 +238,42 @@ void Backend::run(const QString &program, const QStringList &args, std::function
         }
     });
     p->start(program, args);
+}
+
+bool Backend::hasAndroidGames() const
+{
+    return QFileInfo(androidGamesHelper).isExecutable();
+}
+
+void Backend::androidGames(const QString &command, const QString &arg)
+{
+    if (m_androidBusy)
+        return;
+    m_androidBusy = true;
+    Q_EMIT androidBusyChanged();
+    m_androidDownloaded = m_androidDownloadTotal = 0;
+    Q_EMIT androidProgressChanged();
+    // downloads report "PROGRESS <bytes> <total bytes>" lines on stderr
+    auto progress = [this](const QByteArray &line) {
+        const QList<QByteArray> parts = line.trimmed().split(' ');
+        if (parts.size() == 3 && parts[0] == "PROGRESS") {
+            m_androidDownloaded = parts[1].toDouble();
+            m_androidDownloadTotal = parts[2].toDouble();
+            Q_EMIT androidProgressChanged();
+        }
+    };
+    run(androidGamesHelper, {command, arg}, [this, command](int, const QString &out, const QString &err) {
+        QVariantMap result = QJsonDocument::fromJson(out.toUtf8()).object().toVariantMap();
+        if (result.isEmpty()) {
+            result.insert(QStringLiteral("ok"), false);
+            result.insert(QStringLiteral("error"), err.isEmpty() ? QStringLiteral("kettle-android-games failed.") : err);
+        }
+        m_androidBusy = false;
+        m_androidDownloaded = m_androidDownloadTotal = 0;
+        Q_EMIT androidProgressChanged();
+        Q_EMIT androidBusyChanged();
+        Q_EMIT androidResult(command, result);
+    }, progress);
 }
 
 bool Backend::saveScreenshot(QQuickWindow *window, const QString &name)

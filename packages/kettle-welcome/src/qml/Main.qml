@@ -22,9 +22,10 @@ Kirigami.ApplicationWindow {
         { name: "setup", title: "Setup", icon: "configure", component: setupPage },
         { name: "controls", title: "Controls", icon: "input-gamepad", component: controlsPage },
         { name: "games", title: "Games", icon: "applications-games", component: gamesPage },
+        { name: "android", title: "Android", icon: "smartphone", component: androidPage },
         { name: "extras", title: "Gaming Extras", icon: "download", component: extrasPage },
         { name: "system", title: "System", icon: "computer", component: systemPage }
-    ]
+    ].filter(p => p.name !== "android" || Backend.hasAndroidGames)  // Android: with kettle-lepton
     property string currentPage: ""
 
     function showPage(name) {
@@ -97,6 +98,7 @@ Kirigami.ApplicationWindow {
     Component { id: setupPage; SetupPage {} }
     Component { id: controlsPage; ControlsPage {} }
     Component { id: gamesPage; GamesPage { onNavigate: name => root.showPage(name) } }
+    Component { id: androidPage; AndroidPage {} }
     Component { id: extrasPage; ExtrasPage {} }
     Component { id: systemPage; SystemPage {} }
 

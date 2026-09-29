@@ -1,0 +1,884 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+"""Add Android games (.apk) to Steam, set to run with Lepton (Kettle).
+
+  kettle-android-games inspect FILE          what the APK is and whether it can run here
+  kettle-android-games add [--notify] FILE   copy it to ~/Games/Android/<package>/ and add a
+                                             Steam shortcut using "Lepton (Kettle)"
+  kettle-android-games fdroid-search TEXT    search F-Droid
+  kettle-android-games fdroid-add PACKAGE    download an F-Droid app and add it
+  kettle-android-games play-status           whether a Google account is signed in
+  kettle-android-games play-signin [EMAIL] [TOKEN]
+                                             sign in to Google with the one-time oauth_token
+                                             from accounts.google.com/EmbeddedSetup; without a
+                                             token, it's taken from Firefox after the user
+                                             signed in there
+  kettle-android-games play-signout          forget the Google account
+  kettle-android-games play-search TEXT      search Google Play
+  kettle-android-games play-add APP          download a game from Google Play (its link or
+                                             package name) and add it
+
+Every command prints one JSON object ({"ok": true, ...} or {"ok": false, "error": ...}) and
+exits 0 or 1. While downloading, fdroid-add and play-add report "PROGRESS <bytes> <total bytes>"
+lines on stderr, a few times a second. Shortcuts are added through the running Steam client (its CEF remote debugging
+port, which Kettle enables for Decky), so Steam must be running.
+
+.xapk and .apks files are unpacked: the base APK, its split APKs (an app bundle's native code,
+screen density and language parts) and OBB data. Splits go to splits/ next to the game's APK,
+where Lepton (Kettle) installs them together with it.
+
+The Google Play download is opt-in and unofficial: it uses apkeep with the Google account the
+user signs in with, and the device profile of an Android 11 arm64 phone so Google Play hands
+out builds Lepton's Android 11 can run. Signing in is apkeep's documented way: the user signs
+in on Google's embedded setup page in Firefox, which sets a one-time oauth_token cookie; it's
+traded once for a long-lived token, kept in ~/.config/kettle-lepton/google-play.ini. Rather
+than have the user copy the cookie out of Firefox's developer tools (hard on a handheld),
+play-signin reads it from the Firefox profile: cookies.sqlite, or, as Google's is a session
+cookie, the session store Firefox writes every 15 seconds. The account's email comes from
+Firefox's form history of Google's sign-in box, unless given.
+"""
+import base64
+import fcntl
+import glob
+import html
+import json
+import os
+import re
+import shutil
+import socket
+import sqlite3
+import struct
+import subprocess
+import sys
+import tempfile
+import termios
+import time
+import urllib.parse
+import urllib.request
+import zipfile
+
+TOOL = "lepton-kettle"
+GAMES_DIR = os.path.join(os.path.expanduser("~"), "Games", "Android")
+CEF = ("127.0.0.1", 8080)
+FDROID = "https://f-droid.org"
+FDROID_SEARCH = "https://search.f-droid.org/api/search_apps?q="
+USER_AGENT = "kettle-android-games"
+PLAY_CONFIG = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+                           "kettle-lepton", "google-play.ini")
+PLAY_DEVICE = "poco_f1"  # Android 11 (Lepton's), arm64, Adreno
+PLAY_SEARCH = "https://play.google.com/store/search?c=apps&hl=en&q="
+PLAY_PACKAGE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$")
+
+
+class Refused(Exception):
+    pass
+
+
+# ---------------------------------------------------------------- Android binary XML / resources
+
+def _string_pool(data, off):
+    _, header_size, _, count, _, flags, strings_start, _ = struct.unpack_from("<HHIIIIII", data, off)
+    utf8 = flags & 0x100
+    offsets = struct.unpack_from("<%dI" % count, data, off + header_size)
+    base = off + strings_start
+    out = []
+    for o in offsets:
+        p = base + o
+        if utf8:
+            n = data[p]; p += 2 if n & 0x80 else 1          # length in characters (unused)
+            n = data[p]
+            if n & 0x80:
+                n = ((n & 0x7F) << 8) | data[p + 1]; p += 2
+            else:
+                p += 1
+            out.append(data[p:p + n].decode("utf-8", "replace"))
+        else:
+            n = struct.unpack_from("<H", data, p)[0]; p += 2
+            if n & 0x8000:
+                n = ((n & 0x7FFF) << 16) | struct.unpack_from("<H", data, p)[0]; p += 2
+            out.append(data[p:p + 2 * n].decode("utf-16-le", "replace"))
+    return out
+
+
+# android: attribute resource ids
+ATTR_LABEL, ATTR_ICON, ATTR_NAME, ATTR_VALUE = 0x01010001, 0x01010002, 0x01010003, 0x01010024
+ATTR_VERSION_NAME = 0x0101021c
+
+
+def parse_axml(data):
+    """Elements of a binary XML file as (name, {attr: (type, data, string)}) in document order."""
+    strings, resmap, elements = [], [], []
+    off = struct.unpack_from("<H", data, 2)[0]
+    while off + 8 <= len(data):
+        ctype, _, size = struct.unpack_from("<HHI", data, off)
+        if size == 0:
+            break
+        if ctype == 0x0001:
+            strings = _string_pool(data, off)
+        elif ctype == 0x0180:
+            resmap = list(struct.unpack_from("<%dI" % ((size - 8) // 4), data, off + 8))
+        elif ctype == 0x0102:
+            ext = off + 16
+            _, name, astart, asize, acount = struct.unpack_from("<IIHHH", data, ext)
+            attrs = {}
+            for i in range(acount):
+                a = ext + astart + i * asize
+                _, aname, raw, _, _, dtype, value = struct.unpack_from("<IIIHBBI", data, a)
+                key = resmap[aname] if aname < len(resmap) and resmap[aname] else strings[aname]
+                text = strings[raw] if raw != 0xFFFFFFFF else (strings[value] if dtype == 0x03 else None)
+                attrs[key] = (dtype, value, text)
+            elements.append((strings[name], attrs))
+        off += size
+    return elements
+
+
+def parse_arsc(data):
+    """resources.arsc as {resource id: [(language, density, (type, data))]} for all configs."""
+    table = {}
+    _, header_size, _ = struct.unpack_from("<HHI", data, 0)
+    off = header_size
+    global_strings = []
+    while off + 8 <= len(data):
+        ctype, hsize, size = struct.unpack_from("<HHI", data, off)
+        if ctype == 0x0001:
+            global_strings = _string_pool(data, off)
+        elif ctype == 0x0200:
+            pkg_id = struct.unpack_from("<I", data, off + 8)[0]
+            p = off + hsize
+            end = off + size
+            while p + 8 <= end:
+                t, th, ts = struct.unpack_from("<HHI", data, p)
+                if t == 0x0201:
+                    type_id, flags = data[p + 8], data[p + 9]
+                    count, entries_start = struct.unpack_from("<II", data, p + 12)
+                    cfg = p + 20
+                    lang = data[cfg + 8:cfg + 10].rstrip(b"\0").decode("ascii", "replace")
+                    density = struct.unpack_from("<H", data, cfg + 14)[0]
+                    idx_base = p + th
+                    if flags & 0x01:      # sparse: (entry index, offset / 4) pairs
+                        pairs = [struct.unpack_from("<HH", data, idx_base + 4 * i) for i in range(count)]
+                        slots = [(e, o * 4) for e, o in pairs]
+                    elif flags & 0x02:    # 16-bit offsets / 4
+                        raw = struct.unpack_from("<%dH" % count, data, idx_base)
+                        slots = [(i, o * 4) for i, o in enumerate(raw) if o != 0xFFFF]
+                    else:
+                        raw = struct.unpack_from("<%dI" % count, data, idx_base)
+                        slots = [(i, o) for i, o in enumerate(raw) if o != 0xFFFFFFFF]
+                    for index, o in slots:
+                        e = p + entries_start + o
+                        esize, eflags = struct.unpack_from("<HH", data, e)
+                        if eflags & 0x0008:   # compact entry: type in the flags, data follows
+                            value = (eflags >> 8, struct.unpack_from("<I", data, e + 4)[0])
+                        elif eflags & 0x0001:  # complex (bag): not a plain value
+                            continue
+                        else:
+                            _, _, dtype, vdata = struct.unpack_from("<HBBI", data, e + esize)
+                            value = (dtype, vdata)
+                        rid = (pkg_id << 24) | (type_id << 16) | index
+                        table.setdefault(rid, []).append((lang, density, value))
+                p += ts
+        off += size
+    return table, global_strings
+
+
+def resolve_string(table, strings, rid, depth=0):
+    configs = table.get(rid, [])
+    for want in ("", "en"):
+        for lang, _, (dtype, value) in configs:
+            if lang == want:
+                if dtype == 0x03:
+                    return strings[value]
+                if dtype == 0x01 and depth < 5:
+                    return resolve_string(table, strings, value, depth + 1)
+    return None
+
+
+def resolve_icon_paths(table, strings, rid, depth=0):
+    """Files (res/...) a drawable/mipmap id points to, highest density first."""
+    out = []
+    for _, density, (dtype, value) in table.get(rid, []):
+        if dtype == 0x03:
+            out.append((density if density < 0xFFF0 else 0, strings[value]))
+        elif dtype == 0x01 and depth < 5:
+            out += [(0, p) for p in resolve_icon_paths(table, strings, value, depth + 1)]
+    return [p for _, p in sorted(out, key=lambda x: -x[0])]
+
+
+# ---------------------------------------------------------------- APK inspection
+
+def inspect_apk(path, splits=()):
+    try:
+        z = zipfile.ZipFile(path)
+    except (zipfile.BadZipFile, OSError) as e:
+        raise Refused("Not an Android app file (%s)." % e)
+    names = set(z.namelist())
+    if "AndroidManifest.xml" not in names:
+        raise Refused("Not an Android app: it has no AndroidManifest.xml.")
+    elements = parse_axml(z.read("AndroidManifest.xml"))
+    manifest = next((a for n, a in elements if n == "manifest"), {})
+    app = next((a for n, a in elements if n == "application"), {})
+    package = (manifest.get("package") or (None, None, None))[2]
+    split_name = (manifest.get("split") or (None, None, None))[2]
+    version = (manifest.get(ATTR_VERSION_NAME) or (None, None, None))[2]
+    meta = {}
+    for n, a in elements:
+        if n == "meta-data" and ATTR_NAME in a:
+            meta[a[ATTR_NAME][2]] = a.get(ATTR_VALUE)
+    split_required = "com.android.vending.splits.required" in meta
+    uses_gms = any(k and k.startswith("com.google.android.gms") for k in meta)
+
+    abis = sorted({n.split("/")[1] for n in names if n.startswith("lib/") and n.count("/") >= 2})
+    arm64 = not abis or "arm64-v8a" in abis
+
+    label, icon = None, None
+    table, strings = ({}, [])
+    if "resources.arsc" in names:
+        try:
+            table, strings = parse_arsc(z.read("resources.arsc"))
+        except (struct.error, IndexError):
+            pass
+    lab = app.get(ATTR_LABEL)
+    if lab:
+        label = lab[2] if lab[0] == 0x03 else resolve_string(table, strings, lab[1]) if lab[0] == 0x01 else None
+    ic = app.get(ATTR_ICON)
+    if ic and ic[0] == 0x01:
+        # an app bundle keeps its icons in the screen density splits
+        where = [(path, names)] + [(sp, set(zipfile.ZipFile(sp).namelist())) for sp in splits]
+        for p in resolve_icon_paths(table, strings, ic[1]):
+            found = next((f for f, n in where if p in n), None) if p.endswith(".png") else None
+            if found:
+                icon = (found, p)
+                break
+    return {
+        "package": package,
+        "name": label or package,
+        "version": version,
+        "abis": abis,
+        "arm64": arm64,
+        "split": split_required,
+        "split_name": split_name,
+        "google_services": uses_gms,
+        "icon": icon,
+    }
+
+
+def check_runnable(info, splits=()):
+    if not info["package"]:
+        raise Refused("The app has no package name.")
+    if info["split_name"]:
+        raise Refused("This is one part (%s) of a game split into several APK files, not the game "
+                      "itself." % info["split_name"])
+    if not info["arm64"]:
+        raise Refused("%s has no 64-bit ARM (arm64-v8a) code, only %s, so it can't run on this device."
+                      % (info["name"], ", ".join(info["abis"])))
+    if info["split"] and not splits:
+        raise Refused("%s is split into several APK files (an app bundle) and this is only its base. "
+                      "Add the .xapk or .apks file that holds all of them, or a universal APK."
+                      % info["name"])
+    if splits:
+        abis = {n.split("/")[1] for sp in splits for n in zipfile.ZipFile(sp).namelist()
+                if n.startswith("lib/") and n.count("/") >= 2}
+        if abis and "arm64-v8a" not in abis:
+            raise Refused("%s has no 64-bit ARM (arm64-v8a) code, only %s, so it can't run on this "
+                          "device." % (info["name"], ", ".join(sorted(abis))))
+
+
+def split_apk_set(apks):
+    """(base, [splits]) of an app bundle's APK files: the base is the one that isn't a split."""
+    base = [a for a in apks if not inspect_apk(a)["split_name"]]
+    if len(base) != 1:
+        raise Refused("Couldn't tell which APK file is the game (%d candidates)." % len(base))
+    return base[0], [a for a in apks if a != base[0]]
+
+
+def unpack_bundle(path, workdir):
+    """An .xapk or .apks file: extract its APKs and OBB files. Returns (apk, [splits], [obbs])."""
+    try:
+        z = zipfile.ZipFile(path)
+    except (zipfile.BadZipFile, OSError) as e:
+        raise Refused("Not an XAPK or APKS file (%s)." % e)
+    apks, obbs = [], []
+    for n in z.namelist():
+        low = n.lower()
+        if low.endswith(".apk") and "/" not in n:
+            apks.append(z.extract(n, workdir))
+        elif low.endswith(".obb"):
+            obbs.append(z.extract(n, workdir))
+    if not apks:
+        raise Refused("This file holds no APK.")
+    apk, splits = split_apk_set(apks)
+    return apk, splits, obbs
+
+
+# ---------------------------------------------------------------- Steam (CEF remote debugging)
+
+def cef_eval(expression):
+    try:
+        targets = json.load(urllib.request.urlopen("http://%s:%d/json" % CEF, timeout=5))
+    except OSError:
+        raise Refused("Steam isn't running. Start Steam, then try again.")
+    url = next((t["webSocketDebuggerUrl"] for t in targets if t.get("title") == "SharedJSContext"), None)
+    if not url:
+        raise Refused("Steam hasn't finished starting. Try again in a moment.")
+    path = url.split("%s:%d" % CEF, 1)[-1] if "%s:%d" % CEF in url else "/" + url.split("/", 3)[3]
+    s = socket.create_connection(CEF, timeout=30)
+    key = base64.b64encode(os.urandom(16)).decode()
+    s.sendall(("GET %s HTTP/1.1\r\nHost: %s:%d\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+               "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n" % (path, CEF[0], CEF[1], key)).encode())
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = s.recv(4096)
+        if not chunk:
+            raise Refused("Steam refused the connection.")
+        buf += chunk
+    rest = [buf.split(b"\r\n\r\n", 1)[1]]
+
+    def recvn(n):
+        while len(rest[0]) < n:
+            chunk = s.recv(65536)
+            if not chunk:
+                raise Refused("Steam closed the connection.")
+            rest[0] += chunk
+        out, rest[0] = rest[0][:n], rest[0][n:]
+        return out
+
+    msg = json.dumps({"id": 1, "method": "Runtime.evaluate",
+                      "params": {"expression": expression, "awaitPromise": True, "returnByValue": True}}).encode()
+    n = len(msg)
+    hdr = bytes([0x81]) + (bytes([0x80 | n]) if n < 126 else bytes([0x80 | 126]) + struct.pack(">H", n)
+                           if n < 65536 else bytes([0x80 | 127]) + struct.pack(">Q", n))
+    mask = os.urandom(4)
+    s.sendall(hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(msg)))
+    while True:
+        payload = b""
+        while True:
+            b0, b1 = recvn(2)
+            n = b1 & 0x7F
+            if n == 126:
+                n = struct.unpack(">H", recvn(2))[0]
+            elif n == 127:
+                n = struct.unpack(">Q", recvn(8))[0]
+            payload += recvn(n)
+            if b0 & 0x80:
+                break
+        reply = json.loads(payload)
+        if reply.get("id") == 1:
+            s.close()
+            result = reply.get("result", {})
+            if "exceptionDetails" in result:
+                raise Refused("Steam couldn't add the game: %s"
+                              % result["exceptionDetails"].get("exception", {}).get("description", "error"))
+            return result.get("result", {}).get("value")
+
+
+def add_steam_shortcut(name, apk, start_dir, icon, known_appid):
+    js = """(async () => {
+  const name = %s, exe = %s, dir = %s, icon = %s, known = %s, tool = %s;
+  let id = 0;
+  if (known && typeof appStore !== "undefined" && appStore.GetAppOverviewByAppID(known))
+    id = known;
+  if (!id)
+    id = await SteamClient.Apps.AddShortcut(name, exe, dir, "");
+  SteamClient.Apps.SetShortcutName(id, name);
+  SteamClient.Apps.SetShortcutExe(id, '"' + exe + '"');
+  SteamClient.Apps.SetShortcutStartDir(id, dir);
+  SteamClient.Apps.SetShortcutLaunchOptions(id, "");
+  if (icon && SteamClient.Apps.SetShortcutIcon)
+    SteamClient.Apps.SetShortcutIcon(id, icon);
+  SteamClient.Apps.SpecifyCompatTool(id, tool);
+  return id;
+})()""" % tuple(json.dumps(v) for v in (name, apk, start_dir, icon, known_appid or 0, TOOL))
+    appid = cef_eval(js)
+    if not appid:
+        raise Refused("Steam didn't create the shortcut.")
+    return appid
+
+
+# ---------------------------------------------------------------- commands
+
+def cmd_inspect(path):
+    return inspect_apk(path)
+
+
+def cmd_add(path, notify=False):
+    path = os.path.abspath(path)
+    if not path.lower().endswith((".xapk", ".apks")):
+        return add_game(path, [], [], notify)
+    with work_dir() as tmp:
+        apk, splits, obbs = unpack_bundle(path, tmp)
+        return add_game(apk, splits, obbs, notify, move=True)
+
+
+def work_dir():
+    """A temporary folder on the games' drive: games can be gigabytes, too big for /tmp."""
+    os.makedirs(GAMES_DIR, exist_ok=True)
+    return tempfile.TemporaryDirectory(dir=GAMES_DIR, prefix=".work-")
+
+
+def _copy(src, dst, move=False):
+    if os.path.abspath(src) == dst:
+        return
+    if move:
+        os.replace(src, dst)
+    else:
+        shutil.copyfile(src, dst + ".part")
+        os.replace(dst + ".part", dst)
+
+
+def add_game(apk, splits, obbs, notify=False, move=False):
+    """Put the game in ~/Games/Android/<package>/ (APK, splits/, obb/) and add it to Steam."""
+    info = inspect_apk(apk)
+    folder = os.path.join(GAMES_DIR, info["package"] or "unknown")
+    target = os.path.join(folder, "%s.apk" % info["package"])
+    split_dir = os.path.join(folder, "splits")
+    in_place = os.path.abspath(apk) == target
+    if in_place and not splits and os.path.isdir(split_dir):
+        # re-adding a game from its own folder keeps its splits
+        splits = sorted(os.path.join(split_dir, n) for n in os.listdir(split_dir) if n.endswith(".apk"))
+    info = inspect_apk(apk, splits)
+    check_runnable(info, splits)
+
+    icon = None
+    if info["icon"]:
+        src, info["icon"] = info["icon"]
+        with zipfile.ZipFile(src) as z:
+            icon = z.read(info["icon"])
+
+    os.makedirs(folder, exist_ok=True)
+    _copy(apk, target, move)
+    if not (in_place and splits and all(os.path.dirname(sp) == split_dir for sp in splits)):
+        # an update replaces all the splits; Lepton installs whatever is in splits/
+        shutil.rmtree(split_dir, ignore_errors=True)
+        if splits:
+            os.makedirs(split_dir)
+            for sp in splits:
+                _copy(sp, os.path.join(split_dir, os.path.basename(sp)), move)
+    if obbs:
+        obb_dir = os.path.join(folder, "obb")
+        os.makedirs(obb_dir, exist_ok=True)
+        for o in obbs:
+            _copy(o, os.path.join(obb_dir, os.path.basename(o)), move)
+
+    icon_path = None
+    if icon:
+        icon_path = os.path.join(folder, "icon.png")
+        with open(icon_path, "wb") as f:
+            f.write(icon)
+
+    appid_file = os.path.join(folder, ".steam-appid")
+    known = None
+    try:
+        known = int(open(appid_file).read().strip())
+    except (OSError, ValueError):
+        pass
+    appid = add_steam_shortcut(info["name"], target, folder, icon_path, known)
+    with open(appid_file, "w") as f:
+        f.write("%d\n" % appid)
+
+    result = dict(info, apk=target, appid=appid)
+    if notify:
+        body = "%s is in your Steam library, set to run with Lepton (Kettle)." % info["name"]
+        if info["google_services"]:
+            body += " It uses Google Play services, which aren't available, so it may not start."
+        send_notification("Android game added", body, icon_path or "steam")
+    return result
+
+
+def send_notification(title, body, icon):
+    """A desktop notification, without waiting: Game Mode has no notification service."""
+    try:
+        subprocess.Popen(["notify-send", "--app-name=Steam", "--icon=" + icon, title, body],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        pass
+
+
+_last_progress = [0.0]
+
+
+def report_progress(done, total, force=False):
+    """A "PROGRESS done total" line on stderr, at most a few a second."""
+    now = time.monotonic()
+    if force or now - _last_progress[0] >= 0.25:
+        _last_progress[0] = now
+        print("PROGRESS %d %d" % (done, total), file=sys.stderr, flush=True)
+
+
+def download(url, path, timeout=60):
+    """Download url to path, reporting progress."""
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as r, open(path, "wb") as f:
+        total = int(r.headers.get("Content-Length") or 0)
+        done = 0
+        while True:
+            chunk = r.read(1 << 16)
+            if not chunk:
+                break
+            f.write(chunk)
+            done += len(chunk)
+            if total:
+                report_progress(done, total)
+        if total:
+            report_progress(total, total, force=True)
+
+
+def _get_json(url):
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)
+
+
+def cmd_fdroid_search(text):
+    try:
+        found = _get_json(FDROID_SEARCH + urllib.parse.quote(text)).get("apps", [])
+    except OSError as e:
+        raise Refused("Couldn't reach F-Droid (%s)." % getattr(e, "reason", e))
+    apps = []
+    for a in found:
+        package = a.get("url", "").rstrip("/").rsplit("/", 1)[-1]
+        if package:
+            apps.append({"package": package, "name": a.get("name") or package,
+                         "summary": a.get("summary", ""), "icon": a.get("icon", "")})
+    return {"apps": apps}
+
+
+def cmd_fdroid_add(package):
+    try:
+        meta = _get_json("%s/api/v1/packages/%s" % (FDROID, urllib.parse.quote(package)))
+    except OSError as e:
+        raise Refused("F-Droid doesn't have %s (%s)." % (package, getattr(e, "reason", e)))
+    builds = meta.get("packages", [])
+    if not builds:
+        raise Refused("F-Droid has no downloads for %s." % package)
+    suggested = meta.get("suggestedVersionCode")
+    newest = next((b["versionName"] for b in builds if b["versionCode"] == suggested), builds[0]["versionName"])
+    # the newest version's builds first (F-Droid publishes one per processor type for some apps)
+    candidates = [b["versionCode"] for b in builds if b["versionName"] == newest]
+    candidates.sort(key=lambda c: c != suggested)
+    last_error = None
+    with tempfile.TemporaryDirectory() as tmp:
+        for code in candidates[:4]:
+            apk = os.path.join(tmp, "%s_%d.apk" % (package, code))
+            try:
+                download("%s/repo/%s_%d.apk" % (FDROID, package, code), apk)
+            except OSError as e:
+                last_error = Refused("Couldn't download %s (%s)." % (package, getattr(e, "reason", e)))
+                continue
+            try:
+                check_runnable(inspect_apk(apk))
+            except Refused as e:
+                last_error = e
+                continue
+            return cmd_add(apk)
+    raise last_error or Refused("No build of %s can run on this device." % package)
+
+
+# ---------------------------------------------------------------- Google Play (opt-in, apkeep)
+
+def _play_account():
+    """(email, aas token) from the saved sign-in, or None."""
+    try:
+        text = open(PLAY_CONFIG).read()
+    except OSError:
+        return None
+    values = dict(re.findall(r"^\s*(email|aas_token)\s*=\s*(\S+)\s*$", text, re.M))
+    if values.get("email") and values.get("aas_token"):
+        return values["email"], values["aas_token"]
+    return None
+
+
+def cmd_play_status(_=None):
+    account = _play_account()
+    return {"signed_in": bool(account), "email": account[0] if account else ""}
+
+
+FIREFOX_PROFILES = ["~/.mozilla/firefox/*", "~/.config/mozilla/firefox/*",
+                    "~/.var/app/org.mozilla.firefox/.mozilla/firefox/*",
+                    "~/.var/app/org.mozilla.firefox/config/mozilla/firefox/*"]
+
+
+def _lz4_block(src, size):
+    out, i = bytearray(), 0
+    while i < len(src):
+        token = src[i]
+        i += 1
+        n = token >> 4
+        if n == 15:
+            while True:
+                i, n = i + 1, n + src[i]
+                if src[i - 1] != 255:
+                    break
+        out += src[i:i + n]
+        i += n
+        if i >= len(src):
+            break
+        off = src[i] | src[i + 1] << 8
+        i += 2
+        n = token & 15
+        if n == 15:
+            while True:
+                i, n = i + 1, n + src[i]
+                if src[i - 1] != 255:
+                    break
+        start = len(out) - off
+        for k in range(n + 4):
+            out.append(out[start + k])
+    return bytes(out[:size])
+
+
+def _read_mozlz4(path):
+    data = open(path, "rb").read()
+    if data[:8] != b"mozLz40\0":
+        raise ValueError("not mozlz4")
+    return json.loads(_lz4_block(data[12:], struct.unpack("<I", data[8:12])[0]))
+
+
+def _firefox_sqlite(profile, name, query):
+    """Rows from a Firefox database, read from a copy: Firefox keeps it locked while running."""
+    if not os.path.exists(os.path.join(profile, name)):
+        return []
+    with tempfile.TemporaryDirectory() as tmp:
+        for suffix in ("", "-wal"):
+            if os.path.exists(os.path.join(profile, name + suffix)):
+                shutil.copyfile(os.path.join(profile, name + suffix), os.path.join(tmp, name + suffix))
+        try:
+            db = sqlite3.connect(os.path.join(tmp, name))
+            try:
+                return db.execute(query).fetchall()
+            finally:
+                db.close()
+        except sqlite3.Error:
+            return []
+
+
+def firefox_google_signin():
+    """([oauth tokens, newest first], email or None) from the Firefox profiles, newest first."""
+    profiles = [p for pattern in FIREFOX_PROFILES for p in glob.glob(os.path.expanduser(pattern))
+                if os.path.isdir(p)]
+    profiles.sort(key=lambda p: -max((os.path.getmtime(os.path.join(p, f)) for f in
+                                      ("cookies.sqlite", "sessionstore-backups") if
+                                      os.path.exists(os.path.join(p, f))), default=0))
+    tokens, email = [], None
+    for profile in profiles:
+        for (value,) in _firefox_sqlite(profile, "cookies.sqlite",
+                                        "SELECT value FROM moz_cookies WHERE name = 'oauth_token' AND "
+                                        "host LIKE '%accounts.google.com' ORDER BY creationTime DESC"):
+            tokens.append(value)
+        for store in ("sessionstore-backups/recovery.jsonlz4", "sessionstore.jsonlz4"):
+            try:
+                cookies = _read_mozlz4(os.path.join(profile, store)).get("cookies", [])
+            except (OSError, ValueError, struct.error, IndexError):
+                continue
+            tokens += [c.get("value", "") for c in cookies if c.get("name") == "oauth_token"
+                       and c.get("host", "").endswith("accounts.google.com")]
+        if email is None:
+            rows = _firefox_sqlite(profile, "formhistory.sqlite",
+                                   "SELECT value FROM moz_formhistory WHERE fieldname = 'identifier' "
+                                   "ORDER BY lastUsed DESC LIMIT 1")
+            email = rows[0][0].strip() if rows else None
+    tokens = [t for i, t in enumerate(tokens) if t.startswith("oauth2_4/") and t not in tokens[:i]]
+    if email and "@" not in email:
+        email += "@gmail.com"
+    return tokens, email
+
+
+def cmd_play_signin(arg):
+    """arg: "[EMAIL] [OAUTH_TOKEN]"; what's missing comes from Firefox."""
+    email, token = None, None
+    for word in arg.split():
+        if word.startswith("oauth2_4/"):
+            token = word
+        elif "@" in word:
+            email = word
+        else:
+            raise Refused("Enter the whole email address of the Google account, like name@gmail.com.")
+    if not shutil.which("apkeep"):
+        raise Refused("apkeep isn't installed.")
+    tokens = [token] if token else []
+    if not token:
+        tokens, found_email = firefox_google_signin()
+        email = email or found_email
+        if not tokens:
+            raise Refused("Firefox doesn't have the Google sign-in yet. Sign in on the page that "
+                          "opened, wait a few seconds after it finishes, then try again.")
+    if not email:
+        raise Refused("Enter the email address of the Google account you signed in with.")
+    aas = None
+    for t in tokens[:3]:
+        r = subprocess.run(["apkeep", "-e", email, "--oauth-token", t, "-o", "device=" + PLAY_DEVICE],
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120)
+        m = re.search(r"AAS Token: (\S+)", r.stdout)
+        if m:
+            aas = m.group(1)
+            break
+    if not aas:
+        raise Refused("Google didn't accept the sign-in for %s. The sign-in works only once and for a "
+                      "few minutes: open Google sign-in again, sign in, and try again." % email)
+    os.makedirs(os.path.dirname(PLAY_CONFIG), exist_ok=True)
+    fd = os.open(PLAY_CONFIG + ".part", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("[google]\nemail = %s\naas_token = %s\n" % (email, aas))
+    os.replace(PLAY_CONFIG + ".part", PLAY_CONFIG)
+    return {"signed_in": True, "email": email}
+
+
+def cmd_play_signout(_=None):
+    try:
+        os.remove(PLAY_CONFIG)
+    except FileNotFoundError:
+        pass
+    return {"signed_in": False, "email": ""}
+
+
+def play_package(ref):
+    """The package name in a Google Play link (play.google.com/store/apps/details?id=..., market://)
+    or a bare package name."""
+    ref = ref.strip()
+    if "://" in ref:
+        ids = urllib.parse.parse_qs(urllib.parse.urlparse(ref).query).get("id", [])
+        ref = ids[0] if ids else ""
+    if not PLAY_PACKAGE.match(ref):
+        raise Refused("That isn't a Google Play link or package name (like com.example.game).")
+    return ref
+
+
+def cmd_play_search(text):
+    """Games and apps from Google Play's public search page (no sign-in needed). The page is
+    Google's web store HTML, read loosely: each result links to /store/apps/details?id=<package>,
+    with its name, developer and a play-lh.googleusercontent.com icon nearby."""
+    try:
+        req = urllib.request.Request(PLAY_SEARCH + urllib.parse.quote(text),
+                                     headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            page = r.read().decode("utf-8", "replace")
+    except OSError as e:
+        raise Refused("Couldn't reach Google Play (%s)." % getattr(e, "reason", e))
+    links = list(re.finditer(r'href="/store/apps/details\?id=([\w.]+)"', page))
+    found = {}
+    for i, m in enumerate(links):
+        end = links[i + 1].start() if i + 1 < len(links) else m.end() + 6000
+        seg = page[m.start():min(end, m.end() + 6000)]
+        app = found.setdefault(m.group(1), {"package": m.group(1), "name": "", "summary": "", "icon": ""})
+        name = re.search(r'^href="[^"]*" aria-label="([^"]+)"|class="(?:DdYX5|vWM94c)">([^<]+)<', seg)
+        if name and not app["name"]:
+            app["name"] = html.unescape(name.group(1) or name.group(2)).strip()
+        dev = re.search(r'class="(?:wMUdtb|LbQbAe)">([^<]+)<', seg)
+        if dev and not app["summary"]:
+            app["summary"] = html.unescape(dev.group(1)).strip()
+        icon = re.search(r'(https://play-lh\.googleusercontent\.com/[\w-]+)=s\d+', seg)
+        if icon and not app["icon"]:
+            app["icon"] = icon.group(1) + "=s128"
+    apps = [a for a in found.values() if a["name"]]
+    if links and not apps:
+        raise Refused("Google Play's search page has changed and can't be read. Paste a game's "
+                      "Google Play link instead.")
+    return {"apps": apps[:30]}
+
+
+_UNITS = {"B": 1, "KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30, "TiB": 1 << 40,
+          "kB": 1000, "KB": 1000, "MB": 1000 ** 2, "GB": 1000 ** 3, "TB": 1000 ** 4}
+# apkeep's progress bars: "[00:00:12] ███░░ 45.20 MiB/93.10 MiB | com.example.game.apk"
+_BAR = re.compile(r"([\d.]+) ?([KMGT]?i?B)/([\d.]+) ?([KMGT]?i?B) \| (\S+)")
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\r")
+
+
+def run_apkeep(args, timeout):
+    """Run apkeep in a pseudo-terminal, where it draws a progress bar per file (only there), and
+    report the files' total progress. Returns its output without the terminal codes."""
+    master, slave = os.openpty()
+    # wide enough that the bars aren't cut short
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 400, 0, 0))
+    try:
+        proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=slave, stderr=slave,
+                                close_fds=True, start_new_session=True)
+    finally:
+        os.close(slave)
+    files, output, deadline = {}, [], time.monotonic() + timeout
+    try:
+        while True:
+            if time.monotonic() > deadline:
+                proc.kill()
+                raise subprocess.TimeoutExpired(args, timeout)
+            try:
+                data = os.read(master, 1 << 16)
+            except OSError:  # EIO: apkeep has exited and the terminal is closed
+                break
+            if not data:
+                break
+            text = data.decode("utf-8", "replace")
+            output.append(text)
+            for m in _BAR.finditer(text):
+                done = float(m.group(1)) * _UNITS.get(m.group(2), 1)
+                total = float(m.group(3)) * _UNITS.get(m.group(4), 1)
+                files[m.group(5)] = (min(done, total), total)
+            if files:
+                report_progress(sum(d for d, _ in files.values()), sum(t for _, t in files.values()))
+    finally:
+        os.close(master)
+        proc.wait()
+    return _ANSI.sub("\n", "".join(output))
+
+
+def cmd_play_add(ref):
+    package = play_package(ref)
+    account = _play_account()
+    if not account:
+        raise Refused("Sign in to Google Play first.")
+    with work_dir() as tmp:
+        try:
+            out = run_apkeep(["apkeep", "-a", package, "-d", "google-play", "-i", PLAY_CONFIG,
+                              "-o", "device=%s,split_apk=true,include_additional_files=true" % PLAY_DEVICE,
+                              "--accept-tos", "-r", "1", tmp], timeout=4 * 3600)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise Refused("The download from Google Play failed (%s)." % e)
+        if "downloaded successfully" not in out:
+            if "Could not log in" in out or "Terms of Service" in out:
+                raise Refused("Google Play didn't accept the saved sign-in. Sign out and sign in again.")
+            if "Invalid app response" in out:
+                raise Refused("Google Play didn't hand out %s. It may be a paid game this account hasn't "
+                              "bought, not offered in your country, or not offered for Android 11 phones."
+                              % package)
+            lines = [l.strip() for l in out.splitlines() if l.strip() and not _BAR.search(l)]
+            raise Refused("The download of %s from Google Play failed: %s" % (
+                package, (lines or ["no output"])[-1]))
+        folder = os.path.join(tmp, package)
+        if os.path.isdir(folder):
+            files = [os.path.join(folder, n) for n in sorted(os.listdir(folder))]
+        else:
+            files = [os.path.join(tmp, n) for n in sorted(os.listdir(tmp))]
+        apks = [f for f in files if f.endswith(".apk")]
+        obbs = [f for f in files if f.endswith(".obb")]
+        if not apks:
+            raise Refused("Google Play sent no APK for %s." % package)
+        apk, splits = split_apk_set(apks)
+        return add_game(apk, splits, obbs, move=True)
+
+
+def main(argv):
+    notify = "--notify" in argv
+    args = [a for a in argv if a != "--notify"]
+    commands = {"inspect": cmd_inspect, "add": lambda p: cmd_add(p, notify),
+                "fdroid-search": cmd_fdroid_search, "fdroid-add": cmd_fdroid_add,
+                "play-status": cmd_play_status, "play-signin": cmd_play_signin,
+                "play-signout": cmd_play_signout, "play-search": cmd_play_search,
+                "play-add": cmd_play_add}
+    if args and args[0] in ("play-status", "play-signout"):
+        args = args[:1] + [""]
+    elif args and args[0] == "play-signin":
+        args = args[:1] + [" ".join(args[1:])]  # optional EMAIL and TOKEN
+    if len(args) != 2 or args[0] not in commands:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    try:
+        result = commands[args[0]](args[1])
+        print(json.dumps(dict(ok=True, **result)))
+        return 0
+    except Refused as e:
+        print(json.dumps({"ok": False, "error": str(e)}))
+        if notify:
+            send_notification("Couldn't add the Android game", str(e), "dialog-error")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

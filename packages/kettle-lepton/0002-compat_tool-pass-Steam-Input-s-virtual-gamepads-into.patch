@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Sun, 27 Sep 2026 20:48:19 -0500
+Subject: [PATCH 2/2] compat_tool: pass Steam Input's virtual gamepads into the
+ container
+
+Without a headset there are no XR controllers, and the handheld's own
+pad reaches games through Steam Input's virtual Xbox 360 pads. Mount
+those evdev nodes (uinput, vendor 28de) into /dev/input, where
+Android's EventHub registers them as gamepads.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ compat_tool/liblepton/mounting.sh | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/compat_tool/liblepton/mounting.sh b/compat_tool/liblepton/mounting.sh
+index de9f925..42f68f6 100755
+--- a/compat_tool/liblepton/mounting.sh
++++ b/compat_tool/liblepton/mounting.sh
+@@ -484,6 +484,17 @@ function setup_podman_mounts()
+         fi
+     done
+ 
++    # Kettle: Steam Input's virtual gamepads (uinput, vendor 28de), which Android's EventHub
++    # picks up as gamepads. logind's uaccess ACL lets the session user open them.
++    local sys_ev ev
++    for sys_ev in /sys/class/input/event*; do
++        [[ "$(cat "${sys_ev}/device/id/vendor" 2>/dev/null)" == "28de" ]] || continue
++        [[ "$(cat "${sys_ev}/device/name" 2>/dev/null)" == *"X-Box 360 pad"* ]] || continue
++        ev="$(lepton_basename "${sys_ev}")"
++        println "Passing through Steam Input gamepad /dev/input/${ev}"
++        podman_mount_entry "/dev/input/${ev}" "/dev/input/${ev}" rw
++    done
++
+     # By default, we do not allow writes to msg
+     local KMSG_MOUNT="/dev/null"
+     if [[ "${LEPTON_ALLOW_KMSG:-false}" != "false" ]]; then
+-- 
+2.55.0
+

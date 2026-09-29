@@ -1,0 +1,20 @@
+# LineageOS core functionality
+#
+# Kettle Linux: LineageOS's /system/etc/init/lineage-system.rc (Apache-2.0) from Lepton's
+# Android image, without the bugreport service's keychord (volume down + volume up + power).
+# With a keychord registered, init opens every /dev/input node; Waydroid's hwcomposer makes
+# its wl_*_events there as FIFOs, and opening one waits for a writer, which only comes with
+# input: init stalled before starting SurfaceFlinger, and the game's window stayed black.
+on init
+    export TERMINFO /system/etc/terminfo
+
+on post-fs-data
+    mkdir /cache/recovery 0770 system cache
+
+    # Change permissions on fsck log so it can be added to the dropbox
+    chown root log /dev/fscklogs/log
+    chmod 0640 /dev/fscklogs/log
+
+service bugreport /system/bin/dumpstate -d -p -z
+    oneshot
+    disabled
