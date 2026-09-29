@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # Game Mode brightness on the Thor. Steam's brightness slider drives the first backlight it finds,
-# the bottom panel's (DSI0, ae94000.dsi.0), which gamescope has switched off: Game Mode runs on
-# the top panel alone. This follows the bottom backlight and sets the top one's (DSI1,
-# ae96000.dsi.0) to the same share of its range. Run by kettle-game-brightness.service while
+# the bottom panel's (DSI0, ae94000.dsi.0), while Steam runs on the top one. This follows the
+# bottom backlight and sets the top one's (DSI1, ae96000.dsi.0) to the same share of its range,
+# so the slider sets both screens. Run by kettle-game-brightness.service while
 # Game Mode runs; 61-kettle-thor-backlight.rules makes the top one writable for the video group.
 import sys
 import time

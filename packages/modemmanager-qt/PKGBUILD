@@ -1,0 +1,25 @@
+# ModemManagerQt at deckard's KF6 version (6.14), as networkmanager-qt: deckard ships 6.1.0,
+# older than the KF6 >= 6.5 plasma-mobile needs. Arch's PKGBUILD, without the API docs.
+pkgname=modemmanager-qt
+pkgver=6.14.0
+pkgrel=1
+pkgdesc='Qt wrapper for ModemManager DBus API'
+arch=(aarch64)
+url='https://community.kde.org/Frameworks'
+license=(LGPL-2.0-only LGPL-3.0-only)
+depends=(gcc-libs glibc modemmanager qt6-base)
+makedepends=(cmake ninja extra-cmake-modules qt6-tools)
+source=(https://download.kde.org/stable/frameworks/${pkgver%.*}/$pkgname-$pkgver.tar.xz)
+sha256sums=('c1f03a4df18c28c42540ba59d9f9b9962d59f4074cdf686bc787e2ff595783d9')
+
+build() {
+  cmake -B build -S $pkgname-$pkgver -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DBUILD_TESTING=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}

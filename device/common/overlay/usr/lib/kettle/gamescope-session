@@ -35,9 +35,16 @@ export QT_IM_MODULE=xim GTK_IM_MODULE=xim QT_QPA_PLATFORMTHEME=kde
 # overrides (e.g. GAMESCOPE_EXTRA_ARGS="--force-orientation normal"):
 #   GAMESCOPE_ORIENTATION  how the panel is mounted (default: left, the Portal's 270 degree panel)
 #   GAMESCOPE_OUTPUT       the connector to use (default: gamescope's choice)
+#   GAMESCOPE_LEASE_OUTPUT a second screen's connector, leased to the screen's own gamescope
+#                          (kettle-bottom-screen.service) while Game Mode runs
+#   GAMESCOPE_LEASE_TOUCH  that screen's touchscreen, whose input goes to it, never to Steam
+#   GAMESCOPE_BOTTOM_SCREEN=0  leave the second screen off in Game Mode
 for f in /usr/lib/kettle/gamescope.conf /etc/kettle/gamescope.conf "$HOME/.config/kettle/gamescope.conf"; do
   [ -r "$f" ] && . "$f"
 done
+[ "${GAMESCOPE_BOTTOM_SCREEN:-1}" = 0 ] && GAMESCOPE_LEASE_OUTPUT=
+# the lease is handed over this socket, in the user's own runtime dir
+export GAMESCOPE_LEASE_SOCK="$XDG_RUNTIME_DIR/gamescope-lease.sock"
 
 args=(
   --steam --mangoapp
@@ -45,6 +52,8 @@ args=(
   -T "$stats"
   --force-orientation "${GAMESCOPE_ORIENTATION:-left}"   # 1080x1920 portrait panel -> 1920x1080
   ${GAMESCOPE_OUTPUT:+--prefer-output "$GAMESCOPE_OUTPUT"}
+  ${GAMESCOPE_LEASE_OUTPUT:+--lease-connector "$GAMESCOPE_LEASE_OUTPUT"}
+  ${GAMESCOPE_LEASE_TOUCH:+--ignore-touch-device "$GAMESCOPE_LEASE_TOUCH"}
   --default-touch-mode 4
   --hide-cursor-delay 3000
   --fade-out-duration 200

@@ -1,0 +1,27 @@
+# NetworkManagerQt at deckard's KF6 version (6.14). deckard ships 6.1.0 from Arch's 2024
+# snapshot, older than the KF6 >= 6.5 plasma-mobile needs; KF6 keeps binary compatibility,
+# so deckard's plasma-nm keeps working with this one. Arch's PKGBUILD, without the API docs.
+pkgname=networkmanager-qt
+pkgver=6.14.0
+pkgrel=1
+pkgdesc='Qt wrapper for NetworkManager API'
+arch=(aarch64)
+url='https://community.kde.org/Frameworks'
+license=(LGPL-2.0-only LGPL-3.0-only)
+depends=(gcc-libs glibc networkmanager qt6-base)
+makedepends=(cmake ninja extra-cmake-modules qt6-declarative qt6-tools)
+optdepends=('qt6-declarative: QML bindings')
+source=(https://download.kde.org/stable/frameworks/${pkgver%.*}/$pkgname-$pkgver.tar.xz)
+sha256sums=('0c392bdf4f8dd85f1441f65ba931d8f49541c5567f2350c78e7b121434c3b126')
+
+build() {
+  cmake -B build -S $pkgname-$pkgver -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DBUILD_TESTING=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}

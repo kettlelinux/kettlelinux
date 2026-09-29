@@ -1,0 +1,31 @@
+From fa311bbb9ceab74ca81db9114747160e7a8891a9 Mon Sep 17 00:00:00 2001
+From: JPyke3 <github@pyk.ee>
+Date: Thu, 3 Sep 2026 21:17:34 +1000
+Subject: [PATCH] x11-windowed: select the touch events it handles
+
+The X11-windowed output selects raw touch begin and update events, while
+X11WindowedBackend::handleXinputEvent() handles only their non-raw
+counterparts. As a result, nested KWin sessions never receive complete touch
+sequences and touch gestures do not work.
+
+Select the same XI2 touch event types that the backend handles. Touch end and
+ownership already use the correct non-raw masks.
+
+Based-on: https://github.com/armada-os/armada/blob/main/packages/kwin/patches/0002-x11-windowed-select-touch-events.patch
+---
+ src/backends/x11/windowed/x11_windowed_output.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/backends/x11/windowed/x11_windowed_output.cpp b/src/backends/x11/windowed/x11_windowed_output.cpp
+index 9469a6b..7bcaab3 100644
+--- a/src/backends/x11/windowed/x11_windowed_output.cpp
++++ b/src/backends/x11/windowed/x11_windowed_output.cpp
+@@ -289,7 +289,7 @@ void X11WindowedOutput::initXInputForWindow()
+     } mask;
+     mask.head.deviceid = XCB_INPUT_DEVICE_ALL_MASTER;
+     mask.head.mask_len = 1;
+-    mask.mask = static_cast<xcb_input_xi_event_mask_t>(XCB_INPUT_XI_EVENT_MASK_RAW_TOUCH_BEGIN | XCB_INPUT_XI_EVENT_MASK_RAW_TOUCH_UPDATE | XCB_INPUT_XI_EVENT_MASK_TOUCH_END | XCB_INPUT_XI_EVENT_MASK_TOUCH_OWNERSHIP);
++    mask.mask = static_cast<xcb_input_xi_event_mask_t>(XCB_INPUT_XI_EVENT_MASK_TOUCH_BEGIN | XCB_INPUT_XI_EVENT_MASK_TOUCH_UPDATE | XCB_INPUT_XI_EVENT_MASK_TOUCH_END | XCB_INPUT_XI_EVENT_MASK_TOUCH_OWNERSHIP);
+     xcb_input_xi_select_events(m_backend->connection(), m_window, 1, &mask.head);
+ #endif
+ }
