@@ -39,6 +39,16 @@ BasePage {
         }
     }
 
+    TileGrid {
+        visible: Backend.hasAndroidGames
+        Tile {
+            iconName: "smartphone"
+            title: "Android games"
+            subtitle: "Add an APK file or a game from F-Droid to Steam, to play in Game Mode."
+            onClicked: page.navigate("android")
+        }
+    }
+
     Section {
         title: "Play them in Game Mode"
         description: "In Steam on the desktop, choose Add a Game > Add a Non-Steam Game. Or add whole libraries at once, with artwork, with BoilR. The games then show up in your Steam library in Game Mode."

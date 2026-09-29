@@ -4,8 +4,9 @@
 # its icon on the desktop (/etc/skel/Desktop/Welcome.desktop).
 # Pages: Welcome (get-started checklist), Setup (System Settings modules in their own windows:
 # password and account, Wi-Fi, display, sound, ...), Controls (the controller as mouse and
-# keyboard, Return to Game Mode), Games (Heroic, Lutris, Steam; Windows games), Gaming Extras,
-# System (Kettle Installer, Discover, System Monitor, battery, about).
+# keyboard, Return to Game Mode), Games (Heroic, Lutris, Steam; Windows games), Android (APKs
+# and F-Droid games into Steam, with kettle-lepton), Gaming Extras, System (Kettle Installer,
+# Discover, System Monitor, battery, about).
 #
 # Gaming Extras: optional apps (emulators, streaming, Steam helpers) with aarch64 builds on
 # Flathub, installed per user by welcome-flatpak, which runs as a transient systemd user unit so
@@ -13,7 +14,7 @@
 # (org.kettle.GamingExtras.desktop: kettle-welcome --page extras).
 pkgname=kettle-welcome
 pkgver=2.0.0
-pkgrel=3
+pkgrel=9
 pkgdesc='Kettle Linux welcome and setup hub for the desktop'
 arch=(aarch64)
 license=(BSD-3-Clause)
