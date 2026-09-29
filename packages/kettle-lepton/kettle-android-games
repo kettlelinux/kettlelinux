@@ -14,6 +14,7 @@
                                              token, it's taken from Firefox after the user
                                              signed in there
   kettle-android-games play-signout          forget the Google account
+  kettle-android-games play-search TEXT      search Google Play
   kettle-android-games play-add APP          download a game from Google Play (its link or
                                              package name) and add it
 
@@ -37,6 +38,7 @@ Firefox's form history of Google's sign-in box, unless given.
 """
 import base64
 import glob
+import html
 import json
 import os
 import re
@@ -60,6 +62,7 @@ USER_AGENT = "kettle-android-games"
 PLAY_CONFIG = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
                            "kettle-lepton", "google-play.ini")
 PLAY_DEVICE = "poco_f1"  # Android 11 (Lepton's), arm64, Adreno
+PLAY_SEARCH = "https://play.google.com/store/search?c=apps&hl=en&q="
 PLAY_PACKAGE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$")
 
 
@@ -709,6 +712,39 @@ def play_package(ref):
     return ref
 
 
+def cmd_play_search(text):
+    """Games and apps from Google Play's public search page (no sign-in needed). The page is
+    Google's web store HTML, read loosely: each result links to /store/apps/details?id=<package>,
+    with its name, developer and a play-lh.googleusercontent.com icon nearby."""
+    try:
+        req = urllib.request.Request(PLAY_SEARCH + urllib.parse.quote(text),
+                                     headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            page = r.read().decode("utf-8", "replace")
+    except OSError as e:
+        raise Refused("Couldn't reach Google Play (%s)." % getattr(e, "reason", e))
+    links = list(re.finditer(r'href="/store/apps/details\?id=([\w.]+)"', page))
+    found = {}
+    for i, m in enumerate(links):
+        end = links[i + 1].start() if i + 1 < len(links) else m.end() + 6000
+        seg = page[m.start():min(end, m.end() + 6000)]
+        app = found.setdefault(m.group(1), {"package": m.group(1), "name": "", "summary": "", "icon": ""})
+        name = re.search(r'^href="[^"]*" aria-label="([^"]+)"|class="(?:DdYX5|vWM94c)">([^<]+)<', seg)
+        if name and not app["name"]:
+            app["name"] = html.unescape(name.group(1) or name.group(2)).strip()
+        dev = re.search(r'class="(?:wMUdtb|LbQbAe)">([^<]+)<', seg)
+        if dev and not app["summary"]:
+            app["summary"] = html.unescape(dev.group(1)).strip()
+        icon = re.search(r'(https://play-lh\.googleusercontent\.com/[\w-]+)=s\d+', seg)
+        if icon and not app["icon"]:
+            app["icon"] = icon.group(1) + "=s128"
+    apps = [a for a in found.values() if a["name"]]
+    if links and not apps:
+        raise Refused("Google Play's search page has changed and can't be read. Paste a game's "
+                      "Google Play link instead.")
+    return {"apps": apps[:30]}
+
+
 def cmd_play_add(ref):
     package = play_package(ref)
     account = _play_account()
@@ -751,7 +787,8 @@ def main(argv):
     commands = {"inspect": cmd_inspect, "add": lambda p: cmd_add(p, notify),
                 "fdroid-search": cmd_fdroid_search, "fdroid-add": cmd_fdroid_add,
                 "play-status": cmd_play_status, "play-signin": cmd_play_signin,
-                "play-signout": cmd_play_signout, "play-add": cmd_play_add}
+                "play-signout": cmd_play_signout, "play-search": cmd_play_search,
+                "play-add": cmd_play_add}
     if args and args[0] in ("play-status", "play-signout"):
         args = args[:1] + [""]
     elif args and args[0] == "play-signin":
