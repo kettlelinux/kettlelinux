@@ -22,6 +22,7 @@ BasePage {
     // the last result: {ok, error} or the added game
     property var result: null
     property var searchResults: []
+    property var playResults: []
     property string lastCommand: ""
     // the Google account signed in for Google Play downloads ("" when none)
     property string playEmail: ""
@@ -39,6 +40,9 @@ BasePage {
                 page.result = res.ok ? null : res;
             } else if (command === "fdroid-search") {
                 page.searchResults = res.ok ? res.apps : [];
+                page.result = res.ok ? null : res;
+            } else if (command === "play-search") {
+                page.playResults = res.ok ? res.apps : [];
                 page.result = res.ok ? null : res;
             } else {
                 page.result = res;
@@ -96,7 +100,8 @@ BasePage {
                     return page.lastCommand === "fdroid-search" ? "Searching F-Droid…"
                         : page.lastCommand === "fdroid-add" ? "Downloading from F-Droid and adding to Steam…"
                         : page.lastCommand === "play-signin" ? "Signing in to Google Play…"
-                        : page.lastCommand === "play-add" ? "Downloading from Google Play and adding to Steam… Big games take a while."
+                        : page.lastCommand === "play-search" ? "Searching Google Play…"
+                        : page.lastCommand === "play-add" ? "Downloading from Google Play and adding to Steam… Big games take a while; you can keep using the device."
                         : page.lastCommand === "play-status" || page.lastCommand === "" ? ""
                         : "Adding to Steam…";
                 const r = page.result;
@@ -135,54 +140,10 @@ BasePage {
         }
     }
 
-    QQC2.Label {
-        Layout.fillWidth: true
-        visible: page.lastCommand === "fdroid-search" && !Backend.androidBusy && page.result === null
-                 && page.searchResults.length === 0
-        text: "Nothing found."
-        opacity: 0.8
-    }
-
-    Repeater {
-        model: page.searchResults
-
-        delegate: RowLayout {
-            required property var modelData
-
-            Layout.fillWidth: true
-            spacing: Kirigami.Units.largeSpacing
-
-            Image {
-                source: modelData.icon
-                asynchronous: true
-                fillMode: Image.PreserveAspectFit
-                Layout.preferredWidth: Kirigami.Units.iconSizes.large
-                Layout.preferredHeight: Kirigami.Units.iconSizes.large
-            }
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 0
-
-                QQC2.Label {
-                    Layout.fillWidth: true
-                    text: modelData.name
-                    font.bold: true
-                    elide: Text.ElideRight
-                }
-                QQC2.Label {
-                    Layout.fillWidth: true
-                    text: modelData.summary
-                    wrapMode: Text.Wrap
-                    opacity: 0.8
-                }
-            }
-            QQC2.Button {
-                text: "Add to Steam"
-                icon.name: "list-add"
-                enabled: !Backend.androidBusy
-                onClicked: page.run("fdroid-add", modelData.package)
-            }
-        }
+    ResultList {
+        results: page.searchResults
+        searchCommand: "fdroid-search"
+        addCommand: "fdroid-add"
     }
 
     Section {
@@ -249,29 +210,102 @@ BasePage {
         }
     }
 
+    // Games come to this device only through here: the Install button of the Google Play
+    // website sends them to the account's Android phones.
     RowLayout {
         Layout.fillWidth: true
         visible: !!page.playEmail
 
-        QQC2.TextField {
-            id: playField
+        Kirigami.SearchField {
+            id: playSearchField
             Layout.fillWidth: true
-            placeholderText: "Google Play link or package name, e.g. com.example.game"
-            onAccepted: if (text.trim().length > 0 && !Backend.androidBusy) page.run("play-add", text.trim())
+            placeholderText: "Search Google Play, or paste a game's Google Play link"
+            autoAccept: false
+            onAccepted: page.playSearchOrAdd()
         }
         QQC2.Button {
-            text: "Download and add"
-            icon.name: "download"
-            enabled: !Backend.androidBusy && playField.text.trim().length > 0
-            onClicked: page.run("play-add", playField.text.trim())
+            text: /^(https?:|market:)/.test(playSearchField.text.trim()) ? "Download and add" : "Search"
+            icon.name: /^(https?:|market:)/.test(playSearchField.text.trim()) ? "download" : "search"
+            enabled: !Backend.androidBusy && playSearchField.text.trim().length > 0
+            onClicked: page.playSearchOrAdd()
         }
     }
 
-    QQC2.Button {
+    ResultList {
         visible: !!page.playEmail
-        text: "Find games on Google Play"
-        icon.name: "internet-web-browser"
-        onClicked: Qt.openUrlExternally("https://play.google.com/store/games")
+        results: page.playResults
+        searchCommand: "play-search"
+        addCommand: "play-add"
+        addText: "Download and add"
+    }
+
+    function playSearchOrAdd() {
+        const text = playSearchField.text.trim();
+        if (text.length === 0 || Backend.androidBusy)
+            return;
+        page.run(/^(https?:|market:)/.test(text) ? "play-add" : "play-search", text);
+    }
+
+    component ResultList: ColumnLayout {
+        id: list
+
+        property var results: []
+        property string searchCommand
+        property string addCommand
+        property string addText: "Add to Steam"
+
+        Layout.fillWidth: true
+        spacing: Kirigami.Units.largeSpacing
+
+        QQC2.Label {
+            Layout.fillWidth: true
+            visible: page.lastCommand === list.searchCommand && !Backend.androidBusy && page.result === null
+                     && list.results.length === 0
+            text: "Nothing found."
+            opacity: 0.8
+        }
+
+        Repeater {
+            model: list.results
+
+            delegate: RowLayout {
+                required property var modelData
+
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.largeSpacing
+
+                Image {
+                    source: modelData.icon
+                    asynchronous: true
+                    fillMode: Image.PreserveAspectFit
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.large
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.large
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 0
+
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        text: modelData.name
+                        font.bold: true
+                        elide: Text.ElideRight
+                    }
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        text: modelData.summary
+                        wrapMode: Text.Wrap
+                        opacity: 0.8
+                    }
+                }
+                QQC2.Button {
+                    text: list.addText
+                    icon.name: "list-add"
+                    enabled: !Backend.androidBusy
+                    onClicked: page.run(list.addCommand, modelData.package)
+                }
+            }
+        }
     }
 
     Section {
