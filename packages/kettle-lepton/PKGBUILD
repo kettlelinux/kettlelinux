@@ -9,7 +9,9 @@
 # 0001 (ours) shows the 2D window by default (no headset); 0002 (ours) passes Steam Input's
 #   virtual gamepads into the container; 0003 (ours) installs the split APKs of a game Google
 #   Play delivers as an app bundle, kept in splits/ next to its APK; 0004 (ours) finds a launcher
-#   activity declared as an <activity-alias> (Roblox). lepton-kettle puts a
+#   activity declared as an <activity-alias> (Roblox); 0005 (ours) fixes the Android image's
+#   scripts for apps installed with split APKs, shipped in liblepton/rootfs_overlay, which it
+#   mounts over the image's own (Steam's copy of the image stays as it is). lepton-kettle puts a
 #   steamvr stand-in on the launcher's PATH (the Frame's steamvr helper only answers where
 #   SteamVR lives).
 # kettle-android-games (ours) adds an .apk to Steam set to this tool, from the command line,
@@ -22,7 +24,7 @@
 # locked crates need a newer compiler than the snapshot's 1.78.
 pkgname=kettle-lepton
 pkgver=3.0.3
-pkgrel=8
+pkgrel=9
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Android games in Steam through Valve Lepton (Kettle Linux compatibility tool)'
@@ -44,6 +46,7 @@ source=("lepton::git+https://gitlab.steamos.cloud/frame-public/lepton.git#tag=v$
         0002-compat_tool-pass-Steam-Input-s-virtual-gamepads-into.patch
         0003-compat_tool-install-split-APKs-kept-in-splits-next-t.patch
         0004-apk_extractor-find-launcher-activities-declared-as-a.patch
+        0005-compat_tool-handle-apps-installed-with-split-APKs-in.patch
         lepton-kettle
         steamvr
         compatibilitytool.vdf
@@ -57,6 +60,7 @@ sha256sums=('SKIP'
             'a7b2864c6f3c0199c17b329f26b45dcee8ec2dfe9320585e384084408de8f8ac'
             'c77c79f100351f62537ff1c70eed1756112a2187e6104c88a95e2791d67d4538'
             '12b7c0aa5f323c02cc454e26ba5d668d6fa24118b90c1a69e2a147cc771d3984'
+            '90cc871c561635a0f6a7d193f57ed38f06c155dea9e9b4188151307f7b32a572'
             '5f8c2b8abf381d7e85b08f25f34531c201bedd0b4966d8409e65111a566aa58e'
             'e4c2e8bbcac361770f1d9479aacbe9e90bb9e13c0f2c91d694e0d1e72887e0e7'
             '9254fa985690b9e4b0cd11e511868a46e09acda2db434b616f0a552cce3afc5b'
@@ -93,6 +97,9 @@ package() {
   install -Dm755 liblepton/apk_extractor/target/release/apk-info-extractor -t "$lib/liblepton/apk_extractor/bin"
   echo "v$pkgver-kettle" >"$lib/version.txt"
   install -Dm755 "$srcdir/steamvr" -t "$lib/bin"
+  # the Android image's files 0005 fixes, mounted over Steam's copy of the image
+  install -Dm755 images/rootfs_overlay/system/bin/cmd -t "$lib/liblepton/rootfs_overlay/system/bin"
+  install -Dm755 images/rootfs_overlay/vendor/bin/fix_obb_symlink.sh -t "$lib/liblepton/rootfs_overlay/vendor/bin"
 
   # Steam compatibility tool
   install -Dm755 "$srcdir/lepton-kettle" -t "$tool"

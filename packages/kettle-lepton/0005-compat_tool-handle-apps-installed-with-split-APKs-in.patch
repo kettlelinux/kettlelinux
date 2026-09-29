@@ -1,0 +1,77 @@
+From ea5271d09c3bfb3bc02cbe5cc5139c424496135e Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Mon, 28 Sep 2026 19:24:18 -0500
+Subject: [PATCH] compat_tool: handle apps installed with split APKs in the
+ Android image's scripts
+
+---
+ compat_tool/images/rootfs_overlay/system/bin/cmd           | 7 ++++---
+ .../images/rootfs_overlay/vendor/bin/fix_obb_symlink.sh    | 2 +-
+ compat_tool/liblepton/mounting.sh                          | 5 ++++-
+ 3 files changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/compat_tool/images/rootfs_overlay/system/bin/cmd b/compat_tool/images/rootfs_overlay/system/bin/cmd
+index 4049992..c5dd4e1 100755
+--- a/compat_tool/images/rootfs_overlay/system/bin/cmd
++++ b/compat_tool/images/rootfs_overlay/system/bin/cmd
+@@ -14,7 +14,7 @@ unmount_vulkan_layers()
+     cmd_real package list packages -3 -U | while IFS= read -r package_line; do
+         package=$(echo "$package_line" | cut -d' ' -f1 | cut -d: -f2)
+         for vulkan_layer in /vendor/enabled_vulkan_layers/*.so; do
+-            APP_PATH=$(pm path "$package")
++            APP_PATH=$(pm path "$package" | grep -m 1 '/base.apk$')
+             APP_PATH="${APP_PATH#package:}"
+             APP_PATH="${APP_PATH%/base.apk}"
+ 
+@@ -33,7 +33,7 @@ mount_vulkan_layers()
+     cmd_real package list packages -3 -U | while IFS= read -r package_line; do
+         package=$(echo "$package_line" | cut -d' ' -f1 | cut -d: -f2)
+         for vulkan_layer in /vendor/enabled_vulkan_layers/*.so; do
+-            APP_PATH=$(pm path "$package")
++            APP_PATH=$(pm path "$package" | grep -m 1 '/base.apk$')
+             APP_PATH="${APP_PATH#package:}"
+             APP_PATH="${APP_PATH%/base.apk}"
+ 
+@@ -132,7 +132,8 @@ if [ "$?" = "0" ] && [ "$1" = "package" ] && { [ "$2" = "install" ] || [ "$2" =
+     rm -rf /data/media/0/Android/obb/${APP_ID};
+     mkdir -p /data/media/0/Android/obb
+ 
+-    APP_PATH="$(cmd_real package path ${APP_ID})"
++    # An app installed with split APKs lists each of them; its directory is the base APK's
++    APP_PATH="$(cmd_real package path ${APP_ID} | grep -m 1 '/base.apk$')"
+     APP_PATH="${APP_PATH#package:}"
+     APP_PATH="${APP_PATH%/base.apk}"
+ 
+diff --git a/compat_tool/images/rootfs_overlay/vendor/bin/fix_obb_symlink.sh b/compat_tool/images/rootfs_overlay/vendor/bin/fix_obb_symlink.sh
+index a755ef1..f0f7948 100755
+--- a/compat_tool/images/rootfs_overlay/vendor/bin/fix_obb_symlink.sh
++++ b/compat_tool/images/rootfs_overlay/vendor/bin/fix_obb_symlink.sh
+@@ -2,7 +2,7 @@
+ 
+ APP_ID=$1
+ 
+-APP_PATH="$(pm path ${APP_ID} | sed "s/^package://g" | sed "s/\/base.apk$//g")";
++APP_PATH="$(pm path ${APP_ID} | grep -m 1 '/base.apk$' | sed "s/^package://g" | sed "s/\/base.apk$//g")";
+ 
+ local OBB_INNER_PATH="${APP_PATH}"
+ 
+diff --git a/compat_tool/liblepton/mounting.sh b/compat_tool/liblepton/mounting.sh
+index 42f68f6..1f27bf7 100755
+--- a/compat_tool/liblepton/mounting.sh
++++ b/compat_tool/liblepton/mounting.sh
+@@ -78,8 +78,11 @@ function setup_mounts()
+     # However do this using bind mounts because we cannot use multiple
+     # lowerdirs with the rootfs
+     GUESTOS_OVERLAY="/usr/share/guestos/android"
++    # Files a distribution fixes in the Android image it doesn't ship (mounted last, so they win)
++    DISTRO_OVERLAY="${LEPTON_DIR}/rootfs_overlay"
++    [[ -d "${DISTRO_OVERLAY}" ]] || DISTRO_OVERLAY=""
+ 
+-    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY}; do
++    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY} ${DISTRO_OVERLAY}; do
+         pushd "${OVERLAY}" >/dev/null || exit
+         while IFS= read -r -d '' file; do
+             DST="${file#./}"
+-- 
+2.55.0
+
