@@ -21,7 +21,7 @@ source=("git+https://github.com/SteamDeckHomebrew/decky-loader.git#commit=$_comm
         decky-loader-start
         plugin_loader.service)
 sha256sums=('SKIP'
-            '0699ffaca8d6c6ac45784100a48ec16386b66ce3f6cdf83e875ca3ff057f8e64'
+            'da411dcb027402245fda8de1f24ff42965fe5e855a1697f38f7f1fbd3d080b0b'
             '5792b3665dc21172f93faf6212f5a4e8fcefca1301356cd144a05d4fa335be79'
             'af591f6cb3e9864f5860a162b6dc221ac2e3251687d6d0e1239b70e17b25237e'
             'c4a08c48d8eb9150446042055c535e9a01357c6d8acddb75a0b2a7e43e6acf2a')
