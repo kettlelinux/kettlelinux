@@ -24,7 +24,7 @@
 # locked crates need a newer compiler than the snapshot's 1.78.
 pkgname=kettle-lepton
 pkgver=3.0.3
-pkgrel=9
+pkgrel=10
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Android games in Steam through Valve Lepton (Kettle Linux compatibility tool)'
@@ -60,7 +60,7 @@ sha256sums=('SKIP'
             'a7b2864c6f3c0199c17b329f26b45dcee8ec2dfe9320585e384084408de8f8ac'
             'c77c79f100351f62537ff1c70eed1756112a2187e6104c88a95e2791d67d4538'
             '12b7c0aa5f323c02cc454e26ba5d668d6fa24118b90c1a69e2a147cc771d3984'
-            '90cc871c561635a0f6a7d193f57ed38f06c155dea9e9b4188151307f7b32a572'
+            'e545d165492ec767ec1d56d15a050f935d00956b8a004e7c2f9cf166a9e791ec'
             '5f8c2b8abf381d7e85b08f25f34531c201bedd0b4966d8409e65111a566aa58e'
             'e4c2e8bbcac361770f1d9479aacbe9e90bb9e13c0f2c91d694e0d1e72887e0e7'
             '9254fa985690b9e4b0cd11e511868a46e09acda2db434b616f0a552cce3afc5b'
