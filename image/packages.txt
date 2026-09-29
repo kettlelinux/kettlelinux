@@ -87,6 +87,9 @@ flatpak
 # icons and default-browser setting (packages/kettle-firefox-desktop)
 firefox
 kettle-firefox-desktop
+# FFmpeg with DRM-PRIME V4L2 decoding, beside Valve's, for Firefox's hardware video decoding
+# (packages/ffmpeg-v4l2)
+ffmpeg-v4l2
 # fonts: noto-fonts covers Latin, Greek, Cyrillic, Arabic, Thai and more; -cjk is Chinese,
 # Japanese and Korean (Steam's language picker names each language in its own script, and CJK
 # names showed as empty boxes without it), as on SteamOS

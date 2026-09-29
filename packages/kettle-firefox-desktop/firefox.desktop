@@ -5,7 +5,7 @@ Name=Firefox
 GenericName=Web Browser
 Comment=Fast and private browser
 Keywords=Internet;WWW;Browser;Web;Explorer;
-Exec=/usr/lib/firefox/firefox %u
+Exec=/usr/lib/kettle-firefox/kettle-firefox %u
 Icon=firefox
 Terminal=false
 X-MultipleArgs=false
@@ -18,8 +18,8 @@ Actions=new-window;new-private-window;
 
 [Desktop Action new-window]
 Name=New Window
-Exec=/usr/lib/firefox/firefox --new-window %u
+Exec=/usr/lib/kettle-firefox/kettle-firefox --new-window %u
 
 [Desktop Action new-private-window]
 Name=New Private Window
-Exec=/usr/lib/firefox/firefox --private-window %u
+Exec=/usr/lib/kettle-firefox/kettle-firefox --private-window %u

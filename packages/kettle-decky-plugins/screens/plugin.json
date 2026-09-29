@@ -1,0 +1,11 @@
+{
+  "name": "Screens",
+  "author": "Kettle Linux",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["display", "brightness"],
+    "description": "The AYN Thor's bottom screen in Game Mode: on or off, and its own brightness.",
+    "image": ""
+  }
+}

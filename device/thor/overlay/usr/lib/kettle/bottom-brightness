@@ -1,0 +1,121 @@
+#!/usr/bin/python3
+# The Thor's bottom-screen brightness in Game Mode (kettle-bottom-brightness.service). Steam's
+# brightness slider drives the top panel's backlight (ae96000.dsi.0: the bottom one is named
+# bottom-panel, 40-kettle/1130, so Steam finds the top one first); the bottom one follows its own
+# setting, the Screens Quick Access panel's (~/.config/kettle/bottom-screen.json, "brightness",
+# percent). When Steam dims the top screen for idleness, the bottom one dims by the same share,
+# and both come back on input.
+#
+# Steam's dimming isn't announced: it lowers the top backlight after a while without input. So
+# the top backlight falling well below where it was, with no input for a few seconds
+# (gamescope's GAMESCOPE_INPUT_COUNTER, on Game Mode's X display), is a dim; input, or the top
+# backlight coming back up, ends it. A slider move is input and moves the top brightness the
+# bottom is measured against. Nothing is written while the bottom screen is off (its DSI link is
+# down then: a write times out). 61-kettle-thor-backlight.rules makes bottom-panel writable for
+# the video group.
+import glob
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+
+BL = "/sys/class/backlight/"
+TOP, BOTTOM = BL + "ae96000.dsi.0/", BL + "bottom-panel/"
+STATE = os.path.expanduser("~/.config/kettle/bottom-screen.json")
+DEFAULT_PERCENT = 70
+MIN_PERCENT = 2           # the panel's lowest visible level; 0 would look off
+DIM_BELOW = 0.6           # the top at under this share of its level ...
+IDLE_SECONDS = 4          # ... with no input for this long, is Steam dimming it
+UNDIM_ABOVE = 0.9         # the top back at this share of its level: dimming is over
+
+last_input = time.monotonic()
+
+
+def watch_input():
+    """Note the time of each GAMESCOPE_INPUT_COUNTER change (any input to Game Mode)."""
+    global last_input
+    while True:
+        try:
+            p = subprocess.Popen(["xprop", "-root", "-spy", "GAMESCOPE_INPUT_COUNTER"],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            for _ in p.stdout:
+                last_input = time.monotonic()
+            p.wait()
+        except OSError as e:
+            print(f"bottom-brightness: xprop: {e}", file=sys.stderr, flush=True)
+        time.sleep(5)
+
+
+def read(path):
+    with open(path) as f:
+        return int(f.read())
+
+
+def bottom_connector():
+    """The bottom panel's DRM connector (the one with its 1080x1240 mode)."""
+    for c in glob.glob("/sys/class/drm/card*-DSI-*"):
+        try:
+            with open(c + "/modes") as f:
+                if "1080x1240" in f.read().split():
+                    return c
+        except OSError:
+            pass
+    return None
+
+
+def screen_on(connector):
+    try:
+        with open(connector + "/enabled") as f:
+            return f.read().strip() == "enabled"
+    except (OSError, TypeError):
+        return False
+
+
+def percent():
+    try:
+        with open(STATE) as f:
+            p = int(json.load(f).get("brightness", DEFAULT_PERCENT))
+    except (OSError, ValueError, TypeError, AttributeError):
+        p = DEFAULT_PERCENT
+    return min(100, max(MIN_PERCENT, p))
+
+
+def main():
+    threading.Thread(target=watch_input, daemon=True).start()
+    bottom_max = read(BOTTOM + "max_brightness")
+    connector = bottom_connector()
+    top_level = None      # the top brightness while not dimmed: what a dim is measured against
+    dimmed = False
+    last = None
+    while True:
+        try:
+            top = read(TOP + "brightness")
+            if top_level is None:
+                top_level = top
+            idle = time.monotonic() - last_input
+            if dimmed:
+                if idle < IDLE_SECONDS or top >= UNDIM_ABOVE * top_level:
+                    dimmed = False
+            elif top < DIM_BELOW * top_level and idle >= IDLE_SECONDS:
+                dimmed = True
+            if not dimmed:
+                top_level = top
+            share = top / top_level if dimmed and top_level else 1.0
+            value = max(1, round(bottom_max * percent() / 100 * share))
+            if not screen_on(connector):
+                last = None       # set it again once the screen is back
+            elif value != last:
+                with open(BOTTOM + "brightness", "w") as f:
+                    f.write(str(value))
+                last = value
+        except OSError as e:
+            print(f"bottom-brightness: {e}", file=sys.stderr, flush=True)
+            last = None
+            time.sleep(2)
+        time.sleep(0.2)
+
+
+if __name__ == "__main__":
+    main()

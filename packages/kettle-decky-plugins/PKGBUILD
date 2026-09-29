@@ -8,11 +8,14 @@
 #   welcome    opens once on first boot: a tour, a setup checklist, and optional components
 #              (components.json) downloaded from their upstream source on request; also applies
 #              game fixes (welcome/src/fixes.ts): launch options a game needs to run at all
+#   screens    the AYN Thor's bottom screen from Game Mode: on/off and its own brightness
+#              (installed on the Thor only: device/thor/packages.txt)
 # Sources live next to this PKGBUILD; shared/ holds code both frontends use.
 pkgbase=kettle-decky-plugins
-pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome kettle-decky-power)
+pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome kettle-decky-power
+         kettle-decky-screens)
 pkgver=1.12.0
-pkgrel=5
+pkgrel=6
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
@@ -20,8 +23,8 @@ makedepends=(nodejs npm)
 
 prepare() {
   rm -rf src-tree; mkdir src-tree
-  cp -r "$startdir"/{package.json,pnpm-lock.yaml,shared,framegen,upscaling,welcome,power} src-tree/
-  rm -rf src-tree/{framegen,upscaling,welcome,power}/dist
+  cp -r "$startdir"/{package.json,pnpm-lock.yaml,shared,framegen,upscaling,welcome,power,screens} src-tree/
+  rm -rf src-tree/{framegen,upscaling,welcome,power,screens}/dist
 }
 
 build() {
@@ -35,7 +38,9 @@ _install_plugin() {
   local d="$pkgdir/usr/share/decky/plugins/$1"
   install -Dm644 "src-tree/$2"/{plugin.json,package.json,main.py} -t "$d"
   install -Dm644 "src-tree/$2/dist/index.js" -t "$d/dist"
-  install -Dm644 "src-tree/$2"/py_modules/*.py -t "$d/py_modules"   # steamlib.py: symlink to shared/
+  if [ -d "src-tree/$2/py_modules" ]; then
+    install -Dm644 "src-tree/$2"/py_modules/*.py -t "$d/py_modules"   # steamlib.py: symlink to shared/
+  fi
   install -Dm644 "$startdir/LICENSE" -t "$d"
   install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
 }
@@ -63,4 +68,10 @@ package_kettle-decky-power() {
   pkgdesc='Power Decky plugin (per-game fan and CPU settings, power readout, charge limit)'
   depends=(decky-loader kettle-power python-gobject)
   _install_plugin kettle-power power
+}
+
+package_kettle-decky-screens() {
+  pkgdesc='Screens Decky plugin (the AYN Thor bottom screen: on/off and brightness)'
+  depends=(decky-loader)
+  _install_plugin kettle-screens screens
 }

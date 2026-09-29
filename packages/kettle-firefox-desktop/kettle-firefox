@@ -1,0 +1,5 @@
+#!/bin/sh
+# Starts Valve's Firefox with physmem-shim.so preloaded (see physmem-shim.c), which Firefox's
+# hardware video decoding needs here. Firefox's own processes inherit it.
+export LD_PRELOAD="/usr/lib/kettle-firefox/physmem-shim.so${LD_PRELOAD:+:$LD_PRELOAD}"
+exec /usr/lib/firefox/firefox "$@"

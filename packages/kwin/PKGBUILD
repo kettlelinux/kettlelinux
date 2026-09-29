@@ -1,11 +1,13 @@
 # deckard's KWin (Arch's 6.2.5-3, unpatched: deckard's 6.2.5-3.1 carries none of Valve's Steam
-# Deck patches) with one fix: KWin nested in an X server as a window (its X11 windowed
+# Deck patches) with two changes. 0001: KWin nested in an X server as a window (its X11 windowed
 # backend, as the Thor's bottom-screen shell runs in its gamescope's Xwayland) selected raw XI2
 # touch events but only handles the plain ones, so it never got a touch (Armada's patch).
-# pkgrel 3.2 replaces deckard's 3.1.
+# 0002 (ours): KWIN_NO_EXPLICIT_SYNC=1 leaves explicit sync (linux-drm-syncobj) off, which the
+# bottom-screen shell's nested KWin sets: its clients hung or lost their surfaces with it.
+# pkgrel 3.x replaces deckard's 3.1.
 pkgname=kwin
 pkgver=6.2.5
-pkgrel=3.2
+pkgrel=3.3
 pkgdesc='An easy to use, but flexible, composited Window Manager'
 arch=(aarch64)
 url='https://kde.org/plasma-desktop/'
@@ -23,12 +25,17 @@ makedepends=(cmake ninja extra-cmake-modules krunner plasma-wayland-protocols py
              wayland-protocols xorg-xwayland)
 install=$pkgname.install
 source=(https://download.kde.org/stable/plasma/$pkgver/$pkgname-$pkgver.tar.xz
-        0001-x11-windowed-select-the-touch-events-it-handles.patch)
+        0001-x11-windowed-select-the-touch-events-it-handles.patch
+        0002-wayland-KWIN_NO_EXPLICIT_SYNC-1-leaves-explicit-sync.patch)
 sha256sums=('5cc450a6e41105c8c49929b72550b331237f96aafb294690f4707bdc5f776848'
-            '8ed5b019fc2237af7f1643a5eee58ecaa6f02273bf3b12638a8ccc3413b95310')
+            '8ed5b019fc2237af7f1643a5eee58ecaa6f02273bf3b12638a8ccc3413b95310'
+            '5ed2408827201511ae925deb54b24175b104f21befe9655b3ff30d83e5c622cf')
 
 prepare() {
-  patch -d $pkgname-$pkgver -p1 --fuzz=0 <0001-x11-windowed-select-the-touch-events-it-handles.patch
+  local p
+  for p in 0*.patch; do
+    patch -d $pkgname-$pkgver -p1 --fuzz=0 <"$p"
+  done
 }
 
 build() {

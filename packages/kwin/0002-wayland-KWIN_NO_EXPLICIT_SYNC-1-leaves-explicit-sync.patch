@@ -1,0 +1,36 @@
+From adee6ed1d96cf9a8acda45a7d3b5f85c82334376 Mon Sep 17 00:00:00 2001
+From: gennro <kettlelinux@kettlelinux.org>
+Date: Tue, 29 Sep 2026 17:24:05 -0500
+Subject: [PATCH] wayland: KWIN_NO_EXPLICIT_SYNC=1 leaves explicit sync off
+
+KWin nested in an X server as a window (the X11 windowed backend), as
+the AYN Thor's bottom-screen shell runs inside gamescope, offered clients
+linux-drm-syncobj explicit sync, and its clients hung or lost their
+surfaces there: Firefox froze, Plasma's panels stopped drawing
+(eglSwapBuffers EGL_BAD_SURFACE), and plasmashell aborted in
+libwayland ("Tried to add event to destroyed queue" after Mesa's Vulkan
+WSI destroyed a queue with syncobj timelines still attached). Without
+explicit sync all of that stopped. Let whoever starts KWin turn it off.
+---
+ src/wayland_server.cpp | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/wayland_server.cpp b/src/wayland_server.cpp
+index 3dc503e..f4f8259 100644
+--- a/src/wayland_server.cpp
++++ b/src/wayland_server.cpp
+@@ -856,6 +856,14 @@ ExternalBrightnessV1 *WaylandServer::externalBrightness() const
+ 
+ void WaylandServer::setRenderBackend(RenderBackend *backend)
+ {
++    // KWIN_NO_EXPLICIT_SYNC=1: don't offer explicit sync (linux-drm-syncobj) to clients
++    if (qEnvironmentVariableIntValue("KWIN_NO_EXPLICIT_SYNC")) {
++        if (m_linuxDrmSyncObj) {
++            m_linuxDrmSyncObj->remove();
++            m_linuxDrmSyncObj = nullptr;
++        }
++        return;
++    }
+     if (backend->drmDevice()->supportsSyncObjTimelines()) {
+         // ensure the DRM_IOCTL_SYNCOBJ_EVENTFD ioctl is supported
+         const auto linuxVersion = linuxKernelVersion();
