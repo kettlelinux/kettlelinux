@@ -80,41 +80,9 @@ BasePage {
         }
     }
 
-    RowLayout {
-        Layout.fillWidth: true
-        spacing: Kirigami.Units.largeSpacing
-        visible: (Backend.androidBusy && page.lastCommand !== "") || page.result !== null
-
-        QQC2.BusyIndicator {
-            visible: Backend.androidBusy
-            running: visible
-            Layout.preferredHeight: Kirigami.Units.iconSizes.medium
-            Layout.preferredWidth: Layout.preferredHeight
-        }
-        QQC2.Label {
-            Layout.fillWidth: true
-            wrapMode: Text.Wrap
-            color: page.result && !page.result.ok ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
-            text: {
-                if (Backend.androidBusy)
-                    return page.lastCommand === "fdroid-search" ? "Searching F-Droid…"
-                        : page.lastCommand === "fdroid-add" ? "Downloading from F-Droid and adding to Steam…"
-                        : page.lastCommand === "play-signin" ? "Signing in to Google Play…"
-                        : page.lastCommand === "play-search" ? "Searching Google Play…"
-                        : page.lastCommand === "play-add" ? "Downloading from Google Play and adding to Steam… Big games take a while; you can keep using the device."
-                        : page.lastCommand === "play-status" || page.lastCommand === "" ? ""
-                        : "Adding to Steam…";
-                const r = page.result;
-                if (!r)
-                    return "";
-                if (!r.ok)
-                    return r.error;
-                let text = r.name + " is in your Steam library, set to run with Lepton (Kettle).";
-                if (r.google_services)
-                    text += " It uses Google Play services, which aren't available here, so it may not start.";
-                return text;
-            }
-        }
+    // what the last command is doing or did; Google Play's under its own section
+    Status {
+        forPlay: false
     }
 
     Section {
@@ -231,6 +199,10 @@ BasePage {
         }
     }
 
+    Status {
+        forPlay: true
+    }
+
     ResultList {
         visible: !!page.playEmail
         results: page.playResults
@@ -244,6 +216,76 @@ BasePage {
         if (text.length === 0 || Backend.androidBusy)
             return;
         page.run(/^(https?:|market:)/.test(text) ? "play-add" : "play-search", text);
+    }
+
+    component Status: ColumnLayout {
+        property bool forPlay
+
+        Layout.fillWidth: true
+        spacing: Kirigami.Units.largeSpacing
+        visible: page.lastCommand.startsWith("play-") === forPlay
+
+        // download progress, while fdroid-add or play-add downloads
+        ColumnLayout {
+            Layout.fillWidth: true
+            visible: Backend.androidBusy && Backend.androidDownloadTotal > 0
+            spacing: Kirigami.Units.smallSpacing
+
+            QQC2.ProgressBar {
+                Layout.fillWidth: true
+                from: 0
+                to: Math.max(Backend.androidDownloadTotal, 1)
+                value: Backend.androidDownloaded
+            }
+            QQC2.Label {
+                Layout.fillWidth: true
+                opacity: 0.8
+                text: {
+                    const mb = n => n >= 1e9 ? (n / 1e9).toFixed(2) + " GB" : Math.round(n / 1e6) + " MB";
+                    const done = Backend.androidDownloaded >= Backend.androidDownloadTotal;
+                    return done ? "Downloaded " + mb(Backend.androidDownloadTotal) + ", adding to Steam…"
+                                : mb(Backend.androidDownloaded) + " of " + mb(Backend.androidDownloadTotal)
+                                  + " (" + Math.floor(100 * Backend.androidDownloaded / Backend.androidDownloadTotal) + "%)";
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Kirigami.Units.largeSpacing
+            visible: (Backend.androidBusy && page.lastCommand !== "") || page.result !== null
+
+            QQC2.BusyIndicator {
+                visible: Backend.androidBusy
+                running: visible
+                Layout.preferredHeight: Kirigami.Units.iconSizes.medium
+                Layout.preferredWidth: Layout.preferredHeight
+            }
+            QQC2.Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                color: page.result && !page.result.ok ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
+                text: {
+                    if (Backend.androidBusy)
+                        return page.lastCommand === "fdroid-search" ? "Searching F-Droid…"
+                            : page.lastCommand === "fdroid-add" ? "Downloading from F-Droid and adding to Steam…"
+                            : page.lastCommand === "play-signin" ? "Signing in to Google Play…"
+                            : page.lastCommand === "play-search" ? "Searching Google Play…"
+                            : page.lastCommand === "play-add" ? "Downloading from Google Play and adding to Steam… Big games take a while; you can keep using the device."
+                            : page.lastCommand === "play-status" || page.lastCommand === "" ? ""
+                            : "Adding to Steam…";
+                    const r = page.result;
+                    if (!r)
+                        return "";
+                    if (!r.ok)
+                        return r.error;
+                    let text = r.name + " is in your Steam library, set to run with Lepton (Kettle).";
+                    if (r.google_services)
+                        text += " It uses Google Play services, which aren't available here, so it may not start.";
+                    return text;
+                }
+            }
+        }
     }
 
     component ResultList: ColumnLayout {

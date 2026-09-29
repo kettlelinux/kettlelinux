@@ -32,6 +32,9 @@ class Backend : public QObject
     // kettle-android-games (package kettle-lepton) is installed; androidBusy while it runs
     Q_PROPERTY(bool hasAndroidGames READ hasAndroidGames CONSTANT)
     Q_PROPERTY(bool androidBusy READ androidBusy NOTIFY androidBusyChanged)
+    // bytes downloaded and to download by the running command (0 when not downloading)
+    Q_PROPERTY(double androidDownloaded READ androidDownloaded NOTIFY androidProgressChanged)
+    Q_PROPERTY(double androidDownloadTotal READ androidDownloadTotal NOTIFY androidProgressChanged)
 
 public:
     explicit Backend(const QString &screenshotDir, QObject *parent = nullptr);
@@ -50,6 +53,8 @@ public:
     QString userName() const { return QString::fromLocal8Bit(qgetenv("USER")); }
     bool hasAndroidGames() const;
     bool androidBusy() const { return m_androidBusy; }
+    double androidDownloaded() const { return m_androidDownloaded; }
+    double androidDownloadTotal() const { return m_androidDownloadTotal; }
 
     Q_INVOKABLE bool hasApp(const QString &desktopId) const;
     Q_INVOKABLE void launchApp(const QString &desktopId);
@@ -76,10 +81,13 @@ Q_SIGNALS:
     // a second start (menu entry, Gaming Extras entry) asks the open window to show a page
     void pageRequested(const QString &page);
     void androidBusyChanged();
+    void androidProgressChanged();
     void androidResult(const QString &command, const QVariantMap &result);
 
 private:
-    void run(const QString &program, const QStringList &args, std::function<void(int, const QString &, const QString &)> done);
+    // stderrLine, if given, gets each line of the program's stderr as it comes
+    void run(const QString &program, const QStringList &args, std::function<void(int, const QString &, const QString &)> done,
+             std::function<void(const QByteArray &)> stderrLine = {});
     void runHelper(const QStringList &args, std::function<void(int, const QString &, const QString &)> done);
     void refreshBootMode();
     void refreshSsh();
@@ -93,5 +101,7 @@ private:
     bool m_sshEnabled = false;
     bool m_sshBusy = false;
     bool m_androidBusy = false;
+    double m_androidDownloaded = 0;
+    double m_androidDownloadTotal = 0;
     QTimer m_poll;
 };

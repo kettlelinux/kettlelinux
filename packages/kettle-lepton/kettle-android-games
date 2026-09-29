@@ -19,7 +19,8 @@
                                              package name) and add it
 
 Every command prints one JSON object ({"ok": true, ...} or {"ok": false, "error": ...}) and
-exits 0 or 1. Shortcuts are added through the running Steam client (its CEF remote debugging
+exits 0 or 1. While downloading, fdroid-add and play-add report "PROGRESS <bytes> <total bytes>"
+lines on stderr, a few times a second. Shortcuts are added through the running Steam client (its CEF remote debugging
 port, which Kettle enables for Decky), so Steam must be running.
 
 .xapk and .apks files are unpacked: the base APK, its split APKs (an app bundle's native code,
@@ -37,6 +38,7 @@ cookie, the session store Firefox writes every 15 seconds. The account's email c
 Firefox's form history of Google's sign-in box, unless given.
 """
 import base64
+import fcntl
 import glob
 import html
 import json
@@ -49,6 +51,8 @@ import struct
 import subprocess
 import sys
 import tempfile
+import termios
+import time
 import urllib.parse
 import urllib.request
 import zipfile
@@ -489,6 +493,35 @@ def send_notification(title, body, icon):
         pass
 
 
+_last_progress = [0.0]
+
+
+def report_progress(done, total, force=False):
+    """A "PROGRESS done total" line on stderr, at most a few a second."""
+    now = time.monotonic()
+    if force or now - _last_progress[0] >= 0.25:
+        _last_progress[0] = now
+        print("PROGRESS %d %d" % (done, total), file=sys.stderr, flush=True)
+
+
+def download(url, path, timeout=60):
+    """Download url to path, reporting progress."""
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as r, open(path, "wb") as f:
+        total = int(r.headers.get("Content-Length") or 0)
+        done = 0
+        while True:
+            chunk = r.read(1 << 16)
+            if not chunk:
+                break
+            f.write(chunk)
+            done += len(chunk)
+            if total:
+                report_progress(done, total)
+        if total:
+            report_progress(total, total, force=True)
+
+
 def _get_json(url):
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=30) as r:
@@ -527,10 +560,7 @@ def cmd_fdroid_add(package):
         for code in candidates[:4]:
             apk = os.path.join(tmp, "%s_%d.apk" % (package, code))
             try:
-                req = urllib.request.Request("%s/repo/%s_%d.apk" % (FDROID, package, code),
-                                             headers={"User-Agent": USER_AGENT})
-                with urllib.request.urlopen(req, timeout=60) as r, open(apk, "wb") as f:
-                    shutil.copyfileobj(r, f)
+                download("%s/repo/%s_%d.apk" % (FDROID, package, code), apk)
             except OSError as e:
                 last_error = Refused("Couldn't download %s (%s)." % (package, getattr(e, "reason", e)))
                 continue
@@ -745,6 +775,50 @@ def cmd_play_search(text):
     return {"apps": apps[:30]}
 
 
+_UNITS = {"B": 1, "KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30, "TiB": 1 << 40,
+          "kB": 1000, "KB": 1000, "MB": 1000 ** 2, "GB": 1000 ** 3, "TB": 1000 ** 4}
+# apkeep's progress bars: "[00:00:12] ███░░ 45.20 MiB/93.10 MiB | com.example.game.apk"
+_BAR = re.compile(r"([\d.]+) ?([KMGT]?i?B)/([\d.]+) ?([KMGT]?i?B) \| (\S+)")
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\r")
+
+
+def run_apkeep(args, timeout):
+    """Run apkeep in a pseudo-terminal, where it draws a progress bar per file (only there), and
+    report the files' total progress. Returns its output without the terminal codes."""
+    master, slave = os.openpty()
+    # wide enough that the bars aren't cut short
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 400, 0, 0))
+    try:
+        proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=slave, stderr=slave,
+                                close_fds=True, start_new_session=True)
+    finally:
+        os.close(slave)
+    files, output, deadline = {}, [], time.monotonic() + timeout
+    try:
+        while True:
+            if time.monotonic() > deadline:
+                proc.kill()
+                raise subprocess.TimeoutExpired(args, timeout)
+            try:
+                data = os.read(master, 1 << 16)
+            except OSError:  # EIO: apkeep has exited and the terminal is closed
+                break
+            if not data:
+                break
+            text = data.decode("utf-8", "replace")
+            output.append(text)
+            for m in _BAR.finditer(text):
+                done = float(m.group(1)) * _UNITS.get(m.group(2), 1)
+                total = float(m.group(3)) * _UNITS.get(m.group(4), 1)
+                files[m.group(5)] = (min(done, total), total)
+            if files:
+                report_progress(sum(d for d, _ in files.values()), sum(t for _, t in files.values()))
+    finally:
+        os.close(master)
+        proc.wait()
+    return _ANSI.sub("\n", "".join(output))
+
+
 def cmd_play_add(ref):
     package = play_package(ref)
     account = _play_account()
@@ -752,13 +826,11 @@ def cmd_play_add(ref):
         raise Refused("Sign in to Google Play first.")
     with work_dir() as tmp:
         try:
-            r = subprocess.run(["apkeep", "-a", package, "-d", "google-play", "-i", PLAY_CONFIG,
-                                "-o", "device=%s,split_apk=true,include_additional_files=true" % PLAY_DEVICE,
-                                "--accept-tos", "-r", "1", tmp],
-                               capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=4 * 3600)
+            out = run_apkeep(["apkeep", "-a", package, "-d", "google-play", "-i", PLAY_CONFIG,
+                              "-o", "device=%s,split_apk=true,include_additional_files=true" % PLAY_DEVICE,
+                              "--accept-tos", "-r", "1", tmp], timeout=4 * 3600)
         except (OSError, subprocess.TimeoutExpired) as e:
             raise Refused("The download from Google Play failed (%s)." % e)
-        out = r.stdout + r.stderr
         if "downloaded successfully" not in out:
             if "Could not log in" in out or "Terms of Service" in out:
                 raise Refused("Google Play didn't accept the saved sign-in. Sign out and sign in again.")
@@ -766,8 +838,9 @@ def cmd_play_add(ref):
                 raise Refused("Google Play didn't hand out %s. It may be a paid game this account hasn't "
                               "bought, not offered in your country, or not offered for Android 11 phones."
                               % package)
+            lines = [l.strip() for l in out.splitlines() if l.strip() and not _BAR.search(l)]
             raise Refused("The download of %s from Google Play failed: %s" % (
-                package, (out.strip().splitlines() or ["no output"])[-1]))
+                package, (lines or ["no output"])[-1]))
         folder = os.path.join(tmp, package)
         if os.path.isdir(folder):
             files = [os.path.join(folder, n) for n in sorted(os.listdir(folder))]
