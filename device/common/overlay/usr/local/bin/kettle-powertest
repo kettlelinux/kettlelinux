@@ -1,5 +1,5 @@
 #!/bin/bash
-# Measure battery draw on the Odin 2 Portal, for A/B-testing power/performance settings.
+# Measure battery draw, for A/B-testing power/performance settings.
 #
 #   kettle-powertest [SECONDS] [LABEL]   sample for SECONDS (default 120), run on battery
 #   kettle-powertest state               show the settings that matter for power
@@ -26,8 +26,8 @@ draw_mw() {
     'BEGIN { if (i < 0) i = -i; printf "%d\n", i * u / 1e9 }'
 }
 
-# battery capacity in mWh, for the runtime estimate. qcom_battmgr has no charge_full on the
-# Portal (ENODATA): scale the remaining charge_counter by the percentage, at 3.87 V nominal.
+# battery capacity in mWh, for the runtime estimate. qcom_battmgr has no charge_full (ENODATA,
+# on the Portal at least): scale the remaining charge_counter by the percentage, at 3.87 V nominal.
 capacity_mwh() {
   awk -v c="$(rd "$bat/charge_counter")" -v p="$(rd "$bat/capacity")" \
     'BEGIN { if (p > 0) printf "%d\n", c * 100 / p * 3.87 / 1000; else print 0 }'

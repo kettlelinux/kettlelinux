@@ -11,8 +11,8 @@ own *Check for updates*.
 > audio, Wi-Fi, controls, Game Mode and Desktop Mode. Several features are built but not yet
 > tested on a Portal. See [Project Status](https://github.com/kettlelinux/kettlelinux/wiki/Project-Status).
 >
-> **AYN Thor** (same SoC, two screens): builds, not yet tested on hardware.
-> See [docs/THOR.md](docs/THOR.md).
+> **AYN Thor** (same SoC, two screens): boots and runs on hardware; its second screen in Game
+> Mode is still being tested. See [docs/THOR.md](docs/THOR.md).
 
 **Documentation lives in the [wiki](https://github.com/kettlelinux/kettlelinux/wiki).**
 
@@ -47,6 +47,7 @@ own *Check for updates*.
 - **Testing your own builds:** [docs/TESTING.md](docs/TESTING.md)
 - **Building from source:** [Building](https://github.com/kettlelinux/kettlelinux/wiki/Building)
   (x86_64 Linux host, no root needed)
+- **Adding a device:** [docs/PORTING.md](docs/PORTING.md)
 - **Repository layout:** [Repository Layout](https://github.com/kettlelinux/kettlelinux/wiki/Repository-Layout)
 
 ## Thanks
