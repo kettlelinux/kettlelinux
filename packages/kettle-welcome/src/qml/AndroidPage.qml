@@ -26,12 +26,29 @@ BasePage {
     property string lastCommand: ""
     // the Google account signed in for Google Play downloads ("" when none)
     property string playEmail: ""
+    // the added games (kettle-android-games list), refreshed quietly: no status line for it
+    property var games: []
+    property bool quiet: false
 
     Component.onCompleted: Backend.androidGames("play-status", "")
+
+    function refreshGames() {
+        page.quiet = true;
+        Backend.androidGames("list", "");
+    }
+
+    function mb(n) {
+        return n >= 1e9 ? (n / 1e9).toFixed(1) + " GB" : Math.max(1, Math.round(n / 1e6)) + " MB";
+    }
 
     Connections {
         target: Backend
         function onAndroidResult(command, res) {
+            if (command === "list") {
+                page.quiet = false;
+                page.games = res.ok ? res.games : [];
+                return;
+            }
             if (command === "play-status" || command === "play-signout") {
                 page.playEmail = res.ok ? res.email : "";
             } else if (command === "play-signin") {
@@ -47,7 +64,35 @@ BasePage {
             } else {
                 page.result = res;
             }
+            // after the status on opening, and after anything that adds or removes a game
+            if (command === "play-status" || (res.ok && ["add", "fdroid-add", "play-add", "remove"].includes(command)))
+                Qt.callLater(page.refreshGames);
         }
+    }
+
+    Kirigami.PromptDialog {
+        id: removeDialog
+
+        property var game: null
+
+        title: game ? "Remove " + game.name + "?" : ""
+        subtitle: game ? "This deletes the game, its saves and its shortcut in Steam, and frees " + page.mb(game.size) + "." : ""
+        standardButtons: Kirigami.Dialog.NoButton
+        customFooterActions: [
+            Kirigami.Action {
+                text: "Remove"
+                icon.name: "edit-delete"
+                onTriggered: {
+                    page.run("remove", removeDialog.game.package);
+                    removeDialog.close();
+                }
+            },
+            Kirigami.Action {
+                text: "Cancel"
+                icon.name: "dialog-cancel"
+                onTriggered: removeDialog.close()
+            }
+        ]
     }
 
     function run(command, arg) {
@@ -83,6 +128,55 @@ BasePage {
     // what the last command is doing or did; Google Play's under its own section
     Status {
         forPlay: false
+    }
+
+    Section {
+        visible: page.games.length > 0
+        title: "Your Android games"
+        description: "Removing a game deletes it with its saves, and takes it out of Steam."
+    }
+
+    Repeater {
+        model: page.games
+
+        delegate: RowLayout {
+            required property var modelData
+
+            Layout.fillWidth: true
+            spacing: Kirigami.Units.largeSpacing
+
+            Kirigami.Icon {
+                source: modelData.icon ? "file://" + modelData.icon : "smartphone"
+                Layout.preferredWidth: Kirigami.Units.iconSizes.large
+                Layout.preferredHeight: Kirigami.Units.iconSizes.large
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 0
+
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    text: modelData.name
+                    font.bold: true
+                    elide: Text.ElideRight
+                }
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    opacity: 0.8
+                    text: page.mb(modelData.size) + (modelData.in_steam === false ? " · no longer in Steam" : "")
+                }
+            }
+            QQC2.Button {
+                text: "Remove"
+                icon.name: "edit-delete"
+                enabled: !Backend.androidBusy
+                onClicked: {
+                    removeDialog.game = modelData;
+                    removeDialog.open();
+                }
+            }
+        }
     }
 
     Section {
@@ -253,7 +347,7 @@ BasePage {
         RowLayout {
             Layout.fillWidth: true
             spacing: Kirigami.Units.largeSpacing
-            visible: (Backend.androidBusy && page.lastCommand !== "") || page.result !== null
+            visible: (Backend.androidBusy && !page.quiet && page.lastCommand !== "") || page.result !== null
 
             QQC2.BusyIndicator {
                 visible: Backend.androidBusy
@@ -266,19 +360,22 @@ BasePage {
                 wrapMode: Text.Wrap
                 color: page.result && !page.result.ok ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
                 text: {
-                    if (Backend.androidBusy)
+                    if (Backend.androidBusy && !page.quiet)
                         return page.lastCommand === "fdroid-search" ? "Searching F-Droid…"
                             : page.lastCommand === "fdroid-add" ? "Downloading from F-Droid and adding to Steam…"
                             : page.lastCommand === "play-signin" ? "Signing in to Google Play…"
                             : page.lastCommand === "play-search" ? "Searching Google Play…"
                             : page.lastCommand === "play-add" ? "Downloading from Google Play and adding to Steam… Big games take a while; you can keep using the device."
                             : page.lastCommand === "play-status" || page.lastCommand === "" ? ""
+                            : page.lastCommand === "remove" ? "Removing…"
                             : "Adding to Steam…";
                     const r = page.result;
                     if (!r)
                         return "";
                     if (!r.ok)
                         return r.error;
+                    if (page.lastCommand === "remove")
+                        return "Removed " + r.name + ", freeing " + page.mb(r.freed) + ".";
                     let text = r.name + " is in your Steam library, set to run with Lepton (Kettle).";
                     if (r.google_services)
                         text += " It uses Google Play services, which aren't available here, so it may not start.";

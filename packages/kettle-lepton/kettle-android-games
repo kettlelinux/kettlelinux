@@ -5,6 +5,9 @@
   kettle-android-games inspect FILE          what the APK is and whether it can run here
   kettle-android-games add [--notify] FILE   copy it to ~/Games/Android/<package>/ and add a
                                              Steam shortcut using "Lepton (Kettle)"
+  kettle-android-games list                  the added games (name, size, whether in Steam)
+  kettle-android-games remove PACKAGE        remove a game: its Steam shortcut, files, saves
+                                             and Lepton's container for it
   kettle-android-games fdroid-search TEXT    search F-Droid
   kettle-android-games fdroid-add PACKAGE    download an F-Droid app and add it
   kettle-android-games play-status           whether a Google account is signed in
@@ -58,6 +61,7 @@ import urllib.request
 import zipfile
 
 TOOL = "lepton-kettle"
+STEAMAPPS = os.path.join(os.path.expanduser("~"), ".local", "share", "Steam", "steamapps")
 GAMES_DIR = os.path.join(os.path.expanduser("~"), "Games", "Android")
 CEF = ("127.0.0.1", 8080)
 FDROID = "https://f-droid.org"
@@ -477,6 +481,8 @@ def add_game(apk, splits, obbs, notify=False, move=False, name=None):
     appid = add_steam_shortcut(info["name"], target, folder, icon_path, known)
     with open(appid_file, "w") as f:
         f.write("%d\n" % appid)
+    with open(os.path.join(folder, ".name"), "w") as f:
+        f.write(info["name"] + "\n")
 
     result = dict(info, apk=target, appid=appid)
     if notify:
@@ -485,6 +491,99 @@ def add_game(apk, splits, obbs, notify=False, move=False, name=None):
             body += " It uses Google Play services, which aren't available, so it may not start."
         send_notification("Android game added", body, icon_path or "steam")
     return result
+
+
+def _du(path):
+    total = 0
+    for dp, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.lstat(os.path.join(dp, f)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def _game_appid(folder):
+    try:
+        return int(open(os.path.join(folder, ".steam-appid")).read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def cmd_list(_=None):
+    """The games in ~/Games/Android: name, icon, size (with Lepton's data for it), and whether
+    Steam still has its shortcut (None when Steam isn't running)."""
+    try:
+        packages = sorted(n for n in os.listdir(GAMES_DIR) if not n.startswith(".")
+                          and os.path.isfile(os.path.join(GAMES_DIR, n, n + ".apk")))
+    except FileNotFoundError:
+        packages = []
+    appids = {pk: _game_appid(os.path.join(GAMES_DIR, pk)) for pk in packages}
+    try:  # the shortcuts Steam still has, by the names they have there now
+        known = cef_eval("JSON.stringify(Object.fromEntries(%s.map(a => [a, appStore.GetAppOverviewByAppID(a)])"
+                         ".filter(e => e[1]).map(e => [e[0], e[1].display_name])))"
+                         % json.dumps([a for a in appids.values() if a]))
+        in_steam = {int(a): n for a, n in json.loads(known or "{}").items()}
+    except Refused:
+        in_steam = None
+    games = []
+    for pk in packages:
+        folder = os.path.join(GAMES_DIR, pk)
+        try:
+            name = open(os.path.join(folder, ".name")).read().strip()
+        except OSError:
+            try:
+                name = inspect_apk(os.path.join(folder, pk + ".apk"))["name"]
+            except Refused:
+                name = pk
+        appid = appids[pk]
+        if in_steam and in_steam.get(appid):
+            name = in_steam[appid]
+        size = _du(folder)
+        if appid:
+            size += _du(os.path.join(STEAMAPPS, "compatdata", str(appid)))
+            size += _du(os.path.join(STEAMAPPS, "shadercache", str(appid)))
+        icon = os.path.join(folder, "icon.png")
+        games.append({"package": pk, "name": name or pk, "appid": appid or 0, "size": size,
+                      "icon": icon if os.path.isfile(icon) else "",
+                      "in_steam": None if in_steam is None else appid in in_steam})
+    return {"games": games}
+
+
+def cmd_remove(package):
+    """Remove a game: its Steam shortcut, Lepton's container, its data and saves (compatdata),
+    shader cache and files."""
+    if not PLAY_PACKAGE.match(package):
+        raise Refused("That isn't a package name.")
+    folder = os.path.join(GAMES_DIR, package)
+    if not os.path.isdir(folder):
+        raise Refused("%s isn't in Games/Android." % package)
+    appid = _game_appid(folder)
+    try:
+        name = open(os.path.join(folder, ".name")).read().strip() or package
+    except OSError:
+        name = package
+    if appid:
+        container = "lepton-steamlaunch-%d" % appid
+        running = subprocess.run(["podman", "ps", "-q", "--filter", "name=^%s$" % container],
+                                 capture_output=True, text=True).stdout.strip()
+        if running:
+            raise Refused("%s is running. Quit it first." % name)
+        try:
+            cef_eval("(() => { if (appStore.GetAppOverviewByAppID(%d)) SteamClient.Apps.RemoveShortcut(%d); "
+                     "return true; })()" % (appid, appid))
+        except Refused:
+            pass  # Steam isn't running: the shortcut goes the next time, or from Steam by hand
+        subprocess.run(["podman", "rm", "-fi", container], capture_output=True)
+    freed = _du(folder)
+    shutil.rmtree(folder, ignore_errors=True)
+    if appid:
+        for sub in ("compatdata", "shadercache"):
+            path = os.path.join(STEAMAPPS, sub, str(appid))
+            freed += _du(path)
+            shutil.rmtree(path, ignore_errors=True)
+    return {"package": package, "name": name, "freed": freed}
 
 
 def send_notification(title, body, icon):
@@ -878,11 +977,12 @@ def main(argv):
     notify = "--notify" in argv
     args = [a for a in argv if a != "--notify"]
     commands = {"inspect": cmd_inspect, "add": lambda p: cmd_add(p, notify),
+                "list": cmd_list, "remove": cmd_remove,
                 "fdroid-search": cmd_fdroid_search, "fdroid-add": cmd_fdroid_add,
                 "play-status": cmd_play_status, "play-signin": cmd_play_signin,
                 "play-signout": cmd_play_signout, "play-search": cmd_play_search,
                 "play-add": cmd_play_add}
-    if args and args[0] in ("play-status", "play-signout"):
+    if args and args[0] in ("play-status", "play-signout", "list"):
         args = args[:1] + [""]
     elif args and args[0] == "play-signin":
         args = args[:1] + [" ".join(args[1:])]  # optional EMAIL and TOKEN
