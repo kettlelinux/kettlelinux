@@ -10,8 +10,12 @@ StartLimitBurst=5
 [Service]
 Slice=session.slice
 ExecStart=/usr/lib/kettle/bottom-screen
-Restart=on-failure
+# back whenever it ends: the shell ending ends its session cleanly, and the screen stays dark
+Restart=always
 RestartSec=2
+# except when there's no bottom screen to run on (bottom-screen: off, or not leased)
+SuccessExitStatus=3
+RestartPreventExitStatus=3
 # gamescope's Xwayland runs with -core; don't SIGTERM it
 KillMode=mixed
 TimeoutStopSec=5

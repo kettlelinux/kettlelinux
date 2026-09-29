@@ -409,6 +409,9 @@
 	panel@0 {
 		reg = <0>;
 		compatible = "ch13726a,thor";
+		/* its backlight's name (40-kettle/1130): sorts after the top panel's
+		 * ae96000.dsi.0, so Steam's brightness slider drives the top screen */
+		label = "bottom-panel";
 
 		pinctrl-0 = <&dsi_p_rst_active>, <&dsi_p_te_active>;
 		pinctrl-1 = <&dsi_p_rst_suspend>, <&dsi_p_te_suspend>;

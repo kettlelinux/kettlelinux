@@ -5,15 +5,29 @@
 #   /etc/xdg/mimeapps.list  Firefox as the default browser, so the taskbar's preferred://browser
 #                         launcher is Firefox (it was Valve's "Install Chromium" placeholder,
 #                         which image/pacman.conf now leaves out)
+#   kettle-firefox        launcher that preloads physmem-shim.so, which Firefox's hardware video
+#                         decoding needs (see physmem-shim.c); firefox.desktop and
+#                         /usr/local/bin/firefox (ahead of Valve's /usr/bin/firefox in PATH, for
+#                         apps that start "firefox") both go through it
+#   kettle-media.js       default prefs: AV1 off, so YouTube sends VP9, which iris decodes
 pkgname=kettle-firefox-desktop
-pkgver=1.0.0
-pkgrel=1
-pkgdesc='Menu entry, icons and default-browser setting for Firefox'
-arch=(any)
+pkgver=1.1.0
+pkgrel=2
+pkgdesc='Menu entry, icons, launcher and default-browser setting for Firefox'
+arch=(aarch64)
 license=(BSD-3-Clause)
-depends=(firefox)
+depends=(firefox glibc)
+
+build() {
+  cc $CFLAGS $LDFLAGS -shared -fPIC -o physmem-shim.so "$startdir/physmem-shim.c" -ldl
+}
 
 package() {
+  install -Dm755 physmem-shim.so -t "$pkgdir/usr/lib/kettle-firefox"
+  install -Dm755 "$startdir/kettle-firefox" -t "$pkgdir/usr/lib/kettle-firefox"
+  install -d "$pkgdir/usr/local/bin"
+  ln -s /usr/lib/kettle-firefox/kettle-firefox "$pkgdir/usr/local/bin/firefox"
+  install -Dm644 "$startdir/kettle-media.js" -t "$pkgdir/usr/lib/firefox/defaults/pref"
   install -Dm644 "$startdir/firefox.desktop" -t "$pkgdir/usr/share/applications"
   install -Dm644 "$startdir/mimeapps.list" -t "$pkgdir/etc/xdg"
   local s

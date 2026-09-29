@@ -1,0 +1,54 @@
+From 17a5db4603cef487271d7b094a1688960e955f2b Mon Sep 17 00:00:00 2001
+From: gennro <kettlelinux@kettlelinux.org>
+Date: Tue, 29 Sep 2026 18:06:03 -0500
+Subject: [PATCH] wlserver: touches passed to a lease companion still count as
+ input
+
+Steam dims the screen and suspends after a time without input, which it
+reads from GAMESCOPE_INPUT_COUNTER. The --ignore-touch-device
+touchscreen's events went straight to the lease companion without
+bumping it, so using the second screen (the AYN Thor's bottom one) left
+the top one dimming as if the device were idle, and only a touch on the
+top screen brought its brightness back. Count them while a companion
+holds the lease (its screen is on); touches on a dark screen still don't.
+---
+ src/wlserver.cpp | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+index 48da21a1..b4046e25 100644
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -457,6 +457,10 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
+ 	if ( touch->bIgnoreWhileLeased )
+ 	{
+ 		drm_lease_send_touch( DrmLeaseEventType::Down, event->x, event->y, event->touch_id, event->time_msec );
++		// still input to the device while its screen is on: Steam's idle dimming and sleep
++		// go by it
++		if ( g_nActiveLeaseClients.load() > 0 )
++			bump_input_counter();
+ 		return;
+ 	}
+ 
+@@ -472,6 +476,10 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
+ 	if ( touch->bIgnoreWhileLeased )
+ 	{
+ 		drm_lease_send_touch( DrmLeaseEventType::Up, 0.0, 0.0, event->touch_id, event->time_msec );
++		// still input to the device while its screen is on: Steam's idle dimming and sleep
++		// go by it
++		if ( g_nActiveLeaseClients.load() > 0 )
++			bump_input_counter();
+ 		return;
+ 	}
+ 
+@@ -486,6 +494,10 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
+ 	if ( touch->bIgnoreWhileLeased )
+ 	{
+ 		drm_lease_send_touch( DrmLeaseEventType::Motion, event->x, event->y, event->touch_id, event->time_msec );
++		// still input to the device while its screen is on: Steam's idle dimming and sleep
++		// go by it
++		if ( g_nActiveLeaseClients.load() > 0 )
++			bump_input_counter();
+ 		return;
+ 	}
+ 

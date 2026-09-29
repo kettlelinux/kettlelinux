@@ -1,0 +1,85 @@
+# FFmpeg for Firefox's hardware video decoding: the SoC's V4L2 decoder (iris on SM8550).
+# Firefox's V4L2 path takes only DRM-PRIME frames (dmabufs) from FFmpeg's *_v4l2m2m decoders,
+# which upstream FFmpeg (Valve's 7.0 too) never outputs: Firefox logs "Got non-DRM-PRIME frame
+# from FFmpeg V4L2" and decodes in software (Mozilla bug 1852765). Raspberry Pi's FFmpeg fork
+# carries the v4l2m2m rework that outputs DRM-PRIME; its decoder is generic V4L2, and its Pi-only
+# parts (sand formats, MMAL, vout_*) are left off here.
+#
+# Installed beside Valve's ffmpeg, not over it: this is 8.1 (libavcodec.so.62, libavutil.so.60),
+# Valve's is 7.0 (.so.61/.so.59), and no soname is shared. Firefox dlopens the newest
+# libavcodec it finds (152 goes up to .so.62, so don't move to 9.x/.so.63 before Firefox 155),
+# and nothing else asks for .so.62, so everything else keeps using Valve's. The libraries live in
+# /usr/lib/ffmpeg-v4l2, which /etc/ld.so.conf.d adds to the loader's path (pacman runs ldconfig
+# after installing), so Firefox finds them however it's started. No headers or .pc files:
+# nothing builds against this.
+#
+# 0001 (ours) stops sending VP8/VP9/AV1 extradata (Firefox passes the container's vpcC/av1C
+#   record) in front of the first frame: iris then skipped the first keyframe and every frame to
+#   the next one, so YouTube, which restarts the decoder at each resolution change, froze.
+# v4l2-av1.h: the chroot's kernel headers (6.18) predate V4L2's AV1 format, which iris decodes
+#   on SM8550; without it the av1_v4l2m2m decoder isn't built.
+#
+# Only FFmpeg's own codecs are built (no external codec libraries), so it stays LGPL-2.1+.
+# Firefox also decodes in software with this libavcodec once it has loaded it.
+#
+# To follow the fork, move _commit to the head of its test/<version>/main branch.
+pkgname=ffmpeg-v4l2
+pkgver=8.1.2
+pkgrel=3
+_commit=f60aae17021abae85b1ba9759e8b2da33f723902 # test/8.1.2/main
+pkgdesc="FFmpeg with DRM-PRIME V4L2 decoding (Raspberry Pi's fork), for Firefox's hardware video decoding"
+arch=(aarch64)
+url='https://github.com/jc-kynesim/rpi-ffmpeg'
+license=(LGPL-2.1-or-later)
+depends=(glibc libdrm)
+makedepends=(git)
+source=("git+https://github.com/jc-kynesim/rpi-ffmpeg.git#commit=$_commit"
+        ffmpeg-v4l2.conf
+        v4l2-av1.h
+        0001-v4l2m2m_dec-don-t-send-VP8-VP9-AV1-extradata-to-the-.patch)
+sha256sums=('SKIP'
+            'b5f4e1cc5afb966f0809655341805870673dcc88b5105fa74c460191d930bcc4'
+            'c5d8aa74f5327095ac12d15cebabd5aad34c5c2577ba6c7b7435b58bf1be56ad'
+            'ee30bbb33e8c97b473dada6d241c1a90f0ab25ea4647e9469e01ef4db15a716b')
+
+prepare() {
+  cd rpi-ffmpeg
+  for p in "$srcdir"/0*.patch; do patch -p1 --fuzz=0 <"$p"; done
+}
+
+build() {
+  cd rpi-ffmpeg
+  ./configure \
+    --prefix=/usr \
+    --libdir=/usr/lib/ffmpeg-v4l2 \
+    --shlibdir=/usr/lib/ffmpeg-v4l2 \
+    --enable-shared \
+    --disable-static \
+    --disable-programs \
+    --disable-doc \
+    --disable-avdevice \
+    --disable-avfilter \
+    --disable-avformat \
+    --disable-swscale \
+    --disable-swresample \
+    --disable-autodetect \
+    --enable-libdrm \
+    --enable-v4l2-m2m \
+    --disable-sand \
+    --disable-mmal \
+    --disable-vout-drm \
+    --disable-vout-egl \
+    --disable-v4l2-request \
+    --extra-cflags="-include $srcdir/v4l2-av1.h"
+  make
+}
+
+package() {
+  cd rpi-ffmpeg
+  make DESTDIR="$pkgdir" install
+  rm -r "$pkgdir/usr/include" "$pkgdir/usr/lib/ffmpeg-v4l2/pkgconfig"
+  rm -rf "$pkgdir/usr/share"
+  rm "$pkgdir"/usr/lib/ffmpeg-v4l2/lib*.so
+  install -Dm644 "$srcdir/ffmpeg-v4l2.conf" -t "$pkgdir/etc/ld.so.conf.d"
+  install -Dm644 LICENSE.md COPYING.LGPLv2.1 -t "$pkgdir/usr/share/licenses/$pkgname"
+}

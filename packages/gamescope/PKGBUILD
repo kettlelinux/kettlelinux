@@ -27,12 +27,14 @@
 #   as gamescope.
 # 0017 (ours) keeps the second screen's gamescope from sending mangoapp its frames: every
 #   gamescope uses the same message queue, and Game Mode's MangoHud flickered between the two.
+# 0018 (ours) counts the second screen's touches as input, which Steam's idle dimming and sleep
+#   go by: touching the bottom screen didn't bring back a dimmed top one.
 #
 # To follow a newer deckard gamescope, move _commit to the one its `gamescopectl version`
 # names and drop whichever of 0001-0008 it already contains.
 pkgname=gamescope
 pkgver=3.16.28
-pkgrel=2.6
+pkgrel=2.7
 _commit=e383171ff1c0f7b5b37f05f2bb67f7c5282b087f
 pkgdesc='gaming shell based on Xwayland, powered by Vulkan and DRM (deckard + Kettle Linux, SGSR 1)'
 arch=(aarch64)
@@ -63,7 +65,8 @@ source=("git+https://github.com/ValveSoftware/gamescope.git#commit=$_commit"
         0014-DRM-run-a-compositor-from-the-leased-output-drm-leas.patch
         0015-wlserver-always-swallow-the-ignored-touch-device.patch
         0016-DRM-blank-the-leased-connector-when-the-companion-go.patch
-        0017-mangoapp-a-drm-lease-client-gamescope-sends-mangoapp.patch)
+        0017-mangoapp-a-drm-lease-client-gamescope-sends-mangoapp.patch
+        0018-wlserver-touches-passed-to-a-lease-companion-still-c.patch)
 sha256sums=('SKIP'
             'SKIP'
             'a34b30f8c58881f29a632ae1b4c8d7fbd7ba8c1ae6509d2b85afe362cad6de93'
@@ -82,7 +85,8 @@ sha256sums=('SKIP'
             '847d0390ddf5cf95c49b43901b10ead4ff64c6833dc528544b8f3281e710e1f6'
             'e7f22ac329a9c8a4421c8547f251fcef334b9ed66072c41a61ed9c4304b521f0'
             '47a9ed3b64ffcfca17dd2ad82c71d2658483de460c7a6e42452793206e7234f1'
-            'a7bfd70b27c550b88752d5bd8246a6bcb678f45d6e1cfeba8f3b45ada4ee0bd7')
+            'a7bfd70b27c550b88752d5bd8246a6bcb678f45d6e1cfeba8f3b45ada4ee0bd7'
+            '2e2b46c5bcd2534cb1baaf7e7a81b6bc60ea5d97c63c14eed8f6bed90e05b335')
 
 prepare() {
   cd gamescope

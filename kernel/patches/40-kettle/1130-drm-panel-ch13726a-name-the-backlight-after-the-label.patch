@@ -1,0 +1,31 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] drm/panel: ch13726a: name the backlight after the panel's label
+
+The AYN Thor has two panels, each with a DSI backlight named after its
+DSI device (ae94000.dsi.0 for this bottom panel, ae96000.dsi.0 for the
+top one). Steam's Game Mode brightness slider drives the first entry of
+/sys/class/backlight, and ae94000.dsi.0 comes first both alphabetically
+and in sysfs order, so the slider dimmed the bottom screen, not the top
+one Game Mode runs on.
+
+Name the backlight after the panel node's "label" when it has one. The
+Thor's dts labels the bottom panel "bottom-panel", which sorts after
+ae96000.dsi.0 both ways, so Steam's slider drives the top panel and the
+bottom one keeps a backlight of its own.
+---
+--- a/drivers/gpu/drm/panel/panel-ddic-ch13726a.c
++++ b/drivers/gpu/drm/panel/panel-ddic-ch13726a.c
+@@ -225,8 +225,12 @@
+ 		.brightness = 255,
+ 		.max_brightness = 255,
+ 	};
++	const char *name = dev_name(dev);
+ 
+-	return devm_backlight_device_register(dev, dev_name(dev), dev, dsi,
++	/* the device tree may name the backlight: which panel of several it is */
++	of_property_read_string(dev->of_node, "label", &name);
++
++	return devm_backlight_device_register(dev, name, dev, dsi,
+ 					      &ch13726a_bl_ops, &props);
+ }
+ 

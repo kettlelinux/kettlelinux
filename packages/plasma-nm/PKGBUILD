@@ -1,0 +1,31 @@
+# Plasma's network applet and settings at deckard's Plasma version (6.2.5). deckard ships
+# 6.0.4 (from Arch's 2024 snapshot), older than the rest of its Plasma; Plasma Mobile's shell
+# (the Thor's bottom screen) uses its QML for the Wi-Fi settings. Without the OpenConnect VPN
+# plugins: the image has no openconnect, so 6.0.4's (Arch built them) never loaded either.
+pkgname=plasma-nm
+pkgver=6.2.5
+pkgrel=1
+pkgdesc='Plasma applet written in QML for managing network connections'
+arch=(aarch64)
+url='https://kde.org/plasma-desktop/'
+license=(GPL-2.0-or-later)
+depends=(gcc-libs glib2 glibc kcmutils kcolorscheme kcompletion kconfig kcoreaddons kdbusaddons
+         kdeclarative ki18n kio kirigami knotifications kquickcharts ksvg kwallet kwidgetsaddons
+         kwindowsystem libnm libplasma modemmanager-qt networkmanager-qt plasma-workspace prison
+         qca-qt6 qcoro qt6-base qt6-declarative solid)
+makedepends=(cmake ninja extra-cmake-modules qt6-tools)
+source=(https://download.kde.org/stable/plasma/$pkgver/$pkgname-$pkgver.tar.xz)
+sha256sums=('146d76936ce98558839a9a7cf30fa951b7ee6cd3daa7c32d71ccdf157a4f6c68')
+
+build() {
+  cmake -B build -S $pkgname-$pkgver -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_INSTALL_LIBEXECDIR=lib \
+    -DBUILD_TESTING=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}

@@ -4,8 +4,8 @@
   "type": "module",
   "license": "BSD-3-Clause",
   "scripts": {
-    "build": "cd framegen && rollup -c && cd ../upscaling && rollup -c && cd ../welcome && rollup -c && cd ../power && rollup -c",
-    "typecheck": "tsc -p framegen --noEmit && tsc -p upscaling --noEmit && tsc -p welcome --noEmit && tsc -p power --noEmit"
+    "build": "cd framegen && rollup -c && cd ../upscaling && rollup -c && cd ../welcome && rollup -c && cd ../power && rollup -c && cd ../screens && rollup -c",
+    "typecheck": "tsc -p framegen --noEmit && tsc -p upscaling --noEmit && tsc -p welcome --noEmit && tsc -p power --noEmit && tsc -p screens --noEmit"
   },
   "devDependencies": {
     "@decky/rollup": "1.0.2",
@@ -22,6 +22,11 @@
     "tslib": "^2.7.0"
   },
   "pnpm": {
-    "peerDependencyRules": { "ignoreMissing": ["react", "react-dom"] }
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "react",
+        "react-dom"
+      ]
+    }
   }
 }

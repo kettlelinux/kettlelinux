@@ -1,0 +1,38 @@
+From c23f0f43481b2a2bc91280fe43c3d9f4875f0ace Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Tue, 29 Sep 2026 18:45:16 -0500
+Subject: [PATCH] v4l2m2m_dec: don't send VP8/VP9/AV1 extradata to the decoder
+
+The V4L2 stateful decoders take the bare VPx/AV1 bitstream. Extradata an
+application supplies (e.g. the vpcC or av1C record Firefox passes from
+the container) was sent in front of the first frame, and Qualcomm's iris
+driver then skipped the first keyframe and every frame up to the next
+one.
+---
+ libavcodec/v4l2_m2m_dec.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/libavcodec/v4l2_m2m_dec.c b/libavcodec/v4l2_m2m_dec.c
+index b182a66..93d2d94 100644
+--- a/libavcodec/v4l2_m2m_dec.c
++++ b/libavcodec/v4l2_m2m_dec.c
+@@ -250,6 +250,16 @@ copy_extradata(AVCodecContext * const avctx,
+     *pdst_len = 0;
+     av_freep(pdst_data);
+ 
++    // VPx and AV1 V4L2 decoders take the bare bitstream; the extradata an app may have
++    // (e.g. a vpcC or av1C record from the container) is not bitstream, and sent in
++    // front of the first frame it stops the driver from finding the first keyframe
++    if (avctx->codec_id == AV_CODEC_ID_VP8 || avctx->codec_id == AV_CODEC_ID_VP9 ||
++        avctx->codec_id == AV_CODEC_ID_AV1) {
++        av_log(avctx, AV_LOG_DEBUG, "Not sending %d bytes of %s extradata\n",
++               src_len, avcodec_get_name(avctx->codec_id));
++        return 0;
++    }
++
+     if (avctx->codec_id == AV_CODEC_ID_H264)
+         len = h264_xd_copy(src_data, src_len, NULL);
+     else
+-- 
+2.55.0
+

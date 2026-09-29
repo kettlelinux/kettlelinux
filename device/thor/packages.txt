@@ -8,3 +8,5 @@ kettle-ucm-thor
 # deckard's Plasma 6.2.5 (packages/plasma-mobile, plasma-nano; with packages/bluez-qt,
 # networkmanager-qt and modemmanager-qt at deckard's KF6 6.14, and packages/kwin's nested touch fix)
 plasma-mobile
+# Quick Access > Screens: the bottom screen on or off, and its brightness
+kettle-decky-screens
