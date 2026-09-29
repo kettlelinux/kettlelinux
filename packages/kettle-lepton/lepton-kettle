@@ -48,6 +48,14 @@ ln -sfn "$steam_lepton/images" "$TOOL/images"
 ln -sfn "$steam_lepton/sysbake" "$TOOL/sysbake"
 ln -sfn "$steam_lepton/sysbake.xattrs" "$TOOL/sysbake.xattrs"
 
+# Rootless podman keeps its user namespace in a pause process that outlives every container.
+# Started from here it would be left under Steam's reaper, which then waits for it and shows
+# the game as running for good: start it as a systemd user service instead, which podman joins.
+pause_pid="$(cat "${XDG_RUNTIME_DIR:-/run/user/$UID}/libpod/tmp/pause.pid" 2>/dev/null || true)"
+if [ -z "$pause_pid" ] || ! kill -0 "$pause_pid" 2>/dev/null; then
+  systemd-run --user --quiet --collect --wait -p KillMode=process podman unshare true >/dev/null 2>&1 || true
+fi
+
 # No VR runtime on a handheld: the steamvr stand-in answers Lepton's path queries
 export PATH="$LIB/bin:$PATH"
 exec "$TOOL/lepton" "$@"
