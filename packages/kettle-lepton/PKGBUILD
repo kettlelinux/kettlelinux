@@ -8,7 +8,8 @@
 #
 # 0001 (ours) shows the 2D window by default (no headset); 0002 (ours) passes Steam Input's
 #   virtual gamepads into the container; 0003 (ours) installs the split APKs of a game Google
-#   Play delivers as an app bundle, kept in splits/ next to its APK. lepton-kettle puts a
+#   Play delivers as an app bundle, kept in splits/ next to its APK; 0004 (ours) finds a launcher
+#   activity declared as an <activity-alias> (Roblox). lepton-kettle puts a
 #   steamvr stand-in on the launcher's PATH (the Frame's steamvr helper only answers where
 #   SteamVR lives).
 # kettle-android-games (ours) adds an .apk to Steam set to this tool, from the command line,
@@ -21,7 +22,7 @@
 # locked crates need a newer compiler than the snapshot's 1.78.
 pkgname=kettle-lepton
 pkgver=3.0.3
-pkgrel=7
+pkgrel=8
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Android games in Steam through Valve Lepton (Kettle Linux compatibility tool)'
@@ -42,6 +43,7 @@ source=("lepton::git+https://gitlab.steamos.cloud/frame-public/lepton.git#tag=v$
         0001-compat_tool-show-the-2D-window-by-default.patch
         0002-compat_tool-pass-Steam-Input-s-virtual-gamepads-into.patch
         0003-compat_tool-install-split-APKs-kept-in-splits-next-t.patch
+        0004-apk_extractor-find-launcher-activities-declared-as-a.patch
         lepton-kettle
         steamvr
         compatibilitytool.vdf
@@ -54,7 +56,8 @@ sha256sums=('SKIP'
             'b73955c080723a1de72a0a88edd006cd68769d3fd2f20bc3b3db6d94e5529fc8'
             'a7b2864c6f3c0199c17b329f26b45dcee8ec2dfe9320585e384084408de8f8ac'
             'c77c79f100351f62537ff1c70eed1756112a2187e6104c88a95e2791d67d4538'
-            '1d4720144a3d023191fc741e4096f098121631990ec89e584a4a9748ec6b353f'
+            '12b7c0aa5f323c02cc454e26ba5d668d6fa24118b90c1a69e2a147cc771d3984'
+            '5f8c2b8abf381d7e85b08f25f34531c201bedd0b4966d8409e65111a566aa58e'
             'e4c2e8bbcac361770f1d9479aacbe9e90bb9e13c0f2c91d694e0d1e72887e0e7'
             '9254fa985690b9e4b0cd11e511868a46e09acda2db434b616f0a552cce3afc5b'
             'ffaaded8988303bb552cf862addca3f45b2a88ccbed99d937611b27fc7b8d8c4'
