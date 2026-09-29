@@ -11,9 +11,10 @@
 #   Play delivers as an app bundle, kept in splits/ next to its APK; 0004 (ours) finds a launcher
 #   activity declared as an <activity-alias> (Roblox); 0005 (ours) fixes the Android image's
 #   scripts for apps installed with split APKs, shipped in liblepton/rootfs_overlay, which it
-#   mounts over the image's own (Steam's copy of the image stays as it is). lepton-kettle puts a
-#   steamvr stand-in on the launcher's PATH (the Frame's steamvr helper only answers where
-#   SteamVR lives).
+#   mounts over the image's own (Steam's copy of the image stays as it is); lineage-system.rc
+#   there drops a keychord that made Android's init block on Waydroid's input FIFOs at boot.
+#   lepton-kettle puts a steamvr stand-in on the launcher's PATH (the Frame's steamvr helper
+#   only answers where SteamVR lives).
 # kettle-android-games (ours) adds an .apk to Steam set to this tool, from the command line,
 # Kettle Welcome's Android page, or Dolphin's right-click menu; it also searches F-Droid, and,
 # opt-in, downloads games from Google Play with apkeep, once the user has signed in to Google
@@ -24,7 +25,7 @@
 # locked crates need a newer compiler than the snapshot's 1.78.
 pkgname=kettle-lepton
 pkgver=3.0.3
-pkgrel=10
+pkgrel=11
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Android games in Steam through Valve Lepton (Kettle Linux compatibility tool)'
@@ -52,7 +53,8 @@ source=("lepton::git+https://gitlab.steamos.cloud/frame-public/lepton.git#tag=v$
         compatibilitytool.vdf
         toolmanifest.vdf
         kettle-android-games
-        kettle-add-android-game.desktop)
+        kettle-add-android-game.desktop
+        lineage-system.rc)
 noextract=("rust-$_rust-aarch64-unknown-linux-gnu.tar.xz")
 sha256sums=('SKIP'
             '0b514a8cc1cbcd939bff0f151661fe58b6ea5c7a7f645a5098c69e32e8c1e0a2'
@@ -66,7 +68,8 @@ sha256sums=('SKIP'
             '9254fa985690b9e4b0cd11e511868a46e09acda2db434b616f0a552cce3afc5b'
             'ffaaded8988303bb552cf862addca3f45b2a88ccbed99d937611b27fc7b8d8c4'
             '38197d26c55961edcbc7e9c6933a1c0503781f64dbea1a83984e30703ee82c57'
-            '9fa93f8589aa91fe749611460e0288876d8f4a98cdcb6d1036a243fbf09b649e')
+            '9fa93f8589aa91fe749611460e0288876d8f4a98cdcb6d1036a243fbf09b649e'
+            'f50b6be3d1797e155edebb0889c710458e4711636776616409d8e970962317c8')
 
 prepare() {
   rm -rf rust-dist rust && mkdir rust-dist
@@ -100,6 +103,7 @@ package() {
   # the Android image's files 0005 fixes, mounted over Steam's copy of the image
   install -Dm755 images/rootfs_overlay/system/bin/cmd -t "$lib/liblepton/rootfs_overlay/system/bin"
   install -Dm755 images/rootfs_overlay/vendor/bin/fix_obb_symlink.sh -t "$lib/liblepton/rootfs_overlay/vendor/bin"
+  install -Dm644 "$srcdir/lineage-system.rc" -t "$lib/liblepton/rootfs_overlay/system/etc/init"
 
   # Steam compatibility tool
   install -Dm755 "$srcdir/lepton-kettle" -t "$tool"
