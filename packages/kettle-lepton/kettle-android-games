@@ -425,8 +425,9 @@ def _copy(src, dst, move=False):
         os.replace(dst + ".part", dst)
 
 
-def add_game(apk, splits, obbs, notify=False, move=False):
-    """Put the game in ~/Games/Android/<package>/ (APK, splits/, obb/) and add it to Steam."""
+def add_game(apk, splits, obbs, notify=False, move=False, name=None):
+    """Put the game in ~/Games/Android/<package>/ (APK, splits/, obb/) and add it to Steam, as
+    name if given (else the app's own label)."""
     info = inspect_apk(apk)
     folder = os.path.join(GAMES_DIR, info["package"] or "unknown")
     target = os.path.join(folder, "%s.apk" % info["package"])
@@ -437,6 +438,8 @@ def add_game(apk, splits, obbs, notify=False, move=False):
         splits = sorted(os.path.join(split_dir, n) for n in os.listdir(split_dir) if n.endswith(".apk"))
     info = inspect_apk(apk, splits)
     check_runnable(info, splits)
+    if name:
+        info["name"] = name
 
     icon = None
     if info["icon"]:
@@ -819,6 +822,23 @@ def run_apkeep(args, timeout):
     return _ANSI.sub("\n", "".join(output))
 
 
+def play_title(package):
+    """The game's name on Google Play, which can be longer than its label on the phone (Diablo
+    Immortal's is "Immortal"), or None."""
+    try:
+        req = urllib.request.Request("https://play.google.com/store/apps/details?hl=en&id=" + urllib.parse.quote(package),
+                                     headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            page = r.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+    m = re.search(r'<meta property="og:title" content="([^"]+)"', page)
+    if not m:
+        return None
+    title = re.sub(r" - Apps on Google Play$", "", html.unescape(m.group(1))).strip()
+    return title or None
+
+
 def cmd_play_add(ref):
     package = play_package(ref)
     account = _play_account()
@@ -851,7 +871,7 @@ def cmd_play_add(ref):
         if not apks:
             raise Refused("Google Play sent no APK for %s." % package)
         apk, splits = split_apk_set(apks)
-        return add_game(apk, splits, obbs, move=True)
+        return add_game(apk, splits, obbs, move=True, name=play_title(package))
 
 
 def main(argv):
