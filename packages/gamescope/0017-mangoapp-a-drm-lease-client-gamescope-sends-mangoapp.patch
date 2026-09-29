@@ -1,0 +1,34 @@
+From 5eba71dfb90a1fd3de2fb374e0cce0d565a7d2fc Mon Sep 17 00:00:00 2001
+From: gennro <kettlelinux@kettlelinux.org>
+Date: Tue, 29 Sep 2026 16:31:10 -0500
+Subject: [PATCH] mangoapp: a --drm-lease-client gamescope sends mangoapp
+ nothing
+
+Every gamescope sends its frame timings to mangoapp's SysV message queue,
+whether or not it runs mangoapp, and the queue's key is the same for all
+of them (ftok("mangoapp") on a file that doesn't exist fails, and each one
+gets the key -1). A second gamescope on a leased screen at 60 Hz fed its
+frames into the game's overlay: MangoHud flickered between the two and
+mangoapp's CPU use went from about 20% to over 110%, which the game felt.
+The overlay belongs to the lessor's gamescope, so the lessee sends none.
+---
+ src/mangoapp.cpp | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/mangoapp.cpp b/src/mangoapp.cpp
+index e7c7ede5..38ba3a34 100644
+--- a/src/mangoapp.cpp
++++ b/src/mangoapp.cpp
+@@ -190,6 +190,12 @@ void mangoapp_post_control( uint32_t uMsgType, uint8_t uNoDisplay, bool bStartLo
+ }
+ 
+ void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uint64_t latency_ns, uint32_t uMsgType ) {
++    // mangoapp belongs to the gamescope that leased us our screen: every gamescope's frames go
++    // to the same message queue (ftok on a file that isn't there gives every one the same key),
++    // and ours would be mixed into its game's.
++    if (g_sDrmLeaseClientSocket)
++        return;
++
+     if (!inited)
+         init_mangoapp();
+ 

@@ -25,12 +25,14 @@
 #   0014-0016 are Armada's 0013-0015, ported without the drm-lease-v1 protocol they sit on
 #   (which only apps that request a lease themselves, e.g. emulators, need). BSD-2-Clause,
 #   as gamescope.
+# 0017 (ours) keeps the second screen's gamescope from sending mangoapp its frames: every
+#   gamescope uses the same message queue, and Game Mode's MangoHud flickered between the two.
 #
 # To follow a newer deckard gamescope, move _commit to the one its `gamescopectl version`
 # names and drop whichever of 0001-0008 it already contains.
 pkgname=gamescope
 pkgver=3.16.28
-pkgrel=2.5
+pkgrel=2.6
 _commit=e383171ff1c0f7b5b37f05f2bb67f7c5282b087f
 pkgdesc='gaming shell based on Xwayland, powered by Vulkan and DRM (deckard + Kettle Linux, SGSR 1)'
 arch=(aarch64)
@@ -60,7 +62,8 @@ source=("git+https://github.com/ValveSoftware/gamescope.git#commit=$_commit"
         0013-DRM-detach-conflicting-pipelines-before-creating-the.patch
         0014-DRM-run-a-compositor-from-the-leased-output-drm-leas.patch
         0015-wlserver-always-swallow-the-ignored-touch-device.patch
-        0016-DRM-blank-the-leased-connector-when-the-companion-go.patch)
+        0016-DRM-blank-the-leased-connector-when-the-companion-go.patch
+        0017-mangoapp-a-drm-lease-client-gamescope-sends-mangoapp.patch)
 sha256sums=('SKIP'
             'SKIP'
             'a34b30f8c58881f29a632ae1b4c8d7fbd7ba8c1ae6509d2b85afe362cad6de93'
@@ -78,7 +81,8 @@ sha256sums=('SKIP'
             'f6ac2c35787c39ca6c24b25ad25d2fa5f8a0a8f45ba77187aadc7cbcaf05d6d4'
             '847d0390ddf5cf95c49b43901b10ead4ff64c6833dc528544b8f3281e710e1f6'
             'e7f22ac329a9c8a4421c8547f251fcef334b9ed66072c41a61ed9c4304b521f0'
-            '47a9ed3b64ffcfca17dd2ad82c71d2658483de460c7a6e42452793206e7234f1')
+            '47a9ed3b64ffcfca17dd2ad82c71d2658483de460c7a6e42452793206e7234f1'
+            'a7bfd70b27c550b88752d5bd8246a6bcb678f45d6e1cfeba8f3b45ada4ee0bd7')
 
 prepare() {
   cd gamescope

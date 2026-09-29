@@ -3,23 +3,47 @@
 # inside the bottom screen's gamescope (bottom-screen), as a window of its Xwayland.
 #  - its own config dir: Plasma Mobile sets KWin and Plasma up its own way
 #    (plasma-mobile-envmanager: mobile look, maximised windows, its task switcher), which
-#    mustn't reach the desktop's. Default apps and folders are the desktop's; its look starts
-#    as a copy of the desktop's.
+#    mustn't reach the desktop's. Only the shell's own settings are kept there: everything else
+#    is the desktop's (~/.config), linked in, so apps started here (Firefox's profile, ...) are
+#    the same as on the desktop. Its look starts as a copy of the desktop's.
 #  - its own session bus: nothing on it answers to Steam's (no powerdevil, no second
 #    brightness or suspend handling); the system bus (NetworkManager, BlueZ) is shared.
 set -u
 [ -n "${DISPLAY:-}" ] || { echo "bottom-shell: no X display from gamescope" >&2; exit 1; }
 
 export XDG_CONFIG_HOME="$HOME/.config/kettle/bottom-shell"
-mkdir -p "$XDG_CONFIG_HOME"
-for f in mimeapps.list user-dirs.dirs user-dirs.locale; do
-  [ -e "$HOME/.config/$f" ] && ln -sfn "../../$f" "$XDG_CONFIG_HOME/$f"
+# and its own caches: KDE's app database (ksycoca) is named after the data dirs only, so the
+# desktop's and this one's would be the same file, each built with its own menu settings
+export XDG_CACHE_HOME="$HOME/.cache/kettle/bottom-shell"
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"
+# The shell's own settings: what KWin, Plasma and plasma-mobile-envmanager write
+shells_own() {
+  case "$1" in
+    kwin* | kdeglobals | plasma* | kglobalshortcutsrc | kactivitymanagerd* | ksmserverrc | \
+    kscreenlocker* | powerdevil* | powermanagementprofilesrc | applications-blacklistrc | \
+    kded* | KDE | kde.org | session | autostart | kettle | *.bottom-shell-old) return 0 ;;
+  esac
+  return 1
+}
+# what an app made here first moves to the desktop's config (set aside if the desktop has its own)
+for p in "$XDG_CONFIG_HOME"/* "$XDG_CONFIG_HOME"/.[!.]*; do
+  [ -e "$p" ] && [ ! -L "$p" ] || continue
+  f=${p##*/}
+  shells_own "$f" && continue
+  if [ -e "$HOME/.config/$f" ]; then mv "$p" "$p.bottom-shell-old"; else mv "$p" "$HOME/.config/"; fi
+done
+for p in "$HOME/.config"/* "$HOME/.config"/.[!.]*; do
+  [ -e "$p" ] || continue
+  f=${p##*/}
+  shells_own "$f" || ln -sfn "../../$f" "$XDG_CONFIG_HOME/$f"
 done
 [ -e "$XDG_CONFIG_HOME/kdeglobals" ] || cp "$HOME/.config/kdeglobals" "$XDG_CONFIG_HOME/" 2>/dev/null
 # links open in Firefox (envmanager would pick Angelfish, which we don't ship)
 kwriteconfig6 --file kdeglobals --group General --key BrowserApplication firefox.desktop
 
 export XDG_CURRENT_DESKTOP=KDE XDG_SESSION_DESKTOP=KDE KDE_SESSION_VERSION=6 KDE_FULL_SESSION=true
+# the app list is Plasma's menu (/etc/xdg/menus/plasma-applications.menu), as startplasma sets
+export XDG_MENU_PREFIX=plasma-
 export QT_QPA_PLATFORMTHEME=kde QT_QUICK_CONTROLS_STYLE=org.kde.breeze QT_QUICK_CONTROLS_MOBILE=1
 export PLASMA_PLATFORM=phone:handset
 export XCURSOR_THEME=breeze_cursors
@@ -34,7 +58,32 @@ QT_QPA_PLATFORM=offscreen plasma-mobile-envmanager --apply-settings
 kwriteconfig6 --file kwinrc --group Wayland --key InputMethod \
   /usr/share/applications/org.kde.plasma.keyboard.desktop
 
-# The shell fills gamescope's 1240x1080 screen (3.9", about 420 dpi): 2x makes it touch-sized
+# The shell fills gamescope's 1240x1080 screen (3.9", about 420 dpi), scaled 2x to be
+# touch-sized, as a phone's. Nested in X, KWin's --scale makes its window that much larger
+# instead (gamescope then shrank it back down), so the scale goes in KWin's own output settings,
+# set before every start (KWin keeps whatever it last saved there otherwise).
+python3 - "$XDG_CONFIG_HOME/kwinoutputconfig.json" "${BOTTOM_SHELL_SCALE:-2}" <<'EOF'
+import json, sys
+path, scale = sys.argv[1], float(sys.argv[2])
+output = {"connectorName": "X11-0", "edidIdentifier": "", "transform": "Normal",
+          "autoRotation": "InTabletMode", "overscan": 0, "rgbRange": "Automatic",
+          "vrrPolicy": "Automatic", "brightness": 1, "sdrBrightness": 200,
+          "highDynamicRange": False, "wideColorGamut": False, "sdrGamutWideness": 0,
+          "allowSdrSoftwareBrightness": True, "colorProfileSource": "sRGB", "iccProfilePath": ""}
+setup = {"lidClosed": False, "outputs": [
+    {"enabled": True, "outputIndex": 0, "position": {"x": 0, "y": 0}, "priority": 0}]}
+try:
+    with open(path) as f:
+        config = json.load(f)
+except (OSError, ValueError):
+    config = [{"name": "outputs", "data": [output]}, {"name": "setups", "data": [setup]}]
+for section in config:
+    if section.get("name") == "outputs":
+        for o in section["data"]:
+            o["mode"] = {"width": 1240, "height": 1080, "refreshRate": 60000}
+            o["scale"] = scale
+with open(path, "w") as f:
+    json.dump(config, f, indent=4)
+EOF
 exec dbus-run-session kwin_wayland --x11-display "$DISPLAY" --width 1240 --height 1080 \
-  --scale "${BOTTOM_SHELL_SCALE:-2}" --no-lockscreen \
-  --exit-with-session "plasmashell -p org.kde.plasma.mobileshell"
+  --no-lockscreen --exit-with-session "plasmashell -p org.kde.plasma.mobileshell"

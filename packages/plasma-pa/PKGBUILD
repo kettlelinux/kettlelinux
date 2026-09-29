@@ -1,0 +1,36 @@
+# Plasma's volume applet and sound settings at deckard's Plasma version (6.2.5). deckard ships
+# 6.0.4 (from Arch's 2024 snapshot), older than the rest of its Plasma: Plasma Mobile's shell
+# (the Thor's bottom screen) needs 6.2's QML API (PreferredDevice) for its volume controls.
+# Replaces deckard's for the desktop too, where it matches the rest of Plasma 6.2.5. Built without
+# its handbook: deckard has no kdoctools.
+pkgname=plasma-pa
+pkgver=6.2.5
+pkgrel=1
+pkgdesc='Plasma applet for audio volume management using PulseAudio'
+arch=(aarch64)
+url='https://kde.org/plasma-desktop/'
+license=(LGPL-2.0-or-later)
+depends=(gcc-libs glib2 glibc kcmutils kconfig kcoreaddons kdbusaddons kdeclarative
+         kglobalaccel ki18n kirigami kitemmodels kstatusnotifieritem ksvg libcanberra libplasma
+         libpulse plasma-workspace pulse-native-provider pulseaudio-qt qt6-base qt6-declarative)
+makedepends=(cmake ninja extra-cmake-modules qt6-tools)
+source=(https://download.kde.org/stable/plasma/$pkgver/$pkgname-$pkgver.tar.xz)
+sha256sums=('5179337a7eac4145a953b46146d4899945d9c43373ad60f76692ffc42cf19d47')
+
+prepare() {
+  sed -i -e '/^    DocTools$/d' -e 's/^add_subdirectory(doc)$//' -e 's/^kdoctools_install(po)$//' \
+    $pkgname-$pkgver/CMakeLists.txt
+}
+
+build() {
+  cmake -B build -S $pkgname-$pkgver -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_INSTALL_LIBEXECDIR=lib \
+    -DBUILD_TESTING=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}
