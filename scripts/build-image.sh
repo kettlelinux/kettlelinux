@@ -166,6 +166,9 @@ echo LANG=en_US.UTF-8 >/etc/locale.conf
 ln -sf /usr/share/zoneinfo/UTC /etc/localtime
 # the home directory is made on first boot (holo-create-homedir), on the home partition
 useradd -M -G wheel,video,input,audio,render -s /bin/bash kettle
+# subordinate ids for rootless podman (Lepton's Android containers); usermod needs the files
+touch /etc/subuid /etc/subgid
+usermod --add-subuids 100000-165535 --add-subgids 100000-165535 kettle
 echo 'kettle:$USER_PASSWORD' | chpasswd
 passwd -l root >/dev/null
 systemctl enable NetworkManager $SSHD bluetooth systemd-timesyncd sddm >/dev/null 2>&1

@@ -37,6 +37,7 @@ qt_add_qml_module(kettle-welcome
         src/qml/SetupPage.qml
         src/qml/ControlsPage.qml
         src/qml/GamesPage.qml
+        src/qml/AndroidPage.qml
         src/qml/ExtrasPage.qml
         src/qml/SystemPage.qml
 )

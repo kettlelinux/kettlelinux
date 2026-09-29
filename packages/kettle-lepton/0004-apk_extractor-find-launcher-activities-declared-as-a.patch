@@ -1,0 +1,35 @@
+From 6c2b1cf0b071edd8f449cb149b15a5c80e59e7f8 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Mon, 28 Sep 2026 19:15:14 -0500
+Subject: [PATCH] apk_extractor: find launcher activities declared as
+ <activity-alias>
+
+---
+ compat_tool/liblepton/apk_extractor/src/main.rs | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/compat_tool/liblepton/apk_extractor/src/main.rs b/compat_tool/liblepton/apk_extractor/src/main.rs
+index 4ca1b8c..afee982 100644
+--- a/compat_tool/liblepton/apk_extractor/src/main.rs
++++ b/compat_tool/liblepton/apk_extractor/src/main.rs
+@@ -134,7 +134,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+ 
+     // Search for launchable activity
+     let application = only_child(manifest, "application")?;
+-    let activities = filter_children(application, "activity")?;
++    // A launcher entry can also be an <activity-alias> (another name for an activity, which
++    // am start takes too); apps switch between aliases with android:enabled.
++    let activities = peel_element(application)?
++        .get_children()
++        .iter()
++        .filter(|n| match n {
++            Node::Element(e) => (e.get_tag() == "activity" || e.get_tag() == "activity-alias")
++                && !matches!(e.get_attributes().get("android:enabled").map(|s| s.as_str()), Some("false") | Some("0")),
++            Node::Cdata(_) => false,
++        });
+     let uses_sdk = only_child(manifest, "uses-sdk")?;
+ 
+     // Get the minimum sdk version from the uses-sdk element
+-- 
+2.55.0
+

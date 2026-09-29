@@ -15,6 +15,8 @@
 #   by keeping sgsr_filter at Valve's value 9.
 # 0009 (ours) adds the steam_sharp_filter convar: which filter Steam's Sharp runs
 #   (default sgsr; `gamescopectl steam_sharp_filter fsr` gives FSR 1 back).
+# 0010 (ours) reports mapped xdg-shell windows to Steam as focusable (app IDs, and windows
+#   under a synthetic id), so native Wayland games (Lepton's Android window) come to the front.
 # 0011 (ours) GAMESCOPE_INTERNAL_PHYSICAL_SIZE=WxH (mm) overrides the size clients see for the
 #   built-in panel, which Steam picks its UI scale from (the Thor's panel driver reports one
 #   that made Game Mode's UI too large for the screen).
@@ -30,7 +32,7 @@
 # names and drop whichever of 0001-0008 it already contains.
 pkgname=gamescope
 pkgver=3.16.28
-pkgrel=2.5
+pkgrel=2.6
 _commit=e383171ff1c0f7b5b37f05f2bb67f7c5282b087f
 pkgdesc='gaming shell based on Xwayland, powered by Vulkan and DRM (deckard + Kettle Linux, SGSR 1)'
 arch=(aarch64)
@@ -55,6 +57,7 @@ source=("git+https://github.com/ValveSoftware/gamescope.git#commit=$_commit"
         0007-render-run-RCAS-at-one-pixel-per-thread-on-Adreno.patch
         0008-render-add-composite_timing-GPU-timestamps-per-filte.patch
         0009-steamcompmgr-let-steam_sharp_filter-pick-what-Steam-.patch
+        0010-steamcompmgr-report-mapped-xdg-shell-windows-to-Stea.patch
         0011-drm-GAMESCOPE_INTERNAL_PHYSICAL_SIZE-overrides-the-in.patch
         0012-DRM-lease-a-connector-to-a-companion-app-over-a-Unix.patch
         0013-DRM-detach-conflicting-pipelines-before-creating-the.patch
@@ -73,6 +76,7 @@ sha256sums=('SKIP'
             '80033171760f0037bf53bb8e85981d7f98df1b096d581cf299dd7de61f1831b0'
             'e86a0fc74acaf2aba19d0667b37e510c68de079953524e6d9c0f35c45835b814'
             '44e2a8b91e89a6b82ec87008748a75fcc29c785a0a1a20c4ee6ec159c8ba92c6'
+            'f69f69b132bc9ddda103c794e9d7340c4732c2b8ee8a6f1a42a65793b163fb40'
             '461a3badef10d47eb4d0e4916d3a8231438a35be731a86a27c409a0c8291e8ed'
             'd91f120b7ea0a2ae22d0967a236d28b9fe6840761f96dfec463fdc7078ad9fa8'
             'f6ac2c35787c39ca6c24b25ad25d2fa5f8a0a8f45ba77187aadc7cbcaf05d6d4'

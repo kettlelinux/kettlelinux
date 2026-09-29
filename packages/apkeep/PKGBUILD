@@ -1,0 +1,44 @@
+# apkeep: the EFF's command-line APK downloader (MIT). kettle-android-games uses it for the
+# opt-in Google Play download on Kettle Welcome's Android page: with the Google account the
+# user signs in with, it downloads games they own or that are free, as the base APK plus the
+# split APKs and expansion (.obb) files Google Play serves.
+#
+# Built with upstream Rust (build time only), as packages/inputplumber: the locked crates need
+# a newer compiler than the snapshot's.
+pkgname=apkeep
+pkgver=1.0.0
+pkgrel=1
+_rust=1.98.1
+_rustdate=2026-09-03
+pkgdesc='Command-line tool for downloading APK files from various sources'
+arch=(aarch64)
+url='https://github.com/EFForg/apkeep'
+license=(MIT)
+depends=(gcc-libs glibc openssl)
+makedepends=(git cmake)
+options=(!lto)  # makepkg's GCC LTO objects in the -sys crates don't link into the Rust binary
+source=("apkeep::git+https://github.com/EFForg/apkeep.git#tag=$pkgver"
+        "https://static.rust-lang.org/dist/$_rustdate/rust-$_rust-aarch64-unknown-linux-gnu.tar.xz")
+noextract=("rust-$_rust-aarch64-unknown-linux-gnu.tar.xz")
+sha256sums=('SKIP'
+            '0b514a8cc1cbcd939bff0f151661fe58b6ea5c7a7f645a5098c69e32e8c1e0a2')
+
+prepare() {
+  rm -rf rust-dist rust && mkdir rust-dist
+  bsdtar -xf "rust-$_rust-aarch64-unknown-linux-gnu.tar.xz" -C rust-dist --strip-components 1
+  rust-dist/install.sh --prefix="$srcdir/rust" --disable-ldconfig \
+    --components=rustc,cargo,rust-std-aarch64-unknown-linux-gnu >/dev/null
+}
+
+build() {
+  cd apkeep
+  export PATH="$srcdir/rust/bin:$PATH" CARGO_HOME="$srcdir/cargo-home"
+  cargo build --release --locked
+}
+
+package() {
+  cd apkeep
+  install -Dm755 target/release/apkeep -t "$pkgdir/usr/bin"
+  install -Dm644 README.md USAGE-google-play.md USAGE-fdroid.md -t "$pkgdir/usr/share/doc/$pkgname"
+  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+}

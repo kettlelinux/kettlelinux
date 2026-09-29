@@ -175,3 +175,8 @@ winetricks
 cabextract
 lutris
 heroic-games-launcher
+
+# Android games in Steam (built by us, packages/kettle-lepton): Valve's Lepton launcher as the
+# "Lepton (Kettle)" compatibility tool, on the Android image of Steam's own Lepton (app
+# 3029110); pulls in rootless podman and Valve's Android Mesa. Only runs for games set to it.
+kettle-lepton
