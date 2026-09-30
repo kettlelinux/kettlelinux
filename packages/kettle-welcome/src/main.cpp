@@ -3,11 +3,14 @@
 // (--autostart, from /etc/xdg/autostart), then from the application menu whenever needed.
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QDir>
+#include <QFile>
 #include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QStandardPaths>
 
 #include <KAboutData>
 #include <KConfigGroup>
@@ -43,6 +46,17 @@ int main(int argc, char *argv[])
 
     if (parser.isSet(autostartOpt)) {
         KConfigGroup g = KSharedConfig::openConfig(QStringLiteral("kettle-welcomerc"))->group(QStringLiteral("General"));
+        // New home directories get the desktop icon from /etc/skel; ones made before it was there
+        // (kept across updates) get it here, once, so deleting it keeps it deleted.
+        if (!g.readEntry("DesktopIconPlaced", false)) {
+            const QString skel = QStringLiteral("/etc/skel/Desktop/Welcome.desktop");
+            const QString dir = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
+            const QString dest = dir + QStringLiteral("/Welcome.desktop");
+            if (QFile::exists(skel) && !QFile::exists(dest) && QDir().mkpath(dir) && QFile::copy(skel, dest))
+                QFile::setPermissions(dest, QFile::permissions(skel));
+            g.writeEntry("DesktopIconPlaced", true);
+            g.sync();
+        }
         if (g.readEntry("FirstRunDone", false) && !g.readEntry("ShowAtLogin", false))
             return 0;
         g.writeEntry("FirstRunDone", true);
