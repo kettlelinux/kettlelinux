@@ -1,0 +1,39 @@
+From 4139c6d640b9cfd81a5257cc8155d1ca3e822d88 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Tue, 29 Sep 2026 19:13:56 -0500
+Subject: [PATCH] v4l2_context: don't output empty capture buffers marked as
+ errors
+
+Qualcomm's iris driver returns an empty capture buffer with
+V4L2_BUF_FLAG_ERROR for a coded frame that produces no picture (VP9
+hidden frames). It was output as a frame with no timestamp; Firefox took
+that as a late frame and stopped playing video. Requeue it instead, as
+for other empty buffers, but without marking EOS.
+---
+ libavcodec/v4l2_context.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/libavcodec/v4l2_context.c b/libavcodec/v4l2_context.c
+index cf4b901..70ee246 100644
+--- a/libavcodec/v4l2_context.c
++++ b/libavcodec/v4l2_context.c
+@@ -493,6 +493,16 @@ dq_buf(V4L2Context * const ctx, V4L2Buffer ** const ppavbuf)
+     av_buffer_unref(&avbuf->ref_buf);
+ 
+     if (V4L2_TYPE_IS_CAPTURE(ctx->type)) {
++        // Zero length cap buffer marked as error: no picture came out of the coded
++        // frame (Qualcomm iris returns these for frames that are decoded but not shown,
++        // e.g. VP9 hidden frames). Not a frame to output, and not EOS.
++        if ((buf.flags & V4L2_BUF_FLAG_ERROR) != 0 &&
++            (is_mp ? buf.m.planes[0].bytesused : buf.bytesused) == 0) {
++            av_log(avctx, AV_LOG_DEBUG, "Buffer empty with error flag - reQ\n");
++            ff_v4l2_buffer_enqueue(avbuf);
++            return AVERROR(EPIPE);
++        }
++
+         // Zero length cap buffer return == EOS unless marked as error
+         if ((buf.flags & V4L2_BUF_FLAG_ERROR) == 0 &&
+             (is_mp ? buf.m.planes[0].bytesused : buf.bytesused) == 0) {
+-- 
+2.55.0
+

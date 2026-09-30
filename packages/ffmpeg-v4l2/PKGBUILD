@@ -16,6 +16,9 @@
 # 0001 (ours) stops sending VP8/VP9/AV1 extradata (Firefox passes the container's vpcC/av1C
 #   record) in front of the first frame: iris then skipped the first keyframe and every frame to
 #   the next one, so YouTube, which restarts the decoder at each resolution change, froze.
+# 0002 (ours) drops the empty error-flagged capture buffers iris returns for frames that aren't
+#   shown (VP9 hidden frames), which went to Firefox as frames with no timestamp and stopped
+#   video there.
 # v4l2-av1.h: the chroot's kernel headers (6.18) predate V4L2's AV1 format, which iris decodes
 #   on SM8550; without it the av1_v4l2m2m decoder isn't built.
 #
@@ -25,7 +28,7 @@
 # To follow the fork, move _commit to the head of its test/<version>/main branch.
 pkgname=ffmpeg-v4l2
 pkgver=8.1.2
-pkgrel=3
+pkgrel=4
 _commit=f60aae17021abae85b1ba9759e8b2da33f723902 # test/8.1.2/main
 pkgdesc="FFmpeg with DRM-PRIME V4L2 decoding (Raspberry Pi's fork), for Firefox's hardware video decoding"
 arch=(aarch64)
@@ -36,11 +39,13 @@ makedepends=(git)
 source=("git+https://github.com/jc-kynesim/rpi-ffmpeg.git#commit=$_commit"
         ffmpeg-v4l2.conf
         v4l2-av1.h
-        0001-v4l2m2m_dec-don-t-send-VP8-VP9-AV1-extradata-to-the-.patch)
+        0001-v4l2m2m_dec-don-t-send-VP8-VP9-AV1-extradata-to-the-.patch
+        0002-v4l2_context-don-t-output-empty-capture-buffers-mark.patch)
 sha256sums=('SKIP'
             'b5f4e1cc5afb966f0809655341805870673dcc88b5105fa74c460191d930bcc4'
             'c5d8aa74f5327095ac12d15cebabd5aad34c5c2577ba6c7b7435b58bf1be56ad'
-            'ee30bbb33e8c97b473dada6d241c1a90f0ab25ea4647e9469e01ef4db15a716b')
+            'ee30bbb33e8c97b473dada6d241c1a90f0ab25ea4647e9469e01ef4db15a716b'
+            '1af6eec739b8d3fb35a54f366d8537f65c9b2091ae3261cf379a2cfe84d58ab9')
 
 prepare() {
   cd rpi-ffmpeg

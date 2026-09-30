@@ -111,14 +111,19 @@ FFmpeg reaches through its `*_v4l2m2m` decoders. Three pieces make Firefox use i
   decoded in software. The shim, preloaded by the `kettle-firefox` launcher (menu entry and
   `/usr/local/bin/firefox`), answers with the size read before the sandbox starts.
   `/usr/lib/firefox/firefox` started directly skips it and decodes in software.
-- **AV1 off** (`kettle-media.js`, a default pref): AV1 on iris returned a few frames, most
-  without timestamps, then none and no error, so YouTube (which picks AV1) played sound with no
-  picture. `ffmpeg-v4l2` leaves `av1_v4l2m2m` out, and with AV1 off YouTube sends VP9.
+- **Two rpi-ffmpeg patches** (`packages/ffmpeg-v4l2`): 0001 stops sending the extradata
+  Firefox passes for VP8/VP9/AV1 (the container's vpcC/av1C record) in front of the first
+  frame; iris skipped the first keyframe for it, and everything up to the next one. 0002 drops
+  the empty, error-flagged capture buffers iris returns for frames that are decoded but not
+  shown (VP9/AV1 hidden frames); they reached Firefox as frames with no timestamp, and video
+  stopped there. YouTube, which restarts the decoder at every resolution change, played sound
+  over a still picture until both were fixed.
 
-Tested on a Thor: H.264 1080p all 600 frames on iris with the sandbox on; VP9 1080p played to
-the end on iris. Iris decodes H.264, HEVC, VP9 (and AV1), not VP8. Known limits in Firefox
-152: a second codec in the same session can fall back to software (bug 2071471, fixed in 159),
-and some videos cropped at the right edge show green bars (bug 2014641).
+Tested on a Thor, sandbox on: 1080p H.264 (600/600 frames), VP9 (300/300) and AV1 (300/300)
+files, and YouTube in VP9 and AV1 at 30 fps, all on iris, the decoder process at ~4% CPU.
+Iris decodes H.264, HEVC, VP9 and AV1, not VP8. Known limits in Firefox 152: a second codec in
+the same session can fall back to software (bug 2071471, fixed in 159), and some videos cropped
+at the right edge show green bars (bug 2014641).
 
 ## Still to check, by hand
 1. **The ROCKNIX ABL path**: whether its *Device model* setting offers a Thor (all AYN boards
@@ -149,11 +154,8 @@ and some videos cropped at the right edge show green bars (bug 2014641).
    the Portal's 4-18 W), charge limit support.
 8. **Headphones** and the speakers by ear.
 9. **Internal install** with the Kettle Installer.
-10. **Firefox's hardware video decoding** (above): H.264 and VP9 files checked on a Thor.
-    - YouTube sends VP9 now and shows a picture; `about:support`'s Media section.
-    - `MOZ_LOG="PlatformDecoderModule:5,FFmpegVideo:5" firefox`: "V4L2 Got one frame" keeps
-      counting, no "failed to create texture" (the shim missing) and no fallback to a software
-      codec; CPU in `top` well below software decoding.
-    - VP9 1080p gave 172 frames for 300 packets: dropped frames or VP9 superframes? Watch it.
-    - Seeking, resolution changes, fullscreen, long playback: no stall, no corrupt frames.
-    - AV1 again once iris or rpi-ffmpeg changes: rebuild with `av1_v4l2m2m`, drop the pref.
+10. **Firefox's hardware video decoding** (above): files and YouTube checked on a Thor.
+    - Longer playback, seeking, quality changes and fullscreen: no stall, no corrupt frames.
+    - `MOZ_LOG="FFmpegVideo:5" firefox`: "V4L2 Got one frame" keeps counting, no "failed to
+      create texture" (the shim missing) and no fallback to a software codec.
+    - HEVC (iris decodes it; not tried yet) and the Portal.
