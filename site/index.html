@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Kettle Linux</title>
-  <meta name="description" content="A SteamOS-like Linux distro for the AYN Odin 2 Portal: Valve's arm64 Steam client, Game Mode, a Plasma desktop and atomic A/B updates.">
+  <meta name="description" content="A SteamOS-like Linux distro for the AYN Odin 2 Portal and AYN Thor: Valve's arm64 Steam client, Game Mode, a Plasma desktop and atomic A/B updates.">
   <meta property="og:title" content="Kettle Linux">
-  <meta property="og:description" content="A SteamOS-like Linux distro for the AYN Odin 2 Portal.">
+  <meta property="og:description" content="A SteamOS-like Linux distro for the AYN Odin 2 Portal and AYN Thor.">
   <link rel="icon" href="kettle.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -14,7 +14,7 @@
   <header class="hero">
     <img class="logo" src="kettle.svg" alt="" width="128" height="128">
     <h1><img src="wordmark.svg" alt="Kettle Linux" width="332" height="48"></h1>
-    <p class="tagline">A SteamOS-like Linux distro for the <strong>AYN Odin 2 Portal</strong>.</p>
+    <p class="tagline">A SteamOS-like Linux distro for the <strong>AYN Odin 2 Portal</strong> and <strong>AYN Thor</strong>.</p>
     <p class="sub">Valve's arm64 Steam client, a handheld Game Mode, a Plasma desktop and atomic A/B updates, on a patched mainline kernel.</p>
     <div class="actions">
       <a class="btn primary" href="#download">Download</a>
@@ -27,13 +27,13 @@
   <main>
     <section id="download">
       <h2>Download</h2>
-      <div id="release" class="card">
-        <p class="muted">Loading the latest release…</p>
+      <div id="release" class="releases">
+        <div class="card"><p class="muted">Loading the latest releases…</p></div>
       </div>
       <p class="muted small">
-        Write the image to a 32&nbsp;GB or larger microSD card. Booting it needs the ROCKNIX ABL; Android on
-        internal storage is left alone. Follow the
-        <a href="https://github.com/kettlelinux/kettlelinux/blob/main/docs/INSTALL.md">install guide</a>.
+        Each device has its own image: pick the one for yours. Write it to a 32&nbsp;GB or larger microSD
+        card. Booting it needs the ROCKNIX ABL or U-Boot; Android on internal storage is left alone. Follow
+        the <a href="https://github.com/kettlelinux/kettlelinux/blob/main/docs/INSTALL.md">install guide</a>.
         Once installed, updates come through Steam's own <em>Check for updates</em>.
       </p>
     </section>
@@ -64,6 +64,14 @@
         <div class="card">
           <h3>Games outside Steam</h3>
           <p>ARM64EC Wine with FEX, DXVK and vkd3d-proton, plus Lutris and Heroic built for arm64.</p>
+        </div>
+        <div class="card">
+          <h3>Android games</h3>
+          <p>Add an Android game to Steam and play it in Game Mode, through Lepton, the Android layer Valve made for the Steam Frame.</p>
+        </div>
+        <div class="card">
+          <h3>Two screens on the Thor</h3>
+          <p>Steam on the top screen and a touch shell on the bottom one in Game Mode, and both screens in the desktop.</p>
         </div>
       </div>
     </section>

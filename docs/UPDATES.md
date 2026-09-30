@@ -160,8 +160,9 @@ device is pointed at a release that isn't all there. Chunks and bundles are cach
 (kettlelinux.org, `site/`) lists them from `downloads/releases.json`. Build with
 `KETTLE_RELEASE=1 scripts/build-image.sh`, then
 `scripts/upload-image.sh out/kettle-<buildid>-<variant>.img.xz`. It uploads the image and its
-`.sha256`, adds it to the index and keeps the newest three (`KETTLE_KEEP_IMAGES`), deleting
-older ones. The website reads the index from another origin, so the bucket needs a CORS policy
+`.sha256`, adds it to the index with its release notes (`releases/<variant>/<buildid>.md`) and
+keeps each device's newest three (`KETTLE_KEEP_IMAGES`), deleting older ones. The website shows
+each device's newest image, with its notes. The website reads the index from another origin, so the bucket needs a CORS policy
 once (R2 bucket *Settings > CORS Policy*):
 
 ```json

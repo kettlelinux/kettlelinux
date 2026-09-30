@@ -1,16 +1,19 @@
 # Installing Kettle Linux
 
-Kettle Linux runs from a microSD card in the AYN Odin 2 Portal. Android on the internal storage
-stays as it is, and you can start either one. The only change to the device itself is a one-time
-bootloader swap, below, so it can start Linux. If your Portal already runs the ROCKNIX ABL or
-U-Boot (from ROCKNIX or another Linux distro, for example), skip that step.
+Kettle Linux runs from a microSD card in the AYN Odin 2 Portal and the AYN Thor. Android on the
+internal storage stays as it is, and you can start either one. The only change to the device
+itself is a one-time bootloader swap, below, so it can start Linux. If your device already runs
+the ROCKNIX ABL or U-Boot (from ROCKNIX or another Linux distro, for example), skip that step.
+
+The steps are the same on both devices, with the differences noted. The Thor is newer to Kettle
+than the Portal: see its release notes for what has been tested on it.
 
 Kettle is early and in active development. Check the known issues in the release notes on
 [kettlelinux.org](https://kettlelinux.org) before you start.
 
 ## What you need
 
-- An AYN Odin 2 Portal
+- An AYN Odin 2 Portal or AYN Thor
 - A microSD card of **32 GB or more**. Games are installed to it too, so bigger and faster
   (A2 / U3) is better. Everything on it is erased.
 - A computer to write the card from (Windows, macOS or Linux)
@@ -19,10 +22,10 @@ Kettle is early and in active development. Check the known issues in the release
 
 ## 1. Install the ROCKNIX bootloader (once)
 
-**Skip this step** if your Portal already has the ROCKNIX ABL or U-Boot: Kettle's card works
+**Skip this step** if your device already has the ROCKNIX ABL or U-Boot: Kettle's card works
 with both as they are. Go on to step 2.
 
-The Portal's stock bootloader (ABL) only starts Android. The ROCKNIX ABL adds a menu that can
+The stock bootloader (ABL) only starts Android. The ROCKNIX ABL adds a menu that can
 start Linux from the SD card, and still starts Android. You only do this once; Kettle updates
 never touch it.
 
@@ -39,8 +42,9 @@ Get the latest release from [github.com/ROCKNIX/abl](https://github.com/ROCKNIX/
 
 ## 2. Download and check the image
 
-Download the latest image, `kettle-<build>-odin2portal.img.xz` (about 4 GB), from
-[kettlelinux.org](https://kettlelinux.org). The page shows its SHA-256 checksum. To check the
+Download the latest image for your device from [kettlelinux.org](https://kettlelinux.org)
+(about 4 GB): `kettle-<build>-odin2portal.img.xz` for the Portal, `kettle-<build>-thor.img.xz`
+for the Thor. Each device's image only works on that device. The page shows its SHA-256 checksum. To check the
 download, compare it with:
 
 - **Linux / macOS:** `sha256sum kettle-*.img.xz` (macOS: `shasum -a 256 kettle-*.img.xz`)
@@ -64,15 +68,18 @@ You don't need to unpack the `.img.xz` first: these tools read it as it is.
 
 ## 4. First start
 
-1. Put the card in the Portal and start it from the card:
+1. Put the card in the device and start it from the card:
    - **ROCKNIX ABL:** hold **Vol−** while powering on to open its menu, and set
-     **Device model:** Odin 2 Portal, **Boot source:** SD, **Boot mode:** Linux.
+     **Device model:** Odin 2 Portal (or your Thor), **Boot source:** SD, **Boot mode:** Linux.
+     On the Thor, Kettle has so far been started through U-Boot; whether the ROCKNIX ABL's
+     menu offers a Thor hasn't been checked yet.
    - **U-Boot:** start from the SD card as you would any other card. Kettle's card has the
      `extlinux.conf` and EFI loader U-Boot looks for.
 2. The first start takes a little longer than later ones: Kettle sets itself up on the
    rest of the card (the space for games and your files, and a second system slot for updates).
 3. Kettle starts in **Game Mode**, Steam's handheld interface. Connect to Wi-Fi and sign in to
-   Steam as on a Steam Deck.
+   Steam as on a Steam Deck. On the Thor, Steam is on the top screen and the bottom screen has a
+   touch shell of its own; *Quick Access*, *Screens* turns it off or on.
 4. For the desktop, choose *Switch to Desktop* in Steam's power menu. **Kettle Welcome** opens
    there (it's also in the app menu): use it to set a new password (every copy starts with
    user `kettle`, password `kettle`), to turn on SSH if you want it (it's off), and for controls help and extra apps.
