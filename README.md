@@ -1,6 +1,7 @@
 # Kettle Linux
 
-A SteamOS-like Linux distro for the **AYN Odin 2 Portal** (Snapdragon 8 Gen 2, SM8550/QCS8550).
+A SteamOS-like Linux distro for the **AYN Odin 2 Portal** and the **AYN Thor** (Snapdragon 8 Gen 2,
+SM8550/QCS8550).
 
 Kettle combines a patched mainline kernel with the aarch64 userspace from Valve's SteamOS
 "deckard" (Steam Frame). You get Valve's arm64 Steam client, a handheld Game Mode and a
@@ -11,15 +12,16 @@ own *Check for updates*.
 > audio, Wi-Fi, controls, Game Mode and Desktop Mode. Several features are built but not yet
 > tested on a Portal. See [Project Status](https://github.com/kettlelinux/kettlelinux/wiki/Project-Status).
 >
-> **AYN Thor** (same SoC, two screens): boots and runs on hardware; its second screen in Game
-> Mode is still being tested. See [docs/THOR.md](docs/THOR.md).
+> **AYN Thor** (same SoC, two screens): first public test build. See [docs/THOR.md](docs/THOR.md)
+> for what has been tested on it. Each device gets its own image and its own updates;
+> [docs/PORTING.md](docs/PORTING.md) has how devices are kept apart and how to add one.
 
 **Documentation lives in the [wiki](https://github.com/kettlelinux/kettlelinux/wiki).**
 
 ## Features
 
-- **Mainline kernel for the Portal**: Linux 7.2 with a pinned patch stack for the panel,
-  gamepad, LEDs, haptics, microSD, Wi-Fi and s2idle suspend.
+- **Mainline kernel**: Linux 7.2 with a pinned patch stack for the panels, gamepad, LEDs,
+  haptics, microSD, Wi-Fi and s2idle suspend.
 - **SteamOS experience**: Valve's arm64 Steam client with its own handheld Game Mode
   (gamescope), steamos-manager, and switching between Game Mode and Desktop.
 - **Atomic A/B updates**: Valve's SteamOS update stack (steamcl, RAUC, atomupd) built for arm64,
@@ -36,6 +38,12 @@ own *Check for updates*.
   Steam's Performance panel, the Power plugin, or a Desktop Mode tray applet.
 - **Games outside Steam**: ARM64EC Wine with FEX, DXVK and vkd3d-proton, plus Lutris and Heroic
   built for arm64.
+- **Android games**: add an Android game to Steam and play it in Game Mode, through Lepton, the
+  Android layer Valve made for the Steam Frame (APK files, F-Droid, or opt-in Google Play).
+- **Hardware video in Firefox**: H.264, HEVC, VP9 and AV1 on the SoC's video decoder, YouTube
+  included.
+- **Two screens on the Thor**: Steam on the top screen, and in Game Mode a touch shell of its own
+  (Plasma Mobile) on the bottom one; both screens in the desktop.
 - **Desktop welcome hub**: setup shortcuts, controls help, and one-click *Gaming Extras*
   (emulators, streaming and tools) from Flathub.
 - **Kettle branding**: boot splash, Steam startup movie and Plasma splash, all rendered from source art.

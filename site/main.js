@@ -55,42 +55,61 @@ function renderNotes(text) {
   return box;
 }
 
+// Devices in the order the Download section lists them; names for index entries made before
+// upload-image.sh recorded each image's model. A device not named here is listed after these.
+const DEVICES = { odin2portal: "AYN Odin 2 Portal", thor: "AYN Thor" };
+
+function releaseCard(img, older) {
+  const head = el("div", { className: "release-head" },
+    el("h3", { textContent: img.model || DEVICES[img.variant] || img.variant }),
+    el("span", { className: "muted small", textContent:
+      `Kettle ${img.version} (${img.buildid})${img.branch ? " · " + img.branch : ""} · ${new Date(img.date).toLocaleDateString()}` }));
+  const assets = el("ul", { className: "assets" },
+    el("li", {},
+      el("a", { className: "btn primary", href: `${DOWNLOADS}/${img.file}`, textContent: `${img.name}.img.xz` }),
+      el("span", { className: "muted small", textContent:
+        `${size(img.size)}${img.image_size ? `, ${size(img.image_size)} unpacked` : ""}` })),
+    el("li", {},
+      el("a", { className: "btn", href: `${DOWNLOADS}/${img.sums}`, textContent: "SHA-256 checksums" })));
+  const parts = [head, assets, el("p", { className: "small sha" }, "SHA-256: ", el("code", { textContent: img.sha256 }))];
+  if (older.length) {
+    parts.push(el("p", { className: "small" }, "Older: ", ...older.flatMap((o, i) => [
+      i ? " · " : "", el("a", { href: `${DOWNLOADS}/${o.file}`, textContent: o.buildid })])));
+  }
+  if (img.notes) parts.push(renderNotes(img.notes));
+  return el("div", { className: "card release" }, ...parts);
+}
+
 async function loadRelease() {
   const box = document.getElementById("release");
   try {
-    // written by scripts/upload-image.sh, newest first
+    // written by scripts/upload-image.sh, every device's images, newest first
     const res = await fetch(`${DOWNLOADS}/downloads/releases.json`, { cache: "no-cache" });
     if (!res.ok && res.status !== 404) throw new Error(`downloads ${res.status}`);
     const images = res.ok ? (await res.json()).images : [];
     if (!images.length) {
-      box.replaceChildren(
+      box.replaceChildren(el("div", { className: "card" },
         el("p", {}, "No image has been released yet. You can ",
           el("a", { href: `https://github.com/${REPO}/wiki/Building`, textContent: "build one from source" }),
-          " in the meantime."));
+          " in the meantime.")));
       return;
     }
-    const [img, ...older] = images;
-    const head = el("div", { className: "release-head" },
-      el("h3", { textContent: `Kettle ${img.version} (${img.buildid})` }),
-      el("span", { className: "muted small", textContent:
-        `${img.branch ? img.branch + " · " : ""}${new Date(img.date).toLocaleDateString()}` }));
-    const assets = el("ul", { className: "assets" },
-      el("li", {},
-        el("a", { className: "btn primary", href: `${DOWNLOADS}/${img.file}`, textContent: `${img.name}.img.xz` }),
-        el("span", { className: "muted small", textContent:
-          `${size(img.size)}${img.image_size ? `, ${size(img.image_size)} unpacked` : ""}` })),
-      el("li", {},
-        el("a", { className: "btn", href: `${DOWNLOADS}/${img.sums}`, textContent: "SHA-256 checksums" })));
-    const parts = [head, assets, el("p", { className: "small sha" }, "SHA-256: ", el("code", { textContent: img.sha256 }))];
-    if (older.length) {
-      parts.push(el("p", { className: "small" }, "Older: ", ...older.flatMap((o, i) => [
-        i ? " · " : "", el("a", { href: `${DOWNLOADS}/${o.file}`, textContent: o.buildid })])));
+    const byDevice = new Map();
+    for (const img of images) {
+      if (!byDevice.has(img.variant)) byDevice.set(img.variant, []);
+      byDevice.get(img.variant).push(img);
     }
-    if (img.notes) parts.push(renderNotes(img.notes));
-    box.replaceChildren(...parts);
+    const order = Object.keys(DEVICES);
+    const rank = v => (order.includes(v) ? order.indexOf(v) : order.length);
+    const devices = [...byDevice.keys()].sort((a, b) => rank(a) - rank(b));
+    box.replaceChildren(...devices.map(v => {
+      const [img, ...older] = byDevice.get(v);
+      return releaseCard(img, older);
+    }));
   } catch (e) {
-    box.replaceChildren(el("p", {}, "Couldn't load the download list. Try again later, or ask in the ",
-      el("a", { href: `https://github.com/${REPO}/issues`, textContent: "issue tracker" }), "."));
+    box.replaceChildren(el("div", { className: "card" },
+      el("p", {}, "Couldn't load the download list. Try again later, or ask in the ",
+        el("a", { href: `https://github.com/${REPO}/issues`, textContent: "issue tracker" }), ".")));
   }
 }
 
