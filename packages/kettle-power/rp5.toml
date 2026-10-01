@@ -30,8 +30,10 @@ default_curve = [[40, 0], [45, 20], [55, 30], [62, 40], [68, 50], [73, 70], [78,
 
 [power]
 battery = "battery"
-# the PM8150B charger (kernel patch 21-sm8250/0011)
-charger = "pmi8998_charger"
+# the PM8150B charger (kernel patch 21-sm8250/0011). It reports online=16 when plugged in and
+# input currents that look too low (seen on an RP5), so on the charger the draw falls back to
+# the battery's reading
+charger = "pm8150b-charger"
 # Share of the charger's input power that reaches the system and battery
 charger_efficiency = 0.9
 # Steam's TDP slider: whole-device draw in watts (screen included); max means no limit

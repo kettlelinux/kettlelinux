@@ -2,7 +2,7 @@
 // on the first plugin load that finds the game in the library (installed or not, since launch
 // options belong to the app), and recorded by the backend so a user who removes it keeps it off.
 import { callable } from "@decky/api";
-import { editLaunchOptions, withWrapper } from "../../shared/launchOptions";
+import { editLaunchOptions, hasEnv, withEnv, withWrapper } from "../../shared/launchOptions";
 
 type Fix = { id: string; appid: number; applied: (opts: string) => boolean; edit: (opts: string) => string };
 
@@ -23,6 +23,16 @@ const FIXES: Fix[] = [
     appid: 782330,
     applied: (opts) => opts.includes("DOOMEternalx64vk.exe"),
     edit: (opts) => withWrapper(opts, skipTo("launcher/idTechLauncher.exe", "DOOMEternalx64vk.exe")),
+  },
+  {
+    // The Witcher 3 Remastered creates its D3D12 device at feature level 12_0. vkd3d-proton
+    // reports only 11_x on Turnip (FL 12_0 needs tiled resources tier 2, and Turnip has no
+    // sparseResidencyImage2D), so the game stops at "GPU does not meet minimal requirements.
+    // Support for DirectX 12 is required." Forcing 12_0 lets it create the device.
+    id: "witcher3-feature-level-12-0",
+    appid: 292030,
+    applied: (opts) => hasEnv(opts, "VKD3D_FEATURE_LEVEL"),
+    edit: (opts) => withEnv(opts, "VKD3D_FEATURE_LEVEL", "12_0"),
   },
 ];
 
