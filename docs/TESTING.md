@@ -66,7 +66,7 @@ Login: `kettle` / `kettle` (sudo via wheel), on the panel console or `ssh kettle
 | Power key | short press | suspends (long press powers off) |
 | Swap | `swapon --show` | `/dev/zram0`, half of RAM (max 8 GB) |
 | Power draw | `kettle-powertest state`; on battery: `kettle-powertest 120 idle` | per-run mW + settings in `~/.local/state/kettle-powertest.csv` |
-| Crash reports | `systemctl status kettle-crashd`; `sh -c 'kill -SEGV $$'`; `ls /var/log/kettle-crash` | a `*-coredump-sh` report: `report.json` (versions, game, Kettle features), `backtrace.txt`, journal and kernel log; a GPU hang or firmware crash adds a `*-devcoredump-<driver>` one |
+| Crash reports | `systemctl status kettle-crashd`; `sh -c 'kill -SEGV $$'`; `ls /var/log/kettle-crash` | a `*-coredump-sh` report: `report.json` (versions, game, Kettle features), `backtrace.txt`, journal and kernel log; a GPU hang or firmware crash adds a `*-devcoredump-<driver>` one. With a Steam app id (`SteamAppId=<id> sh -c 'kill -SEGV $$'`): a "<game> crashed" toast in Game Mode, and the report in Quick Access > Crash Reports |
 | Desktop power | Desktop Mode: Power (speedometer) in the system tray; Powersave, 6 W, fixed GPU clock, a fixed fan speed; then Return to Game Mode and back | readout moves; `GetStatus` (below) shows the caps and `active_game` `desktop`; Game Mode has Steam's own values and its fan/CPU settings; the desktop's come back with it |
 
 Suspend is the least proven area: nobody has validated s2idle on a Portal yet. After a

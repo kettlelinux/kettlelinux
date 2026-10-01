@@ -16,7 +16,8 @@ parking. Every cap source is combined here, the lowest wins, so no two writers f
 scaling_max_freq or devfreq max_freq.
 
   kettle-powerd            run the daemon (system bus, root)
-  kettle-powerd --restore  hand the fan back to the kernel and lift every cap (ExecStopPost)
+  kettle-powerd --restore  hand the fan back to the kernel and lift every cap, the GPU's to
+                           [gpu] auto_max_mhz (ExecStopPost)
 """
 import json
 import os
@@ -131,6 +132,11 @@ class Hardware:
         g = cfg["gpu"]["devfreq"]
         self.gpu = g
         self.gpu_freqs = sorted(int(f) for f in read(f"{g}/available_frequencies", "").split())
+        # auto (and the TDP limit's steps) stay at or below auto_max_mhz; the clocks above it
+        # (overclock OPPs) are only for a manual GPU clock
+        auto_max = cfg["gpu"].get("auto_max_mhz")
+        self.gpu_auto_freqs = [f for f in self.gpu_freqs
+                               if not auto_max or f <= auto_max * 1_000_000] or self.gpu_freqs
         self.gpu_load_path = cfg["gpu"].get("load")
         self.hwmon = find_class("hwmon", "name", cfg["fan"]["hwmon"])
         self.fan_cdev = find_class("thermal", "type", cfg["fan"]["cooling_device"])
@@ -230,7 +236,7 @@ class Daemon:
         self.profiles = {p["name"]: p for p in self.cfg.get("profile", [])}
         self.state = {
             "steam": {"tdp": pw["tdp_max"], "profile": next(iter(self.profiles), ""),
-                      "gpu_level": "auto", "gpu_clock": self.hw.gpu_freqs[-1] // 1_000_000,
+                      "gpu_level": "auto", "gpu_clock": self.hw.gpu_auto_freqs[-1] // 1_000_000,
                       "fan_control": 1, "charge_limit": -1},
             "games": {"default": self.normalize({})},
         }
@@ -317,7 +323,7 @@ class Daemon:
                 if src:
                     cap = min(cap, src)
             cpu[c["name"]] = floor_freq(c["freqs"], cap)
-        gf = self.hw.gpu_freqs
+        gf = self.gpu_steps()
         gmax = gf[-1]
         if prof.get("gpu_mhz"):
             gmax = min(gmax, prof["gpu_mhz"] * 1_000_000)
@@ -330,6 +336,10 @@ class Daemon:
             gmin = gmax
         gmax = floor_freq(gf, gmax)
         return cpu, (floor_freq(gf, gmin), gmax)
+
+    def gpu_steps(self):
+        """GPU frequencies auto and the TDP limit step through: all of them for a manual clock."""
+        return self.hw.gpu_freqs if self.state["steam"]["gpu_level"] == "manual" else self.hw.gpu_auto_freqs
 
     def put(self, path, value):
         if self.written.get(path) != value and write(path, value):
@@ -447,7 +457,7 @@ class Daemon:
         if gpu_busy is None:
             gpu_busy = 1.0
         cpu_room = len(self.cpu_ladder) - 1 - self.tdp_cpu
-        gpu_room = len(self.hw.gpu_freqs) - 1 - self.tdp_gpu
+        gpu_room = len(self.gpu_steps()) - 1 - self.tdp_gpu
         err = self.power - limit
         steps = 2 if abs(err) > 3 else 1
         before = (self.tdp_cpu, self.tdp_gpu)
@@ -690,7 +700,7 @@ def restore(hw, daemon=None):
         write(f"{c['path']}/scaling_max_freq", max(c["freqs"]))
     if hw.gpu_freqs:
         write(f"{hw.gpu}/min_freq", hw.gpu_freqs[0])
-        write(f"{hw.gpu}/max_freq", hw.gpu_freqs[-1])
+        write(f"{hw.gpu}/max_freq", hw.gpu_auto_freqs[-1])
 
 
 INTROSPECTION = f"""<node>

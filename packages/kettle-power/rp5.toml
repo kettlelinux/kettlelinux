@@ -1,7 +1,7 @@
 # kettle-powerd's description of the Retroid Pocket 5 (SM8250, both panels: compatible
-# "retroidpocket,rp5"). GPU frequencies are sm8250.dtsi's A650 OPP table; the CPU caps are
-# SM8250 cpufreq-hw steps, to check against the table read on the device (caps between steps
-# round down).
+# "retroidpocket,rp5"). GPU frequencies are sm8250.dtsi's A650 OPP table with the overclock
+# steps of kernel 21-sm8250/0111; the CPU caps are SM8250 cpufreq-hw steps, to check against
+# the table read on the device (caps between steps round down).
 
 [cpu]
 # cpufreq policies, smallest cluster first. cpu0 can't be taken offline.
@@ -18,6 +18,11 @@ devfreq = "/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu"
 load = "/sys/kernel/debug/dri/ae01000.display-controller/perf_now"
 # lowest clock offered for a fixed (manual) GPU clock, MHz
 manual_min_mhz = 305
+# highest clock in auto and for the TDP limit, MHz: the stock SD865 top. The overclock OPPs
+# above it (kernel 21-sm8250/0111, to 750 MHz, with ACD from 0112) are only for a manual GPU
+# clock, which Steam keeps per game. Tested in Cleared Hot on a charging RP5 with ACD: 700 MHz
+# +10%, 750 MHz +11% fps, GPU at most 80 C (the passive trip is 85 C), no GPU errors.
+auto_max_mhz = 587
 
 [fan]
 hwmon = "pwmfan"

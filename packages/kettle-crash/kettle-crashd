@@ -10,11 +10,16 @@ Turns each crash into a report directory under /var/log/kettle-crash (/var/log i
   devcoredump   a device's driver dumped its state: a GPU hang or fault (msm), or a firmware
                 crash (remoteproc, Wi-Fi). The kernel drops it after 5 minutes, so it's copied
                 at once, from kettle-devcoredump@.service (started by udev).
+  game          a Windows game crashed in Wine ("wine: Unhandled ..."), which makes no core
+                dump, or lost its GPU (VK_ERROR_DEVICE_LOST): seen in the game's own output.
+                Games write it to Steam's (steam_output.log: they inherit Steam's stdout and
+                stderr), which is followed here, keeping its last lines for the report.
 
 Each report is report.json (what crashed; the Steam game it belongs to, or the one running at
 the time; the system's versions; the game's Kettle features) and text and data files next to it.
 
-  kettle-crashd                     follow the journal for coredumps (kettle-crashd.service)
+  kettle-crashd                     follow the journal for coredumps and the game output
+                                    (kettle-crashd.service)
   kettle-crashd --devcoredump NAME  save /sys/class/devcoredump/NAME and free it
 """
 import datetime
@@ -26,7 +31,9 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from collections import deque
 
 DIR = os.environ.get("KETTLE_CRASH_DIR", "/var/log/kettle-crash")
 CURSOR = os.path.join(DIR, ".cursor")
@@ -38,6 +45,18 @@ KEEP = 50  # reports kept, newest first
 KEEP_BYTES = 512 << 20
 DEVCD_MAX = 64 << 20  # bigger device dumps (a modem's memory) are noted, not kept
 REPEAT_S = 30  # the same program crashing again within this: one report, with a count
+STEAM_OUTPUT = os.environ.get("KETTLE_CRASH_OUTPUT",
+                              STEAM_HOMES[0] + "/logs/steam_output.log")  # fake for testing
+OUTPUT_LINES = 400  # game output kept from before a crash
+OUTPUT_AFTER_S = 4  # and after it: Wine's debugger prints its backtrace then
+# a game's crash in its output: Wine's unhandled exception (start_debugger: "Unhandled page fault
+# on read access to ...", "Unhandled exception 0xc0000409 ...", "Unhandled stack overflow ...")
+# and the GPU lost under DXVK, vkd3d-proton or a native Vulkan game
+GAME_CRASH = (
+    ("wine", re.compile(r"\bwine: (Unhandled .*?)(?:, starting debugger.*)?$")),
+    ("gpu", re.compile(r"(VK_ERROR_DEVICE_LOST)")),
+)
+LOCK = threading.Lock()  # two followers write reports
 # versions that matter for a crash report, those installed
 PACKAGES = ("mesa", "vulkan-freedreno", "gamescope", "steam", "fex-emu-wine", "wine",
             "kettle-framegen", "optiscaler-arm64ec", "decky-loader", "kettle-power")
@@ -80,12 +99,15 @@ def system_info():
         name, _, ver = line.partition(" ")
         if ver:
             pkgs[name] = ver
-    slot = re.search(r"\brauc\.slot=(\S+)", read("/proc/cmdline"))
+    try:  # the A/B slot running
+        slot = json.loads(run("rauc", "status", "--output-format=json") or "{}").get("booted")
+    except ValueError:
+        slot = None
     return {
         "os": os_release(),
         "model": read("/proc/device-tree/model").rstrip("\0\n"),
         "kernel": os.uname().release,
-        "slot": slot.group(1) if slot else None,
+        "slot": slot,
         "uptime_s": int(float(read("/proc/uptime", "0").split()[0])),
         "packages": pkgs,
     }
@@ -108,17 +130,32 @@ def steam_app_id(env):
     return None
 
 
-def running_app_id():
-    """The Steam game running now: the first process with a Steam app id in its environment."""
+def compat_tool(env, exe):
+    """The Proton (or other compatibility tool) a game process ran under."""
+    for p in env.get("STEAM_COMPAT_TOOL_PATHS", "").split(":"):
+        if "/steamapps/common/" in p and "SteamLinuxRuntime" not in p:
+            return os.path.basename(p.rstrip("/"))
+    m = re.search(r"/steamapps/common/([^/]*Proton[^/]*)/", exe)
+    return m.group(1) if m else None
+
+
+def running_game():
+    """The Steam game running now, and the environment of its first process (its app id in
+    it), or (None, {})."""
     for p in glob.glob("/proc/[0-9]*/environ"):
         try:
             with open(p, "rb") as f:
-                app = steam_app_id(environ_dict(f.read().decode(errors="replace")))
+                env = environ_dict(f.read().decode(errors="replace"))
         except OSError:
             continue
+        app = steam_app_id(env)
         if app:
-            return app
-    return None
+            return app, env
+    return None, {}
+
+
+def running_app_id():
+    return running_game()[0]
 
 
 def steam_libraries():
@@ -166,7 +203,8 @@ def new_report(kind, name):
     while os.path.exists(path + (f"-{n}" if n > 1 else "")):
         n += 1
     path += f"-{n}" if n > 1 else ""
-    os.makedirs(path, mode=0o750)
+    os.makedirs(path)
+    os.chmod(path, 0o2770)  # the kettle group (the Crash Reports plugin) can delete it
     return path
 
 
@@ -206,8 +244,8 @@ def journal_before(until_us, *match, lines=300):
                "--until", until, *match)
 
 
-def repeat_of(exe, now_us):
-    """The last report, when it's this program crashing again within REPEAT_S."""
+def repeat_of(kind, key, value, now_us):
+    """The last report, when it's this program (or game) crashing again within REPEAT_S."""
     last = reports()[-1:]
     if not last:
         return None
@@ -216,10 +254,21 @@ def repeat_of(exe, now_us):
             r = json.load(f)
     except (OSError, ValueError):
         return None
-    if r.get("kind") == "coredump" and r.get("exe") == exe and \
+    if r.get("kind") == kind and r.get(key) == value and \
             now_us - r.get("last_time_us", r["time_us"]) < REPEAT_S * 1e6:
         return last[0], r
     return None
+
+
+def count_repeat(kind, key, value, now_us):
+    """A crash loop: count it in the last report instead of filling the report list."""
+    rep = repeat_of(kind, key, value, now_us)
+    if rep:
+        path, r = rep
+        r["count"] = r.get("count", 1) + 1
+        r["last_time_us"] = now_us
+        finish(path, r)
+    return bool(rep)
 
 
 # ---------------------------------------------------------------- coredumps
@@ -237,12 +286,7 @@ def on_coredump(entry):
               or time.time() * 1e6)
     if exe == sys.executable or (field(entry, "COREDUMP_COMM") or "").startswith("kettle-crash"):
         return
-    rep = repeat_of(exe, now)
-    if rep:  # a crash loop: count it instead of filling the report list
-        path, r = rep
-        r["count"] = r.get("count", 1) + 1
-        r["last_time_us"] = now
-        finish(path, r)
+    if count_repeat("coredump", "exe", exe, now):
         return
 
     env = environ_dict(field(entry, "COREDUMP_ENVIRON") or "")
@@ -264,6 +308,7 @@ def on_coredump(entry):
         # the game this process belongs to; else the one running at the time
         "game": game_info(app_running) if app_running else None,
         "game_process": bool(app),
+        "compat_tool": compat_tool(env, exe) if app else None,
         "system": system_info(),
     }
     write(path, "backtrace.txt", field(entry, "MESSAGE") or "")
@@ -282,6 +327,7 @@ def follow():
     p = subprocess.Popen(["journalctl", "-f", "-o", "json", "--all", "--no-pager",
                           f"MESSAGE_ID={COREDUMP_ID}", *start],
                          stdout=subprocess.PIPE, text=True, errors="replace")
+    threading.Thread(target=follow_output, daemon=True).start()
     log("following coredumps")
     for line in p.stdout:
         try:
@@ -289,13 +335,91 @@ def follow():
         except ValueError:
             continue
         try:
-            on_coredump(entry)
+            with LOCK:
+                on_coredump(entry)
         except Exception as e:  # one bad entry mustn't stop the reports
             log(f"coredump report failed: {e!r}")
         with open(CURSOR + ".tmp", "w") as f:
             f.write(entry.get("__CURSOR", ""))
         os.replace(CURSOR + ".tmp", CURSOR)
     return p.wait()
+
+
+# ---------------------------------------------------------------- game output
+
+def on_game_crash(kind, what, line, app, env, before, after, now):
+    # the same game again soon after is the same crash still being reported (a lost GPU,
+    # every frame), not a new one
+    if repeat_of("game", "app_id", app, now):
+        return
+    info = game_info(app) if app else None
+    path = new_report("game", (info or {}).get("name") or kind)
+    report = {
+        "kind": "game",
+        "time_us": now,
+        "reason": kind,  # wine: an unhandled exception; gpu: the device lost
+        "what": what,
+        "line": line,
+        "app_id": app,
+        "game": info,
+        "game_process": bool(app),
+        "compat_tool": compat_tool(env, "") if app else None,
+        "system": system_info(),
+    }
+    write(path, "output.txt", "".join(before) + "".join(after))
+    write(path, "environ.txt", "\n".join(f"{k}={v}" for k, v in sorted(env.items())) + "\n")
+    write(path, "journal.txt", journal_before(now, lines=150))
+    write(path, "kernel.txt", journal_before(now, "-k", lines=100))
+    finish(path, report)
+
+
+def follow_output():
+    """Steam's output, which games write theirs to: Steam makes it anew when it starts."""
+    lines = deque(maxlen=OUTPUT_LINES)
+    f = ino = None
+    rest = b""
+    crash = None  # a crash seen, still collecting the output after it
+    while True:
+        try:
+            st = os.stat(STEAM_OUTPUT)
+            if st.st_ino != ino or (f and st.st_size < f.tell()):
+                if f:
+                    f.close()
+                f = open(STEAM_OUTPUT, "rb")
+                if ino is None:
+                    f.seek(0, os.SEEK_END)  # what was there before the daemon started: not ours
+                ino, rest = st.st_ino, b""
+            data = f.read()
+        except OSError:
+            data = b""
+        if data:
+            *new, rest = (rest + data).split(b"\n")
+            for raw in new:
+                line = raw.decode(errors="replace") + "\n"
+                if crash:
+                    crash["after"].append(line)
+                    continue
+                lines.append(line)
+                for kind, pattern in GAME_CRASH:
+                    m = pattern.search(line)
+                    if m:
+                        # the game is still there while Wine reports it
+                        app, env = running_game()
+                        crash = {"kind": kind, "what": m.group(1), "line": line.strip(),
+                                 "app": app, "env": env, "before": list(lines), "after": [],
+                                 "now": int(time.time() * 1e6), "until": time.monotonic() +
+                                 OUTPUT_AFTER_S}
+                        break
+        if crash and (time.monotonic() > crash["until"] or len(crash["after"]) > OUTPUT_LINES):
+            c, crash = crash, None
+            try:
+                with LOCK:
+                    on_game_crash(c["kind"], c["what"], c["line"], c["app"], c["env"],
+                                  c["before"], c["after"], c["now"])
+            except Exception as e:
+                log(f"game crash report failed: {e!r}")
+            lines.clear()
+        time.sleep(0.5)
 
 
 # ---------------------------------------------------------------- devcoredumps

@@ -1,0 +1,11 @@
+{
+  "name": "Crash Reports",
+  "author": "Kettle Linux",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["crash", "debug"],
+    "description": "Kettle's crash reports for games and the system: what crashed, the game, the versions and the stack trace. Kept on the device.",
+    "image": ""
+  }
+}

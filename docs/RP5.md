@@ -100,7 +100,12 @@ First boot of 20260930.1 from SD, on an RP5 with the CH13726A panel (Android rep
 - GPU DDR bandwidth votes (`21-sm8250/0110`, from ROCKNIX's `9998-gpu-tuning`), checked on
   20261001.2 in Cleared Hot: the GPU votes its top step (8171875 kBps) at 587 MHz, the DDR vote
   rises from 5412000-6220000 (CPU only) to 8171875-8368000, no GMU errors, GPU 51-55 C, 33-36 fps
-  GPU-bound. Its overclock and ACD levels are not taken.
+  GPU-bound.
+- GPU overclock (`21-sm8250/0111`, 650-750 MHz) with ACD (`0112`), checked in Cleared Hot on a
+  charging RP5, steps held 40 s each (fps / GPU max temp): 587 MHz 33.1 / 64 C, 700 MHz 36.4 /
+  77 C, 750 MHz 36.9 / 80 C, 800 MHz 37.1 / 82 C (not shipped); without ACD 750 MHz reached
+  84 C. No GPU errors at any step. Auto stays at 587 MHz (`rp5.toml` `auto_max_mhz`); the
+  overclock is Steam's manual GPU clock, per game.
 - GPU load in the performance overlay and the Performance app: msm is card1 here (simpledrm
   takes minor 0), so mangohud 0006 and `rp5.toml` don't read `dri/0`; overlay checked on
   20261001.2.

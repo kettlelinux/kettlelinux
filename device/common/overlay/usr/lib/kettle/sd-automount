@@ -1,0 +1,90 @@
+#!/bin/bash
+# Kettle Linux: mount a microSD card partition under /run/media/<user>/<label> and add it to
+# Steam as a library folder, as SteamOS's automount does for the Steam Deck's card.
+#   sd-automount add|remove <partition>   (kettle-sd-automount@.service, from udev)
+#   sd-automount steam-add <mount point>  (as the user: waits for Steam, then hands it the folder)
+# Left alone: the card Kettle runs from, cards with an EFI system partition (another system's
+# boot card, such as a Kettle or Armbian SD install) and cards being formatted (format-device.sh).
+set -euo pipefail
+FORMATTING=/run/kettle/sd-formatting
+ESP_TYPES="c12a7328-f81f-11d2-ba4b-00a0c93ec93b 0xef"
+
+urlencode() {
+  local s=$1 out= c i
+  for (( i = 0; i < ${#s}; i++ )); do
+    c=${s:i:1}
+    case $c in [a-zA-Z0-9/._~-]) out+=$c ;; *) printf -v c '%%%02X' "'$c"; out+=$c ;; esac
+  done
+  echo "$out"
+}
+
+# Steam is told about the folder through its running client (steam:// URL over ~/.steam/steam.pipe).
+# At boot the card is mounted before Steam starts, so wait for it for a while.
+steam_add() {
+  local mnt=$1 pid
+  for _ in $(seq 300); do
+    pid=$(cat "$HOME/.steam/steam.pid" 2>/dev/null) || pid=
+    if [ -n "$pid" ] && [ -e "/proc/$pid" ] && [ -p "$HOME/.steam/steam.pipe" ]; then
+      sleep 10   # let a client that just started open its pipe and log in
+      mountpoint -q "$mnt" || exit 0
+      /usr/lib/steam/steam -ifrunning "steam://addlibraryfolder/$(urlencode "$mnt")"
+      echo "added $mnt to Steam"
+      exit 0
+    fi
+    mountpoint -q "$mnt" || exit 0
+    sleep 2
+  done
+  echo "Steam did not start; $mnt not added" >&2
+}
+
+add() {
+  local part=/dev/$1 disk root user home fstype name mnt opts
+  [ -e "$FORMATTING" ] && { echo "$part: card is being formatted"; exit 0; }
+  disk=/dev/$(lsblk -no PKNAME "$part")
+  root=$(findmnt -no SOURCE /)
+  if [ "/dev/$(lsblk -no PKNAME "$root" 2>/dev/null)" = "$disk" ]; then
+    echo "$part: on the card Kettle runs from"; exit 0
+  fi
+  for t in $(lsblk -nro PARTTYPE "$disk"); do
+    case " $ESP_TYPES " in *" ${t,,} "*) echo "$part: $disk is a boot card (EFI system partition)"; exit 0 ;; esac
+  done
+  fstype=$(blkid -o value -s TYPE "$part" || true)
+  case $fstype in
+    ext4|btrfs) opts=rw,noatime,lazytime ;;
+    exfat|vfat) opts=rw,noatime,lazytime,uid=1000,gid=1000,umask=022 ;;
+    *) echo "$part: no filesystem to mount (${fstype:-none})"; exit 0 ;;
+  esac
+  findmnt -S "$part" >/dev/null && { echo "$part: already mounted"; exit 0; }
+  user=$(id -nu 1000) home=$(getent passwd 1000 | cut -d: -f6)
+  name=$(blkid -o value -s LABEL "$part" || true)
+  name=${name//\//_}
+  [ -n "$name" ] || name=$(blkid -o value -s UUID "$part")
+  mnt=/run/media/$user/$name
+  install -d -m 0755 /run/media
+  install -d -m 0750 -o "$user" -g "$user" "/run/media/$user"
+  mkdir -p "$mnt"
+  if ! mount -t "$fstype" -o "$opts" "$part" "$mnt"; then
+    rmdir "$mnt"; exit 1
+  fi
+  echo "$part: mounted on $mnt"
+  # A FAT card cannot hold a Steam library (4 GiB file limit, no symlinks for Proton)
+  [ "$fstype" = vfat ] && exit 0
+  systemd-run --quiet --no-block --collect --unit="kettle-sd-steam-${1}" --uid="$user" \
+    --setenv=HOME="$home" --property=BindsTo="kettle-sd-automount@$1.service" \
+    /usr/lib/kettle/sd-automount steam-add "$mnt"
+}
+
+remove() {
+  local part=/dev/$1 mnt
+  mnt=$(findmnt -nro TARGET -S "$part" | grep -m1 '^/run/media/') || exit 0
+  umount "$mnt" 2>/dev/null || umount -l "$mnt"
+  rmdir "$mnt" 2>/dev/null || true
+  echo "$part: unmounted $mnt"
+}
+
+case ${1:-} in
+  add) add "$2" ;;
+  remove) remove "$2" ;;
+  steam-add) steam_add "$2" ;;
+  *) echo "usage: $0 add|remove <partition> | steam-add <mount point>" >&2; exit 2 ;;
+esac

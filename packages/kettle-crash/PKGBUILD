@@ -5,12 +5,12 @@
 # features. Nothing is sent anywhere. Sources live next to this PKGBUILD.
 pkgname=kettle-crash
 pkgver=0.1.0
-pkgrel=1
+pkgrel=4
 pkgdesc='Kettle Linux crash reports'
 arch=(any)
 license=(BSD-3-Clause)
-# elfutils: systemd-coredump's stack traces (libdw)
-depends=(python systemd elfutils)
+# libelf: libdw, for systemd-coredump's stack traces
+depends=(python systemd libelf)
 
 package() {
   cd "$startdir"

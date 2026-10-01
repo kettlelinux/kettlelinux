@@ -1,3 +1,4 @@
-# Crash reports (kettle-crashd), readable by wheel (the kettle user); /var/log is on /home
-# setgid: each report directory is wheel's too
-d /var/log/kettle-crash 2750 root wheel -
+# Crash reports (kettle-crashd); /var/log is on /home. The kettle group's (the Crash Reports
+# plugin: Decky runs it as kettle without supplementary groups, so wheel wouldn't do), setgid
+# so each report directory is too: the plugin reads and deletes them
+d /var/log/kettle-crash 2770 root kettle -

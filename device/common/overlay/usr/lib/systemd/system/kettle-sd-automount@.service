@@ -1,0 +1,10 @@
+[Unit]
+Description=Mount microSD card partition %I
+BindsTo=dev-%i.device
+After=dev-%i.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/kettle/sd-automount add %I
+ExecStop=/usr/lib/kettle/sd-automount remove %I
