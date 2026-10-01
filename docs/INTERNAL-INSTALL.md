@@ -17,6 +17,12 @@ Android. Run it from the SD card system with the charger connected.
 Afterwards the device starts the internal Kettle Linux when no SD card is inserted, and the
 card's system when one is (U-Boot tries the SD card first). Android starts as before.
 
+**Retroid Pocket 5.** The same installer: Android's `userdata` is the last partition on LUN 0
+there too. The internal install starts through Kettle's U-Boot in the `loader` partition
+([RP5.md](RP5.md)), whose fixed boot order (SD card, then internal storage) is what keeps the
+card's system first; Retroid's own U-Boot follows the saved EFI boot order instead, which a boot
+without the card can turn around.
+
 **ROCKNIX ABL.** From v1.1.9 the ROCKNIX ABL starts no EFI program: with *Boot source:
 Internal* it starts `\KERNEL` from the internal install's boot partition, which the installer
 writes and updates keep on the newest version. Like the SD card with this ABL, it has no
@@ -117,6 +123,8 @@ changes) unless `--all-luns` is given. Only use that if the firmware LUNs themse
 - The ROCKNIX ABL v1.1.9 starting the internal install's `\KERNEL` (*Boot source: Internal*),
   and `--boot-files` on an existing install.
 
+- An install on a Retroid Pocket 5 (any of the above, and the stock Retroid ABL acting on the
+  `--wipe_data` request).
 - Stock AYN ABL and the ROCKNIX ABL acting on the recovery `--wipe_data` request in `misc`
   (the fallback is Android's own "Cannot load Android system" prompt).
 - Android using the extra space after an uninstall that keeps its data, once it has been

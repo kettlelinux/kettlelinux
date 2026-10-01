@@ -1,0 +1,28 @@
+diff --git a/board/qualcomm/retroidpocket.env b/board/qualcomm/retroidpocket.env
+index e6ceaf23..f1025475 100644
+--- a/board/qualcomm/retroidpocket.env
++++ b/board/qualcomm/retroidpocket.env
+@@ -13,7 +13,7 @@ serial_gadget=setenv stdin serial,button-kbd,usbacm; \
+ 	echo Enabled U-Boot console gadget :3
+ 
+ bootmenu_0=Reset=reset
+-bootmenu_1=Boot=bootefi bootmgr; pause
++bootmenu_1=Boot=run bootcmd; pause
+ bootmenu_2=Enable serial console gadget=run serial_gadget
+ bootmenu_3=Enable USB mass storage=ums 0 scsi 0
+ bootmenu_4=Dump clocks=clk dump; pause;
+@@ -26,7 +26,12 @@ bootmenu_9=Drop to shell=setenv bootretry -1
+ button_cmd_0_name=pwrkey
+ button_cmd_0=run menucmd
+ 
+-# Run bootefi bootmgr, fallback to menu if it fails
+-bootcmd=if bootefi bootmgr; then echo Boot successful; else echo Boot failed, dropping to menu; bootmenu -1; fi
++# Boot \EFI\BOOT\BOOTAA64.EFI from the SD card if there is one, else from the internal storage, in
++# that fixed order (standard boot, EFI only: no extlinux). bootefi bootmgr follows BootOrder from
++# ubootefi.var, which the boot options it creates for whatever is attached rewrite: after a boot
++# without the SD card the internal storage would come first even with the card back in.
++boot_targets=mmc scsi
++bootmeths=efi
++bootcmd=bootflow scan -b; echo Boot failed, dropping to menu; bootmenu -1
+ 
+ menucmd=setenv bootcmd run menucmd; bootmenu -1
