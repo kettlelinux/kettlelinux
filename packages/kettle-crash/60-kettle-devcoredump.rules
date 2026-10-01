@@ -1,0 +1,3 @@
+# A driver dumped its device's state (a GPU hang, a firmware crash): copy it into a crash report
+# before the kernel drops it (kettle-crashd --devcoredump)
+ACTION=="add", SUBSYSTEM=="devcoredump", RUN+="/usr/bin/systemctl start --no-block kettle-devcoredump@%k.service"

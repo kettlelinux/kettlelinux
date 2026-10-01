@@ -1,0 +1,20 @@
+[Unit]
+Description=Kettle Linux crash reports (coredumps)
+Documentation=file:///usr/lib/kettle-crash/kettle-crashd
+After=local-fs.target holo-offload.target
+
+[Service]
+ExecStart=/usr/lib/kettle-crash/kettle-crashd
+Restart=on-failure
+RestartSec=5
+# a report is written once per crash, never in the way of the game
+Nice=10
+IOSchedulingClass=idle
+ProtectSystem=strict
+ReadWritePaths=/var/log/kettle-crash
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

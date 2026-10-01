@@ -164,6 +164,9 @@ kettle-decky-welcome
 kettle-power
 kettle-decky-power
 kettle-power-applet
+# Crash reports (built by us, packages/kettle-crash): kettle-crashd writes a report for each
+# coredump and each device dump (GPU hang, firmware crash) to /var/log/kettle-crash; local only
+kettle-crash
 
 # Desktop Mode welcome (built by us, packages/kettle-welcome): Kettle Welcome, our own hub app.
 # Opens on the first desktop login; setup shortcuts (password, Wi-Fi, ...), controls, games

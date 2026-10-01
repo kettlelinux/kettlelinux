@@ -1,0 +1,15 @@
+[Unit]
+Description=Kettle Linux crash report for device dump %i
+Documentation=file:///usr/lib/kettle-crash/kettle-crashd
+After=local-fs.target holo-offload.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/kettle-crash/kettle-crashd --devcoredump %i
+Nice=10
+ProtectSystem=strict
+# (ProtectSystem leaves /sys writable: freeing the dump)
+ReadWritePaths=/var/log/kettle-crash
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
