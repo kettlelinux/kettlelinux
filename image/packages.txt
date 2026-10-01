@@ -140,12 +140,13 @@ gtk2
 at-spi2-core
 ibus
 
-# boot splash, Steam startup movie and Plasma splash (built by us, packages/): plymouth with the
-# Kettle theme as its default; the movie is put in place by run-steam
+# boot splash, Steam startup movie, Plasma splash and wallpaper (built by us, packages/):
+# plymouth with the Kettle theme as its default; the movie is put in place by run-steam
 plymouth
 kettle-plymouth-theme
 kettle-steam-startup
 kettle-plasma-splash
+kettle-wallpaper
 
 # Game Mode plugins (built by us, packages/): Decky Loader (native aarch64, no self-update)
 # with our Frame Generation (our own kettle-framegen layer) and Upscaling (per-game gamescope
