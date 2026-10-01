@@ -96,4 +96,10 @@ First boot of 20260930.1 from SD, on an RP5 with the CH13726A panel (Android rep
   `/dev/sda` (117 GB, 4 KiB sectors) with `userdata` last and a `misc` partition, the layout the
   installer expects; the boot chain is on LUN 4, which it never touches. Needs Kettle's U-Boot
   from 2024.10.r20250507-2 on (fixed boot order: SD card, then internal storage).
-- Not taken yet: ROCKNIX's A650 overclock/ACD/bandwidth votes (`9998-gpu-tuning`).
+- GPU DDR bandwidth votes (`21-sm8250/0110`, from ROCKNIX's `9998-gpu-tuning`), checked on
+  20261001.2 in Cleared Hot: the GPU votes its top step (8171875 kBps) at 587 MHz, the DDR vote
+  rises from 5412000-6220000 (CPU only) to 8171875-8368000, no GMU errors, GPU 51-55 C, 33-36 fps
+  GPU-bound. Its overclock and ACD levels are not taken.
+- GPU load in the performance overlay and the Performance app: msm is card1 here (simpledrm
+  takes minor 0), so mangohud 0006 and `rp5.toml` don't read `dri/0`; overlay checked on
+  20261001.2.
