@@ -51,6 +51,7 @@ own *Check for updates*.
 ## Getting started
 
 - **Download:** [kettlelinux.org](https://kettlelinux.org)
+- **Community:** [Discord](https://discord.gg/jcUqbDJgd) for help, test builds and release news
 - **Installing:** [docs/INSTALL.md](docs/INSTALL.md)
 - **Testing your own builds:** [docs/TESTING.md](docs/TESTING.md)
 - **Building from source:** [Building](https://github.com/kettlelinux/kettlelinux/wiki/Building)

@@ -142,8 +142,8 @@ async function loadIssues() {
   }
 }
 
-// Discord's server widget (Server Settings → Widget, on): the online count and an invite.
-// Without it the links stay on the widget page, which has its own Join button.
+// The online count from Discord's server widget (Server Settings → Widget, on); the join
+// links are the permanent invite in index.html.
 const DISCORD_SERVER = "1555239537314103366";
 
 async function loadDiscord() {
@@ -151,9 +151,6 @@ async function loadDiscord() {
     const res = await fetch(`https://discord.com/api/guilds/${DISCORD_SERVER}/widget.json`);
     if (!res.ok) return;
     const w = await res.json();
-    if (w.instant_invite) {
-      for (const a of document.querySelectorAll(".discord-link")) a.href = w.instant_invite;
-    }
     if (w.presence_count) {
       document.getElementById("discord-online").replaceChildren(
         el("span", { className: "dot" }), `${w.presence_count} online now`);
