@@ -130,7 +130,7 @@ grep -qF "ATTRS{name}==\"$PAD_NAME\"" "$RFS/etc/udev/rules.d/60-input-kettle-gam
 sed -i -e "s|^DTB=@DTB@\$|DTB=$DTB|" -e "s|^DTB_ALT=\"@DTB_ALT@\"\$|DTB_ALT=\"${DTB_ALT:-}\"|" \
   -e "s|^ABL_DTBS=\"@ABL_DTBS@\"\$|ABL_DTBS=\"$ABL_DTBS\"|" "$RFS/usr/lib/kettle/boot.conf"
 grep -qx "DTB=$DTB" "$RFS/usr/lib/kettle/boot.conf" || die "boot.conf: DTB not set"
-grep -qx "ABL_DTBS=\"$ABL_DTBS\"" "$RFS/usr/lib/kettle/boot.conf" || die "boot.conf: ABL_DTBS not set"
+grep -qxF "ABL_DTBS=\"$ABL_DTBS\"" "$RFS/usr/lib/kettle/boot.conf" || die "boot.conf: ABL_DTBS not set"
 for alt in $DTB $(printf '%s\n' ${DTB_ALT:-} | cut -d: -f2); do
   [ -f "$RFS/boot/dtbs/$alt" ] || die "no $alt in out/kernel"
 done
