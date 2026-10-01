@@ -105,6 +105,9 @@ h3 { font-size: 1.05rem; margin: 0 0 6px; color: var(--copper-light); }
   vertical-align: middle;
 }
 
+.community { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; }
+.community #discord-online { margin-top: 6px; }
+
 footer {
   max-width: 960px;
   margin: 56px auto 0;
