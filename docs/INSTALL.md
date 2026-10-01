@@ -11,6 +11,9 @@ than the Portal: see its release notes for what has been tested on it.
 Kettle is early and in active development. Check the known issues in the release notes on
 [kettlelinux.org](https://kettlelinux.org) before you start.
 
+**Retroid Pocket 5:** it starts Kettle differently (no bootloader swap, a U-Boot flashed from a
+computer instead). Follow [INSTALL-RP5.md](INSTALL-RP5.md).
+
 ## What you need
 
 - An AYN Odin 2 Portal or AYN Thor

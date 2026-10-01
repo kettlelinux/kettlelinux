@@ -1,0 +1,357 @@
+#!/usr/bin/python3
+"""kettle-crashd: crash reports for games and the system on Kettle Linux.
+
+Turns each crash into a report directory under /var/log/kettle-crash (/var/log is offloaded to
+/home, so reports survive A/B updates). Nothing leaves the device: reports are only written here.
+
+  coredump      a process died on a signal: systemd-coredump's journal entry (MESSAGE_ID
+                fc2e22bc...), followed with journalctl. The core file itself stays in
+                /var/lib/systemd/coredump, under systemd-coredump's own size limits.
+  devcoredump   a device's driver dumped its state: a GPU hang or fault (msm), or a firmware
+                crash (remoteproc, Wi-Fi). The kernel drops it after 5 minutes, so it's copied
+                at once, from kettle-devcoredump@.service (started by udev).
+
+Each report is report.json (what crashed; the Steam game it belongs to, or the one running at
+the time; the system's versions; the game's Kettle features) and text and data files next to it.
+
+  kettle-crashd                     follow the journal for coredumps (kettle-crashd.service)
+  kettle-crashd --devcoredump NAME  save /sys/class/devcoredump/NAME and free it
+"""
+import datetime
+import glob
+import gzip
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+DIR = os.environ.get("KETTLE_CRASH_DIR", "/var/log/kettle-crash")
+CURSOR = os.path.join(DIR, ".cursor")
+DEVCD = os.environ.get("KETTLE_CRASH_DEVCD", "/sys/class/devcoredump")  # fake for testing
+COREDUMP_ID = "fc2e22bc6ee647b6b90729ab34a250b1"
+HOME = "/home/kettle"
+STEAM_HOMES = (HOME + "/.local/share/Steam",)
+KEEP = 50  # reports kept, newest first
+KEEP_BYTES = 512 << 20
+DEVCD_MAX = 64 << 20  # bigger device dumps (a modem's memory) are noted, not kept
+REPEAT_S = 30  # the same program crashing again within this: one report, with a count
+# versions that matter for a crash report, those installed
+PACKAGES = ("mesa", "vulkan-freedreno", "gamescope", "steam", "fex-emu-wine", "wine",
+            "kettle-framegen", "optiscaler-arm64ec", "decky-loader", "kettle-power")
+
+
+def log(msg):
+    print(msg, file=sys.stderr, flush=True)
+
+
+def read(path, default=""):
+    try:
+        with open(path, errors="replace") as f:
+            return f.read()
+    except OSError:
+        return default
+
+
+def run(*cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, errors="replace",
+                              timeout=30).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+# ---------------------------------------------------------------- what was running
+
+def os_release():
+    out = {}
+    for line in read("/etc/os-release").splitlines():
+        k, sep, v = line.partition("=")
+        if sep and k in ("NAME", "VERSION_ID", "BUILD_ID", "VARIANT", "VARIANT_ID"):
+            out[k.lower()] = v.strip('"')
+    return out
+
+
+def system_info():
+    pkgs = {}
+    for line in run("pacman", "-Q", *PACKAGES).splitlines():
+        name, _, ver = line.partition(" ")
+        if ver:
+            pkgs[name] = ver
+    slot = re.search(r"\brauc\.slot=(\S+)", read("/proc/cmdline"))
+    return {
+        "os": os_release(),
+        "model": read("/proc/device-tree/model").rstrip("\0\n"),
+        "kernel": os.uname().release,
+        "slot": slot.group(1) if slot else None,
+        "uptime_s": int(float(read("/proc/uptime", "0").split()[0])),
+        "packages": pkgs,
+    }
+
+
+def environ_dict(text):
+    env = {}
+    for line in text.split("\n" if "\n" in text else "\0"):
+        k, sep, v = line.partition("=")
+        if sep:
+            env[k] = v
+    return env
+
+
+def steam_app_id(env):
+    for key in ("SteamAppId", "SteamGameId", "STEAM_COMPAT_APP_ID"):
+        v = env.get(key, "")
+        if v.isdigit() and v != "0":
+            return int(v)
+    return None
+
+
+def running_app_id():
+    """The Steam game running now: the first process with a Steam app id in its environment."""
+    for p in glob.glob("/proc/[0-9]*/environ"):
+        try:
+            with open(p, "rb") as f:
+                app = steam_app_id(environ_dict(f.read().decode(errors="replace")))
+        except OSError:
+            continue
+        if app:
+            return app
+    return None
+
+
+def steam_libraries():
+    libs = []
+    for home in STEAM_HOMES:
+        vdf = read(os.path.join(home, "steamapps", "libraryfolders.vdf"))
+        libs += re.findall(r'"path"\s+"([^"]+)"', vdf) or [home]
+    return list(dict.fromkeys(libs))
+
+
+def game_info(app):
+    """Name and install folder from the game's appmanifest, and its Kettle features."""
+    info = {"app_id": app}
+    for lib in steam_libraries():
+        acf = read(os.path.join(lib, "steamapps", f"appmanifest_{app}.acf"))
+        if acf:
+            for key in ("name", "installdir"):
+                m = re.search(rf'"{key}"\s+"([^"]*)"', acf)
+                if m:
+                    info[key] = m.group(1)
+            break
+    features = []
+    if os.path.exists(f"{HOME}/.config/kettle-framegen/{app}.conf"):  # only while it's on
+        features.append("framegen")
+    # the Upscaling plugin's record of the folder it put OptiScaler in, with its marker there
+    # while it's on
+    try:
+        with open(f"{HOME}/homebrew/settings/kettle-upscaling/optiscaler/{app}.json") as f:
+            exe_dir = json.load(f).get("dir") or ""
+        if os.path.exists(os.path.join(exe_dir, "kettle-optiscaler.json")):
+            features.append("optiscaler")
+    except (OSError, ValueError, AttributeError):
+        pass
+    info["kettle_features"] = features
+    return info
+
+
+# ---------------------------------------------------------------- reports
+
+def new_report(kind, name):
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name)[:48] or "unknown"
+    path = os.path.join(DIR, f"{stamp}-{kind}-{safe}")
+    n = 1
+    while os.path.exists(path + (f"-{n}" if n > 1 else "")):
+        n += 1
+    path += f"-{n}" if n > 1 else ""
+    os.makedirs(path, mode=0o750)
+    return path
+
+
+def write(path, name, text):
+    with open(os.path.join(path, name), "w") as f:
+        f.write(text)
+
+
+def finish(path, report):
+    tmp = os.path.join(path, ".report.json")
+    with open(tmp, "w") as f:
+        json.dump(report, f, indent=1)
+    os.replace(tmp, os.path.join(path, "report.json"))  # written last: the report is complete
+    log(f"report: {path}")
+    prune()
+
+
+def reports():
+    return sorted(d for d in glob.glob(os.path.join(DIR, "*")) if os.path.isdir(d))
+
+
+def prune():
+    """At most KEEP reports and KEEP_BYTES, the oldest go first."""
+    all_ = reports()
+    sizes = {d: sum(os.path.getsize(f) for f in glob.glob(os.path.join(d, "*"))) for d in all_}
+    total = sum(sizes.values())
+    for i, d in enumerate(all_):
+        if len(all_) - i <= KEEP and total <= KEEP_BYTES:
+            break
+        total -= sizes[d]
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def journal_before(until_us, *match, lines=300):
+    until = datetime.datetime.fromtimestamp(until_us / 1e6 + 1).strftime("%Y-%m-%d %H:%M:%S")
+    return run("journalctl", "--no-pager", "-b", "-o", "short-precise", "-n", str(lines),
+               "--until", until, *match)
+
+
+def repeat_of(exe, now_us):
+    """The last report, when it's this program crashing again within REPEAT_S."""
+    last = reports()[-1:]
+    if not last:
+        return None
+    try:
+        with open(os.path.join(last[0], "report.json")) as f:
+            r = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if r.get("kind") == "coredump" and r.get("exe") == exe and \
+            now_us - r.get("last_time_us", r["time_us"]) < REPEAT_S * 1e6:
+        return last[0], r
+    return None
+
+
+# ---------------------------------------------------------------- coredumps
+
+def field(entry, key):
+    v = entry.get(key)
+    if isinstance(v, list):  # non-UTF-8 fields come as byte lists, repeated ones as lists
+        v = bytes(v).decode(errors="replace") if all(isinstance(b, int) for b in v) else v[0]
+    return v if isinstance(v, str) else None
+
+
+def on_coredump(entry):
+    exe = field(entry, "COREDUMP_EXE") or field(entry, "COREDUMP_COMM") or "unknown"
+    now = int(field(entry, "COREDUMP_TIMESTAMP") or field(entry, "__REALTIME_TIMESTAMP")
+              or time.time() * 1e6)
+    if exe == sys.executable or (field(entry, "COREDUMP_COMM") or "").startswith("kettle-crash"):
+        return
+    rep = repeat_of(exe, now)
+    if rep:  # a crash loop: count it instead of filling the report list
+        path, r = rep
+        r["count"] = r.get("count", 1) + 1
+        r["last_time_us"] = now
+        finish(path, r)
+        return
+
+    env = environ_dict(field(entry, "COREDUMP_ENVIRON") or "")
+    app = steam_app_id(env)
+    app_running = app or running_app_id()
+    comm = field(entry, "COREDUMP_COMM") or os.path.basename(exe)
+    path = new_report("coredump", comm)
+    report = {
+        "kind": "coredump",
+        "time_us": now,
+        "exe": exe,
+        "comm": comm,
+        "cmdline": field(entry, "COREDUMP_CMDLINE"),
+        "pid": int(field(entry, "COREDUMP_PID") or 0),
+        "uid": int(field(entry, "COREDUMP_UID") or -1),
+        "signal": field(entry, "COREDUMP_SIGNAL_NAME"),
+        "unit": field(entry, "COREDUMP_USER_UNIT") or field(entry, "COREDUMP_UNIT"),
+        "core_file": field(entry, "COREDUMP_FILENAME"),
+        # the game this process belongs to; else the one running at the time
+        "game": game_info(app_running) if app_running else None,
+        "game_process": bool(app),
+        "system": system_info(),
+    }
+    write(path, "backtrace.txt", field(entry, "MESSAGE") or "")
+    write(path, "environ.txt", "\n".join(f"{k}={v}" for k, v in sorted(env.items())) + "\n")
+    write(path, "journal.txt", journal_before(now))
+    write(path, "kernel.txt", journal_before(now, "-k", lines=100))
+    finish(path, report)
+
+
+def follow():
+    os.makedirs(DIR, exist_ok=True)
+    cursor = read(CURSOR).strip()
+    # from where it stopped (a crash just before a reboot still gets its report); the very
+    # first time, from now on
+    start = ["--after-cursor", cursor] if cursor else ["-n", "0"]
+    p = subprocess.Popen(["journalctl", "-f", "-o", "json", "--all", "--no-pager",
+                          f"MESSAGE_ID={COREDUMP_ID}", *start],
+                         stdout=subprocess.PIPE, text=True, errors="replace")
+    log("following coredumps")
+    for line in p.stdout:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        try:
+            on_coredump(entry)
+        except Exception as e:  # one bad entry mustn't stop the reports
+            log(f"coredump report failed: {e!r}")
+        with open(CURSOR + ".tmp", "w") as f:
+            f.write(entry.get("__CURSOR", ""))
+        os.replace(CURSOR + ".tmp", CURSOR)
+    return p.wait()
+
+
+# ---------------------------------------------------------------- devcoredumps
+
+def devcoredump(name):
+    if not re.fullmatch(r"devcd\d+", name):
+        sys.exit(f"not a devcoredump: {name}")
+    d = os.path.join(DEVCD, name)
+    dev = os.path.realpath(os.path.join(d, "failing_device"))
+    driver = os.path.basename(os.path.realpath(os.path.join(dev, "driver")))
+    now = int(time.time() * 1e6)
+    app = running_app_id()
+    os.makedirs(DIR, exist_ok=True)
+    path = new_report("devcoredump", driver or os.path.basename(dev))
+    report = {
+        "kind": "devcoredump",
+        "time_us": now,
+        "device": dev.removeprefix("/sys"),
+        "driver": driver,
+        "game": game_info(app) if app else None,
+        "system": system_info(),
+    }
+    # read it all, then free it (any write does); the kernel would drop it after 5 minutes
+    size = 0
+    try:
+        with open(os.path.join(d, "data"), "rb") as src, \
+                gzip.open(os.path.join(path, "devcoredump.bin.gz"), "wb", compresslevel=6) as out:
+            while chunk := src.read(1 << 20):
+                size += len(chunk)
+                if size > DEVCD_MAX:
+                    break
+                out.write(chunk)
+    except OSError as e:
+        report["error"] = repr(e)
+    if size > DEVCD_MAX:
+        os.remove(os.path.join(path, "devcoredump.bin.gz"))
+        report["dump_skipped"] = f"over {DEVCD_MAX >> 20} MiB"
+    report["dump_bytes"] = size
+    try:
+        with open(os.path.join(d, "data"), "w") as f:
+            f.write("1")
+    except OSError:
+        pass
+    write(path, "kernel.txt", journal_before(now, "-k", lines=300))
+    write(path, "journal.txt", journal_before(now, lines=200))
+    finish(path, report)
+
+
+def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--devcoredump":
+        devcoredump(sys.argv[2])
+        return 0
+    if len(sys.argv) > 1:
+        sys.exit(__doc__)
+    return follow()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

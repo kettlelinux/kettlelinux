@@ -20,7 +20,8 @@ KETTLE_DEVICE=rp5 scripts/build-image.sh    # -> out/kettle-<build>-rp5.img (+ .
 ```
 
 ## Booting
-Two ways, both from the SD card. Neither needs a bootloader unlock.
+The step-by-step guide for users is [INSTALL-RP5.md](INSTALL-RP5.md). Two ways, both from the SD
+card. Neither needs a bootloader unlock.
 - **Retroid's U-Boot, in the loader partition** (with A/B fallback, like the AYN devices). The
   RP5's own bootloader (ABL) boots whatever is in its `loader` partition. Flash it once, from a
   PC, with the RP5 in fastboot mode: power it off, then hold Volume Down while plugging the USB

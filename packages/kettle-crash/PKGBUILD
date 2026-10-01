@@ -1,0 +1,23 @@
+# kettle-crash: local crash reports for games and the system. kettle-crashd follows
+# systemd-coredump's journal entries, and udev hands it device dumps (GPU hangs, firmware
+# crashes) through kettle-devcoredump@.service; each crash becomes a report directory in
+# /var/log/kettle-crash with the game it belongs to, the system's versions and the game's Kettle
+# features. Nothing is sent anywhere. Sources live next to this PKGBUILD.
+pkgname=kettle-crash
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Kettle Linux crash reports'
+arch=(any)
+license=(BSD-3-Clause)
+# elfutils: systemd-coredump's stack traces (libdw)
+depends=(python systemd elfutils)
+
+package() {
+  cd "$startdir"
+  install -Dm755 kettle-crashd -t "$pkgdir/usr/lib/kettle-crash"
+  install -Dm644 kettle-crashd.service kettle-devcoredump@.service -t "$pkgdir/usr/lib/systemd/system"
+  install -Dm644 60-kettle-devcoredump.rules -t "$pkgdir/usr/lib/udev/rules.d"
+  install -Dm644 coredump.conf "$pkgdir/usr/lib/systemd/coredump.conf.d/60-kettle.conf"
+  install -Dm644 kettle-crash.tmpfiles "$pkgdir/usr/lib/tmpfiles.d/kettle-crash.conf"
+  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+}

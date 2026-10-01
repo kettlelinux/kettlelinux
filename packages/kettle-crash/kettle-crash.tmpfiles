@@ -1,0 +1,3 @@
+# Crash reports (kettle-crashd), readable by wheel (the kettle user); /var/log is on /home
+# setgid: each report directory is wheel's too
+d /var/log/kettle-crash 2750 root wheel -

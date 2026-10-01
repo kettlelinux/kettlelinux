@@ -203,6 +203,8 @@ systemctl enable steamos-manager kettle-mangoapp-tracefs kettle-steam-unpack >/d
 # kettle-powerd: CPU/GPU caps, power budget, fan and charge limit, behind Steam's own power
 # controls (steamos-manager remotes.d) and the Power plugin
 systemctl enable kettle-powerd >/dev/null 2>&1
+# kettle-crashd: a crash report for each coredump (device dumps come through udev)
+systemctl enable kettle-crashd >/dev/null 2>&1
 # Decky Loader (Game Mode plugins); its unit name is fixed by the loader itself
 systemctl enable plugin_loader >/dev/null 2>&1
 systemctl --global enable steamos-manager.service kettle-steam-bootstrap.service \
