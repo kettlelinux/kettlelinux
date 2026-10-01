@@ -1,0 +1,48 @@
+# U-Boot for the Retroid Pocket 5, built from Retroid's published source (RetroidPocket/u-boot,
+# branch retroidpocket/sm8250) with their recipe. The RP5's stock bootloader (ABL) boots whatever
+# is in its "loader" partition: no bootloader unlock, Android stays as it is. This U-Boot then
+# boots \EFI\BOOT\BOOTAA64.EFI from the SD card (bootefi bootmgr), which is steamcl, so the RP5
+# gets the same A/B slots and fallback as the other devices (docs/RP5.md).
+#
+# Installs /usr/share/kettle/u-boot/u-boot-rp5.img (an Android boot image); the image build also
+# puts it on the KETTLE partition for `fastboot flash loader u-boot-rp5.img`. Its own devicetree
+# is only for U-Boot (the console on the framebuffer the ABL set up), so one image serves both
+# RP5 panels; Linux gets its devicetree from GRUB.
+pkgname=u-boot-retroidpocket
+_commit=d1c4eba0c495c3c4a32924efe0f590a4759aa6d5   # retroidpocket/sm8250, 2025-05-07
+pkgver=2024.10.r20250507
+pkgrel=1
+pkgdesc='U-Boot for the Retroid Pocket 5 (SM8250), as an Android boot image for its loader partition'
+arch=(aarch64)
+url='https://github.com/RetroidPocket/u-boot'
+license=(GPL-2.0-or-later)
+makedepends=(git bc dtc python python-setuptools python-pyelftools swig openssl gnutls util-linux xxd)
+options=(!strip)
+source=("u-boot::git+https://github.com/RetroidPocket/u-boot.git#commit=$_commit"
+        mkbootimg.py)   # steamos-customizations-kettle's (symlink)
+sha256sums=('SKIP'
+            'cb8c07b9dde2c1ab060433af0a6406020ec07774b208450a0210c7e848b5ae6a')
+
+_boards=(rp5)
+
+build() {
+  cd u-boot
+  local b
+  for b in "${_boards[@]}"; do
+    make O="out-$b" qcom_defconfig retroidpocket.config
+    make O="out-$b" DEVICE_TREE="qcom/sm8250-retroidpocket-$b"
+    gzip -9n -c "out-$b/u-boot-nodtb.bin" >"out-$b/kernel-dtb"
+    cat "out-$b/dts/upstream/src/arm64/qcom/sm8250-retroidpocket-$b.dtb" >>"out-$b/kernel-dtb"
+    # Retroid's: mkbootimg --kernel_offset 0x00008000 --pagesize 4096 --cmdline nodtbo
+    python3 "$srcdir/mkbootimg.py" --kernel "out-$b/kernel-dtb" --kernel_offset 0x8000 \
+      --pagesize 4096 --cmdline nodtbo -o "out-$b/u-boot-$b.img"
+  done
+}
+
+package() {
+  local b
+  for b in "${_boards[@]}"; do
+    install -Dm644 "u-boot/out-$b/u-boot-$b.img" "$pkgdir/usr/share/kettle/u-boot/u-boot-$b.img"
+  done
+  install -Dm644 u-boot/Licenses/README "$pkgdir/usr/share/licenses/$pkgname/README"
+}

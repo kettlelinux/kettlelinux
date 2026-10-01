@@ -1,0 +1,6 @@
+# The RP5's own checks, sourced by kettle-hwcheck's summary (chk NAME COMMAND...)
+chk "panel (DSI, devicetree)"  bash -c 'tr -d "\0" </proc/device-tree/model; for c in /sys/class/drm/card*-DSI-*; do [ "$(cat $c/status)" = connected ] && echo -n " ${c##*/card[0-9]-} $(head -1 $c/modes)"; done'
+chk "panel driver bound"       bash -c 'ls -d /sys/bus/mipi-dsi/devices/*/driver 2>/dev/null | xargs -r -n1 readlink | xargs -r -n1 basename'
+chk "PM8150B charger"          bash -c 'cat /sys/class/power_supply/pmi8998_charger/online 2>/dev/null | sed "s/^/online=/"'
+chk "SMBIOS (U-Boot EFI)"      bash -c 'cat /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name 2>/dev/null | tr "\n" " "'
+chk "audio heal"               bash -c 'journalctl -b -u kettle-rp5-audio-heal -o cat 2>/dev/null | tail -1; systemctl is-active kettle-rp5-audio-heal'

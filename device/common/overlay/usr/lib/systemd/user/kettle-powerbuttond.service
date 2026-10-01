@@ -1,0 +1,16 @@
+[Unit]
+Description=Power button to Steam in Game Mode
+# Valve's steamos-powerbuttond.service (deckard) only runs next to steamvr.service, and a
+# drop-in can't clear its Requisite=, so Game Mode runs the daemon from this unit instead.
+# It only forwards presses to Steam (steam://shortpowerpress, longpowerpress): the inhibitor
+# keeps logind from also acting on them. Stopped with Game Mode, so the desktop keeps logind's
+# handling (logind.conf.d/10-powerkey.conf).
+PartOf=gamescope-session.target
+After=gamescope-session.service
+
+[Service]
+ExecStart=/usr/bin/systemd-inhibit --what=handle-power-key --mode=block \
+  --who="Steam (Game Mode)" --why="Steam handles the power button" \
+  /usr/lib/hwsupport/steamos-powerbuttond
+Restart=on-failure
+Slice=session.slice

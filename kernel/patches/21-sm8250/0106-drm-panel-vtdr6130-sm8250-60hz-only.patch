@@ -1,0 +1,41 @@
+From: Kettle Linux <noreply@kettlelinux>
+Subject: [PATCH] drm/panel: vtdr6130: RP5/Flip 2 expose only their 60Hz mode
+
+ROCKNIX's 0105 gives the SM8250 panels the RP6 mode table (120Hz and 60Hz).
+The init sequence guesses the active mode at prepare() time and races when
+more than one mode is exposed (20-sm8550/1021, the same fix for the RP6):
+60Hz programming against 120Hz DPU timings kills TE and every commit times
+out. Expose the 60Hz timing, the panel's rate on these devices, as the only
+mode. The same change as pocknix-os's 0105 (their Visionox cold-boot fix).
+---
+--- a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c	2026-09-30 18:46:43.166300902 -0500
++++ b/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c	2026-09-30 18:46:43.174578846 -0500
+@@ -270,9 +270,26 @@
+ 	.num_supplies = ARRAY_SIZE(sm8550_panel_supplies),
+ };
+ 
++/* RP5 / Flip 2 run this panel at 60Hz (product spec) */
++static const struct drm_display_mode vtdr6130_sm8250_modes[] = {
++	{
++		/* 60Hz */
++		.clock = (1080 + 16 + 2 + 22) * (1920 + 16 + 4 + 1972) * 60 / 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 16,
++		.hsync_end = 1080 + 16 + 2,
++		.htotal = 1080 + 16 + 2 + 22,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 16,
++		.vsync_end = 1920 + 16 + 4,
++		.vtotal = 1920 + 16 + 4 + 1972,
++	}
++};
++
+ static struct panel_desc vtdr6130_sm8250_desc = {
+-	.modes = vtdr6130_rp6_modes,
+-	.num_modes = ARRAY_SIZE(vtdr6130_rp6_modes),
++	.modes = vtdr6130_sm8250_modes,
++	/* 60Hz only: init_sequence guesses the mode at prepare(), two modes race (see 20-sm8550/1021) */
++	.num_modes = 1,
+ 	.width_mm = 120,
+ 	.height_mm = 68,
+ 	.bpc = 8,

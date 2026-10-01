@@ -1,13 +1,17 @@
 # deckard's KWin (Arch's 6.2.5-3, unpatched: deckard's 6.2.5-3.1 carries none of Valve's Steam
-# Deck patches) with two changes. 0001: KWin nested in an X server as a window (its X11 windowed
+# Deck patches) with four changes. 0001: KWin nested in an X server as a window (its X11 windowed
 # backend, as the Thor's bottom-screen shell runs in its gamescope's Xwayland) selected raw XI2
 # touch events but only handles the plain ones, so it never got a touch (Armada's patch).
 # 0002 (ours): KWIN_NO_EXPLICIT_SYNC=1 leaves explicit sync (linux-drm-syncobj) off, which the
 # bottom-screen shell's nested KWin sets: its clients hung or lost their surfaces with it.
+# 0003 (ours): the on-screen keyboard leaves Plasma's applet popups where they are (moved out of
+# its way, Kickoff flickered between two places and couldn't be closed).
+# 0004 (ours): an input device's output defaults to its udev WL_OUTPUT (an unset OutputName
+# dropped it, and both of the Thor's touchscreens went to the bottom screen).
 # pkgrel 3.x replaces deckard's 3.1.
 pkgname=kwin
 pkgver=6.2.5
-pkgrel=3.3
+pkgrel=3.4
 pkgdesc='An easy to use, but flexible, composited Window Manager'
 arch=(aarch64)
 url='https://kde.org/plasma-desktop/'
@@ -26,10 +30,14 @@ makedepends=(cmake ninja extra-cmake-modules krunner plasma-wayland-protocols py
 install=$pkgname.install
 source=(https://download.kde.org/stable/plasma/$pkgver/$pkgname-$pkgver.tar.xz
         0001-x11-windowed-select-the-touch-events-it-handles.patch
-        0002-wayland-KWIN_NO_EXPLICIT_SYNC-1-leaves-explicit-sync.patch)
+        0002-wayland-KWIN_NO_EXPLICIT_SYNC-1-leaves-explicit-sync.patch
+        0003-window-leave-applet-popups-where-they-are-for-the-vi.patch
+        0004-libinput-default-an-input-device-s-output-to-its-ude.patch)
 sha256sums=('5cc450a6e41105c8c49929b72550b331237f96aafb294690f4707bdc5f776848'
             '8ed5b019fc2237af7f1643a5eee58ecaa6f02273bf3b12638a8ccc3413b95310'
-            '5ed2408827201511ae925deb54b24175b104f21befe9655b3ff30d83e5c622cf')
+            '5ed2408827201511ae925deb54b24175b104f21befe9655b3ff30d83e5c622cf'
+            '84e6df88c9b0eb7b2ff1ecf175cbc75120b3046f2b562a7fe5a1ce6f04e3af3f'
+            '38949d08c19f7561e44b3134e0f0aebba3be0a0c282a828681d104442113c121')
 
 prepare() {
   local p

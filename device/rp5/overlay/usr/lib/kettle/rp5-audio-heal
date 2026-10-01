@@ -1,0 +1,34 @@
+#!/bin/bash
+# Kettle Linux, Retroid Pocket 5: bring the sound card up if an LPASS driver lost its probe race.
+# The audio block's drivers (LPASS pin controller, VA/RX/TX/WSA macros) need clocks the ADSP
+# serves once its firmware is running, which takes a few seconds after boot (the remoteproc
+# driver and firmware are loaded, not built in). A driver that probes before that fails with a
+# timeout, the kernel doesn't retry it, and the "RetroidPocket" card never appears; a different
+# driver loses each time. Found on the RP5 by pocknix-os, whose service does the same: wait for
+# the ADSP, then reload whichever of these modules has no device bound until the card is there.
+card_up() { grep -q RetroidPocket /proc/asound/cards 2>/dev/null; }
+bound() { [ -e "/sys/bus/platform/devices/$1/driver" ]; }
+
+for _ in $(seq 60); do
+  for r in /sys/class/remoteproc/remoteproc*; do
+    [ "$(cat "$r/name" 2>/dev/null)" = adsp ] && [ "$(cat "$r/state" 2>/dev/null)" = running ] &&
+      break 2
+  done
+  sleep 1
+done
+card_up && exit 0
+
+# device (sm8250.dtsi) and the module that drives it
+drivers=(33c0000.pinctrl:pinctrl_sm8250_lpass_lpi 3370000.codec:snd_soc_lpass_va_macro
+         3200000.rxmacro:snd_soc_lpass_rx_macro 3220000.txmacro:snd_soc_lpass_tx_macro
+         3240000.codec:snd_soc_lpass_wsa_macro)
+for try in $(seq 15); do
+  sleep 2
+  card_up && { echo "rp5-audio-heal: sound card up after $((try - 1)) reload round(s)"; exit 0; }
+  for d in "${drivers[@]}"; do
+    bound "${d%%:*}" && continue
+    echo "rp5-audio-heal: ${d%%:*} unbound, reloading ${d#*:}"
+    modprobe -r "${d#*:}" 2>/dev/null; modprobe "${d#*:}"
+  done
+done
+card_up || echo "rp5-audio-heal: no RetroidPocket sound card" >&2

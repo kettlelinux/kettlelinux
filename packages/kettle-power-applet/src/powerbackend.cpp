@@ -16,6 +16,7 @@ namespace
 const QString service = QStringLiteral("org.kettlelinux.Power1");
 const QString path = QStringLiteral("/org/kettlelinux/Power1");
 const QString desktop = QStringLiteral("desktop"); // Desktop Mode's key among the games
+const QString allGames = QStringLiteral("default"); // the all-games settings' key
 
 struct SteamProperty {
     const char *key; // name in GetStatus's "steam"
@@ -49,6 +50,11 @@ QDBusConnection bus()
 {
     return qEnvironmentVariable("KETTLE_POWER_BUS") == QLatin1String("session") ? QDBusConnection::sessionBus()
                                                                                 : QDBusConnection::systemBus();
+}
+
+QString toJson(const QVariantMap &map)
+{
+    return QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(map)).toJson(QJsonDocument::Compact));
 }
 
 KConfigGroup desktopValues()
@@ -90,11 +96,34 @@ PowerBackend::PowerBackend(QObject *parent)
 PowerBackend::~PowerBackend()
 {
     // the applet is gone (removed, or the desktop ends): back to the all-games settings
-    if (m_connected) {
+    if (m_connected && m_mode == Desktop) {
         QDBusMessage msg = QDBusMessage::createMethodCall(service, path, service, QStringLiteral("SetActiveGame"));
         msg.setArguments({QString()});
         bus().call(msg, QDBus::Block, 500);
     }
+}
+
+void PowerBackend::setMode(Mode mode)
+{
+    if (mode == m_mode)
+        return;
+    m_mode = mode;
+    m_connected = false; // connect again the new mode's way
+    Q_EMIT modeChanged();
+}
+
+QString PowerBackend::gameKey() const
+{
+    if (m_mode == Desktop)
+        return desktop;
+    return m_activeGame.isEmpty() ? allGames : m_activeGame;
+}
+
+QString PowerBackend::editKey() const
+{
+    if (m_mode == Desktop)
+        return desktop;
+    return !m_activeGame.isEmpty() && m_custom ? m_activeGame : allGames;
 }
 
 void PowerBackend::setInterval(int ms)
@@ -161,9 +190,17 @@ void PowerBackend::tick()
             return;
         m_status = parse(out);
         Q_EMIT statusChanged();
-        // kettle-powerd restarted, or another applet was removed
-        if (m_status.value(QStringLiteral("active_game")).toString() != desktop)
+        const QString active = m_status.value(QStringLiteral("active_game")).toString();
+        if (m_mode == GameMode) {
+            if (active != m_activeGame) {
+                m_activeGame = active;
+                Q_EMIT activeGameChanged();
+            }
+            readGame(); // the Power plugin may have changed them too
+        } else if (active != desktop) {
+            // kettle-powerd restarted, or another applet was removed
             call(QStringLiteral("SetActiveGame"), {desktop});
+        }
     });
 }
 
@@ -176,6 +213,11 @@ void PowerBackend::connectDaemon()
             return;
         m_info = parse(out);
         Q_EMIT infoChanged();
+        if (m_mode == GameMode) {
+            m_connected = true;
+            tick(); // the status, then the running game's settings
+            return;
+        }
         const KConfigGroup values = desktopValues();
         for (const auto &p : steamProperties) {
             if (p.desktop && values.hasKey(p.key))
@@ -190,12 +232,17 @@ void PowerBackend::connectDaemon()
 
 void PowerBackend::readGame()
 {
-    call(QStringLiteral("GetGame"), {desktop}, [this](bool ok, const QString &out) {
-        if (!ok)
+    const QString key = gameKey();
+    call(QStringLiteral("GetGame"), {key}, [this, key](bool ok, const QString &out) {
+        if (!ok || key != gameKey()) // another game started meanwhile
             return;
         const QVariantMap game = parse(out);
-        m_settings = game.value(QStringLiteral("settings")).toMap();
-        m_custom = game.value(QStringLiteral("custom")).toBool();
+        const QVariantMap settings = game.value(QStringLiteral("settings")).toMap();
+        const bool custom = game.value(QStringLiteral("custom")).toBool();
+        if (settings == m_settings && custom == m_custom)
+            return;
+        m_settings = settings;
+        m_custom = custom;
         Q_EMIT settingsChanged();
     });
 }
@@ -228,7 +275,7 @@ void PowerBackend::setSteam(const QString &key, const QVariant &value)
     if (!p)
         return;
     setSteamProperty(key, value);
-    if (p->desktop) {
+    if (p->desktop && m_mode == Desktop) {
         KConfigGroup values = desktopValues();
         values.writeEntry(p->key, value.toString());
         values.sync();
@@ -242,14 +289,28 @@ void PowerBackend::setSteam(const QString &key, const QVariant &value)
 
 void PowerBackend::setSettings(const QVariantMap &settings)
 {
+    const QString key = editKey();
     m_settings = settings;
-    m_custom = true;
+    if (m_mode == Desktop)
+        m_custom = true;
     Q_EMIT settingsChanged();
-    call(QStringLiteral("SetGame"), {desktop, QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(settings)).toJson(QJsonDocument::Compact))},
-         [this](bool, const QString &) { readGame(); });
+    call(QStringLiteral("SetGame"), {key, toJson(settings)}, [this](bool, const QString &) { readGame(); });
 }
 
 void PowerBackend::resetSettings()
 {
-    call(QStringLiteral("SetGame"), {desktop, QStringLiteral("null")}, [this](bool, const QString &) { readGame(); });
+    const QString key = editKey();
+    // kettle-powerd keeps the all-games settings: "{}" makes them the defaults
+    call(QStringLiteral("SetGame"), {key, key == allGames ? QStringLiteral("{}") : QStringLiteral("null")},
+         [this](bool, const QString &) { readGame(); });
+}
+
+void PowerBackend::setGameOnly(bool on)
+{
+    if (m_mode != GameMode || m_activeGame.isEmpty())
+        return;
+    m_custom = on;
+    Q_EMIT settingsChanged();
+    call(QStringLiteral("SetGame"), {m_activeGame, on ? toJson(m_settings) : QStringLiteral("null")},
+         [this](bool, const QString &) { readGame(); });
 }

@@ -1,0 +1,10 @@
+# Retroid Pocket 5: reload LPASS drivers that failed to probe before the ADSP was up
+# (/usr/lib/kettle/rp5-audio-heal). Enabled by the device overlay (multi-user.target.wants).
+[Unit]
+Description=Bring up the RP5 sound card after an LPASS probe race
+After=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/kettle/rp5-audio-heal
+TimeoutStartSec=180

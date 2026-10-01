@@ -169,8 +169,8 @@ index 1ab858d..a616935 100644
  uint64_t MSM::getQcomGpuInfo(){
      static std::thread perf_thread(perf_read_thread);
 -    //printf("gpu_bytes_memory()=%d\n",gpu_bytes_memory());
-+    static const std::string temp_zone = find_thermal_zone({"gpuss-2-thermal", "gpuss-0-thermal"});
-+    static const std::vector<std::string> gpu_zones = find_thermal_zones("gpuss-");
++    static const std::string temp_zone = find_thermal_zone({"gpuss-2-thermal", "gpuss-0-thermal", "gpu-top-thermal"});
++    static const std::vector<std::string> gpu_zones = find_thermal_zones("gpu"); // gpuss-* (SM8550), gpu-top/bottom (SM8250)
 +    static const std::string mem_zone = find_thermal_zone({"ddr-thermal", "mem-thermal"});
 +    static const std::string devfreq = find_gpu_devfreq();
 +    static const float mem_total = mem_total_gib();

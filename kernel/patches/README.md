@@ -7,6 +7,7 @@ Applied in directory order, then file order, with `patch -p1 --fuzz=0` by
 |---|---|---|
 | `10-mainline` | ROCKNIX `projects/ROCKNIX/packages/linux/patches/mainline` | input-polldev, pwm_set_period, adc-keys, RTL8733BU |
 | `20-sm8550` | ROCKNIX `projects/ROCKNIX/devices/SM8550/patches/linux` + pocknix-os suspend/UFS/SD additions | Portal: 0057 ICNA35XX panel, 0031/1003/1004/1009 rsinput gamepad, 0033 HTR3212 LEDs, 1000-1005 haptics, 0066 DPU inline rotation |
+| `21-sm8250` | ROCKNIX `projects/ROCKNIX/devices/SM8250/patches/linux` | Retroid Pocket 5: 0004/0005 PM8150B charger+fg nodes and uart16, 0008/0013 Retroid gamepad MCU + rumble, 0009 PM8150B SPMI haptics, 0011 PM8150B charger/fuel-gauge drivers, 0012/0100 q6asm/sm8250 audio, 0102 PM8150 RTC offset, 0105 VTDR6130 RP5 mode (its vendor-page hunk dropped: `20-sm8550/1022` has it) and our 0106 exposing only its 60Hz mode (as 1021 does for the RP6; pocknix-os carries the same), 0300 wcd938x jack IRQ guard. 0014 is only the ath11k half of ROCKNIX's MAC fix (btqca/socinfo are in `20-sm8550/0501`). 0058 is ours: the 120 ms sleep-out delay ROCKNIX's SM8250 CH13726A driver has. **Shared with SM8550** (re-test the Portal/Thor): 0001 DSI wide_bus bpp, 0016 DSI link clocks left on while the display runs, 0058, 0300 |
 | `30-version` | ROCKNIX `packages/linux/patches/7.2` via pocknix-os | 0010 carries pocknix's `cstate` uninitialized fix; ROCKNIX 9999 (perf/rust build fix) dropped |
 | `40-kettle` | ours | 1060: pcie-qcom `#iommu-cells` SID fix (Manivannan Sadhasivam, via NovaDeck) — 7.2.6+ breaks WCN7850 Wi-Fi without it; 1100: rsinput UART frame reassembly (Armada 0515, rebased) — fixes "Checksum mismatch" and dead pad after resume; 1110: drm/msm debugfs `perf_now` (devfreq GPU load %) — what Valve's mangoapp reads for the overlay's GPU usage; 1120: ICNA3512 backlight floor (slider 0..4096 scaled onto DCS 1330..4096) — lower levels shift colours and go black; 1130: CH13726A backlight named after the panel's dts `label` — the Thor's bottom panel is `bottom-panel`, which sorts after the top panel's `ae96000.dsi.0`, so Steam's brightness slider (first backlight) drives the top screen |
 
@@ -15,7 +16,7 @@ Pinned upstreams:
 - ROCKNIX distribution @ `5607f6e149934b39196f7a128804d2c04e25ce88`
 - NovaDeck os-build @ `b5d61c0`
 
-`../dts/` is ROCKNIX's `devices/SM8550/linux/dts` (Portal: `qcs8550-ayn-odin2portal.dts`,
+`../dts/` is ROCKNIX's `devices/SM8550/linux/dts` plus, for the RP5, `devices/SM8250/linux/dts` (`sm8250-retroidpocket-{common.dtsi,rp5.dts,rp5-visionox.dts}`, `sm8250-pwm-fan-cooling.dtsi`) (Portal: `qcs8550-ayn-odin2portal.dts`,
 © Teguh Sobirin). Upstream equivalent is Aaron Kling's "Support AYN QCS8550 Devices"
 series (v9, not merged); the Portal panel driver lands upstream in 7.3 as
 `panel-chipone-icna35xx` with compatible `ayntec,odin2portal-panel`.
@@ -34,6 +35,14 @@ series (v9, not merged); the Portal panel driver lands upstream in 7.3 as
   `OOB GPU_SET` / `GX_BW_PERF_VOTE` timeouts: the GPU idles at this level ~75% of the time, so
   nearly every wake from slumber starts from it. It shares LOW_SVS_D2 and the bus vote with
   220 MHz, so dropping it costs no measurable power.
+
+## Not taken from ROCKNIX SM8250
+- 0010 htr3212, 0015 edt-ft5x06, 0017 hdmi hw_params, 0047 aw88166, 0104 RP6 panel, 0504, 0505,
+  9997 boot fan speed: already in `20-sm8550` (ours are the same or newer).
+- 0057 ICNA35XX, 0060/0063/0064 Mangmi, 0061 aw200xx, 0062 wsa881x shared GPIO, 0065 cst66xx
+  iovcc, 0066/0067 PM8150L LCDB: for SM8250 devices other than the RP5.
+- 9998 A650 overclock/ACD/bandwidth votes: may cost idle battery; revisit after the RP5 runs.
+- 9999 log-spam silencing: comments out real errors (and changes `net/core/sock.c` behaviour).
 
 ## Candidates not yet applied
 - Valve `linux-neptune-72` (7.2.4-valve1): `HID: steam` 2026 Steam Controller series

@@ -1,0 +1,4 @@
+# Retroid Pocket 5: keep the WCD9385 headphone codec's SoundWire RX/TX devices out of runtime
+# suspend, or headphone jack detection stops working (ROCKNIX SM8250 99-wcd938x-nosleep.rules;
+# pocknix-os carries the same).
+ACTION=="bind", SUBSYSTEM=="soundwire", KERNEL=="sdw:*:0217:010d:*", ATTR{power/control}="on"

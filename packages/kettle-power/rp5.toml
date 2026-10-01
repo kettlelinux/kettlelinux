@@ -1,0 +1,62 @@
+# kettle-powerd's description of the Retroid Pocket 5 (SM8250, both panels: compatible
+# "retroidpocket,rp5"). GPU frequencies are sm8250.dtsi's A650 OPP table; the CPU caps are
+# SM8250 cpufreq-hw steps, to check against the table read on the device (caps between steps
+# round down).
+
+[cpu]
+# cpufreq policies, smallest cluster first. cpu0 can't be taken offline.
+clusters = [
+  { name = "little", policy = 0, cpus = [0, 1, 2, 3] },
+  { name = "mid", policy = 4, cpus = [4, 5, 6] },
+  { name = "prime", policy = 7, cpus = [7] },
+]
+
+[gpu]
+devfreq = "/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu"
+# busy percentage (kernel patch 40-kettle/1110)
+load = "/sys/kernel/debug/dri/0/perf_now"
+# lowest clock offered for a fixed (manual) GPU clock, MHz
+manual_min_mhz = 305
+
+[fan]
+hwmon = "pwmfan"
+cooling_device = "pwm-fan"
+# Custom curves always run the fan at full speed from here, whatever the curve says (C)
+full_speed_temp = 85
+# The device tree curve (sm8250-pwm-fan-cooling.dtsi: cooling-levels 0 51 77 102 128 153 179
+# 204 255 of 255, levels 1 2 3 4 6 8 at 45 55 62 68 73 78 C), as percent: the starting point
+# for a custom curve
+default_curve = [[40, 0], [45, 20], [55, 30], [62, 40], [68, 50], [73, 70], [78, 100]]
+
+[power]
+battery = "battery"
+# the PM8150B charger (kernel patch 21-sm8250/0011)
+charger = "pmi8998_charger"
+# Share of the charger's input power that reaches the system and battery
+charger_efficiency = 0.9
+# Steam's TDP slider: whole-device draw in watts (screen included); max means no limit
+tdp_min = 3
+tdp_max = 15
+# The PM8150B charger driver has no charge end threshold (CHARGE_CONTROL_END_THRESHOLD), so
+# there's no charge limit: BatteryChargeLimit1 isn't offered to Steam.
+charge_limit = false
+charge_limit_min = 55
+
+# Steam's performance profiles (Quick Access > Performance). Caps in kHz / MHz; a cluster
+# left out runs up to its highest frequency.
+[[profile]]
+name = "Performance"
+
+[[profile]]
+name = "Balanced"
+little = 1516800
+mid = 2054400
+prime = 2361600
+gpu_mhz = 490
+
+[[profile]]
+name = "Powersave"
+little = 1171200
+mid = 1574400
+prime = 1747200
+gpu_mhz = 400

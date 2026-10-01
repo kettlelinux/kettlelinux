@@ -54,14 +54,19 @@ cmdline="$CMDLINE $SPLASH steamos.efi=PARTUUID=$efi_partuuid"
 verbose="$CMDLINE $VERBOSE steamos.efi=PARTUUID=$efi_partuuid"
 kver=$(ls "$root/usr/lib/modules" | sort -V | tail -1)
 boot=$root/boot
+# a DTB_ALT marker (NAME or NAME.txt) on the esp picks that devicetree for extlinux
+for alt in ${DTB_ALT:-}; do
+  if [ -e "$esp/${alt%%:*}" ] || [ -e "$esp/${alt%%:*}.txt" ]; then DTB=${alt#*:}; fi
+done
 
 # build it all next to the old files, then swap them in: the esp is never left half-written
 stage=$(mktemp -d "$esp/.kettle-boot.XXXXXX")
 
-# \KERNEL for the ROCKNIX ABL: gzip(Image) with every SM8550 dtb appended (the ABL picks one by
-# its Device model setting), the initramfs, the splash command line
+# \KERNEL for the ROCKNIX ABL: gzip(Image) with the device's dtbs appended (ABL_DTBS; the ABL
+# picks one by its Device model setting, and one ABL build serves one SoC), the initramfs, the
+# splash command line. A slot from before ABL_DTBS had only SM8550 dtbs.
 gzip -9n -c "$boot/Image" >"$stage/kernel.gz"
-cat "$boot"/dtbs/qcom/*.dtb >>"$stage/kernel.gz"
+(cd "$boot/dtbs" && cat ${ABL_DTBS:-qcom/*.dtb}) >>"$stage/kernel.gz"
 python3 /usr/lib/kettle/mkbootimg.py --kernel "$stage/kernel.gz" \
   --ramdisk "$boot/initramfs-linux.img" --cmdline "$cmdline" \
   --os_patch_level "$(date +%Y-%m)" -o "$stage/KERNEL"

@@ -57,7 +57,7 @@ function renderNotes(text) {
 
 // Devices in the order the Download section lists them; names for index entries made before
 // upload-image.sh recorded each image's model. A device not named here is listed after these.
-const DEVICES = { odin2portal: "AYN Odin 2 Portal", thor: "AYN Thor" };
+const DEVICES = { odin2portal: "AYN Odin 2 Portal", thor: "AYN Thor", rp5: "Retroid Pocket 5" };
 
 function releaseCard(img, older) {
   const head = el("div", { className: "release-head" },

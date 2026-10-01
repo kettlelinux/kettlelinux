@@ -45,6 +45,11 @@ for name in "${names[@]}"; do
   pacman_root "$CHROOT" -Sy --needed $deps
   rm -rf "$CHROOT/build/$name"; mkdir -p "$CHROOT/build"
   cp -r "$src" "$CHROOT/build/$name"
+  # a file shared with another package is a symlink at the top of the package dir (e.g.
+  # u-boot-retroidpocket/mkbootimg.py): copy what it points to (deeper links, node_modules, stay)
+  find "$src" -mindepth 1 -maxdepth 1 -type l -printf '%f\n' | while read -r l; do
+    rm "$CHROOT/build/$name/$l"; cp -rL "$src/$l" "$CHROOT/build/$name/$l"
+  done
   # reuse the sources a previous build downloaded (cache/src/<name>), so a build doesn't
   # depend on upstream still having them
   [ -d "$ROOT/cache/src/$name" ] && cp -a "$ROOT/cache/src/$name/." "$CHROOT/build/$name/"

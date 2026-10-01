@@ -27,16 +27,17 @@ def os_version(ver: str, patch: str) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--kernel", required=True)
-    ap.add_argument("--ramdisk", required=True)
+    ap.add_argument("--ramdisk", help="omitted: none (a bootloader, e.g. U-Boot)")
     ap.add_argument("--cmdline", default="")
     ap.add_argument("--pagesize", type=int, default=2048)
+    ap.add_argument("--kernel_offset", type=lambda v: int(v, 0), default=0)
     ap.add_argument("--os_version", default="12.0.0")
     ap.add_argument("--os_patch_level", default="2026-01")
     ap.add_argument("-o", "--output", required=True)
     a = ap.parse_args()
 
     kernel = open(a.kernel, "rb").read()
-    ramdisk = open(a.ramdisk, "rb").read()
+    ramdisk = open(a.ramdisk, "rb").read() if a.ramdisk else b""
     cmdline = a.cmdline.encode()
     if len(cmdline) > 512 + 1024 - 1:
         sys.exit("cmdline too long")
@@ -50,7 +51,7 @@ def main() -> int:
     hdr = struct.pack(
         "<8s10I16s512s32s1024s",
         BOOT_MAGIC,
-        len(kernel), BASE,          # kernel size / addr (base + kernel_offset 0)
+        len(kernel), BASE + a.kernel_offset,  # kernel size / addr
         len(ramdisk), BASE,         # ramdisk size / addr
         0, 0,                       # second size / addr (unused, AOSP writes 0)
         BASE,                       # tags addr
