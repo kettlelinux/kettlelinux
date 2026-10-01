@@ -1,0 +1,58 @@
+GPU load: find the msm card's debugfs perf_now instead of assuming
+DRM minor 0.
+
+On the Retroid Pocket 5, simpledrm takes minor 0 for the boot
+framebuffer and msm comes up as card1, so dri/0/perf_now doesn't exist
+and the overlay's GPU usage stays at 0%. Look through the DRM cards for
+the one with perf_now (kernel patch 40-kettle/1110), retrying until it
+is reachable.
+---
+diff --git a/src/msm.cpp b/src/msm.cpp
+index 1d81c2fa..f6172f5b 100644
+--- a/src/msm.cpp
++++ b/src/msm.cpp
+@@ -3,6 +3,7 @@
+ #include <filesystem.h>
+ #include <mesa/util/os_time.h>
+ #include <inttypes.h>
++#include <unistd.h>
+ 
+ #include <string>
+ #include <iostream>
+@@ -36,14 +37,35 @@ unsigned gpu_bytes_memory()
+     return (unsigned)bytes;
+ }
+ 
++// The msm card isn't always DRM minor 0: on the RP5, simpledrm takes minor 0 for the boot
++// framebuffer, so msm is card1. Look for the card whose debugfs directory has perf_now.
++static std::string find_perf_now()
++{
++    std::error_code ec;
++    for (auto const& entry : fs::directory_iterator("/sys/class/drm/", ec)) {
++        auto name = entry.path().filename().string();
++        if (name.rfind("card", 0) != 0 || name.find('-') != std::string::npos)
++            continue;
++        auto path = "/sys/kernel/debug/dri/" + name.substr(4) + "/perf_now";
++        if (access(path.c_str(), R_OK) == 0)
++            return path;
++    }
++    return "";
++}
++
+ static std::atomic<double> gpu_usage;
+ void perf_read_thread()
+ {
++    std::string path;
+     while (true) {
+         gpu_usage = 0.0;
+ 
++        // retried until found: debugfs is opened to the user by kettle-mangoapp-tracefs
++        if (path.empty())
++            path = find_perf_now();
++
+         {
+-            std::ifstream perf_now("/sys/kernel/debug/dri/0/perf_now");
++            std::ifstream perf_now(path);
+             if (perf_now.is_open()) {
+                 std::string line; 
+                 std::getline(perf_now, line);

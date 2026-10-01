@@ -4,7 +4,7 @@
 # abort()s with "failed to create instance" when it can't. tracefs is root-only (0700), so
 # create that instance here, hand it to the user, and open only the paths it needs to reach
 # it plus the two ring-buffer header files used to decode it.
-# It also reads GPU load from debugfs dri/0/perf_now (kernel patch 1110), so let the user
+# It also reads GPU load from the msm card's debugfs perf_now (kernel patch 1110), so let the user
 # traverse the debugfs root (0711: no listing; world-readable files become reachable).
 set -eu
 user="${1:-kettle}"
