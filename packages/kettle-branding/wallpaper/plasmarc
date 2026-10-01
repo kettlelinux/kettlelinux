@@ -1,0 +1,5 @@
+# Kettle Linux: the Kettle wallpaper is Plasma's default, on the desktop and the lock screen.
+# Plasma takes it from the Plasma theme, and Vapor sets none, so it falls back to this.
+# A wallpaper picked in System Settings is kept.
+[Theme]
+defaultWallpaperTheme=Kettle

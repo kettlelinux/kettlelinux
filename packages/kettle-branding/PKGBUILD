@@ -7,10 +7,13 @@
 #                          run-steam puts it where Steam looks for overrides.
 #   kettle-plasma-splash   the Plasma (KSplash) splash screen: the boot splash's picture again,
 #                          as a QML scene (plasma/), so the desktop's startup matches the boot.
+#   kettle-wallpaper       the default Plasma wallpaper (desktop and lock screen): the kettle as
+#                          a faint ghost on black (render-wallpaper.sh), so OLED screens keep
+#                          their pixels off and a desktop left open doesn't burn the logo in.
 pkgbase=kettle-branding
-pkgname=(kettle-plymouth-theme kettle-steam-startup kettle-plasma-splash)
+pkgname=(kettle-plymouth-theme kettle-steam-startup kettle-plasma-splash kettle-wallpaper)
 pkgver=1.0.0
-pkgrel=3
+pkgrel=4
 arch=(any)
 license=(BSD-3-Clause)
 makedepends=(librsvg ffmpeg python)
@@ -29,6 +32,15 @@ build() {
   rsvg-convert -w 120 "$startdir/art/steam.svg" -o plasma/steam.png
   rsvg-convert -z 2 "$startdir/art/wordmark.svg" -o plasma/wordmark.png
   rsvg-convert "$startdir/art/glow.svg" -o plasma/glow.png
+
+  # wallpaper at the devices' screens (1920x1080; the Thor's bottom screen 1240x1080), and
+  # common others for external displays: Plasma picks the closest to each screen
+  mkdir -p wallpaper
+  local size
+  for size in 1240x1080 1280x720 1280x800 1920x1080 1920x1200 2560x1440 3840x2160 1080x1920; do
+    sh "$startdir/render-wallpaper.sh" "$startdir/art/kettle.svg" "${size%x*}" "${size#*x}" \
+      "wallpaper/$size.png"
+  done
 
   python "$startdir/render-startup.py" "$startdir/art" startup.webm
 }
@@ -60,5 +72,16 @@ package_kettle-plasma-splash() {
   install -Dm644 "$startdir/plasma/kettle-splash.sh" -t "$pkgdir/etc/xdg/plasma-workspace/env"
   # os-release LOGO=kettle: the distribution logo, and the new user's picture (holo-create-homedir)
   install -Dm644 plasma/kettle.png "$pkgdir/usr/share/pixmaps/kettle.png"
+  install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}
+
+package_kettle-wallpaper() {
+  pkgdesc='Kettle Linux default wallpaper'
+  depends=(plasma-workspace)
+  local dir="$pkgdir/usr/share/wallpapers/Kettle"
+  install -Dm644 "$startdir/wallpaper/metadata.json" -t "$dir"
+  install -Dm644 wallpaper/*.png -t "$dir/contents/images"
+  install -Dm644 wallpaper/1920x1080.png "$dir/contents/screenshot.png"
+  install -Dm644 "$startdir/wallpaper/plasmarc" -t "$pkgdir/etc/xdg"
   install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
 }

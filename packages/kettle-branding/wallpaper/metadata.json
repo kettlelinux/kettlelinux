@@ -1,0 +1,13 @@
+{
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Kettle Linux contributors"
+            }
+        ],
+        "Description": "The Kettle Linux kettle as a faint ghost on black, kind to OLED screens",
+        "Id": "Kettle",
+        "License": "BSD-3-Clause",
+        "Name": "Kettle"
+    }
+}
