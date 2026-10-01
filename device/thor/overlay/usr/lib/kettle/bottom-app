@@ -1,0 +1,23 @@
+#!/bin/bash
+# Keeps an app open on the bottom screen's shell in Game Mode (bottom-shell has KWin start it
+# through this): closed or crashed, it opens again. It ends with the shell (KWin's Wayland socket
+# gone), and gives up on an app that keeps ending at once (missing, or failing to start), so the
+# shell isn't flooded with it.
+#   bottom-app <command> [args...]
+set -u
+socket="${XDG_RUNTIME_DIR:-}/${WAYLAND_DISPLAY:-}"
+quick=0
+while [ -S "$socket" ]; do
+  started=$SECONDS
+  "$@"
+  [ -S "$socket" ] || break
+  if (( SECONDS - started < 10 )); then
+    if (( ++quick >= 5 )); then
+      echo "bottom-app: $1 keeps ending as it starts, not opening it again" >&2
+      exit 1
+    fi
+  else
+    quick=0
+  fi
+  sleep 1
+done

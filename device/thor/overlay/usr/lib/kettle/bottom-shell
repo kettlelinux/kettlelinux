@@ -93,8 +93,8 @@ EOF
 export KWIN_NO_EXPLICIT_SYNC=1
 # KWin runs its own Xwayland too: apps started here get its DISPLAY, not the bottom gamescope's
 # (an X11 app there bypassed KWin, fullscreen over the shell, and couldn't be closed)
-# The Performance app (kettle-power-applet) opens with the shell, filling the screen; closed, it's
-# in the shell's apps.
+# The Performance app (kettle-power-applet) is always open on it, filling the screen: it opens
+# with the shell, and again whenever it's closed (bottom-app).
 exec dbus-run-session kwin_wayland --x11-display "$DISPLAY" --width 1240 --height 1080 \
   --no-lockscreen --xwayland --exit-with-session "plasmashell -p org.kde.plasma.mobileshell" \
-  kettle-performance
+  "/usr/lib/kettle/bottom-app kettle-performance"
