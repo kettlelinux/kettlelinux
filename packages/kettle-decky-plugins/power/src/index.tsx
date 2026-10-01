@@ -3,6 +3,7 @@ import { callable, definePlugin } from "@decky/api";
 import { useEffect, useState } from "react";
 import { FaBolt } from "react-icons/fa";
 import { GamePicker, InstalledGame, gameName, runningAppId, useSelectedGame } from "../../shared/GamePicker";
+import { startSteamSync } from "./steamSync";
 
 type Cluster = { name: string; cpus: number[]; freqs: number[] };
 type Info = {
@@ -274,6 +275,12 @@ function Content() {
 
 export default definePlugin(() => {
   syncActive();
+  // Steam's sliders follow what the Performance app sets (steamSync.ts)
+  let tdpMax: number | null = null;
+  const stopSync = startSteamSync(async () => {
+    tdpMax ??= (await info()).tdp[1];
+    return { steam: (await status()).steam, tdpMax };
+  });
   const lifetime = SteamClient.GameSessions.RegisterForAppLifetimeNotifications((n: { unAppID: number; bRunning: boolean }) => {
     if (n.bRunning) setActive(n.unAppID).catch(() => {});
     else setTimeout(() => syncActive(n.unAppID), 1000);
@@ -283,6 +290,9 @@ export default definePlugin(() => {
     titleView: <div className={staticClasses.Title}>Power</div>,
     content: <Content />,
     icon: <FaBolt />,
-    onDismount: () => lifetime.unregister(),
+    onDismount: () => {
+      lifetime.unregister();
+      stopSync();
+    },
   };
 });

@@ -1,0 +1,127 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+# Kettle Linux: upstream's retroid_type1.yaml (ret1: the button below the right stick as Quick
+# Access, the triggers) with the RP5's face buttons mapped by their labels, as the Thor's are.
+# Used by 40-kettle-rp5.yaml.
+version: 2
+kind: CapabilityMap
+name: Retroid Pocket 5 (Kettle)
+id: kettle-rp5
+
+mapping:
+  - name: D-Pad Up
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_DPAD_UP
+          value_type: button
+    target_event:
+      gamepad:
+        button: DPadUp
+
+  - name: D-Pad Down
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_DPAD_DOWN
+          value_type: button
+    target_event:
+      gamepad:
+        button: DPadDown
+
+  - name: D-Pad Left
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_DPAD_LEFT
+          value_type: button
+    target_event:
+      gamepad:
+        button: DPadLeft
+
+  - name: D-Pad Right
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_DPAD_RIGHT
+          value_type: button
+    target_event:
+      gamepad:
+        button: DPadRight
+
+  - name: Back Button
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_BACK
+          value_type: button
+    target_event:
+      gamepad:
+        button: QuickAccess
+
+  # The RP5's face buttons are labelled Nintendo-style (A right, B bottom, X top, Y left), and
+  # Steam follows the labels here, as on the Thor: the button marked A is Steam's A, and so on.
+  # (ret1 follows the Xbox layout by position, which would swap A/B and X/Y.)
+  - name: A Button
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_EAST
+          value_type: button
+    target_event:
+      gamepad:
+        button: South
+
+  - name: B Button
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_SOUTH
+          value_type: button
+    target_event:
+      gamepad:
+        button: East
+
+  - name: X Button
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_NORTH
+          value_type: button
+    target_event:
+      gamepad:
+        button: North
+
+  - name: Y Button
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_WEST
+          value_type: button
+    target_event:
+      gamepad:
+        button: West
+
+  - name: Right Trigger
+    source_events:
+      - evdev:
+          event_type: ABS
+          event_code: ABS_HAT2Y
+          value_type: trigger
+    target_event:
+      gamepad:
+        trigger:
+          name: RightTrigger
+
+  - name: Left Trigger
+    source_events:
+      - evdev:
+          event_type: ABS
+          event_code: ABS_HAT2X
+          value_type: trigger
+    target_event:
+      gamepad:
+        trigger:
+          name: LeftTrigger
+
+# List of events to filter from the source devices
+filtered_events: []

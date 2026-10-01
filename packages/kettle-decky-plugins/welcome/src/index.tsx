@@ -178,7 +178,7 @@ const PAGES = [
         <Text>
           <h2>Welcome to Kettle Linux</h2>
           <p>
-            Kettle is a SteamOS-style system for the AYN Odin 2 Portal: Valve's arm64 Steam client with Game Mode, a
+            Kettle is a SteamOS-style system for Snapdragon handhelds: Valve's arm64 Steam client with Game Mode, a
             Plasma desktop, and Windows games through Proton ARM64.
           </p>
           <p>

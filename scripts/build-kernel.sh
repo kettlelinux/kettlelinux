@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the Kettle Linux kernel: pinned kernel.org source + kernel/patches/*/ (in
-# order, --fuzz=0) + kernel/dts + base.config merged with steamos.config.
+# order, --fuzz=0) + kernel/dts + base.config merged with the $FRAGMENTS below.
 # Cross-compiles with LLVM; no GCC cross toolchain needed.
 #
 # Usage: scripts/build-kernel.sh [prepare|config|build|all]   (default: all)
@@ -15,6 +15,8 @@ OUT="$ROOT/out/kernel"
 . "$ROOT/scripts/lib.sh"
 be_nice   # sets JOBS
 KMAKE=(make -C "$KSRC" ARCH=arm64 LLVM=1 -j"$JOBS")
+# Merged in order over base.config; one kernel serves every device, so each SoC adds its own.
+FRAGMENTS=(steamos.config sm8250.config)
 
 # The kernel needs bc; fall back to the timeconst-only shim if the host lacks it.
 command -v bc >/dev/null || export PATH="$ROOT/tools:$PATH"
@@ -59,19 +61,21 @@ prepare() {
 
 config() {
   [ -d "$KSRC" ] || die "no source tree; run: $0 prepare"
-  log "merging base.config + steamos.config"
+  log "merging base.config + ${FRAGMENTS[*]}"
   cp "$ROOT/kernel/config/base.config" "$KSRC/.config"
   (cd "$KSRC" && ARCH=arm64 LLVM=1 scripts/kconfig/merge_config.sh -m .config \
-     "$ROOT/kernel/config/steamos.config" >/dev/null)
+     "${FRAGMENTS[@]/#/$ROOT/kernel/config/}" >/dev/null)
   "${KMAKE[@]}" olddefconfig >/dev/null
 
   # olddefconfig silently drops symbols whose dependencies are unmet: assert.
-  local line bad=0
-  while IFS= read -r line; do
-    case "$line" in CONFIG_*=*) ;; *) continue ;; esac
-    grep -qxF "$line" "$KSRC/.config" || { echo "  not applied: $line"; bad=1; }
-  done <"$ROOT/kernel/config/steamos.config"
-  [ "$bad" = 0 ] || die "steamos.config options dropped by olddefconfig"
+  local frag line bad=0
+  for frag in "${FRAGMENTS[@]}"; do
+    while IFS= read -r line; do
+      case "$line" in CONFIG_*=*) ;; *) continue ;; esac
+      grep -qxF "$line" "$KSRC/.config" || { echo "  not applied ($frag): $line"; bad=1; }
+    done <"$ROOT/kernel/config/$frag"
+  done
+  [ "$bad" = 0 ] || die "config fragment options dropped by olddefconfig"
   cp "$KSRC/.config" "$ROOT/kernel/config/generated.config"
 }
 

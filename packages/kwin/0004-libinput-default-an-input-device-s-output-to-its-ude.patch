@@ -1,0 +1,54 @@
+From 102f69fa180fb8b3b3b423d3db4672b9f1cc91a2 Mon Sep 17 00:00:00 2001
+From: gennro <kettlelinux@kettlelinux.org>
+Date: Wed, 30 Sep 2026 17:48:25 -0500
+Subject: [PATCH] libinput: default an input device's output to its udev
+ WL_OUTPUT
+
+A device's output comes from libinput (udev's WL_OUTPUT tag), but
+loading its configuration then set it to the configured OutputName,
+whose default is empty: with no OutputName configured the udev tag was
+always dropped, and every touchscreen went to the first internal output.
+On the AYN Thor both touchscreens landed on the bottom screen, whatever
+61-kettle-thor-touch.rules tagged them for.
+
+Make the udev output the default, so the tag holds until configured
+otherwise.
+---
+ src/backends/libinput/device.cpp | 1 +
+ src/backends/libinput/device.h   | 4 +++-
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/backends/libinput/device.cpp b/src/backends/libinput/device.cpp
+index 905d4d2..5374aa4 100644
+--- a/src/backends/libinput/device.cpp
++++ b/src/backends/libinput/device.cpp
+@@ -283,6 +283,7 @@ Device::Device(libinput_device *device, QObject *parent)
+     , m_name(QString::fromLocal8Bit(libinput_device_get_name(m_device)))
+     , m_sysName(QString::fromLocal8Bit(libinput_device_get_sysname(m_device)))
+     , m_outputName(QString::fromLocal8Bit(libinput_device_get_output_name(m_device)))
++    , m_udevOutputName(m_outputName)
+     , m_product(libinput_device_get_id_product(m_device))
+     , m_vendor(libinput_device_get_id_vendor(m_device))
+     , m_tapFingerCount(libinput_device_config_tap_get_finger_count(m_device))
+diff --git a/src/backends/libinput/device.h b/src/backends/libinput/device.h
+index c5a3095..15e21b2 100644
+--- a/src/backends/libinput/device.h
++++ b/src/backends/libinput/device.h
+@@ -595,7 +595,8 @@ public:
+     void setOutputName(const QString &uuid) override;
+     QString defaultOutputName() const
+     {
+-        return {};
++        // the output udev tags the device for (WL_OUTPUT), as libinput reports it
++        return m_udevOutputName;
+     }
+ 
+     /**
+@@ -706,6 +707,7 @@ private:
+     QString m_name;
+     QString m_sysName;
+     QString m_outputName;
++    QString m_udevOutputName;
+     QSizeF m_size;
+     quint32 m_product;
+     quint32 m_vendor;

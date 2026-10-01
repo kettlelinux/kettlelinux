@@ -1,0 +1,8 @@
+# The RP5's own packages, added to image/packages.txt (built by us, packages/)
+
+# firmware: DSPs, GPU, video, Wi-Fi, Bluetooth (packages/kettle-firmware-retroid)
+kettle-firmware-rp5
+# ALSA UCM profile for the "RetroidPocket" card (packages/kettle-ucm-retroid)
+kettle-ucm-rp5
+# U-Boot for the loader partition, put on the KETTLE partition too (docs/RP5.md)
+u-boot-retroidpocket

@@ -26,6 +26,7 @@ KETTLE_DEVICE=thor scripts/build-image.sh   # -> out/kettle-<build>-thor.img (+ 
 | Brightness | Steam's slider sets the top screen (the bottom panel's backlight is named `bottom-panel`, so Steam finds the top one first); the bottom screen has its own, in Quick Access > Screens, and dims with the top one | `40-kettle/1130`, `device/thor/overlay` (`kettle-bottom-brightness`), `kettle-decky-screens` |
 | Controller | Steam Deck target as on the Portal, plus the AYN key as Quick Access | `packages/inputplumber/40-kettle-thor.yaml` |
 | Game Mode | Steam on the top screen (orientation `right`, output found by its 1080x1920 mode); Plasma Mobile's touch shell on the bottom one, see below | `device/thor/overlay`, `packages/gamescope` 0012-0016 |
+| Performance app | opens on the bottom screen with Game Mode: readings and power settings, see below | `packages/kettle-power-applet` (`app/`), `bottom-shell` |
 | Desktop Mode | both screens, bottom one centred under the top one, each touchscreen mapped to its own screen | `device/thor/overlay` |
 | Updates | RAUC compatible `kettle-aarch64-thor`, update variant `thor`: Portal and Thor bundles are refused on each other | `device/thor/device.conf` |
 
@@ -39,7 +40,9 @@ Booted from SD through U-Boot's EFI (GRUB loads `qcs8550-ayn-thor.dtb`):
 - Touch: the Thor's dts swaps and inverts the touch axes, which the Portal's doesn't (the kernel
   reports 1920x1080 for the 1080x1920 top panel), so taps landed rotated;
   `LIBINPUT_CALIBRATION_MATRIX` in `61-kettle-thor-touch.rules` turns them back to the panels'
-  own orientation.
+  own orientation. In the desktop each touchscreen is mapped to its own screen by
+  `/etc/xdg/kcminputrc` (`OutputName`): KWin 6.2 reads that setting over the udev `WL_OUTPUT`
+  tag, and without it both touchscreens went to the bottom screen.
 - Audio: the Thor's U-Boot reports the Odin 2's SMBIOS product ("AYN Odin 2"), so its card is
   `ayn-AYNOdin2` under EFI; `kettle-ucm-thor` aliases that to the Thor's profile. Speaker path
   and internal mic checked.
@@ -96,6 +99,42 @@ shell (`usr/lib/kettle/bottom-screen`, `bottom-shell`). The same mechanism as Ba
   Wi-Fi settings), kinfocenter and plasma-systemmonitor (neither started with deckard's 6.2.5
   libraries, on the desktop too).
 
+## The Performance app on the bottom screen
+`kettle-performance` (built with the Power applet, `packages/kettle-power-applet/app`) opens
+with the bottom screen's shell in Game Mode (`bottom-shell` starts it with KWin) and fills the
+screen. Closed, it's in the shell's apps. It is shared: in Desktop Mode, on either device, it's
+the Power applet's controls in a window.
+- **Stats**: the game's frame rate, frame time, 1% low and a frame-time graph (the last 10
+  seconds; the dashed line is one display refresh), with the rate before frame generation when
+  the Frame Generation layer runs; power draw and the TDP limit (and whether it's holding clocks
+  down), battery and time left, CPU load and each cluster's clock (and its cap), GPU clock and
+  load, CPU, GPU and battery temperatures, fan speed, memory and swap, the performance profile.
+  The frame times come from mangoapp (`packages/mangohud` 0005, `frametimes=` in
+  `$XDG_RUNTIME_DIR/kettle-fps`, next to the frame rate the Frame Generation plugin reads);
+  mangoapp runs all through Game Mode, so the overlay needn't be on. The game is the process
+  mangoapp reports, named by its Steam app manifest.
+- **Settings**: the bottom screen's brightness (the Screens setting,
+  `~/.config/kettle/bottom-screen.json`); Steam's performance profile, TDP limit and GPU clock;
+  fan and CPU settings for the running game or all games, as the Power plugin has them; the
+  charge limit where the charger has one; how often the readings update.
+- **Shared with Steam and the plugins**: every setting is the same one Quick Access sets, read
+  back from kettle-powerd each update, so a change made in Steam shows here. Steam's own sliders
+  follow the app's changes through the Power plugin (`kettle-decky-power`, `steamSync.ts`): this
+  Steam build keeps the TDP limit, performance profile and fixed GPU clock as client settings
+  (`steamos_tdp_limit`, `steamos_platform_performance_profile`, `steamos_manual_gpu_clock_*`)
+  and sends them to kettle-powerd through steamos-manager, but never reads them back (set in
+  kettle-powerd or through steamos-manager, Steam's sliders stayed put). The plugin, in Steam,
+  watches kettle-powerd once a second: a value that changes there to something Steam's setting
+  doesn't have was set outside Steam, and goes into Steam's setting through the setter Steam's
+  settings pages use, which moves the slider and sends it back. Checked on a Thor, both ways.
+  The running game is the one the Power plugin tells kettle-powerd about (`active_game`).
+- `KETTLE_BOTTOM_SHELL=1` (set by `bottom-shell`) puts the app in Game Mode: it follows the
+  running game instead of making Desktop Mode the active one, and offers the bottom screen's
+  brightness.
+- It runs on the shell's Wayland display whatever `XDG_SESSION_TYPE` says (the shell's apps
+  inherit Game Mode's `x11`): on the shell's Xwayland, the shell's 2x scale didn't apply and
+  everything was half size.
+
 ## Firefox's hardware video decoding
 Both devices have the SM8550's iris decoder (`&iris` in `qcs8550-ayn-common.dtsi`), which
 FFmpeg reaches through its `*_v4l2m2m` decoders. Three pieces make Firefox use it:
@@ -145,11 +184,18 @@ at the right edge show green bars (bug 2014641).
    - Suspend and resume, and Desktop Mode and back a few times: both screens come back.
    - Wi-Fi and the desktop's network settings still work with the newer networkmanager-qt.
    - Battery drain with the shell idle against `GAMESCOPE_BOTTOM_SCREEN=0` (`kettle-powertest`).
+   - The Performance app opens filling the bottom screen, and stays usable at the shell's 2x
+     scale; its readings update while a game runs (frame rate matching Steam's overlay, the
+     graph moving, temperatures and clocks), and its CPU use is small.
+   - The app's "Settings for this game only" against the Power plugin's; its brightness slider
+     against Screens'; the fixed GPU clock both ways (TDP and profile sync is checked).
 5. **Brightness by eye**: Steam's slider on the top screen only, Screens' slider on the bottom
    one, both screens dimming together when idle and coming back on a touch on either; the low
    end (the Portal's panel needed a floor, `40-kettle/1120`).
-6. **Buttons**: the AYN key as Quick Access, the lid (logind's default: suspend on close), power
-   key suspend and wake.
+6. **Buttons**: the AYN key as Quick Access; the lid: closing it sleeps, also within seconds of
+   a wake-up (`logind.conf.d/20-lid.conf`), and closing it on a sleeping Thor leaves it asleep
+   (only opening wakes it: the dts' `wakeup-event-action`); the power key in Game Mode goes to
+   Steam (`kettle-powerbuttond`): a short press sleeps and wakes, a long one opens its power menu.
 7. **Power on battery**: `kettle-powertest`; the right TDP range for the Thor (`thor.toml` has
    the Portal's 4-18 W), charge limit support.
 8. **Headphones** and the speakers by ear.

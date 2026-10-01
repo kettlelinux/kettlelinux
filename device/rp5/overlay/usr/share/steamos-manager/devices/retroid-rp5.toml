@@ -1,0 +1,26 @@
+# steamos-manager device config for the Retroid Pocket 5. The power controls themselves (TDP,
+# performance profiles, GPU clock, charge limit, fan control) are kettle-powerd's, relayed
+# through remotes.d/kettle-power.toml: configuring them here would make steamos-manager write
+# the same cpufreq/devfreq files and fight it.
+# Booted through U-Boot's EFI there is SMBIOS, and steamos-manager then matches on DMI only.
+# Retroid's U-Boot has no sysinfo driver and fills SMBIOS from its own devicetree: the vendor is
+# the compatible's prefix, the product its model (the same for both panels).
+[[device]]
+dmi.sys_vendor = "retroidpocket"
+dmi.product_name = "Retroid Pocket 5"
+device = "rp5"
+variant = "RP5"
+friendly_name = "Retroid Pocket 5"
+
+# Booted without SMBIOS (the ABL's \KERNEL)
+[[device]]
+dt.compatible = "retroidpocket,rp5"
+device = "rp5"
+variant = "RP5"
+friendly_name = "Retroid Pocket 5"
+
+# Steam lowers the TDP to this while it downloads in sleep; the rest of TdpLimit1 comes
+# from kettle-powerd
+[tdp_limit]
+method = "remote_interface"
+download_mode_limit = 5

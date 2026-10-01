@@ -10,4 +10,4 @@ Wants=steam.service
 # The pad as a Steam Deck controller (InputPlumber), started before Steam
 Wants=kettle-inputplumber.service
 # The power button goes to Steam (sleep / power menu) while Game Mode runs; logind otherwise
-Wants=steamos-powerbuttond.service
+Wants=kettle-powerbuttond.service

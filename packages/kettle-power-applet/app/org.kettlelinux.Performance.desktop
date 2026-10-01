@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Performance
+GenericName=Power and Performance
+Comment=Power, clocks, temperatures and frame rate, and the power settings
+Exec=kettle-performance
+Icon=speedometer
+Categories=System;Monitor;
+Keywords=power;tdp;fan;fps;frame rate;temperature;clock;battery;
+StartupNotify=false
+X-KDE-FormFactor=desktop;tablet;handset;

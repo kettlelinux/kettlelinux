@@ -1,5 +1,5 @@
 diff --git a/src/app/main.cpp b/src/app/main.cpp
-index 7a5d502..7f0f7f3 100644
+index 7a5d5021..f4927345 100644
 --- a/src/app/main.cpp
 +++ b/src/app/main.cpp
 @@ -29,6 +29,9 @@
@@ -12,24 +12,34 @@ index 7a5d502..7f0f7f3 100644
  
  using namespace std;
  
-@@ -174,6 +177,38 @@ static void ctrl_thread(){
+@@ -174,6 +177,50 @@ static void ctrl_thread(){
  
  bool new_frame = false;
  
 +// Kettle Linux: export the focused app's displayed frame rate for the Frame Generation
 +// plugin, which derives each game's real (pre frame generation) rate and picks its frame cap
-+// from it. $XDG_RUNTIME_DIR/kettle-fps, rewritten about once a second while frames arrive.
++// from it, and its frame times for the Performance app's graph (frametimes=, the second's
++// frame-to-frame times in ms, oldest first). $XDG_RUNTIME_DIR/kettle-fps, rewritten about once
++// a second while frames arrive.
 +static void kettle_export_fps(uint32_t pid, uint64_t frametime_ns, uint16_t refresh, bool steam_focused){
 +    static uint32_t cur_pid = 0;
 +    static uint64_t sum_ns = 0, frames = 0;
++    static std::string times;
 +    static auto last = std::chrono::steady_clock::now();
 +    if (pid != cur_pid) {
 +        cur_pid = pid;
 +        sum_ns = frames = 0;
++        times.clear();
 +    }
 +    if (frametime_ns != ~(0lu) && frametime_ns > 0 && frametime_ns < 1000000000ull) {
 +        sum_ns += frametime_ns;
 +        frames++;
++        // at most a second of frames at 500 fps
++        if (frames <= 500) {
++            char ms[16];
++            snprintf(ms, sizeof(ms), "%s%.2f", times.empty() ? "" : ",", frametime_ns / 1e6);
++            times += ms;
++        }
 +    }
 +    auto now = std::chrono::steady_clock::now();
 +    if (now - last < std::chrono::seconds(1))
@@ -40,18 +50,20 @@ index 7a5d502..7f0f7f3 100644
 +        return;
 +    std::string path = std::string(dir) + "/kettle-fps", tmp = path + ".tmp";
 +    if (FILE *f = fopen(tmp.c_str(), "w")) {
-+        fprintf(f, "pid=%u\nfps=%.2f\nrefresh=%u\nsteam_focused=%d\ntime=%lld\n", pid,
-+                sum_ns ? frames * 1e9 / sum_ns : 0.0, refresh, steam_focused ? 1 : 0, (long long) time(nullptr));
++        fprintf(f, "pid=%u\nfps=%.2f\nrefresh=%u\nsteam_focused=%d\ntime=%lld\nframetimes=%s\n", pid,
++                sum_ns ? frames * 1e9 / sum_ns : 0.0, refresh, steam_focused ? 1 : 0, (long long) time(nullptr),
++                times.c_str());
 +        fclose(f);
 +        rename(tmp.c_str(), path.c_str());
 +    }
 +    sum_ns = frames = 0;
++    times.clear();
 +}
 +
  static void gamescope_frametime(uint64_t app_frametime_ns, uint64_t latency_ns){
      if (app_frametime_ns != uint64_t(-1))
      {
-@@ -278,6 +313,10 @@ static void msg_read_thread(){
+@@ -278,6 +325,10 @@ static void msg_read_thread(){
                      if (msg_bytes > offsetof(mangoapp_msg_v1, latency_ns))
                          gamescope_frametime(mangoapp_v1->app_frametime_ns, mangoapp_v1->latency_ns);
  

@@ -1,0 +1,36 @@
+From a6cb797437fe9909416d6a6a830c32f8450663cd Mon Sep 17 00:00:00 2001
+From: gennro <kettlelinux@kettlelinux.org>
+Date: Wed, 30 Sep 2026 17:48:00 -0500
+Subject: [PATCH] window: leave applet popups where they are for the virtual
+ keyboard
+
+When the on-screen keyboard opens, KWin moves and shrinks the window
+with the focused text field so the field stays above the keyboard. For
+Plasma's applet popups (Kickoff's search field, on the AYN Thor's
+touchscreens) plasmashell positions the popup itself and put it back:
+the popup flickered between the two places, lost focus, the keyboard
+hid and came back, and the popup could no longer be closed.
+
+Leave applet popups where plasmashell puts them.
+---
+ src/window.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/window.cpp b/src/window.cpp
+index 7617468..24edf95 100644
+--- a/src/window.cpp
++++ b/src/window.cpp
+@@ -2940,6 +2940,13 @@ QRectF Window::virtualKeyboardGeometry() const
+ 
+ void Window::setVirtualKeyboardGeometry(const QRectF &geo)
+ {
++    // Plasma places its applet popups (the application menu, ...) itself: moved out of the
++    // keyboard's way, plasmashell puts the popup back, it loses focus, the keyboard hides and the
++    // popup comes back, over and over
++    if (isAppletPopup()) {
++        m_virtualKeyboardGeometry = geo;
++        return;
++    }
+     // No keyboard anymore
+     if (geo.isEmpty() && !m_keyboardGeometryRestore.isEmpty()) {
+         const QRectF availableArea = workspace()->clientArea(MaximizeArea, this);

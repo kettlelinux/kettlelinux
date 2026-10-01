@@ -1,0 +1,20 @@
+From: Kettle Linux <noreply@kettlelinux>
+Subject: [PATCH] drm/panel: ch13726a: wait 120 ms after sleep-out
+
+The DDIC needs 120 ms after SLPOUT before DISPON (MIPI DCS). ROCKNIX's SM8250
+copy of this driver (used by the RP5) carries the delay; the
+SM8550 copy in 20-sm8550 does not.
+
+---
+diff --git a/drivers/gpu/drm/panel/panel-ddic-ch13726a.c b/drivers/gpu/drm/panel/panel-ddic-ch13726a.c
+index ae29144..34a7cd2 100644
+--- a/drivers/gpu/drm/panel/panel-ddic-ch13726a.c
++++ b/drivers/gpu/drm/panel/panel-ddic-ch13726a.c
+@@ -52,6 +52,7 @@ static int ch13726a_on(struct ch13726a_panel *ctx)
+ 	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb9, 0x00);
+ 	
+ 	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 120);
+ 
+ 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
+ 

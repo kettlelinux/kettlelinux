@@ -1,7 +1,7 @@
 # InputPlumber: presents the AYN gamepad (rsinput, "AYN Odin2 Gamepad") to Steam as a Steam
 # Deck controller in Game Mode: Deck button glyphs and layouts, Steam Input, and the button below
-# the right stick as Quick Access. Upstream's Odin 2 and Thor configs give them an Xbox Elite
-# controller; 40-kettle-odin2portal.yaml and 40-kettle-thor.yaml sort first and claim the pad
+# the right stick as Quick Access. Upstream's Odin 2, Thor and Retroid Pocket 5 configs give them
+# an Xbox Elite controller; 40-kettle-{odin2portal,thor,rp5}.yaml sort first and claim the pad
 # for the Deck target (the Thor's with its AYN key as Quick Access too).
 # Runs with Game Mode only (kettle-inputplumber.service, device overlay): the desktop's own
 # controller (kettle-desktop-controller) needs the raw pad.
@@ -10,7 +10,7 @@
 # the snapshot's 1.78.
 pkgname=inputplumber
 pkgver=0.81.0
-pkgrel=4
+pkgrel=5
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Input router and remapper daemon (Steam Deck controller emulation for AYN handhelds)'
@@ -24,13 +24,17 @@ source=("InputPlumber-$pkgver.tar.gz::https://github.com/ShadowBlip/InputPlumber
         "https://static.rust-lang.org/dist/$_rustdate/rust-$_rust-aarch64-unknown-linux-gnu.tar.xz"
         40-kettle-odin2portal.yaml
         40-kettle-thor.yaml
-        kettle-thor-capability-map.yaml)
+        40-kettle-rp5.yaml
+        kettle-thor-capability-map.yaml
+        kettle-rp5-capability-map.yaml)
 noextract=("rust-$_rust-aarch64-unknown-linux-gnu.tar.xz")
 sha256sums=('804ff31b6b67efe266f21cc752282b1defe14b34916261d0600da1b6094a21a7'
             '0b514a8cc1cbcd939bff0f151661fe58b6ea5c7a7f645a5098c69e32e8c1e0a2'
             'fda1ae4bfb045bb67e047ac73be99037079e753e268ce35c50db91c4dc2d57c1'
             'ad506a8243e42f39e79dd0e2e0a2fb54a8a60cad18a162c44598862578e41fe4'
-            '2cb3955e5d30d85589ddce8cd260851e60367b18e8b44c0b09e9250cf5518ee8')
+            'c17970bf78ddab689d8b93acebd78fdf6fa03befde4377b04bd5f9b3e3b78e89'
+            '2cb3955e5d30d85589ddce8cd260851e60367b18e8b44c0b09e9250cf5518ee8'
+            '769f8dfdb945985a3417ab2cbb988d43ef76bec81b6989251821a0200fbac69c')
 
 prepare() {
   rm -rf rust-dist rust && mkdir rust-dist
@@ -49,8 +53,10 @@ package() {
   cd "InputPlumber-$pkgver"
   export PATH="$srcdir/rust/bin:$PATH" CARGO_HOME="$srcdir/cargo-home"
   make install PREFIX="$pkgdir/usr" NO_RELOAD=true TARGET_ARCH=aarch64-unknown-linux-gnu
-  install -Dm644 "$srcdir"/40-kettle-{odin2portal,thor}.yaml -t "$pkgdir/usr/share/inputplumber/devices"
+  install -Dm644 "$srcdir"/40-kettle-{odin2portal,thor,rp5}.yaml -t "$pkgdir/usr/share/inputplumber/devices"
   install -Dm644 "$srcdir/kettle-thor-capability-map.yaml" \
     "$pkgdir/usr/share/inputplumber/capability_maps/kettle_thor.yaml"
+  install -Dm644 "$srcdir/kettle-rp5-capability-map.yaml" \
+    "$pkgdir/usr/share/inputplumber/capability_maps/kettle_rp5.yaml"
   install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""kettle-powerd: power, clocks, fan and charging on AYN's SM8550 handhelds.
+"""kettle-powerd: power, clocks, fan and charging on Kettle Linux's handhelds.
 
 The one writer of CPU/GPU frequency caps, the fan and the battery charge limit. It serves
 Steam's power controls through steamos-manager's remote interfaces (remotes.d/kettle-power.toml):

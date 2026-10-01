@@ -50,6 +50,9 @@ export XCURSOR_THEME=breeze_cursors
 # apps started here are the shell's, not gamescope's clients (gamescope's Vulkan layer would
 # look for Game Mode's gamescope)
 export DISABLE_GAMESCOPE_WSI=1
+# for apps that behave differently next to Steam: the Performance app follows the running game,
+# and sets this screen's brightness
+export KETTLE_BOTTOM_SHELL=1
 
 # Plasma Mobile's settings, before the shell starts (as startplasmamobile does). It makes
 # maliit the on-screen keyboard, which deckard's Qt can't run: use the desktop's
@@ -90,5 +93,8 @@ EOF
 export KWIN_NO_EXPLICIT_SYNC=1
 # KWin runs its own Xwayland too: apps started here get its DISPLAY, not the bottom gamescope's
 # (an X11 app there bypassed KWin, fullscreen over the shell, and couldn't be closed)
+# The Performance app (kettle-power-applet) opens with the shell, filling the screen; closed, it's
+# in the shell's apps.
 exec dbus-run-session kwin_wayland --x11-display "$DISPLAY" --width 1240 --height 1080 \
-  --no-lockscreen --xwayland --exit-with-session "plasmashell -p org.kde.plasma.mobileshell"
+  --no-lockscreen --xwayland --exit-with-session "plasmashell -p org.kde.plasma.mobileshell" \
+  kettle-performance

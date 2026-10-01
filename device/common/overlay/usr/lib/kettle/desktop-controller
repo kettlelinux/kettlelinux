@@ -40,7 +40,10 @@ BUTTON_KEYS = {  # pad button -> key or mouse button, pressed while held
     e.BTN_DPAD_UP: e.KEY_UP, e.BTN_DPAD_DOWN: e.KEY_DOWN,
     e.BTN_DPAD_LEFT: e.KEY_LEFT, e.BTN_DPAD_RIGHT: e.KEY_RIGHT,
 }
-TRIGGER_KEYS = {e.ABS_RZ: e.BTN_LEFT, e.ABS_Z: e.BTN_RIGHT}
+# right trigger: left click, left trigger: right click. rsinput (AYN) reports the triggers as
+# ABS_Z/ABS_RZ, the Retroid pad (RP5) as ABS_HAT2X/ABS_HAT2Y
+TRIGGER_KEYS = {e.ABS_RZ: e.BTN_LEFT, e.ABS_Z: e.BTN_RIGHT,
+                e.ABS_HAT2Y: e.BTN_LEFT, e.ABS_HAT2X: e.BTN_RIGHT}
 TAP_CHORDS = {  # tapped on release, unless the button was part of the toggle combo
     e.BTN_START: [e.KEY_LEFTMETA],  # Plasma opens the launcher on a lone Meta tap
     e.BTN_SELECT: [e.KEY_LEFTMETA, e.KEY_W],

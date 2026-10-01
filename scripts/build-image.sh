@@ -42,7 +42,7 @@ VARIANT="${KETTLE_DEVICE:-odin2portal}"
 DEVICE="$ROOT/device/$VARIANT"
 [ "$VARIANT" != common ] && [ -f "$DEVICE/device.conf" ] || die "no device '$VARIANT' (device/*/device.conf)"
 . "$DEVICE/device.conf"
-for v in MODEL DTB RAUC_COMPATIBLE PAD_NAME FACE_BUTTONS; do
+for v in MODEL DTB ABL_DTBS RAUC_COMPATIBLE PAD_NAME FACE_BUTTONS; do
   [ -n "${!v:-}" ] || die "device/$VARIANT/device.conf: $v not set (docs/PORTING.md)"
 done
 [[ "$FACE_BUTTONS" =~ ^(xbox|nintendo)$ ]] || die "device/$VARIANT/device.conf: FACE_BUTTONS is xbox or nintendo"
@@ -122,10 +122,20 @@ chmod 0750 "$RFS/etc/sudoers.d"; chmod 0440 "$RFS"/etc/sudoers.d/*
   echo "DEVICE=$VARIANT"
   cat "$DEVICE/device.conf"; } >"$RFS/usr/lib/kettle/device.conf"
 chmod 0644 "$RFS/usr/lib/kettle/device.conf"
-# this device's devicetree for GRUB and extlinux
-sed -i "s|^DTB=@DTB@\$|DTB=$DTB|" "$RFS/usr/lib/kettle/boot.conf"
+# the built-in gamepad's name, for the rule that keeps it a joystick
+sed -i "s|@PAD_NAME@|$PAD_NAME|" "$RFS/etc/udev/rules.d/60-input-kettle-gamepad.rules"
+grep -qF "ATTRS{name}==\"$PAD_NAME\"" "$RFS/etc/udev/rules.d/60-input-kettle-gamepad.rules" ||
+  die "60-input-kettle-gamepad.rules: PAD_NAME not set"
+# this device's devicetree for GRUB and extlinux, its alternatives, and the ABL's set
+sed -i -e "s|^DTB=@DTB@\$|DTB=$DTB|" -e "s|^DTB_ALT=\"@DTB_ALT@\"\$|DTB_ALT=\"${DTB_ALT:-}\"|" \
+  -e "s|^ABL_DTBS=\"@ABL_DTBS@\"\$|ABL_DTBS=\"$ABL_DTBS\"|" "$RFS/usr/lib/kettle/boot.conf"
 grep -qx "DTB=$DTB" "$RFS/usr/lib/kettle/boot.conf" || die "boot.conf: DTB not set"
-[ -f "$RFS/boot/dtbs/$DTB" ] || die "no $DTB in out/kernel"
+grep -qx "ABL_DTBS=\"$ABL_DTBS\"" "$RFS/usr/lib/kettle/boot.conf" || die "boot.conf: ABL_DTBS not set"
+for alt in $DTB $(printf '%s\n' ${DTB_ALT:-} | cut -d: -f2); do
+  [ -f "$RFS/boot/dtbs/$alt" ] || die "no $alt in out/kernel"
+done
+(shopt -s nullglob; set -- $(cd "$RFS/boot/dtbs" && echo $ABL_DTBS)
+ [ $# -gt 0 ] && [ -f "$RFS/boot/dtbs/$1" ]) || die "ABL_DTBS ($ABL_DTBS) matches no dtb"
 # this device's update compatible (RAUC) and update variant (steamos-atomupd, which also offers
 # the variants in client.conf); steamos-customizations-kettle ships the Portal's
 sed -i "s|^compatible=.*|compatible=$RAUC_COMPATIBLE|" "$RFS/etc/rauc/system.conf"
@@ -268,6 +278,11 @@ done
 install -m 0644 "$cl" "$STAGE/esp/EFI/steamos/steamcl.efi"
 install -m 0644 "$cl" "$STAGE/esp/EFI/BOOT/BOOTAA64.EFI"
 install -m 0644 "$RFS/usr/share/holo-efi/steamcl-version" "$STAGE/esp/EFI/steamos/"
+# a U-Boot the device's stock bootloader loads (the RP5's loader partition), where a PC sees
+# it for `fastboot flash loader` (docs/<DEVICE>.md)
+for f in "$RFS"/usr/share/kettle/u-boot/*.img; do
+  if [ -f "$f" ]; then install -m 0644 "$f" "$STAGE/esp/"; fi
+done
 
 # Both slots' partition sets (what holo-partsets would write: <link name> <partuuid>), on each
 # slot's efi partition. steamcl knows a slot by the file named after it (A or B) whose efi entry

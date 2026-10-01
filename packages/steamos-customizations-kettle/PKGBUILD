@@ -22,7 +22,7 @@
 pkgname=steamos-customizations-kettle
 _srctag=jupiter-20260914.1
 pkgver=${_srctag#jupiter-}
-pkgrel=8
+pkgrel=10
 pkgdesc='SteamOS atomic A/B system (Valve steamos-customizations) for Kettle Linux'
 arch=(aarch64)
 url='https://gitlab.steamos.cloud/holo/steamos-customizations'
@@ -60,9 +60,9 @@ sha256sums=('1df4fcaf6af7713b8b885031eeeae0489d9cd6cd71593f93c589f89775547489'
             '78f47e2565d9a48bbd0cebaa318eeaca1540fc116003f616e5fb5817a80c5d02'
             'a99f7889fff91cc3e11615e5a128acab636228dabcc0803b0b661f479ac685f2'
             '4e795fe93549b171628d9737ccbf6119c1cb39bf4e6f29687c593ed87ef64362'
-            'ce52557046321350447f2da5650b4bae16a35cd0c451929c6fa1471e7bdf73f4'
-            '1601a65b42ffbbdea54f72c3ac117a44a69cd70cdd4b76fc0ee2a7112bdabbac'
-            '4f61a4f3a9f058ce65227cd7e607ba8c2162b1a070a3071c89517bdba2b67889'
+            '3b41dab2b4aeeaef460f5697358b89081281e24b61d68aa611c6e5fd45654ac5'
+            'f245b5c76e2bf47172b531c89cc5e2a35d2c834e07845d57c47864cff6e4c395'
+            'cb8c07b9dde2c1ab060433af0a6406020ec07774b208450a0210c7e848b5ae6a'
             'ebda901acd2fe3a33034af9753aa87c22d867793251f462e7932c1a81ee9c491'
             '545638e85db9e487c1d03f3bad4206e5e4272c017daf5c29c726b319f2c87627'
             'f338627672b10c5e4cf4c9944f47a019d7b1741943faa8ce5ec3e1e58b9ecfd1'
@@ -122,6 +122,9 @@ package() {
   # Valve's grub-install/grub-mkimage (holo-grub-*) stand in for GRUB's, as in Valve's package
   ln -sf /usr/lib/holo/holo-grub-install usr/bin/grub-install
   ln -sf /usr/lib/holo/holo-grub-mkimage usr/bin/grub-mkimage
+  # steamdeck-kde-presets' kcm-about-distrorc still runs steamos-partition (renamed holo-partition)
+  # for Info Center's A/B line; kinfocenter crashes on About this System when the script is missing
+  ln -sf holo-partition usr/bin/steamos-partition
 
   install -Dm755 "$srcdir/update-grub" usr/bin/update-grub
   install -Dm755 "$srcdir/kettle-boot-legacy" usr/bin/kettle-boot-legacy

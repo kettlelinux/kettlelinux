@@ -1,0 +1,53 @@
+# Firmware for Retroid's SM8250 handhelds, one package per device, only the files its drivers and
+# device tree ask for, all from Arch linux-firmware-qcom/-atheros (Valve's deckard mirror, as for
+# the AYN devices; Qualcomm's redistributable licence):
+#  - ADSP, CDSP (qcom/sm8250), SLPI (the RB5's image, where the device tree names it)
+#  - A650 GPU (SQE/GMU/zap)
+#  - the video decoder (iris, qcom/vpu/vpu20_p4)
+#  - QCA6390 Wi-Fi (ath11k) and Bluetooth (HST)
+# Valve's own linux-firmware-deckard is ignored (image/pacman.conf); these files are ours alone.
+pkgbase=kettle-firmware-retroid
+pkgname=(kettle-firmware-rp5)
+_linux_fw=20260221-1
+pkgver=${_linux_fw%-*}
+pkgrel=1
+pkgdesc='Firmware for Retroid SM8250 handhelds (DSPs, GPU, video, Wi-Fi, Bluetooth)'
+arch=(any)
+url='https://gitlab.com/kernel-firmware/linux-firmware'
+license=(LicenseRef-linux-firmware)
+# firmware images, not ELF binaries: nothing to strip
+options=(!strip)
+_mirror=https://steamdeck-packages.steamos.cloud/archlinux-deckard/archlinux/mash-20260305/core/os/aarch64
+source=("$_mirror/linux-firmware-qcom-$_linux_fw-any.pkg.tar.zst"
+        "$_mirror/linux-firmware-atheros-$_linux_fw-any.pkg.tar.zst")
+noextract=("linux-firmware-qcom-$_linux_fw-any.pkg.tar.zst"
+           "linux-firmware-atheros-$_linux_fw-any.pkg.tar.zst")
+sha256sums=('d7d520aa66b66004e2de1632ce80c16539b6058d0e6bdef5f66ca6e6ef6a26bd'
+            '59e0a43b634246312db82bc0e4944faee72cc846fb71ab918e5a13135d7837d1')
+
+_package() {
+  local fw="$pkgdir/usr/lib/firmware"
+  bsdtar -xf "$srcdir/linux-firmware-qcom-$_linux_fw-any.pkg.tar.zst" -C "$pkgdir" \
+    usr/lib/firmware/qcom/a650_sqe.fw.zst \
+    usr/lib/firmware/qcom/a650_gmu.bin.zst \
+    usr/lib/firmware/qcom/sm8250/a650_zap.mbn.zst \
+    usr/lib/firmware/qcom/sm8250/adsp.mbn.zst \
+    usr/lib/firmware/qcom/sm8250/cdsp.mbn.zst \
+    usr/lib/firmware/qcom/sm8250/Thundercomm/RB5/slpi.mbn.zst \
+    usr/lib/firmware/qcom/vpu/vpu20_p4.mbn.zst \
+    'usr/share/licenses/linux-firmware-qcom/*'
+  # the device tree asks for qcom/sm8250/slpi.mbn
+  mv "$fw/qcom/sm8250/Thundercomm/RB5/slpi.mbn.zst" "$fw/qcom/sm8250/slpi.mbn.zst"
+  rm -r "$fw/qcom/sm8250/Thundercomm"
+  bsdtar -xf "$srcdir/linux-firmware-atheros-$_linux_fw-any.pkg.tar.zst" -C "$pkgdir" \
+    'usr/lib/firmware/ath11k/QCA6390/hw2.0/*' \
+    'usr/lib/firmware/qca/htbtfw20.tlv*' 'usr/lib/firmware/qca/htnv20*' \
+    'usr/share/licenses/linux-firmware-atheros/*'
+  find "$pkgdir" -type d -exec chmod 755 {} + && find "$fw" -type f -exec chmod 644 {} +
+}
+
+package_kettle-firmware-rp5() {
+  pkgdesc='Firmware for the Retroid Pocket 5 (DSPs, GPU, video, Wi-Fi, Bluetooth)'
+  conflicts=(kettle-firmware-odin2portal kettle-firmware-thor)
+  _package
+}

@@ -1,0 +1,45 @@
+# ALSA UCM profiles for Retroid's SM8250 handhelds, one package per device, from ROCKNIX's
+# alsa-ucm-conf patches (distribution @ 5607f6e1): card "RetroidPocket" (the WSA881x speakers,
+# the WCD9385 headphone jack, DisplayPort audio over USB-C). Only new files: Valve's
+# alsa-ucm-conf stays untouched. ROCKNIX's 0003 (aliases for an older loader U-Boot's SMBIOS)
+# is left out: Kettle's U-Boot is packages/u-boot-retroidpocket.
+pkgbase=kettle-ucm-retroid
+pkgname=(kettle-ucm-rp5)
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='ALSA UCM profiles for Retroid SM8250 handhelds'
+arch=(any)
+license=(BSD-3-Clause)
+depends=(alsa-ucm-conf)
+makedepends=(git)
+source=(0002_Add-Retroid-Pocket-SM8250-configuration.patch
+        0004_Add-HDMI-DisplayPort-audio-device.patch)
+sha256sums=('9828231b8056485ac960457b233a658b62c2398ea864fbd6c0e960287af4d0f2'
+            '8095f0dddd35d7e8ac18f1be610be4fd920f393bb403788a6315f9cc07271b1e')
+
+build() {
+  rm -rf ucm && git init -q ucm
+  local p
+  for p in "${source[@]}"; do git -C ucm apply "$srcdir/$p"; done
+}
+
+# $@: the card's names in conf.d/sm8250. alsa-lib looks up conf.d/<driver>/<card longname>.conf:
+# the card name ("RetroidPocket", the ABL's \KERNEL, no SMBIOS) or, booted through U-Boot's EFI,
+# DMI vendor-product ("retroidpocket-RetroidPocket5", from U-Boot's devicetree; the same for
+# both RP5 panels)
+_package() {
+  local ucm="$pkgdir/usr/share/alsa/ucm2" n
+  install -d "$ucm/Qualcomm/sm8250" "$ucm/codecs/wsa881x" "$ucm/conf.d/sm8250"
+  cp -a --no-preserve=ownership "$srcdir"/ucm/ucm2/Qualcomm/sm8250/{RetroidPocket,HiFi-RP,HDMI-RP}.conf \
+    "$ucm/Qualcomm/sm8250/"
+  cp -a --no-preserve=ownership "$srcdir/ucm/ucm2/codecs/wsa881x/init.conf" "$ucm/codecs/wsa881x/"
+  for n in "$@"; do
+    cp -a --no-preserve=ownership "$srcdir/ucm/ucm2/conf.d/sm8250/$n.conf" "$ucm/conf.d/sm8250/"
+  done
+}
+
+package_kettle-ucm-rp5() {
+  pkgdesc='ALSA UCM profile for the Retroid Pocket 5'
+  conflicts=(kettle-ucm-odin2portal kettle-ucm-thor)
+  _package RetroidPocket retroidpocket-RetroidPocket5
+}

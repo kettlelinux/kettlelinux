@@ -1,12 +1,12 @@
 # kettle-powerd: CPU/GPU caps, the whole-device power budget (Steam's TDP slider), fan curves
-# and the battery charge limit on AYN's SM8550 handhelds (the Odin 2 Portal and the Thor).
+# and the battery charge limit on Kettle's handhelds (the Odin 2 Portal, the Thor, the Retroid Pocket 5).
 # Serves Steam's own power controls through steamos-manager's remote interfaces (remotes.d) and
 # per-game fan/CPU settings to the Power plugin (kettle-decky-power). Sources live next to this
 # PKGBUILD.
 # Custom fan curves need the kernel's user_space thermal governor (kernel/config/steamos.config).
 pkgname=kettle-power
 pkgver=0.1.0
-pkgrel=4
+pkgrel=5
 pkgdesc='Kettle Linux power, clock and fan control daemon'
 arch=(any)
 license=(BSD-3-Clause)
@@ -16,7 +16,7 @@ package() {
   cd "$startdir"
   install -Dm755 kettle-powerd -t "$pkgdir/usr/lib/kettle-power"
   # one description per device, picked by the device tree's compatible ("ayn,thor" -> thor.toml)
-  install -Dm644 odin2portal.toml thor.toml -t "$pkgdir/usr/share/kettle-power"
+  install -Dm644 odin2portal.toml thor.toml rp5.toml -t "$pkgdir/usr/share/kettle-power"
   install -Dm644 kettle-powerd.service -t "$pkgdir/usr/lib/systemd/system"
   install -Dm644 org.kettlelinux.Power1.conf -t "$pkgdir/usr/share/dbus-1/system.d"
   install -Dm644 org.kettlelinux.Power1.service -t "$pkgdir/usr/share/dbus-1/system-services"

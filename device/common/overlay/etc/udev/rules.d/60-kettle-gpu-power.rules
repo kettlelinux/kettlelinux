@@ -4,4 +4,6 @@
 # hang the display for good. With the GPU kept powered there were none in hours of use, games
 # included; the cost is some battery while idle. A workaround until the kernel's GMU wake-up is
 # fixed; system sleep still powers it off.
-ACTION=="add|bind", SUBSYSTEM=="platform", KERNEL=="3d00000.gpu", ATTR{power/control}="on"
+# The A740 only (SM8550): the RP5's A650 keeps runtime PM.
+ACTION=="add|bind", SUBSYSTEM=="platform", KERNEL=="3d00000.gpu", \
+  ENV{OF_COMPATIBLE_0}=="qcom,adreno-43050a01", ATTR{power/control}="on"

@@ -1,0 +1,10 @@
+# Each of the Thor's touchscreens on its own screen in the desktop. udev tags them for it
+# (61-kettle-thor-touch.rules, WL_OUTPUT), but KWin 6.2 reads this setting over the tag, and
+# without one both went to the first built-in screen, the bottom one: taps on the top screen
+# landed on the bottom one, and the on-screen keyboard closed on the first key.
+# Groups: [Libinput][vendor][product][name] (the touchscreens report vendor and product 0).
+[Libinput][0][0][top_touchscreen]
+OutputName=DSI-2
+
+[Libinput][0][0][bottom_touchscreen]
+OutputName=DSI-1

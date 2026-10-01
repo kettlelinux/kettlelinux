@@ -5,6 +5,7 @@
 
 /dts-v1/;
 
+#include <dt-bindings/input/gpio-keys.h>
 #include "qcs8550-ayn-common.dtsi"
 
 / {
@@ -38,6 +39,9 @@
 			linux,code = <SW_LID>;
 			linux,can-disable;
 			wakeup-source;
+			/* wake on opening only (deasserted: the sensor is active-low, asserted
+			 * when closed); closing a sleeping Thor woke it up inside the lid */
+			wakeup-event-action = <EV_ACT_DEASSERTED>;
 		};
 	};
 
