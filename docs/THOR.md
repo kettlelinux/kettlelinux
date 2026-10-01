@@ -100,10 +100,11 @@ shell (`usr/lib/kettle/bottom-screen`, `bottom-shell`). The same mechanism as Ba
   libraries, on the desktop too).
 
 ## The Performance app on the bottom screen
-`kettle-performance` (built with the Power applet, `packages/kettle-power-applet/app`) opens
-with the bottom screen's shell in Game Mode (`bottom-shell` starts it with KWin) and fills the
-screen. Closed, it's in the shell's apps. It is shared: in Desktop Mode, on either device, it's
-the Power applet's controls in a window.
+`kettle-performance` (built with the Power applet, `packages/kettle-power-applet/app`) is always
+open on the bottom screen in Game Mode, filling it: `bottom-shell` has KWin start it through
+`bottom-app`, which opens it again whenever it's closed or crashes (and gives up on one that
+keeps ending as it starts). It is shared: in Desktop Mode, on either device, it's the Power
+applet's controls in a window.
 - **Stats**: the game's frame rate, frame time, 1% low and a frame-time graph (the last 10
   seconds; the dashed line is one display refresh), with the rate before frame generation when
   the Frame Generation layer runs; power draw and the TDP limit (and whether it's holding clocks
