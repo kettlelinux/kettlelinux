@@ -16,6 +16,8 @@
 #   KETTLE_KEEP_IMAGES     how many images stay up per device, newest by build ID (default 3);
 #                          older ones are removed from the index and the bucket
 #   RCLONE_BWLIMIT         rclone's own, e.g. 5M, to leave the connection usable meanwhile
+#   KETTLE_DISCORD_WEBHOOK Discord webhook URL (secret: local.env only); a build new to the index
+#                          is announced there with its notes. Unset, nothing is posted.
 #
 # On the server:
 #   downloads/<variant>/<name>.img.xz, <name>.sha256
@@ -94,3 +96,19 @@ jq -r --argjson k "$kept" '($k.images | map(.name)) as $keep
   rc deletefile "$REMOTE/$old" || true
 done
 log "done. Download: ${KETTLE_UPDATE_URL:-<KETTLE_UPDATE_URL>}/downloads/$variant/$name.img.xz"
+
+# announce only a build the index didn't have, so rerunning to change notes doesn't post again;
+# a failed post doesn't fail the upload
+if [ -n "${KETTLE_DISCORD_WEBHOOK:-}" ] \
+   && [ "$(jq --arg n "$name" '[.images[] | select(.name == $n)] | length' <<<"$current")" = 0 ]; then
+  command -v curl >/dev/null || die "curl not found (pacman -S curl)"
+  log "announcing $name on Discord"
+  jq -n --argjson e "$entry" '{username: "Kettle Linux", allowed_mentions: {parse: []}, embeds: [{
+      title: "Kettle \($e.version) for the \($e.model)",
+      url: "https://kettlelinux.org",
+      description: (($e.notes // "A new image is up.")
+                    | if length > 4000 then .[:4000] + "\n…" else . end),
+      footer: {text: "Build \($e.buildid) · \($e.branch)"}, timestamp: $e.date}]}' \
+    | curl -fsS -o /dev/null -H "Content-Type: application/json" --data-binary @- "$KETTLE_DISCORD_WEBHOOK" \
+    || log "warning: the Discord announcement failed"
+fi

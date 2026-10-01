@@ -1,8 +1,10 @@
 # U-Boot for the Retroid Pocket 5, built from Retroid's published source (RetroidPocket/u-boot,
 # branch retroidpocket/sm8250) with their recipe. The RP5's stock bootloader (ABL) boots whatever
 # is in its "loader" partition: no bootloader unlock, Android stays as it is. This U-Boot then
-# boots \EFI\BOOT\BOOTAA64.EFI from the SD card (bootefi bootmgr), which is steamcl, so the RP5
-# gets the same A/B slots and fallback as the other devices (docs/RP5.md).
+# boots \EFI\BOOT\BOOTAA64.EFI from the SD card (standard boot, EFI only), which is steamcl, so the RP5
+# gets the same A/B slots and fallback as the other devices (docs/RP5.md). 0001 makes it try the
+# SD card before the internal storage every time, so an internal install never takes over from
+# the card (kettle-install-internal relies on that).
 #
 # Installs /usr/share/kettle/u-boot/u-boot-rp5.img (an Android boot image); the image build also
 # puts it on the KETTLE partition for `fastboot flash loader u-boot-rp5.img`. Its own devicetree
@@ -11,7 +13,7 @@
 pkgname=u-boot-retroidpocket
 _commit=d1c4eba0c495c3c4a32924efe0f590a4759aa6d5   # retroidpocket/sm8250, 2025-05-07
 pkgver=2024.10.r20250507
-pkgrel=1
+pkgrel=2
 pkgdesc='U-Boot for the Retroid Pocket 5 (SM8250), as an Android boot image for its loader partition'
 arch=(aarch64)
 url='https://github.com/RetroidPocket/u-boot'
@@ -19,11 +21,18 @@ license=(GPL-2.0-or-later)
 makedepends=(git bc dtc python python-setuptools python-pyelftools swig openssl gnutls util-linux xxd)
 options=(!strip)
 source=("u-boot::git+https://github.com/RetroidPocket/u-boot.git#commit=$_commit"
-        mkbootimg.py)   # steamos-customizations-kettle's (symlink)
+        mkbootimg.py   # steamos-customizations-kettle's (symlink)
+        0001-retroidpocket-boot-the-SD-card-then-internal-storage.patch)
 sha256sums=('SKIP'
-            'cb8c07b9dde2c1ab060433af0a6406020ec07774b208450a0210c7e848b5ae6a')
+            'cb8c07b9dde2c1ab060433af0a6406020ec07774b208450a0210c7e848b5ae6a'
+            '484845769904a5dc4197716d90444b4e9ad67de6064b8d145cf9b7154bf07faf')
 
 _boards=(rp5)
+
+prepare() {
+  # boot the SD card, else the internal storage, in a fixed order (not the saved BootOrder)
+  git -C u-boot apply "$srcdir/0001-retroidpocket-boot-the-SD-card-then-internal-storage.patch"
+}
 
 build() {
   cd u-boot

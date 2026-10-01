@@ -23,7 +23,9 @@ KETTLE_DEVICE=rp5 scripts/build-image.sh    # -> out/kettle-<build>-rp5.img (+ .
 Two ways, both from the SD card. Neither needs a bootloader unlock.
 - **Retroid's U-Boot, in the loader partition** (with A/B fallback, like the AYN devices). The
   RP5's own bootloader (ABL) boots whatever is in its `loader` partition. Flash it once, from a
-  PC, with the RP5 in fastboot mode (hold Power + Volume Down):
+  PC, with the RP5 in fastboot mode: power it off, then hold Volume Down while plugging the USB
+  cable into the PC (on our RP5, Power + Volume Down did not get there; from Android,
+  `adb reboot bootloader` works too):
   ```sh
   fastboot flash loader u-boot-rp5.img     # from the SD card's KETTLE partition
   ```
@@ -90,7 +92,8 @@ First boot of 20260930.1 from SD, on an RP5 with the CH13726A panel (Android rep
 - Sleep: s2idle, as on the AYN devices.
 - Vulkan: Turnip is Vulkan 1.3 on the A650 without 8-bit storage; whether Proton's DXVK runs
   (pocknix-os swaps in DXVK 2.7).
-- Internal (UFS) install: `kettle-install-internal` assumes the AYN layout; pocknix-os found the
-  RP5's main LUN `/dev/sda` with Android's userdata last, as on the AYN devices, but with its
-  boot chain on another LUN. Not supported yet.
+- Internal (UFS) install ([INTERNAL-INSTALL.md](INTERNAL-INSTALL.md)): the RP5's LUN 0 is
+  `/dev/sda` (117 GB, 4 KiB sectors) with `userdata` last and a `misc` partition, the layout the
+  installer expects; the boot chain is on LUN 4, which it never touches. Needs Kettle's U-Boot
+  from 2024.10.r20250507-2 on (fixed boot order: SD card, then internal storage).
 - Not taken yet: ROCKNIX's A650 overclock/ACD/bandwidth votes (`9998-gpu-tuning`).

@@ -2,9 +2,10 @@
 # Install the running (SD card) Kettle Linux system to the internal UFS, next to Android.
 # The kettle-installer wizard (Kettle Installer in the application menu) drives this.
 #
-# Boot chain this relies on (stock AYN firmware): ABL starts either Android (boot_a/b) or
-# U-Boot (loader_a/b); U-Boot's EFI boot order is the SD card ("mmc 0") first, then the UFS
-# LUNs ("scsi 0".."scsi 7"), loading \EFI\BOOT\BOOTAA64.EFI (steamcl) from an ESP.
+# Boot chain this relies on (stock AYN firmware, or the RP5's stock ABL with Kettle's U-Boot,
+# packages/u-boot-retroidpocket): ABL starts either Android (boot_a/b) or U-Boot (loader_a/b);
+# U-Boot tries the SD card ("mmc 0") first, then the UFS LUNs ("scsi 0".."scsi 7"), loading
+# \EFI\BOOT\BOOTAA64.EFI (steamcl) from an ESP.
 # So: with an SD card inserted the SD system boots, without one the internal install does.
 # The ROCKNIX ABL from v1.1.9 on loads no EFI program: it starts \KERNEL (an Android boot.img,
 # kettle-boot-legacy) from the internal ESP instead, which updates then keep on the newest slot.
