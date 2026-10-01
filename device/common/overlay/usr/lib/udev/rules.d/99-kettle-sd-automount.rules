@@ -1,0 +1,3 @@
+# Kettle Linux: mount microSD card partitions and add them to Steam as library folders, as
+# SteamOS does (kettle-sd-automount@.service, which stops and unmounts when the card goes).
+ACTION=="add", SUBSYSTEM=="block", KERNEL=="mmcblk[0-9]p[0-9]*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="kettle-sd-automount@%k.service"
