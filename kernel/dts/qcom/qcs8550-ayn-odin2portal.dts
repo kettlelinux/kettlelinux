@@ -14,6 +14,22 @@
 	qcom,msm-id = <603 0x20000>;
 	qcom,board-id = <0x1001f 0>;
 
+	reserved-memory {
+		/*
+		 * pstore: the kernel log and console of a boot that hangs or resets (e.g. in s2idle
+		 * resume) survive a warm reset here, and show up in /sys/fs/pstore on the next boot.
+		 * Plain RAM just below the splash region, in the 4 GB every RAM size has.
+		 */
+		ramoops@b7c00000 {
+			compatible = "ramoops";
+			reg = <0x0 0xb7c00000 0x0 0x400000>;
+			record-size = <0x40000>;
+			console-size = <0x200000>;
+			ecc-size = <16>;
+			no-map;
+		};
+	};
+
 	vdd_bl_5v0: vdd-bl-5v0-regulator {
 		compatible = "regulator-fixed";
 		regulator-name = "vdd_bl_5v0";
