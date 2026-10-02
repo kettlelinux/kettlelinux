@@ -154,7 +154,17 @@ curl -sI https://updates.kettlelinux.org/images/<variant>/<version>/<name>.castr
 **Releasing:** `scripts/publish-update.sh out/kettle-<buildid>-<variant>.raucb [branch]`, then
 `scripts/upload-update.sh`. The upload sends only new chunks, bundles before `meta/`, so no
 device is pointed at a release that isn't all there. Chunks and bundles are cached for good
-(`immutable`); `meta/` for a minute. Chunks of removed releases stay in `store/` for now.
+(`immutable`); `meta/` for a minute.
+
+**How many are kept**, per device:
+| What | Kept | Setting |
+|---|---|---|
+| Builds in `out/` (image, bundle, chunk store) | the newest 3; older ones are deleted after each build | `KETTLE_KEEP_BUILDS` (build-image.sh) |
+| Releases on the update server | the newest 3 on each branch; older ones leave the tree when a release is published, with the chunks only they used, and leave the server on the next upload (after `meta/` stops naming them) | `KETTLE_KEEP_RELEASES` (publish-update.sh) |
+| SD card images for download | the newest 3 | `KETTLE_KEEP_IMAGES` (upload-image.sh) |
+
+`0` keeps everything. A device that missed releases still updates: it gets the newest one, and
+only that release's chunks.
 
 **SD card images** for new installs are in the same bucket, under `downloads/`, and the website
 (kettlelinux.org, `site/`) lists them from `downloads/releases.json`. Build with

@@ -14,6 +14,9 @@
 # The meta files come from Valve's own server tool (steamos-atomupd's staticserver), run over
 # every release in images/, so publishing again (or removing a release) rewrites them all.
 # Releases on stable are offered to beta and main followers too, as on SteamOS.
+# Each device keeps its newest KETTLE_KEEP_RELEASES releases on each branch (default 3; 0 keeps
+# all): older ones leave the tree, and the chunks only they used leave store/;
+# scripts/upload-update.sh then removes both from the server.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -57,6 +60,34 @@ cp -r --reflink=auto "$base.castr" "$dest/"
 mkdir -p "$TREE/store"
 cp -rn --reflink=auto "$base.castr/." "$TREE/store/"
 jq --arg b "$branch" '.branch = $b | .default_update_branch = $b' <<<"$manifest" >"$dest/$name.manifest.json"
+
+# the newest KEEP of each device's releases on each branch stay; a branch is never emptied
+keep="${KETTLE_KEEP_RELEASES:-3}"
+if [ "$keep" -gt 0 ] 2>/dev/null; then
+  removed=0
+  for vdir in "$TREE"/images/*/; do
+    for b in stable beta main; do
+      while read -r _ m; do
+        log "removing $(basename "${m%.manifest.json}") from the tree (keeping the newest $keep on $b)"
+        rm -rf "${m%.manifest.json}".{raucb,castr,manifest.json}
+        removed=1
+      done < <(for m in "$vdir"*/*.manifest.json; do
+                 [ -e "$m" ] && [ "$(jq -r .branch "$m")" = "$b" ] && echo "$(jq -r .buildid "$m") $m"
+               done | sort -t' ' -k1,1V | head -n -"$keep")
+    done
+  done
+  if [ "$removed" = 1 ]; then
+    # chunks no remaining release's .castr/ has
+    used="$(mktemp)" all="$(mktemp)"
+    find "$TREE/images" -path '*.castr/*' -type f -printf '%P\n' | sed 's|^.*\.castr/||' | sort -u >"$used"
+    find "$TREE/store" -type f -printf '%P\n' | sort >"$all"
+    n="$(comm -23 "$all" "$used" | wc -l)"
+    comm -23 "$all" "$used" | (cd "$TREE/store" && xargs -r rm -f)
+    find "$TREE/store" -mindepth 1 -type d -empty -delete
+    rm -f "$used" "$all"
+    log "removed $n chunks no release uses any more from store/"
+  fi
+fi
 
 # Valve's staticserver, in the build chroot (it has steamos-atomupd and its Python modules)
 trap 'umount "$TOOLS/mnt/tree" 2>/dev/null || true; chroot_umount "$TOOLS"' EXIT
