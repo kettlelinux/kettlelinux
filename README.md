@@ -1,7 +1,7 @@
 # Kettle Linux
 
 A SteamOS-like Linux distro for the **AYN Odin 2 Portal** and the **AYN Thor** (Snapdragon 8 Gen 2,
-SM8550/QCS8550).
+SM8550/QCS8550), and the **Retroid Pocket 5** (Snapdragon 865, SM8250).
 
 Kettle combines a patched mainline kernel with the aarch64 userspace from Valve's SteamOS
 "deckard" (Steam Frame). You get Valve's arm64 Steam client, a handheld Game Mode and a
@@ -12,8 +12,12 @@ own *Check for updates*.
 > audio, Wi-Fi, controls, Game Mode and Desktop Mode. Several features are built but not yet
 > tested on a Portal. See [Project Status](https://github.com/kettlelinux/kettlelinux/wiki/Project-Status).
 >
-> **AYN Thor** (same SoC, two screens): first public test build. See [docs/THOR.md](docs/THOR.md)
-> for what has been tested on it. Each device gets its own image and its own updates;
+> **AYN Thor** (same SoC, two screens): public test builds. See [docs/THOR.md](docs/THOR.md)
+> for what has been tested on it.
+>
+> **Retroid Pocket 5** (Snapdragon 865): first public test build, 20261001.5. See
+> [docs/RP5.md](docs/RP5.md) for what has been tested, and [docs/INSTALL-RP5.md](docs/INSTALL-RP5.md)
+> to install it. Each device gets its own image and its own updates;
 > [docs/PORTING.md](docs/PORTING.md) has how devices are kept apart and how to add one.
 
 **Documentation lives in the [wiki](https://github.com/kettlelinux/kettlelinux/wiki).**
@@ -42,8 +46,13 @@ own *Check for updates*.
   Android layer Valve made for the Steam Frame (APK files, F-Droid, or opt-in Google Play).
 - **Hardware video in Firefox**: H.264, HEVC, VP9 and AV1 on the SoC's video decoder, YouTube
   included.
-- **Two screens on the Thor**: Steam on the top screen, and in Game Mode a touch shell of its own
-  (Plasma Mobile) on the bottom one; both screens in the desktop.
+- **Two screens on the Thor**: Steam on the top screen, and in Game Mode the Performance app and
+  a touch shell of its own (Plasma Mobile) on the bottom one; both screens in the desktop.
+- **Crash reports**: a report for every game or system crash, in Quick Access > Crash Reports.
+  Sharing one uploads it with the player's details taken out on the device, and gives a link to
+  file it on GitHub ([docs/CRASH-REPORTS.md](docs/CRASH-REPORTS.md)).
+- **microSD libraries**: a card put in is mounted and added to Steam as a library, as on a Steam
+  Deck.
 - **Desktop welcome hub**: setup shortcuts, controls help, and one-click *Gaming Extras*
   (emulators, streaming and tools) from Flathub.
 - **Kettle branding**: boot splash, Steam startup movie and Plasma splash, all rendered from source art.
