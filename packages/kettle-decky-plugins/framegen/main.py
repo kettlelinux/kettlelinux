@@ -1,6 +1,6 @@
 # Frame Generation: per-game settings for Kettle's frame generation layer
-# (packages/kettle-framegen). It loads only with KETTLE_FG=1 in a game's launch options, which
-# the frontend edits; its settings are in ~/.config/kettle-framegen/<appid>.conf, which it
+# (github.com/kettlelinux/kettle-framegen). It loads only with KETTLE_FG=1 in a game's launch
+# options, which the frontend edits; its settings are in ~/.config/kettle-framegen/<appid>.conf, which it
 # rereads while the game runs. Each game's settings live in the plugin's games.json and are
 # kept while the game is off.
 #
