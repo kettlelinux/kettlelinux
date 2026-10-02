@@ -1,11 +1,12 @@
 # kettle-crash: local crash reports for games and the system. kettle-crashd follows
-# systemd-coredump's journal entries, and udev hands it device dumps (GPU hangs, firmware
-# crashes) through kettle-devcoredump@.service; each crash becomes a report directory in
+# systemd-coredump's journal entries and Steam's output (steam_output.log, where games write
+# theirs: Wine's unhandled exceptions make no core dump), and udev hands it device dumps (GPU
+# hangs, firmware crashes) through kettle-devcoredump@.service; each crash becomes a report directory in
 # /var/log/kettle-crash with the game it belongs to, the system's versions and the game's Kettle
 # features. Nothing is sent anywhere. Sources live next to this PKGBUILD.
 pkgname=kettle-crash
 pkgver=0.1.0
-pkgrel=4
+pkgrel=5
 pkgdesc='Kettle Linux crash reports'
 arch=(any)
 license=(BSD-3-Clause)

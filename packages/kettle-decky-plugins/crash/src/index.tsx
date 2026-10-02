@@ -1,8 +1,10 @@
 import {
   ButtonItem,
   ConfirmModal,
+  DialogButton,
   Field,
   Focusable,
+  ModalRoot,
   Navigation,
   PanelSection,
   PanelSectionRow,
@@ -13,6 +15,7 @@ import {
 import { addEventListener, callable, definePlugin, removeEventListener, routerHook, toaster } from "@decky/api";
 import { useEffect, useState } from "react";
 import { FaBug } from "react-icons/fa";
+import qrcode from "qrcode-generator";
 
 type Summary = {
   id: string;
@@ -50,12 +53,16 @@ type Detail = {
   output: string;
   journal: string;
   kernel: string;
+  shared: Shared | null;
+  can_share: boolean;
 };
+type Shared = { id: string; url: string };
 
 const list = callable<[], { reports: Summary[]; seen: string }>("list");
 const get = callable<[rid: string], Detail | null>("get");
 const markSeen = callable<[rid: string], void>("mark_seen");
 const del = callable<[rid: string], void>("delete");
+const share = callable<[rid: string], Shared>("share");
 const delAll = callable<[], void>("delete_all");
 
 const ROUTE = "/kettle-crash";
@@ -143,6 +150,52 @@ const mono: React.CSSProperties = {
   borderRadius: "4px",
 };
 
+// The shared report's page, as a QR code to open it on a phone (a handheld is no place to file an
+// issue), and as a link
+function SharedModal({ shared, closeModal }: { shared: Shared; closeModal?: () => void }) {
+  const qr = qrcode(0, "M");
+  qr.addData(shared.url);
+  qr.make();
+  return (
+    <ModalRoot closeModal={closeModal}>
+      <div style={{ display: "flex", gap: "24px", alignItems: "center" }}>
+        <div
+          style={{ background: "white", padding: "8px", borderRadius: "4px", lineHeight: 0 }}
+          dangerouslySetInnerHTML={{ __html: qr.createSvgTag({ cellSize: 5, margin: 2, scalable: false }) }}
+        />
+        <div>
+          <h3 style={{ marginTop: 0 }}>Report shared</h3>
+          <p>Scan the code to open it on your phone, then use its page to report the crash on GitHub.</p>
+          <p style={{ fontFamily: "monospace", wordBreak: "break-all" }}>{shared.url}</p>
+          <DialogButton onClick={closeModal}>Done</DialogButton>
+        </div>
+      </div>
+    </ModalRoot>
+  );
+}
+
+function confirmShare(id: string, onShared: (s: Shared) => void) {
+  showModal(
+    <ConfirmModal
+      strTitle="Share this crash report?"
+      strDescription={
+        "It's uploaded to Kettle's crash report server, where anyone with its link can read it: what crashed, " +
+        "the game, the versions and the logs. Your user name, Steam account, network names and addresses are " +
+        "taken out first, and core dumps stay on this device."
+      }
+      strOKButtonText="Share"
+      onOK={() =>
+        share(id)
+          .then((s) => {
+            onShared(s);
+            showModal(<SharedModal shared={s} />);
+          })
+          .catch((e) => toaster.toast({ title: "Crash Reports", body: String(e?.message ?? e) }))
+      }
+    />,
+  );
+}
+
 // A block the D-pad can stop on, so the page scrolls to it
 function Block({ title, text }: { title: string; text: string }) {
   if (!text.trim()) return null;
@@ -202,11 +255,19 @@ function Page() {
           <Block title="Game output" text={d.output} />
           <Block title="Kernel log" text={d.kernel} />
           <Block title="System log" text={d.journal} />
-          <Focusable style={{ display: "flex", gap: "8px", marginBottom: "24px" }}>
-            <ButtonItem
-              layout="below"
-              onClick={() => del(id).then(() => Navigation.NavigateBack())}
-            >
+          <Focusable style={{ marginBottom: "24px" }}>
+            {d.shared ? (
+              <ButtonItem layout="below" onClick={() => showModal(<SharedModal shared={d.shared!} />)}>
+                Show shared link
+              </ButtonItem>
+            ) : (
+              d.can_share && (
+                <ButtonItem layout="below" onClick={() => confirmShare(id, (shared) => setD({ ...d, shared }))}>
+                  Share…
+                </ButtonItem>
+              )
+            )}
+            <ButtonItem layout="below" onClick={() => del(id).then(() => Navigation.NavigateBack())}>
               Delete this report
             </ButtonItem>
           </Focusable>
