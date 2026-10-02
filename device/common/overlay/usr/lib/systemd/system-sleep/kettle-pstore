@@ -1,0 +1,21 @@
+#!/bin/bash
+# Kettle Linux: when pstore keeps the console in RAM (a device tree ramoops region), log each
+# sleep and wake-up to it in full, so a device that hangs or resets in s2idle leaves its last
+# messages in /sys/fs/pstore (archived to /var/lib/systemd/pstore) on the next boot: which
+# device's suspend or resume callback never returned. Normally the console is suspended for
+# exactly that stretch and only errors reach it (loglevel=3).
+grep -qw ramoops /sys/module/pstore/parameters/backend 2>/dev/null || exit 0
+saved=/run/kettle-pstore.printk
+case "$1" in
+pre)
+  read -r level rest </proc/sys/kernel/printk
+  echo "$level" >"$saved"
+  echo N >/sys/module/printk/parameters/console_suspend
+  echo 1 >/sys/power/pm_print_times      # each device's suspend/resume callback, as it runs
+  echo 1 >/sys/power/pm_debug_messages
+  echo 8 >/proc/sys/kernel/printk ;;
+post)
+  [ -f "$saved" ] && cat "$saved" >/proc/sys/kernel/printk
+  rm -f "$saved" ;;
+esac
+exit 0
