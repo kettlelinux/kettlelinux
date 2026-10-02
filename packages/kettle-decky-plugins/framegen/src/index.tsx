@@ -2,7 +2,7 @@ import { ButtonItem, DropdownItem, PanelSection, PanelSectionRow, SliderField, T
 import { callable, definePlugin, toaster } from "@decky/api";
 import { useEffect, useState } from "react";
 import { FaLayerGroup } from "react-icons/fa";
-import { editLaunchOptions, withDxvkOption, withEnv, withEnvFlag, withUnset } from "../../shared/launchOptions";
+import { editLaunchOptions, hasEnv, withDxvkOption, withEnv, withEnvFlag, withUnset } from "../../shared/launchOptions";
 import { GamePicker, InstalledGame, gameName, runningAppId, useSelectedGame } from "../../shared/GamePicker";
 
 type Status = { layer: boolean; enabled_games: number[] };
@@ -75,7 +75,8 @@ const applyLaunchOptions = (appid: number, g: Game, s: Status) => {
     o = withDxvkOption(withDxvkOption(o, "dxgi.maxFrameRate", cap), "d3d9.maxFrameRate", cap);
     o = withEnv(o, "VKD3D_FRAME_RATE", cap);
     o = withEnv(o, KETTLE, on ? "1" : null);
-    o = withEnvFlag(o, TU, "noubwc", false);
+    // only lsfg-vk's own noubwc: Game Settings can set TU_DEBUG=noubwc too
+    if (hasEnv(o, LSFG_NOUBWC)) o = withEnvFlag(o, TU, "noubwc", false);
     o = withEnv(o, LSFG_NOUBWC, null);
     return withUnset(o, LSFG_OFF, false);
   });

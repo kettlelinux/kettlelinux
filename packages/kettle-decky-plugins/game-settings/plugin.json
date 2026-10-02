@@ -1,0 +1,11 @@
+{
+  "name": "Game Settings",
+  "author": "Kettle Linux",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["compatibility", "launch options", "fex"],
+    "description": "Per-game compatibility profiles: FEX, DXVK, vkd3d, Turnip and Proton settings, Proton versions, and known good settings from the Kettle game database.",
+    "image": ""
+  }
+}

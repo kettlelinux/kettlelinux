@@ -1,0 +1,410 @@
+import {
+  ButtonItem,
+  ConfirmModal,
+  DialogButton,
+  DropdownItem,
+  Field,
+  PanelSection,
+  PanelSectionRow,
+  ToggleField,
+  showModal,
+  staticClasses,
+} from "@decky/ui";
+import { definePlugin, routerHook, toaster } from "@decky/api";
+import { useEffect, useState } from "react";
+import { FaSlidersH } from "react-icons/fa";
+import { GamePicker, InstalledGame, gameName, runningAppId, useSelectedGame } from "../../shared/GamePicker";
+import { editLaunchOptions, getLaunchOptions } from "../../shared/launchOptions";
+import { fixesFor } from "../../shared/gameFixes";
+import { CATALOG, EMPTY, OPTIONS, Profile, applyProfile, changedIn, isEmpty, profileOf, withPreset } from "./catalog";
+import {
+  Game,
+  ROUTE,
+  Status,
+  commit,
+  compatTools,
+  currentTool,
+  getGame,
+  installedGames,
+  openDatabase,
+  recordPlay,
+  resetGame,
+  setGame,
+  status,
+} from "./api";
+import { AddDllModal, AddEnvModal, ProfilesModal, ShareModal } from "./modals";
+import { DatabasePage } from "./database";
+
+const small: React.CSSProperties = { fontSize: "12px", lineHeight: "16px" };
+const mono: React.CSSProperties = { ...small, fontFamily: "monospace", wordBreak: "break-all" };
+
+// sections opened in the panel, kept while it's closed
+const opened = new Set<string>();
+
+function restartToast(appid: number, name: string) {
+  if (runningAppId() === appid) toaster.toast({ title: "Game Settings", body: `Restart ${name} to apply` });
+}
+
+function minutes(s: number) {
+  return `${Math.floor(s / 60)} min`;
+}
+
+function GamePanel({ appid, name, s, onChanged }: { appid: number; name: string; s: Status; onChanged: () => void }) {
+  const [g, setG] = useState<Game | null>(null);
+  const [opts, setOpts] = useState("");
+  const [tools, setTools] = useState<{ strToolName: string; strDisplayName: string }[]>([]);
+  const [tool, setTool] = useState("");
+  const [count, setCount] = useState<number | null>(null);
+  const [open, setOpen] = useState(new Set(opened));
+
+  const reload = async () => {
+    const [game, o, t] = await Promise.all([getGame(appid), getLaunchOptions(appid), currentTool(appid)]);
+    setG(game);
+    setOpts(o);
+    setTool(t);
+  };
+  useEffect(() => {
+    reload();
+    compatTools(appid).then(setTools);
+    if (s.can_share) openDatabase.count(appid).then(setCount);
+  }, [appid]);
+  if (!g) return null;
+  const p = profileOf(g);
+
+  const update = async (next: Profile, extra = {}) => {
+    const stored = await commit(appid, g, next, extra);
+    setG(stored);
+    setOpts(await getLaunchOptions(appid));
+    setTool(await currentTool(appid));
+    restartToast(appid, name);
+    onChanged();
+  };
+  const toggle = (id: string) => {
+    if (opened.has(id)) opened.delete(id);
+    else opened.add(id);
+    setOpen(new Set(opened));
+  };
+  // the launch options don't have the profile any more (edited by hand, or by another plugin)
+  const outOfSync = applyProfile(opts, p, g.owned).opts !== opts;
+  const fixes = fixesFor(appid);
+  const toolNames = new Map(tools.map((t) => [t.strToolName, t.strDisplayName]));
+
+  return (
+    <>
+      {tools.length > 0 && (
+        <PanelSectionRow>
+          <DropdownItem
+            label="Proton version"
+            description={g.compat_tool ? undefined : `Steam's choice: ${toolNames.get(tool) ?? (tool || "default")}`}
+            rgOptions={[
+              { data: "", label: "Steam's choice" },
+              ...tools.map((t) => ({ data: t.strToolName, label: t.strDisplayName })),
+            ]}
+            selectedOption={g.compat_tool ?? ""}
+            onChange={(o) => update({ ...p, compat_tool: o.data || null })}
+          />
+        </PanelSectionRow>
+      )}
+      <PanelSectionRow>
+        <DropdownItem
+          label="Presets"
+          description="Starting points; change single options below"
+          strDefaultLabel="Apply a preset…"
+          rgOptions={CATALOG.presets.map((pr) => ({ data: pr.id, label: pr.label }))}
+          selectedOption={null}
+          onChange={(o) => {
+            const pr = CATALOG.presets.find((x) => x.id === o.data)!;
+            update(withPreset(p, pr));
+            toaster.toast({ title: pr.label, body: pr.help });
+          }}
+        />
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <ButtonItem layout="below" onClick={() => showModal(<ProfilesModal profile={p} onLoad={(q) => update({ ...q, compat_tool: p.compat_tool })} />)}>
+          Saved profiles…
+        </ButtonItem>
+      </PanelSectionRow>
+
+      {fixes.map((f) => (
+        <PanelSectionRow key={f.id}>
+          <ToggleField
+            label={`Kettle fix: ${f.title}`}
+            description={f.description}
+            checked={f.applied(opts)}
+            onChange={async (on) => {
+              await editLaunchOptions(appid, (o) => (on ? (f.applied(o) ? o : f.edit(o)) : f.undo(o)));
+              setOpts(await getLaunchOptions(appid));
+              restartToast(appid, name);
+            }}
+          />
+        </PanelSectionRow>
+      ))}
+
+      {s.can_share && (
+        <>
+          <PanelSectionRow>
+            <ButtonItem layout="below" onClick={() => openDatabase.page(appid)}>
+              Known good settings{count ? ` (${count})` : ""}
+            </ButtonItem>
+          </PanelSectionRow>
+          <Feedback appid={appid} name={name} g={g} setG={setG} />
+        </>
+      )}
+
+      {CATALOG.sections.map((sec) => (
+        <div key={sec.id}>
+          <PanelSectionRow>
+            <ButtonItem layout="below" description={open.has(sec.id) ? sec.help : undefined} onClick={() => toggle(sec.id)}>
+              {open.has(sec.id) ? "▾" : "▸"} {sec.title}
+              {changedIn(p, sec.id) ? ` · ${changedIn(p, sec.id)} set` : ""}
+            </ButtonItem>
+          </PanelSectionRow>
+          {open.has(sec.id) &&
+            OPTIONS.filter((o) => o.section === sec.id).map((o) => (
+              <PanelSectionRow key={o.id}>
+                <DropdownItem
+                  label={o.label}
+                  description={o.help}
+                  rgOptions={[{ data: "", label: "Default" }, ...o.choices.map((c) => ({ data: c.value, label: c.label }))]}
+                  selectedOption={p.settings[o.id] ?? ""}
+                  onChange={(c) => {
+                    const settings = { ...p.settings };
+                    if (c.data === "") delete settings[o.id];
+                    else settings[o.id] = c.data;
+                    update({ ...p, settings });
+                  }}
+                />
+              </PanelSectionRow>
+            ))}
+        </div>
+      ))}
+
+      <PanelSectionRow>
+        <ButtonItem layout="below" onClick={() => toggle("custom")}>
+          {open.has("custom") ? "▾" : "▸"} Custom
+          {p.env.length + p.dlls.length ? ` · ${p.env.length + p.dlls.length} set` : ""}
+        </ButtonItem>
+      </PanelSectionRow>
+      {open.has("custom") && (
+        <>
+          {p.env.map(([n, v]) => (
+            <PanelSectionRow key={`env-${n}`}>
+              <ButtonItem layout="below" description="Select to remove" onClick={() => update({ ...p, env: p.env.filter(([m]) => m !== n) })}>
+                <span style={mono}>
+                  {n}={v}
+                </span>
+              </ButtonItem>
+            </PanelSectionRow>
+          ))}
+          {p.dlls.map(([d, m]) => (
+            <PanelSectionRow key={`dll-${d}`}>
+              <ButtonItem layout="below" description="Select to remove" onClick={() => update({ ...p, dlls: p.dlls.filter(([e]) => e !== d) })}>
+                <span style={mono}>
+                  {d}.dll: {CATALOG.custom.dll_modes.find((x) => x.value === m)?.label}
+                </span>
+              </ButtonItem>
+            </PanelSectionRow>
+          ))}
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              disabled={p.env.length >= CATALOG.custom.max_env}
+              onClick={() => showModal(<AddEnvModal onAdd={(n, v) => update({ ...p, env: [...p.env.filter(([m]) => m !== n), [n, v]] })} />)}
+            >
+              Add variable…
+            </ButtonItem>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              disabled={p.dlls.length >= CATALOG.custom.max_dlls}
+              onClick={() => showModal(<AddDllModal onAdd={(d, m) => update({ ...p, dlls: [...p.dlls.filter(([e]) => e !== d), [d, m]] })} />)}
+            >
+              Add DLL override…
+            </ButtonItem>
+          </PanelSectionRow>
+        </>
+      )}
+
+      <PanelSectionRow>
+        <Field label="Launch options" childrenLayout="below" bottomSeparator="none">
+          <div style={mono}>{opts || "(none)"}</div>
+        </Field>
+      </PanelSectionRow>
+      {outOfSync && (
+        <PanelSectionRow>
+          <ButtonItem layout="below" description="They were changed outside Game Settings" onClick={() => update(p)}>
+            Re-apply this profile
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+      {!isEmpty(p) && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            onClick={() =>
+              showModal(
+                <ConfirmModal
+                  strTitle={`Reset ${name}?`}
+                  strDescription="Takes out every launch option Game Settings added and puts the Proton version back. Your own launch options stay."
+                  strOKButtonText="Reset"
+                  onOK={async () => {
+                    await commit(appid, g, EMPTY);
+                    setG(await resetGame(appid));
+                    setOpts(await getLaunchOptions(appid));
+                    setTool(await currentTool(appid));
+                    restartToast(appid, name);
+                    onChanged();
+                  }}
+                />,
+              )
+            }
+          >
+            Reset {name}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+    </>
+  );
+}
+
+// Did the settings work: the user's verdict, and from it sharing to the game database (own
+// settings) or a confirmation (settings from the database)
+function Feedback({ appid, name, g, setG }: { appid: number; name: string; g: Game; setG: (g: Game) => void }) {
+  const need = g.played_min_s;
+  const played = g.played_s > 0 ? `Played ${minutes(g.played_s)} with these settings.` : "Not played with these settings yet.";
+  if (g.from_database) {
+    const voted = g.voted.includes(g.from_database.id);
+    return (
+      <PanelSectionRow>
+        <Field
+          label={`From the game database (${g.from_database.status === "approved" ? "verified" : "community"})`}
+          description={
+            voted
+              ? "Thanks, your answer was sent."
+              : `${played}${g.played_enough ? "" : ` You can confirm it works after ${minutes(need)}.`}`
+          }
+          childrenLayout="below"
+        >
+          {!voted && (
+            <div style={{ display: "flex", gap: "8px" }}>
+              <DialogButton disabled={!g.can_vote || !g.played_enough} onClick={() => vote(appid, true, setG)}>
+                Works here
+              </DialogButton>
+              <DialogButton disabled={!g.can_vote} onClick={() => vote(appid, false, setG)}>
+                Doesn't work
+              </DialogButton>
+            </div>
+          )}
+        </Field>
+      </PanelSectionRow>
+    );
+  }
+  if (g.played_s === 0 && isEmpty(profileOf(g))) return null;
+  return (
+    <>
+      <PanelSectionRow>
+        <DropdownItem
+          label="Do these settings work?"
+          description={played}
+          rgOptions={[
+            { data: "", label: "Not sure yet" },
+            { data: "works", label: "Yes, it plays" },
+            { data: "broken", label: "No" },
+          ]}
+          selectedOption={g.works ? "works" : g.broken ? "broken" : ""}
+          onChange={async (o) => setG(await setGame(appid, { verdict: o.data === "" ? null : o.data === "works" }))}
+        />
+      </PanelSectionRow>
+      {g.works && !g.is_shared && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            disabled={!g.can_submit}
+            description={
+              g.can_submit
+                ? "Share them as known good, so other players can try them"
+                : `You can share them after ${minutes(need)} of play with these settings`
+            }
+            onClick={() => showModal(<ShareModal appid={appid} name={name} g={g} onShared={() => getGame(appid).then(setG)} />)}
+          >
+            Share to the game database…
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+      {g.is_shared && (
+        <PanelSectionRow>
+          <Field label="Shared to the game database" description="It shows as community settings until it's verified." />
+        </PanelSectionRow>
+      )}
+    </>
+  );
+}
+
+async function vote(appid: number, works: boolean, setG: (g: Game) => void) {
+  try {
+    setG(await openDatabase.vote(appid, works));
+  } catch (e: any) {
+    toaster.toast({ title: "Game Settings", body: String(e?.message ?? e) });
+  }
+}
+
+function Content() {
+  const [s, setS] = useState<Status | null>(null);
+  const [games, setGames] = useState<InstalledGame[] | null>(null);
+  const [appid, pick] = useSelectedGame(games);
+  const refresh = () => status().then(setS);
+  useEffect(() => {
+    refresh();
+    installedGames().then(setGames);
+  }, []);
+  if (!s || !games) return null;
+  const name = appid !== null ? gameName(games, appid) : "";
+  return (
+    <>
+      <PanelSection title="Game">
+        <GamePicker games={games} appid={appid} onChange={pick} />
+        {appid !== null && <GamePanel key={appid} appid={appid} name={name} s={s} onChanged={refresh} />}
+      </PanelSection>
+      {s.configured.length > 0 && (
+        <PanelSection title="All games">
+          <PanelSectionRow>
+            <div style={small}>Changed for: {s.configured.map((a) => gameName(games, a)).join(", ")}</div>
+          </PanelSectionRow>
+        </PanelSection>
+      )}
+    </>
+  );
+}
+
+export default definePlugin(() => {
+  routerHook.addRoute(`${ROUTE}/:appid`, DatabasePage);
+  // play time per profile: settings can be shared, or confirmed, only after real play
+  const started = new Map<number, { at: number; tool: string }>();
+  const lifetime = SteamClient.GameSessions.RegisterForAppLifetimeNotifications(
+    (n: { unAppID: number; bRunning: boolean }) => {
+      if (n.bRunning) {
+        const at = Date.now();
+        started.set(n.unAppID, { at, tool: "" });
+        currentTool(n.unAppID).then((tool) => {
+          const s = started.get(n.unAppID);
+          if (s && s.at === at) s.tool = tool;
+        });
+      } else {
+        const s = started.get(n.unAppID);
+        started.delete(n.unAppID);
+        if (s) recordPlay(n.unAppID, (Date.now() - s.at) / 1000, s.tool).catch(() => {});
+      }
+    },
+  );
+  return {
+    name: "Game Settings",
+    titleView: <div className={staticClasses.Title}>Game Settings</div>,
+    content: <Content />,
+    icon: <FaSlidersH />,
+    onDismount: () => {
+      lifetime.unregister();
+      routerHook.removeRoute(`${ROUTE}/:appid`);
+    },
+  };
+});

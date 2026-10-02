@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Game settings · Kettle Linux</title>
+  <meta name="description" content="Settings that made games run on Kettle Linux, shared by players from Game Settings in Game Mode: FEX, DXVK, vkd3d, Turnip and Proton options per game.">
+  <meta property="og:title" content="Kettle Linux game settings">
+  <meta property="og:description" content="Known good settings for games on Kettle Linux, shared by players after playing with them.">
+  <link rel="icon" href="kettle.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav class="topbar">
+    <a class="brand" href="./"><img src="kettle.svg" alt="" width="28" height="28"><img src="wordmark.svg" alt="Kettle Linux" width="138" height="20"></a>
+    <div class="links">
+      <a href="./#download">Download</a>
+      <a href="games.html" aria-current="page">Games</a>
+      <a href="https://github.com/kettlelinux/kettlelinux">GitHub</a>
+    </div>
+  </nav>
+
+  <main>
+    <section id="games-list" class="games-intro">
+      <h1>Game settings</h1>
+      <p class="sub-left">Settings that got games running on Kettle Linux, shared by players after playing with them.
+        <strong>Verified</strong> entries were checked by the Kettle team; <strong>community</strong> ones show how many
+        players they worked for.</p>
+
+      <div class="grid steps">
+        <div class="card">
+          <h3>1. Try settings</h3>
+          <p>In Game Mode, open Quick Access &gt; <strong>Game Settings</strong> and pick the game. Change FEX, graphics or
+            Proton options, or try a preset, until it runs.</p>
+        </div>
+        <div class="card">
+          <h3>2. Use what works</h3>
+          <p><strong>Known good settings</strong> lists this database's entries for the game: <em>Apply</em> one, play,
+            and say whether it worked for you too.</p>
+        </div>
+        <div class="card">
+          <h3>3. Share yours</h3>
+          <p>Played 5 minutes with your settings and it works? Mark it as working and <strong>Share</strong>. Only the
+            settings, your device model and Kettle build are sent.</p>
+        </div>
+      </div>
+
+      <div class="filters">
+        <input id="q" type="search" placeholder="Search games" aria-label="Search games">
+        <select id="device" aria-label="Device">
+          <option value="">All devices</option>
+          <option value="odin2portal">AYN Odin 2 Portal</option>
+          <option value="thor">AYN Thor</option>
+          <option value="rp5">Retroid Pocket 5</option>
+        </select>
+        <label class="small"><input id="verified" type="checkbox"> Verified only</label>
+      </div>
+      <p id="count" class="muted small"></p>
+      <div id="games" class="game-grid">
+        <div class="card"><p class="muted">Loading games…</p></div>
+      </div>
+    </section>
+
+    <section id="game" class="hidden">
+      <p class="small"><a href="games.html">← All games</a></p>
+      <div id="game-body"></div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Entries are shared by Kettle Linux players and only hold options the Game Settings plugin offers. A setting that
+      works on one device may not on another: check the device and build.</p>
+    <p class="muted">Game images from Steam. Not affiliated with Valve.</p>
+  </footer>
+
+  <script src="games.js"></script>
+</body>
+</html>

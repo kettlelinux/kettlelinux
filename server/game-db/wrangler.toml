@@ -1,0 +1,35 @@
+# Kettle Linux game database (docs/GAME-DATABASE.md). Deploy: npx wrangler deploy
+name = "kettle-game-db"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+workers_dev = false
+routes = [{ pattern = "games.kettlelinux.org", custom_domain = true }]
+
+[vars]
+# the address in the links it hands out
+PUBLIC_URL = "https://games.kettlelinux.org"
+# the website with the public Games page (site/games.html); / and /g/<app id> redirect there
+SITE_URL = "https://kettlelinux.org"
+
+# the admin page (src/admin/) is bundled as text
+[[rules]]
+type = "Text"
+globs = ["**/*.html", "**/*.client.js"]
+fallthrough = false
+
+# created with: npx wrangler d1 create kettle-games
+[[d1_databases]]
+binding = "DB"
+database_name = "kettle-games"
+database_id = "be1e4f89-f6fa-4369-9c67-b4d8a461f996"
+
+# per device address: 5 shared profiles and 30 votes a minute
+[[ratelimits]]
+name = "SUBMITS"
+namespace_id = "1002"
+simple = { limit = 5, period = 60 }
+
+[[ratelimits]]
+name = "VOTES"
+namespace_id = "1003"
+simple = { limit = 30, period = 60 }

@@ -38,6 +38,8 @@ own *Check for updates*.
 - **Game Mode plugins** (Decky Loader), all off by default and enabled per game:
   - **Frame Generation**: Kettle's own Vulkan layer, 2–4× with automatic frame rate capping.
   - **Upscaling**: gamescope SGSR 1, and SGSR 2, Arm ASR or FSR 2.2 through an ARM64EC build of OptiScaler.
+  - **Game Settings**: per-game profiles of FEX, DXVK, vkd3d, Turnip and Proton options, the Proton
+    version, and known good settings from the Kettle game database. ([docs/GAME-DATABASE.md](docs/GAME-DATABASE.md))
 - **Power control**: TDP budget, performance profiles, GPU clock and per-game fan curves from
   Steam's Performance panel, the Power plugin, or a Desktop Mode tray applet.
 - **Games outside Steam**: ARM64EC Wine with FEX, DXVK and vkd3d-proton, plus Lutris and Heroic

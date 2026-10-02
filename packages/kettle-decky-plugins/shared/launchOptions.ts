@@ -51,12 +51,39 @@ function join(prefix: string[], rest: string): string {
   return `${prefix.length ? prefix.join(" ") + " " : ""}${CMD}${rest}`;
 }
 
-// Set (or with value=null remove) VAR=value in the env prefix.
+// Set (or with value=null remove) VAR=value in the env prefix: in its place when it's there
+// already, else first.
 export function withEnv(opts: string, name: string, value: string | null): string {
   const { prefix, rest } = split(opts);
+  const at = prefix.findIndex((t) => t.startsWith(`${name}=`));
   const kept = prefix.filter((t) => !t.startsWith(`${name}=`));
-  if (value !== null) kept.unshift(`${name}=${value}`);
+  if (value !== null) kept.splice(Math.max(at, 0), 0, `${name}=${value}`);
   return join(kept, rest);
+}
+
+// The value of VAR in the env prefix as written (quotes included), or null.
+export function envValue(opts: string, name: string): string | null {
+  const tok = split(opts).prefix.find((t) => t.startsWith(`${name}=`));
+  return tok === undefined ? null : tok.slice(name.length + 1);
+}
+
+// One entry of a list-valued variable (see withEnvEntry), or null.
+function envEntry(opts: string, name: string, sep: string, key: string): string | null {
+  const v = envValue(opts, name);
+  if (v === null) return null;
+  return v.replace(/^"|"$/g, "").split(sep).find((i) => i.split("=")[0].trim() === key) ?? null;
+}
+
+export const hasEnvFlag = (opts: string, name: string, flag: string) => envEntry(opts, name, ",", flag) !== null;
+
+export function dxvkOption(opts: string, key: string): string | null {
+  const e = envEntry(opts, "DXVK_CONFIG", ";", key);
+  return e === null ? null : e.slice(e.indexOf("=") + 1).trim();
+}
+
+export function dllOverride(opts: string, dll: string): string | null {
+  const e = envEntry(opts, "WINEDLLOVERRIDES", ";", dll);
+  return e === null || !e.includes("=") ? null : e.slice(e.indexOf("=") + 1);
 }
 
 // Set (or with entry=null remove) one entry of a list-valued variable, keeping the user's
@@ -107,6 +134,23 @@ export function withUnset(opts: string, name: string, on: boolean): string {
 export function withWrapper(opts: string, wrapper: string): string {
   const { prefix, rest } = split(opts);
   return join([...prefix, wrapper], rest);
+}
+
+// Remove a wrapper withWrapper added (matched word for word).
+export function withoutWrapper(opts: string, wrapper: string): string {
+  const { prefix, rest } = split(opts);
+  const words = wrapper.split(" ");
+  for (let i = 0; i + words.length <= prefix.length; i++) {
+    if (words.every((w, j) => prefix[i + j] === w)) {
+      prefix.splice(i, words.length);
+      return join(prefix, rest);
+    }
+  }
+  return opts;
+}
+
+export function hasWrapper(opts: string, wrapper: string): boolean {
+  return withoutWrapper(opts, wrapper) !== opts;
 }
 
 export function hasEnv(opts: string, name: string): boolean {
