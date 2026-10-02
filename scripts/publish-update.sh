@@ -15,8 +15,9 @@
 # every release in images/, so publishing again (or removing a release) rewrites them all.
 # Releases on stable are offered to beta and main followers too, as on SteamOS.
 # Each device keeps its newest KETTLE_KEEP_RELEASES releases on each branch (default 3; 0 keeps
-# all): older ones leave the tree, and the chunks only they used leave store/;
-# scripts/upload-update.sh then removes both from the server.
+# all). An older one's bundle and chunk store leave the tree, and the chunks only it used leave
+# store/ (scripts/upload-update.sh removes them from the server too); its manifest stays, marked
+# "skip", as Valve's tool asks: devices still running that build keep getting the newest update.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -68,11 +69,13 @@ if [ "$keep" -gt 0 ] 2>/dev/null; then
   for vdir in "$TREE"/images/*/; do
     for b in stable beta main; do
       while read -r _ m; do
-        log "removing $(basename "${m%.manifest.json}") from the tree (keeping the newest $keep on $b)"
-        rm -rf "${m%.manifest.json}".{raucb,castr,manifest.json}
+        log "retiring $(basename "${m%.manifest.json}") (keeping the newest $keep on $b): its manifest stays, as skip"
+        rm -rf "${m%.manifest.json}".{raucb,castr}
+        jq '.skip = true' "$m" >"$m.new" && mv "$m.new" "$m"
         removed=1
       done < <(for m in "$vdir"*/*.manifest.json; do
-                 [ -e "$m" ] && [ "$(jq -r .branch "$m")" = "$b" ] && echo "$(jq -r .buildid "$m") $m"
+                 [ -e "$m" ] && [ "$(jq -r '"\(.branch) \(.skip // false)"' "$m")" = "$b false" ] \
+                   && echo "$(jq -r .buildid "$m") $m"
                done | sort -t' ' -k1,1V | head -n -"$keep")
     done
   done

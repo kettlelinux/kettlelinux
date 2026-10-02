@@ -160,11 +160,14 @@ device is pointed at a release that isn't all there. Chunks and bundles are cach
 | What | Kept | Setting |
 |---|---|---|
 | Builds in `out/` (image, bundle, chunk store) | the newest 3; older ones are deleted after each build | `KETTLE_KEEP_BUILDS` (build-image.sh) |
-| Releases on the update server | the newest 3 on each branch; older ones leave the tree when a release is published, with the chunks only they used, and leave the server on the next upload (after `meta/` stops naming them) | `KETTLE_KEEP_RELEASES` (publish-update.sh) |
+| Releases on the update server | the newest 3 on each branch; an older one's bundle and chunk store leave the tree when a release is published, with the chunks only it used, and leave the server on the next upload (after `meta/` stops naming them). Its manifest stays, marked `"skip"` | `KETTLE_KEEP_RELEASES` (publish-update.sh) |
 | SD card images for download | the newest 3 | `KETTLE_KEEP_IMAGES` (upload-image.sh) |
 
 `0` keeps everything. A device that missed releases still updates: it gets the newest one, and
-only that release's chunks.
+only that release's chunks. That needs the retired release's manifest: Valve's server tool writes
+each build's update file (`meta/.../<buildid>.json`, what a device running that build asks for)
+only for builds in the tree, so a `"skip"` manifest keeps it current without offering the build.
+Deleting the manifest instead leaves that file stale (the tool warns of a "leftover").
 
 **SD card images** for new installs are in the same bucket, under `downloads/`, and the website
 (kettlelinux.org, `site/`) lists them from `downloads/releases.json`. Build with
