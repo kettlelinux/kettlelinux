@@ -1,0 +1,20 @@
+# Kettle Linux crash report server (docs/CRASH-REPORTS.md). Deploy: npx wrangler deploy
+name = "kettle-crash-reports"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+workers_dev = false
+routes = [{ pattern = "crash.kettlelinux.org", custom_domain = true }]
+
+[vars]
+# the address in the links it hands out
+PUBLIC_URL = "https://crash.kettlelinux.org"
+
+[[r2_buckets]]
+binding = "REPORTS"
+bucket_name = "kettle-crash-reports"
+
+# uploads per device address: 10 a minute
+[[ratelimits]]
+name = "UPLOADS"
+namespace_id = "1001"
+simple = { limit = 10, period = 60 }
