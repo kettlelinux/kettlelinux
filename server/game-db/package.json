@@ -1,0 +1,3 @@
+{ "name": "kettle-game-db", "private": true, "type": "module", "license": "BSD-3-Clause",
+  "scripts": { "dev": "wrangler dev", "deploy": "wrangler deploy" },
+  "devDependencies": { "wrangler": "^4" } }

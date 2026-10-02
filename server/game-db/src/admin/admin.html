@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Game database admin</title>
+<style>
+:root {
+  --bg: #16110e; --surface: #211a15; --surface2: #2a211b; --border: #3a2e25; --text: #f4efe9; --muted: #b3a79c;
+  --copper: #ff8a3d; --copper-light: #ffc46b; --ok: #3fb950; --bad: #f85149; --warn: #d29922;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+a { color: var(--copper-light); }
+button, input, select, textarea { font: inherit; color: inherit; }
+button {
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+button:hover { border-color: var(--copper); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--copper); border-color: var(--copper); color: #1a0f08; font-weight: 600; }
+button.ok { border-color: var(--ok); color: var(--ok); }
+button.bad { border-color: var(--bad); color: var(--bad); }
+input, select, textarea { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+textarea { width: 100%; min-height: 56px; resize: vertical; }
+header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--surface); }
+header h1 { font-size: 1.1rem; margin: 0; }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+.hidden { display: none !important; }
+.muted { color: var(--muted); }
+.small { font-size: .85rem; }
+#login { max-width: 420px; margin: 80px auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+#login input { width: 100%; margin: 12px 0; }
+.stats { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); margin-bottom: 16px; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+.stat b { display: block; font-size: 1.4rem; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.tabs button.active { border-color: var(--copper); color: var(--copper-light); }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.toolbar input[type=search] { flex: 1; min-width: 200px; }
+.filter { background: var(--surface2); border: 1px solid var(--copper); border-radius: 999px; padding: 2px 10px; font-size: .85rem; }
+.bulk { position: sticky; top: 0; z-index: 2; background: var(--surface); border: 1px solid var(--copper); border-radius: 10px; padding: 8px 12px; margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 12px; display: grid; grid-template-columns: auto 1fr; gap: 12px; }
+.card.selected { border-color: var(--copper); }
+.card img { width: 184px; height: 86px; object-fit: cover; border-radius: 6px; background: var(--surface2); }
+.card .head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.card h3 { margin: 0; font-size: 1.05rem; }
+.badge { display: inline-block; font-size: .75rem; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); }
+.badge.pending { color: var(--warn); border-color: var(--warn); }
+.badge.approved { color: var(--ok); border-color: var(--ok); }
+.badge.rejected { color: var(--bad); border-color: var(--bad); }
+.settings { margin: 8px 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px; }
+.settings li { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 1px 8px; font-size: .85rem; }
+.settings li.raw { font-family: ui-monospace, monospace; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+.votes { margin-top: 8px; font-size: .85rem; border-top: 1px solid var(--border); padding-top: 6px; }
+.votes table { border-collapse: collapse; width: 100%; }
+.votes td { padding: 2px 8px 2px 0; }
+.check { display: flex; align-items: flex-start; gap: 10px; }
+.check input { margin-top: 32px; width: 18px; height: 18px; }
+#toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--surface2); border: 1px solid var(--copper); border-radius: 8px; padding: 8px 16px; }
+@media (max-width: 640px) {
+  .card { grid-template-columns: 1fr; }
+  .card img { width: 100%; height: auto; aspect-ratio: 460 / 215; }
+  .check input { margin-top: 4px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Kettle game database · admin</h1>
+  <div><a href="https://kettlelinux.org/games.html">Public page</a> · <button id="logout" class="hidden">Log out</button></div>
+</header>
+
+<div id="login">
+  <h2 style="margin-top:0">Sign in</h2>
+  <p class="muted small">The admin token (<code>wrangler secret put ADMIN_TOKEN</code>). It's kept in this tab only.</p>
+  <input id="token" type="password" autocomplete="current-password" placeholder="Admin token">
+  <button id="signin" class="primary">Sign in</button>
+  <p id="login-error" class="small" style="color: var(--bad)"></p>
+</div>
+
+<main id="app" class="hidden">
+  <div id="stats" class="stats"></div>
+  <div class="tabs" id="tabs">
+    <button data-tab="pending">Pending</button>
+    <button data-tab="approved">Approved</button>
+    <button data-tab="rejected">Rejected</button>
+    <button data-tab="all">All</button>
+    <button data-tab="bans">Banned devices</button>
+  </div>
+  <div class="toolbar" id="toolbar">
+    <input id="search" type="search" placeholder="Search a game, or an app id">
+    <span id="submitter-filter" class="filter hidden"></span>
+    <label class="small"><input type="checkbox" id="select-all"> Select all</label>
+    <button id="refresh">Refresh</button>
+  </div>
+  <div id="bulk" class="bulk hidden">
+    <span id="bulk-count"></span>
+    <button class="ok" data-bulk="approved">Approve</button>
+    <button class="bad" data-bulk="rejected">Reject</button>
+    <button data-bulk="pending">Back to pending</button>
+    <button class="bad" data-bulk="delete">Delete</button>
+  </div>
+  <div id="list"></div>
+  <button id="more" class="hidden">Load more</button>
+</main>
+
+<div id="toast" class="hidden"></div>
+<script src="/admin/admin.js"></script>
+</body>
+</html>

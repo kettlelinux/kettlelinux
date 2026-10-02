@@ -169,6 +169,9 @@ kettle-power-applet
 # The Crash Reports plugin lists and shows them in Game Mode
 kettle-crash
 kettle-decky-crash
+# Game Settings (built by us, packages/kettle-decky-plugins): per-game FEX, graphics and Proton
+# settings, Proton versions, and the game database's known good settings (docs/GAME-DATABASE.md)
+kettle-decky-game-settings
 
 # Desktop Mode welcome (built by us, packages/kettle-welcome): Kettle Welcome, our own hub app.
 # Opens on the first desktop login; setup shortcuts (password, Wi-Fi, ...), controls, games

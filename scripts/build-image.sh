@@ -20,6 +20,7 @@
 #                          image, so of its update bundle too
 #   KETTLE_UPDATE_URL      update server (…/meta, …/images); without it the image has none
 #   KETTLE_CRASH_URL       crash report server the Crash Reports plugin shares reports to
+#   KETTLE_GAMES_URL       game database Game Settings reads known good settings from and shares to
 #                          (docs/CRASH-REPORTS.md); without it the plugin has no Share button
 #   KETTLE_BRANCH          update branch the image follows (default: beta)
 #   KETTLE_BUILD_ID        YYYYMMDD.N (default: today's date .1)
@@ -181,6 +182,10 @@ fi
 if [ -n "${KETTLE_CRASH_URL:-}" ]; then
   log "crash report server: $KETTLE_CRASH_URL"
   printf 'KETTLE_CRASH_URL=%s\n' "${KETTLE_CRASH_URL%/}" >"$RFS/usr/lib/kettle/crash.conf"
+fi
+if [ -n "${KETTLE_GAMES_URL:-}" ]; then
+  log "game database: $KETTLE_GAMES_URL"
+  printf 'KETTLE_GAMES_URL=%s\n' "${KETTLE_GAMES_URL%/}" >"$RFS/usr/lib/kettle/games.conf"
 fi
 # RAUC trusts this certificate (hashed name, as openssl looks certificates up)
 install -D -m 0644 "$CERT" "$RFS/etc/rauc/trusted_keys/$(openssl x509 -hash -noout -in "$CERT").0"

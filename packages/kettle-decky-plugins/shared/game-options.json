@@ -1,0 +1,372 @@
+{
+  "version": 1,
+  "sections": [
+    {
+      "id": "fex",
+      "title": "FEX (x86 emulation)",
+      "help": "How the game's x86 code runs on the ARM CPU. Try these when a game crashes, hangs or glitches at random."
+    },
+    {
+      "id": "graphics",
+      "title": "Graphics",
+      "help": "DXVK (DirectX 8-11), vkd3d-proton (DirectX 12) and Turnip, the GPU driver."
+    },
+    {
+      "id": "proton",
+      "title": "Proton",
+      "help": "Wine and Proton behaviour."
+    }
+  ],
+  "options": [
+    {
+      "id": "fex_tso",
+      "section": "fex",
+      "label": "TSO emulation",
+      "help": "Keeps x86 memory ordering between threads. Off is faster, but most multithreaded games crash or hang without it.",
+      "target": { "env": "FEX_TSOENABLED" },
+      "choices": [{ "value": "1", "label": "On" }, { "value": "0", "label": "Off" }]
+    },
+    {
+      "id": "fex_vector_tso",
+      "section": "fex",
+      "label": "Vector TSO",
+      "help": "Also orders vector (SSE/AVX) loads and stores. Fixes some random crashes and corrupted data; slower.",
+      "target": { "env": "FEX_VECTORTSOENABLED" },
+      "choices": [{ "value": "1", "label": "On" }, { "value": "0", "label": "Off" }]
+    },
+    {
+      "id": "fex_memcpy_tso",
+      "section": "fex",
+      "label": "memcpy/memset TSO",
+      "help": "Also orders REP MOVS/STOS copies. Fixes some crashes in games that copy between threads; slower.",
+      "target": { "env": "FEX_MEMCPYSETTSOENABLED" },
+      "choices": [{ "value": "1", "label": "On" }, { "value": "0", "label": "Off" }]
+    },
+    {
+      "id": "fex_half_barrier",
+      "section": "fex",
+      "label": "Half-barrier TSO",
+      "help": "A faster shortcut for unaligned memory access. Off is fully atomic and safer.",
+      "target": { "env": "FEX_HALFBARRIERTSOENABLED" },
+      "choices": [{ "value": "1", "label": "On" }, { "value": "0", "label": "Off (safer)" }]
+    },
+    {
+      "id": "fex_volatile_metadata",
+      "section": "fex",
+      "label": "Use volatile metadata",
+      "help": "Lets the game's own hints relax TSO where it's safe. Off applies TSO everywhere: slower, sometimes more stable.",
+      "target": { "env": "FEX_VOLATILEMETADATA" },
+      "choices": [{ "value": "1", "label": "On" }, { "value": "0", "label": "Off" }]
+    },
+    {
+      "id": "fex_split_locks",
+      "section": "fex",
+      "label": "Strict split locks",
+      "help": "Locks atomics that cross a cache line. Fixes rare hangs and corrupted state; slower.",
+      "target": { "env": "FEX_STRICTINPROCESSSPLITLOCKS" },
+      "choices": [{ "value": "1", "label": "On" }, { "value": "0", "label": "Off" }]
+    },
+    {
+      "id": "fex_smc",
+      "section": "fex",
+      "label": "Self-modifying code checks",
+      "help": "How FEX notices code the game rewrites (anti-tamper, DRM, JITs). Full fixes crashes in those games but is slow.",
+      "target": { "env": "FEX_SMCCHECKS" },
+      "choices": [
+        { "value": "mtrack", "label": "Page tracking" },
+        { "value": "full", "label": "Full (slow)" },
+        { "value": "none", "label": "None (fastest)" }
+      ]
+    },
+    {
+      "id": "fex_x87",
+      "section": "fex",
+      "label": "x87 precision",
+      "help": "Older and 32-bit games do floating point on the x87 unit. Full precision fixes physics, camera or geometry glitches.",
+      "target": { "env": "FEX_X87REDUCEDPRECISION" },
+      "choices": [{ "value": "1", "label": "Reduced (faster)" }, { "value": "0", "label": "Full" }]
+    },
+    {
+      "id": "fex_multiblock",
+      "section": "fex",
+      "label": "Multiblock",
+      "help": "Compiles bigger chunks of code at once: faster code, but longer compile stutters.",
+      "target": { "env": "FEX_MULTIBLOCK" },
+      "choices": [{ "value": "1", "label": "On" }, { "value": "0", "label": "Off (less stutter)" }]
+    },
+    {
+      "id": "fex_max_inst",
+      "section": "fex",
+      "label": "Block size",
+      "help": "Most instructions per compiled block. Smaller compiles faster (less stutter), larger runs faster.",
+      "target": { "env": "FEX_MAXINST" },
+      "choices": [
+        { "value": "100", "label": "100" },
+        { "value": "500", "label": "500" },
+        { "value": "1000", "label": "1000" },
+        { "value": "5000", "label": "5000" }
+      ]
+    },
+    {
+      "id": "fex_mono",
+      "section": "fex",
+      "label": "Mono (Unity) hacks",
+      "help": "Special handling for games on Mono, such as many Unity games. Turn off if one of those crashes at start.",
+      "target": { "env": "FEX_MONOHACKS" },
+      "choices": [{ "value": "1", "label": "On" }, { "value": "0", "label": "Off" }]
+    },
+    {
+      "id": "fex_hide_hypervisor",
+      "section": "fex",
+      "label": "Hide hypervisor",
+      "help": "Hides the 'running in a virtual machine' CPU flag, which some DRM and anti-cheat refuse.",
+      "target": { "env": "FEX_HIDEHYPERVISORBIT" },
+      "choices": [{ "value": "1", "label": "On" }]
+    },
+    {
+      "id": "dxvk_vendor",
+      "section": "graphics",
+      "label": "Report GPU as",
+      "help": "For DirectX 9-11 games that refuse to start on an unknown GPU (\"unsupported graphics card\").",
+      "target": { "dxvk": "dxgi.customVendorId" },
+      "choices": [
+        { "value": "1002", "label": "AMD" },
+        { "value": "10de", "label": "NVIDIA" },
+        { "value": "8086", "label": "Intel" }
+      ]
+    },
+    {
+      "id": "dxvk_memory",
+      "section": "graphics",
+      "label": "Report video memory",
+      "help": "For DirectX 9-11 games that refuse to start, or pick low textures, because of the shared GPU memory.",
+      "target": { "dxvk": "dxgi.maxDeviceMemory" },
+      "choices": [
+        { "value": "2048", "label": "2 GB" },
+        { "value": "4096", "label": "4 GB" },
+        { "value": "6144", "label": "6 GB" }
+      ]
+    },
+    {
+      "id": "dxvk_hud",
+      "section": "graphics",
+      "label": "DXVK HUD",
+      "help": "DXVK's overlay: frame rate, or also shader compiles (to see where stutter comes from).",
+      "target": { "env": "DXVK_HUD" },
+      "choices": [
+        { "value": "fps", "label": "Frame rate" },
+        { "value": "fps,frametimes,compiler", "label": "Frame times and compiles" }
+      ]
+    },
+    {
+      "id": "vkd3d_feature_level",
+      "section": "graphics",
+      "label": "DirectX 12 feature level",
+      "help": "For DirectX 12 games that say the GPU doesn't meet the requirements.",
+      "target": { "env": "VKD3D_FEATURE_LEVEL" },
+      "choices": [
+        { "value": "11_1", "label": "11_1" },
+        { "value": "12_0", "label": "12_0" },
+        { "value": "12_1", "label": "12_1" },
+        { "value": "12_2", "label": "12_2" }
+      ]
+    },
+    {
+      "id": "vkd3d_shader_model",
+      "section": "graphics",
+      "label": "DirectX 12 shader model",
+      "help": "For DirectX 12 games that check for a newer shader model.",
+      "target": { "env": "VKD3D_SHADER_MODEL" },
+      "choices": [
+        { "value": "6_0", "label": "6.0" },
+        { "value": "6_5", "label": "6.5" },
+        { "value": "6_6", "label": "6.6" }
+      ]
+    },
+    {
+      "id": "vkd3d_nodxr",
+      "section": "graphics",
+      "label": "Hide ray tracing (DX12)",
+      "help": "Turns DirectX ray tracing off, for games that crash when they find it.",
+      "target": { "flags": "VKD3D_CONFIG", "flag": "nodxr" },
+      "choices": [{ "value": "1", "label": "On" }]
+    },
+    {
+      "id": "vkd3d_static_cbv",
+      "section": "graphics",
+      "label": "Static constant buffers (DX12)",
+      "help": "A workaround some DirectX 12 games need for missing or flickering geometry.",
+      "target": { "flags": "VKD3D_CONFIG", "flag": "force_static_cbv" },
+      "choices": [{ "value": "1", "label": "On" }]
+    },
+    {
+      "id": "vkd3d_single_queue",
+      "section": "graphics",
+      "label": "Single queue (DX12)",
+      "help": "Runs all GPU work on one queue. Can fix GPU hangs and device-lost crashes; may be slower.",
+      "target": { "flags": "VKD3D_CONFIG", "flag": "single_queue" },
+      "choices": [{ "value": "1", "label": "On" }]
+    },
+    {
+      "id": "tu_sysmem",
+      "section": "graphics",
+      "label": "Turnip: no tiling (sysmem)",
+      "help": "Renders straight to memory instead of in tiles. Fixes some corrupted or flickering images; slower.",
+      "target": { "flags": "TU_DEBUG", "flag": "sysmem" },
+      "choices": [{ "value": "1", "label": "On" }]
+    },
+    {
+      "id": "tu_nolrz",
+      "section": "graphics",
+      "label": "Turnip: no LRZ",
+      "help": "Turns the early depth test off. Fixes some missing or flickering objects.",
+      "target": { "flags": "TU_DEBUG", "flag": "nolrz" },
+      "choices": [{ "value": "1", "label": "On" }]
+    },
+    {
+      "id": "tu_noubwc",
+      "section": "graphics",
+      "label": "Turnip: no compression (UBWC)",
+      "help": "Turns framebuffer compression off. Fixes some corrupted textures; uses more memory bandwidth.",
+      "target": { "flags": "TU_DEBUG", "flag": "noubwc" },
+      "choices": [{ "value": "1", "label": "On" }]
+    },
+    {
+      "id": "tu_syncdraw",
+      "section": "graphics",
+      "label": "Turnip: sync every draw",
+      "help": "Waits for each draw to finish. Only for chasing GPU hangs: very slow.",
+      "target": { "flags": "TU_DEBUG", "flag": "syncdraw" },
+      "choices": [{ "value": "1", "label": "On" }]
+    },
+    {
+      "id": "proton_wined3d",
+      "section": "proton",
+      "label": "Use WineD3D",
+      "help": "Wine's own OpenGL-based DirectX 9-11 instead of DXVK. A last resort for older games that render wrong; slower.",
+      "target": { "env": "PROTON_USE_WINED3D" },
+      "choices": [{ "value": "1", "label": "On" }]
+    },
+    {
+      "id": "proton_no_d3d12",
+      "section": "proton",
+      "label": "Hide DirectX 12",
+      "help": "Makes games that also have a DirectX 11 renderer use it.",
+      "target": { "env": "PROTON_NO_D3D12" },
+      "choices": [{ "value": "1", "label": "On" }]
+    },
+    {
+      "id": "proton_no_d3d11",
+      "section": "proton",
+      "label": "Hide DirectX 11",
+      "help": "Makes games that also have a DirectX 9 renderer use it.",
+      "target": { "env": "PROTON_NO_D3D11" },
+      "choices": [{ "value": "1", "label": "On" }]
+    },
+    {
+      "id": "proton_no_esync",
+      "section": "proton",
+      "label": "Disable esync",
+      "help": "Turn off if a game hangs or crashes at random. Can cost some performance.",
+      "target": { "env": "PROTON_NO_ESYNC" },
+      "choices": [{ "value": "1", "label": "On" }]
+    },
+    {
+      "id": "proton_no_fsync",
+      "section": "proton",
+      "label": "Disable fsync",
+      "help": "Turn off if a game hangs or crashes at random. Can cost some performance.",
+      "target": { "env": "PROTON_NO_FSYNC" },
+      "choices": [{ "value": "1", "label": "On" }]
+    },
+    {
+      "id": "proton_heap_delay_free",
+      "section": "proton",
+      "label": "Delay heap frees",
+      "help": "Works around games that use memory after freeing it (random crashes).",
+      "target": { "env": "PROTON_HEAP_DELAY_FREE" },
+      "choices": [{ "value": "1", "label": "On" }]
+    },
+    {
+      "id": "proton_log",
+      "section": "proton",
+      "label": "Proton log",
+      "help": "Writes steam-<app id>.log to your home folder, for bug reports. Slows the game down a little.",
+      "target": { "env": "PROTON_LOG" },
+      "choices": [{ "value": "1", "label": "On" }]
+    }
+  ],
+  "presets": [
+    {
+      "id": "fex-fast",
+      "label": "FEX: fastest",
+      "help": "Least emulation overhead. Start here for performance.",
+      "section": "fex",
+      "settings": {
+        "fex_tso": "1", "fex_vector_tso": "0", "fex_memcpy_tso": "0", "fex_half_barrier": "1",
+        "fex_volatile_metadata": "1", "fex_smc": "mtrack", "fex_x87": "1", "fex_multiblock": "1"
+      }
+    },
+    {
+      "id": "fex-safe",
+      "label": "FEX: safer",
+      "help": "Stricter memory ordering. Try this first when a game crashes or hangs at random.",
+      "section": "fex",
+      "settings": {
+        "fex_tso": "1", "fex_vector_tso": "1", "fex_memcpy_tso": "1", "fex_half_barrier": "0",
+        "fex_volatile_metadata": "0", "fex_smc": "mtrack", "fex_x87": "1"
+      }
+    },
+    {
+      "id": "fex-accurate",
+      "label": "FEX: most accurate",
+      "help": "Everything strict, full x87 precision, full code checks. Slow; for games nothing else fixes.",
+      "section": "fex",
+      "settings": {
+        "fex_tso": "1", "fex_vector_tso": "1", "fex_memcpy_tso": "1", "fex_half_barrier": "0",
+        "fex_volatile_metadata": "0", "fex_split_locks": "1", "fex_smc": "full", "fex_x87": "0",
+        "fex_multiblock": "0"
+      }
+    },
+    {
+      "id": "dx12-requirements",
+      "label": "DirectX 12: pass GPU checks",
+      "help": "For DirectX 12 games that stop at \"GPU does not meet the minimum requirements\".",
+      "settings": { "vkd3d_feature_level": "12_1", "vkd3d_shader_model": "6_6", "vkd3d_nodxr": "1" }
+    },
+    {
+      "id": "gpu-check",
+      "label": "DirectX 11: pass GPU checks",
+      "help": "For DirectX 9-11 games that refuse an unknown GPU or its shared memory.",
+      "settings": { "dxvk_vendor": "1002", "dxvk_memory": "4096" }
+    },
+    {
+      "id": "gpu-hangs",
+      "label": "GPU hangs",
+      "help": "For games that freeze the screen or end with a lost GPU.",
+      "settings": { "vkd3d_single_queue": "1", "tu_nolrz": "1" }
+    }
+  ],
+  "custom": {
+    "env_name": "^[A-Z][A-Z0-9_]{1,63}$",
+    "env_prefixes": ["PROTON_", "DXVK_", "VKD3D_", "WINE", "FEX_", "MESA_", "SDL_", "STAGING_"],
+    "env_reserved": ["DXVK_CONFIG", "VKD3D_CONFIG", "VKD3D_FRAME_RATE", "WINEDLLOVERRIDES", "WINEPREFIX",
+                     "WINELOADER", "WINESERVER", "WINEDLLPATH", "PROTON_LOG_DIR", "FEX_ROOTFS",
+                     "FEX_THUNKHOSTLIBS", "FEX_THUNKGUESTLIBS", "FEX_THUNKCONFIG", "FEX_OUTPUTLOG",
+                     "FEX_APP_CONFIG", "FEX_APP_CONFIG_LOCATION", "FEX_APP_DATA_LOCATION",
+                     "FEX_APP_CACHE_LOCATION", "FEX_DUMPIR", "FEX_DISKCACHEPATH",
+                     "FEX_TELEMETRYDIRECTORY", "FEX_SERVERSOCKETPATH", "FEX_ENV", "FEX_HOSTENV",
+                     "FEX_ADDITIONALARGUMENTS"],
+    "env_value": "^[A-Za-z0-9_.,:;=+-]{0,200}$",
+    "dll_name": "^[a-z0-9_.-]{1,32}$",
+    "dll_modes": [
+      { "value": "n,b", "label": "Native, then builtin" },
+      { "value": "b,n", "label": "Builtin, then native" },
+      { "value": "n", "label": "Native only" },
+      { "value": "b", "label": "Builtin only" },
+      { "value": "", "label": "Disabled" }
+    ],
+    "max_env": 16,
+    "max_dlls": 16
+  }
+}
