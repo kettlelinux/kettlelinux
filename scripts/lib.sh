@@ -85,3 +85,21 @@ pacman_root() {
   pacman --root "$r" --dbpath "$r/var/lib/pacman" --config "$PACMAN_CONF" \
     --cachedir "$PKG_CACHE" --noconfirm --noprogressbar "$@"
 }
+
+# Build IDs (YYYYMMDD.N), oldest first, from names like kettle-<buildid>-<device>.*
+sort_buildids() { sort -u -t. -k1,1n -k2,2n; }
+
+# Keep the newest KEEP of a device's builds in out/ and delete the rest (image, .img.xz, bundle,
+# chunk store, manifest, sums). KEEP 0 keeps them all. Published releases don't need these: the
+# update tree has its own copies (publish-update.sh) and downloads are on the server.
+#   prune_builds <device> <keep> [--dry-run]
+prune_builds() {
+  local device="$1" keep="$2" dry="${3:-}" out="$ROOT/out" id
+  [ "$keep" -gt 0 ] 2>/dev/null || return 0
+  local ids; ids="$(find "$out" -maxdepth 1 -name "kettle-*-$device.*" -printf '%f\n' \
+    | sed -nE "s/^kettle-([0-9]{8}\.[0-9]+)-$device\..*/\1/p" | sort_buildids)"
+  for id in $(head -n -"$keep" <<<"$ids"); do
+    if [ -n "$dry" ]; then echo "would remove kettle-$id-$device ($(du -shc "$out/kettle-$id-$device".* | tail -1 | cut -f1))"
+    else log "removing out/kettle-$id-$device.* (keeping $device's newest $keep builds)"; rm -rf "$out/kettle-$id-$device".*; fi
+  done
+}

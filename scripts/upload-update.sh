@@ -12,8 +12,8 @@
 # The per-release .castr/ directories are not uploaded: the server answers
 # images/…/<name>.castr/<chunk> from store/<chunk> (a URL rewrite rule, docs/UPDATES.md).
 # Order matters: chunks and bundles go up before meta/, so no device is ever pointed at a
-# release that isn't all there, and removed releases are deleted only after meta/ stops naming
-# them.
+# release that isn't all there, and removed releases (and the chunks only they used) are deleted
+# only after meta/ stops naming them.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -39,5 +39,9 @@ log "meta -> $REMOTE/meta"
 rc sync "${brief[@]}" "$TREE/meta" "$REMOTE/meta"
 log "removing releases no longer in the tree"
 rc sync --exclude '*.castr/**' "$TREE/images" "$REMOTE/images"
+# last: chunks publish-update.sh dropped from store/ because no remaining release uses them.
+# Nothing the server's meta names needs them by now (meta went up first).
+log "removing chunks no release uses any more"
+rc sync --ignore-existing "${forever[@]}" "$TREE/store" "$REMOTE/store"
 
-log "done. Chunks of removed releases stay in store/ (harmless; a later cleanup can drop them)."
+log "done."

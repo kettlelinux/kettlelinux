@@ -27,6 +27,8 @@
 #   KETTLE_RAUC_KEY/_CERT  release signing key and certificate (default: a development key in
 #                          cache/keys/, made on first use)
 #   KETTLE_NO_BUNDLE=1     skip the update bundle (faster; the image only)
+#   KETTLE_KEEP_BUILDS     how many of this device's builds stay in out/, newest by build ID
+#                          (default 3; 0 keeps all); older ones are deleted after a build
 #   KETTLE_RELEASE=1       an image to hand out: WIFI_*, SSH_PUBKEY and USER_PASSWORD are ignored
 #                          (even from local.env), the SSH server is off by default (every copy
 #                          has the same password), and the image is also written compressed,
@@ -517,3 +519,6 @@ log "done: ${IMG#"$ROOT"/} ($(du -h --apparent-size "$IMG" | cut -f1))"
 [ "$RELEASE" != 1 ] || log "      ${IMG#"$ROOT"/}.xz ($(du -h "$IMG.xz" | cut -f1)), $NAME.sha256"
 [ "${KETTLE_NO_BUNDLE:-}" = 1 ] || log "      ${BUNDLE#"$ROOT"/} + ${NAME}.castr/ (publish: scripts/publish-update.sh)"
 [ -z "${warn_no_server:-}" ] || log "      no KETTLE_UPDATE_URL: this image has no update server"
+
+# a successful build makes room: the device's older builds go (out/ grows by ~10 GB a build)
+prune_builds "$VARIANT" "${KETTLE_KEEP_BUILDS:-3}"
