@@ -1,117 +1,45 @@
-import { ButtonItem, DropdownItem, Field, Navigation, PanelSection, PanelSectionRow, ProgressBarWithInfo, SidebarNavigation, staticClasses } from "@decky/ui";
+import { ButtonItem, DropdownItem, Navigation, PanelSection, PanelSectionRow, SidebarNavigation, ToggleField, staticClasses } from "@decky/ui";
 import { callable, definePlugin, routerHook, toaster } from "@decky/api";
-import { FC, ReactNode, useEffect, useState } from "react";
-import { FaDesktop, FaDownload, FaGamepad, FaHandSparkles, FaMugHot } from "react-icons/fa";
+import { ReactNode, useEffect, useMemo, useState } from "react";
+import { FaAndroid, FaDesktop, FaDownload, FaGamepad, FaHandSparkles, FaMugHot, FaNetworkWired } from "react-icons/fa";
 import { applyGameFixes } from "./fixes";
+import { AndroidPage } from "./android";
+import { ExtrasPage, Setup, status } from "./extras";
+import { Heading, Text, act, red, small, usePoll } from "./ui";
 
-type Component = {
-  id: string;
-  name: string;
-  description: string;
-  license: string;
-  homepage: string;
-  version: string;
-  host: string;
-  installed: string | null;
-  busy: boolean;
-  progress: number | null;
-  error: string | null;
-};
-type Status = { components: Component[] };
 type BootMode = "game" | "desktop";
+// plugins: Kettle's Decky plugins on this device ("framegen", "screens", ...); files: where to
+// look for an APK file
+type Features = { plugins: string[]; extras: boolean; android: boolean; files: string };
+type Ssh = { active: boolean; enabled: boolean; user: string; addresses: string[] };
 
-const status = callable<[], Status>("status");
 const firstRun = callable<[], boolean>("first_run");
 const signedIn = callable<[], boolean>("signed_in");
 const claimDefault = callable<[name: string], boolean>("claim_default");
-const install = callable<[id: string], void>("install");
 const bootMode = callable<[], BootMode | null>("boot_mode");
 const setBootMode = callable<[mode: BootMode], void>("set_boot_mode");
-const uninstall = callable<[id: string], void>("uninstall");
+const features = callable<[], Features>("features");
+const sshStatus = callable<[], Ssh>("ssh_status");
+const setSsh = callable<[on: boolean], void>("set_ssh");
 
 const ROUTE = "/kettle-welcome";
-const small = { fontSize: "12px", lineHeight: "16px" };
 
 const openWelcome = () => {
   Navigation.CloseSideMenus();
   Navigation.Navigate(`${ROUTE}/welcome`);
 };
+const go = (page: string) => Navigation.Navigate(`${ROUTE}/${page}`);
+// a page of Steam's Settings, the way Steam's own menus open one (not in @decky/ui's typings)
+const steamSettings = (page: string) => (SteamClient.URL as any).ExecuteSteamURL(`steam://open/settings/${page}`);
 
-// Backend status, polled while shown: downloads and Steam installs finish in the background
-function useStatus(): Status | null {
-  const [s, setS] = useState<Status | null>(null);
-  useEffect(() => {
-    let live = true;
-    const tick = () => status().then((v) => live && setS(v)).catch(() => {});
-    tick();
-    const t = setInterval(tick, 2000);
-    return () => {
-      live = false;
-      clearInterval(t);
-    };
-  }, []);
-  return s;
-}
-
-function ComponentRow({ c }: { c: Component }) {
-  const run = async (f: () => Promise<void>, fail: string) => {
-    try {
-      await f();
-    } catch (e) {
-      toaster.toast({ title: "Welcome", body: `${fail}: ${e}` });
-    }
-  };
-  const upgrade = c.installed !== null && c.installed !== c.version;
-  const state = c.installed === null ? "" : upgrade ? ` (${c.installed} installed)` : " ✓";
-  return (
-    <>
-      <Field
-        label={`${c.name} ${c.version}${state}`}
-        description={
-          <div style={small}>
-            {c.description}
-            <br />
-            {c.license} · downloaded from {c.host}
-            {c.error && <div style={{ color: "#ff6b6b" }}>{c.error}</div>}
-          </div>
-        }
-        focusable={false}
-      />
-      {c.busy ? (
-        <ProgressBarWithInfo nProgress={(c.progress ?? 0) * 100} indeterminate={!c.progress} sOperationText="Downloading" />
-      ) : (
-        <>
-          {(c.installed === null || upgrade) && (
-            <ButtonItem layout="below" onClick={() => run(() => install(c.id), "Install failed")}>
-              {upgrade ? "Update" : "Download and install"}
-            </ButtonItem>
-          )}
-          {c.installed !== null && (
-            <ButtonItem layout="below" onClick={() => run(() => uninstall(c.id), "Remove failed")}>
-              Remove
-            </ButtonItem>
-          )}
-        </>
-      )}
-    </>
-  );
-}
-
-// The checklist, both on the welcome page and in the Quick Access panel (Row: PanelSectionRow)
-type Row = FC<{ children: ReactNode }>;
-const Plain: Row = ({ children }) => <>{children}</>;
-
-function Setup({ s, Row }: { s: Status; Row: Row }) {
-  return (
-    <>
-      {s.components.map((c) => (
-        <Row key={c.id}>
-          <ComponentRow c={c} />
-        </Row>
-      ))}
-    </>
-  );
-}
+// One of a page's links: a button with what it's for below it
+const Link = ({ label, description, onClick }: { label: string; description: string; onClick: () => void }) => (
+  <div style={{ maxWidth: "720px" }}>
+    <ButtonItem layout="below" description={description} onClick={onClick}>
+      {label}
+    </ButtonItem>
+  </div>
+);
 
 // steamos-manager's default login mode; switching from the power menu only lasts until a reboot
 const BOOT_MODES = [
@@ -148,107 +76,232 @@ function BootModeSetting() {
   );
 }
 
-const Text = ({ children }: { children: ReactNode }) => <div style={{ lineHeight: "22px", maxWidth: "720px" }}>{children}</div>;
-
-function SetupPage() {
-  const s = useStatus();
-  if (!s) return null;
+function WelcomePage({ f }: { f: Features }) {
   return (
     <>
       <Text>
+        <h2 style={{ marginTop: 0 }}>Welcome to Kettle Linux</h2>
         <p>
-          Optional extras Kettle can't include itself. Anything downloaded here comes from its own project's servers
-          and is checked against a pinned checksum before it is installed.
+          Kettle is a SteamOS-style system for Snapdragon handhelds: Valve's arm64 Steam client with Game Mode, a Plasma
+          desktop, and Windows games through Proton ARM64.
+        </p>
+        <p>
+          Game Mode is where you play. Kettle's own tools are in the Quick Access menu (the <b>…</b> button), under the
+          plug icon. This page stays there too, under Welcome.
         </p>
       </Text>
-      <Setup s={s} Row={Plain} />
+      <Heading>Get started</Heading>
+      <Link label="Connect to Wi-Fi" description="Pick a network in Steam's Internet settings." onClick={() => steamSettings("internet")} />
+      <Link label="Kettle in Game Mode" description="Frame generation, upscaling, per-game settings and more, per game." onClick={() => go("game-mode")} />
+      {f.extras && (
+        <Link label="Get emulators and streaming apps" description="Install them from Flathub and add them to your Steam library." onClick={() => go("extras")} />
+      )}
+      {f.android && (
+        <Link label="Add Android games" description="From F-Droid or an APK file, played in Game Mode like any game." onClick={() => go("android")} />
+      )}
+      <Link
+        label="Change your password"
+        description={`The account starts with the password "kettle". Change it in the desktop: it also protects remote logins (SSH) and administrator tasks.`}
+        onClick={() => go("desktop")}
+      />
+      <Heading>Start up in</Heading>
+      <BootModeSetting />
     </>
   );
 }
 
-// Fixed, so the sidebar isn't rebuilt on every render. SidebarNavigation reports each tab as a
-// route under ROUTE (as Decky's own settings do), which is why that route isn't exact.
-const PAGES = [
+// Kettle's plugins, as far as this device has them
+const TOOLS: { plugin: string; name: string; text: ReactNode }[] = [
   {
-    title: "Welcome",
-    route: `${ROUTE}/welcome`,
-    icon: <FaMugHot />,
-    content: (
+    plugin: "framegen",
+    name: "Frame Generation",
+    text: (
       <>
-        <Text>
-          <h2>Welcome to Kettle Linux</h2>
-          <p>
-            Kettle is a SteamOS-style system for Snapdragon handhelds: Valve's arm64 Steam client with Game Mode, a
-            Plasma desktop, and Windows games through Proton ARM64.
-          </p>
-          <p>
-            Kettle's own tools live in the Quick Access menu (the <b>…</b> button), under the plug icon: Frame
-            Generation, Upscaling, and this Welcome page. Everything is off until you turn it on for a game.
-          </p>
-          <p>The last page, Setup, lists optional extras. You can come back here from Quick Access at any time.</p>
-        </Text>
-        <BootModeSetting />
+        shows extra frames between the ones the game renders (2×, 3× or an automatic multiplier), with Kettle's
+        own engine: nothing to buy or install. The base frame rate is capped automatically: leave Steam's frame limit
+        off for these games.
       </>
     ),
   },
   {
-    title: "Game Mode",
-    route: `${ROUTE}/game-mode`,
-    icon: <FaGamepad />,
-    content: (
-      <Text>
-        <h2>Per-game enhancements</h2>
-        <p>
-          Both panels open on the running game, and can set up any installed game before you launch it. Settings are
-          kept when you turn a game off.
-        </p>
-        <p>
-          <b>Frame Generation</b> shows extra frames between the ones the game renders (2–4×), with Kettle's own
-          engine: nothing to buy or install. The base frame rate is capped automatically: leave Steam's frame limit
-          off for these games.
-        </p>
-        <p>
-          <b>Upscaling</b> renders the game at a lower resolution and scales it up: FSR 1 through gamescope for any
-          game, or Snapdragon GSR 2 for games that offer DLSS, FSR 2+ or XeSS.
-        </p>
-      </Text>
+    plugin: "upscaling",
+    name: "Upscaling",
+    text: (
+      <>
+        renders the game at a lower resolution and scales it up: FSR 1 through gamescope for any game, or Snapdragon GSR
+        2, Arm ASR or FSR 2.2 in place of a game's own DLSS, FSR 2+ or XeSS.
+      </>
     ),
   },
   {
-    title: "Desktop mode",
-    route: `${ROUTE}/desktop`,
-    icon: <FaDesktop />,
-    content: (
-      <Text>
-        <h2>Desktop mode</h2>
-        <p>
-          Switch from the power menu. The gamepad drives the mouse and keyboard there; hold <b>Select + Start</b> to
-          hand it to a game started from the desktop, and again to take it back.
-        </p>
-        <p>
-          Left stick: pointer · Right stick: scroll · A / R2: click · B / L2: right click · R1 (held): precise pointer
-          · R3: middle click · X / Home: on-screen keyboard · Y: Enter · D-pad: arrow keys · L1: Escape · Start:
-          application menu · Select: Overview
-        </p>
-      </Text>
+    plugin: "game-settings",
+    name: "Game Settings",
+    text: (
+      <>
+        sets how a Windows game runs: the Proton version and FEX, DXVK, vkd3d and Turnip options, with known good
+        settings other players have shared from Kettle's game database.
+      </>
     ),
   },
   {
-    title: "Setup",
-    route: `${ROUTE}/setup`,
-    icon: <FaDownload />,
-    content: <SetupPage />,
+    plugin: "power",
+    name: "Power",
+    text: (
+      <>
+        shows power use and temperatures live, and sets the fan and CPU limits per game, and the battery charge limit.
+      </>
+    ),
   },
+  {
+    plugin: "crash",
+    name: "Crash Reports",
+    text: <>lists what crashed (a game, Game Mode or the GPU) with the details, kept on the device and never sent.</>,
+  },
+  { plugin: "screens", name: "Screens", text: <>turns the bottom screen on or off and sets its own brightness.</> },
 ];
 
-const Page = () => (
-  <div style={{ marginTop: "40px", height: "calc(100% - 40px)" }}>
-    <SidebarNavigation title="Welcome" showTitle pages={PAGES} />
-  </div>
-);
+function GameModePage({ f }: { f: Features }) {
+  return (
+    <Text>
+      <h2 style={{ marginTop: 0 }}>Kettle in Game Mode</h2>
+      <p>
+        Open the Quick Access menu (the <b>…</b> button) and the plug icon. The per-game panels open on the running game,
+        and can set up any installed game before you launch it. Everything is off until you turn it on for a game, and
+        settings are kept when you turn it off again.
+      </p>
+      {TOOLS.filter((t) => f.plugins.includes(t.plugin)).map((t) => (
+        <p key={t.plugin}>
+          <b>{t.name}</b> {t.text}
+        </p>
+      ))}
+    </Text>
+  );
+}
+
+function RemotePage() {
+  const [s, refresh] = usePoll(sshStatus, 3000);
+  const [busy, setBusy] = useState(false);
+  const toggle = (on: boolean) => {
+    setBusy(true);
+    act(() => setSsh(on), on ? "Couldn't turn on the SSH server" : "Couldn't turn off the SSH server").finally(() => {
+      setBusy(false);
+      refresh();
+    });
+  };
+  return (
+    <>
+      <Text>
+        <h2 style={{ marginTop: 0 }}>Remote access</h2>
+        <p>
+          An SSH server lets you log in to this device from another computer on your network, for copying files or using
+          a terminal. Turn it on only when you need it, and change the password first (in the desktop): anyone on the
+          network who knows it can log in.
+        </p>
+      </Text>
+      {s && (
+        <div style={{ maxWidth: "720px" }}>
+          <ToggleField
+            label="SSH server"
+            checked={s.active}
+            disabled={busy}
+            onChange={toggle}
+            description={
+              <div style={small}>
+                {!s.active
+                  ? "Off. Nothing on the network can log in to this device."
+                  : s.addresses.length > 0
+                    ? `On. From another computer: ${s.addresses.map((a) => `ssh ${s.user}@${a}`).join(" or ")}`
+                    : "On. Connect to a network to log in from another computer."}
+                <br />
+                {s.enabled
+                  ? s.active
+                    ? "It's set to start with the device. To change that, use Kettle Welcome in the desktop."
+                    : <span style={red}>It starts again with the device. To keep it off, use Kettle Welcome in the desktop.</span>
+                  : s.active
+                    ? "Turned on here, it stays on until the device restarts. To have it on at every start, use Kettle Welcome in the desktop."
+                    : null}
+              </div>
+            }
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+const CONTROLS =
+  "Left stick: pointer · Right stick: scroll · A / R2: click · B / L2: right click · R1 (held): precise pointer · R3: middle click · X / Home: on-screen keyboard · Y: Enter · D-pad: arrow keys · L1: Escape · Start: application menu · Select: Overview";
+
+function DesktopPage() {
+  return (
+    <>
+      <Text>
+        <h2 style={{ marginTop: 0 }}>Desktop mode</h2>
+        <p>
+          A Plasma desktop, for everything Game Mode doesn't do. Kettle Welcome opens there with its own guide. Switch from
+          the power menu or below; the desktop's <b>Return to Gaming Mode</b> icon brings you back.
+        </p>
+      </Text>
+      <Heading>Done in the desktop</Heading>
+      <Text>
+        <ul style={{ margin: 0, paddingLeft: "20px" }}>
+          <li>Changing your password, in Kettle Welcome &gt; Setup.</li>
+          <li>Installing Kettle to the internal storage, next to Android, with the Kettle Installer.</li>
+          <li>Games from Epic, GOG and Amazon (Heroic Games Launcher) and other Windows games (Lutris).</li>
+          <li>Android games from Google Play, and apps that need a mouse.</li>
+        </ul>
+      </Text>
+      <div style={{ maxWidth: "720px" }}>
+        <ButtonItem layout="below" onClick={() => SteamClient.System.SwitchToDesktop()}>
+          Switch to Desktop
+        </ButtonItem>
+      </div>
+      <Heading>Controls</Heading>
+      <Text>
+        <p>
+          The controller drives the mouse and keyboard there; hold <b>Select + Start</b> to hand it to a game started from
+          the desktop, and again to take it back.
+        </p>
+        <p style={small}>{CONTROLS}</p>
+      </Text>
+    </>
+  );
+}
+
+let loaded: Features | null = null; // features(), asked once
+const NONE: Features = { plugins: [], extras: false, android: false, files: "/" };
+
+// SidebarNavigation reports each tab as a route under ROUTE (as Decky's own settings do), which is
+// why that route isn't exact. The pages are built once per set of features, so the sidebar isn't
+// rebuilt on every render.
+function Page() {
+  const [f, setF] = useState<Features | null>(loaded);
+  useEffect(() => {
+    if (!loaded) features().then((v) => setF((loaded = v))).catch(() => setF(NONE));
+  }, []);
+  const pages = useMemo(() => {
+    const ft = f ?? NONE;
+    return [
+      { title: "Welcome", route: `${ROUTE}/welcome`, icon: <FaMugHot />, content: <WelcomePage f={ft} /> },
+      { title: "Kettle in Game Mode", route: `${ROUTE}/game-mode`, icon: <FaGamepad />, content: <GameModePage f={ft} /> },
+      { title: "Gaming Extras", route: `${ROUTE}/extras`, icon: <FaDownload />, content: <ExtrasPage flatpak={ft.extras} /> },
+      ...(ft.android
+        ? [{ title: "Android games", route: `${ROUTE}/android`, icon: <FaAndroid />, content: <AndroidPage files={ft.files} /> }]
+        : []),
+      { title: "Remote access", route: `${ROUTE}/remote`, icon: <FaNetworkWired />, content: <RemotePage /> },
+      { title: "Desktop mode", route: `${ROUTE}/desktop`, icon: <FaDesktop />, content: <DesktopPage /> },
+    ];
+  }, [f]);
+  if (!f) return null;
+  return (
+    <div style={{ marginTop: "40px", height: "calc(100% - 40px)" }}>
+      <SidebarNavigation title="Welcome" showTitle pages={pages} />
+    </div>
+  );
+}
 
 function Content() {
-  const s = useStatus();
+  const [s] = usePoll(status, 2000);
   return (
     <>
       <PanelSection>
@@ -257,9 +310,20 @@ function Content() {
             Open Welcome
           </ButtonItem>
         </PanelSectionRow>
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            onClick={() => {
+              Navigation.CloseSideMenus();
+              go("extras");
+            }}
+          >
+            Gaming Extras
+          </ButtonItem>
+        </PanelSectionRow>
       </PanelSection>
       {s && (
-        <PanelSection title="Setup">
+        <PanelSection title="Downloads">
           <Setup s={s} Row={PanelSectionRow} />
         </PanelSection>
       )}

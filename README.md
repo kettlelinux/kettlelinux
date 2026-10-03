@@ -56,7 +56,11 @@ own *Check for updates*.
 - **microSD libraries**: a card put in is mounted and added to Steam as a library, as on a Steam
   Deck.
 - **Desktop welcome hub**: setup shortcuts, controls help, and one-click *Gaming Extras*
-  (emulators, streaming and tools) from Flathub.
+  (emulators, streaming and tools) from Flathub, and GE-Proton and Proton-CachyOS for Steam from
+  their ARM64 releases.
+- **Game Mode welcome**: a tour of Kettle's plugins, and from Game Mode itself: emulators and
+  streaming apps installed and added to Steam, the Proton builds, Android games from F-Droid or an
+  APK file, and the SSH server.
 - **Kettle branding**: boot splash, Steam startup movie and Plasma splash, all rendered from source art.
 
 ## Getting started

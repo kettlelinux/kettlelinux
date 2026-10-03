@@ -5,7 +5,7 @@
   "api_version": 1,
   "publish": {
     "tags": ["welcome", "setup"],
-    "description": "Kettle Linux's welcome page: a tour of its features, a setup checklist, and optional software downloaded from its upstream source.",
+    "description": "Kettle Linux's welcome page for Game Mode: a tour, Gaming Extras (emulators, streaming apps, Protons) added to Steam, Android games, and remote access.",
     "image": ""
   }
 }

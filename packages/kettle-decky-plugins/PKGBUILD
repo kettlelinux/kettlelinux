@@ -6,9 +6,14 @@
 #   power      per-game fan curve / fixed speed and CPU core parking and caps, a live power and
 #              temperature readout, the battery charge limit (all through kettle-powerd); and
 #              Steam's power sliders following what the Performance app sets (steamSync.ts)
-#   welcome    opens once on first boot: a tour, a setup checklist, and optional components
-#              (components.json) downloaded from their upstream source on request; also applies
-#              game fixes (welcome/src/fixes.ts): launch options a game needs to run at all
+#   welcome    opens once on first boot: Game Mode's counterpart of the desktop's Kettle Welcome.
+#              A tour, the start-up mode, Gaming Extras (the controller-friendly Flathub apps
+#              through kettle-welcome's welcome-flatpak, added to Steam as shortcuts; GE-Proton /
+#              Proton-CachyOS through its welcome-proton; optional components, components.json,
+#              downloaded from their upstream source), Android games from F-Droid or an APK file
+#              (kettle-lepton's kettle-android-games), and the SSH server (started and stopped
+#              only: 50-kettle-ssh.rules); also applies game fixes (welcome/src/fixes.ts): launch
+#              options a game needs to run at all
 #   crash      the crash reports kettle-crashd keeps (packages/kettle-crash): a list, each report's
 #              page, and a toast when a game, Game Mode or the GPU crashes; nothing is sent anywhere
 #   game-settings  per-game compatibility profiles: FEX, DXVK, vkd3d, Turnip and Proton options
@@ -22,7 +27,7 @@ pkgbase=kettle-decky-plugins
 pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome kettle-decky-power
          kettle-decky-screens kettle-decky-crash kettle-decky-game-settings)
 pkgver=1.12.0
-pkgrel=15
+pkgrel=16
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
@@ -65,8 +70,9 @@ package_kettle-decky-upscaling() {
 }
 
 package_kettle-decky-welcome() {
-  pkgdesc='Welcome Decky plugin (first-boot tour, setup checklist, optional components)'
-  depends=(decky-loader)
+  pkgdesc='Welcome Decky plugin (first-boot tour, Gaming Extras, Android games, remote access)'
+  depends=(decky-loader kettle-welcome)  # welcome-flatpak, welcome-proton
+  optdepends=('kettle-lepton: Android games')
   _install_plugin kettle-welcome welcome
   install -Dm644 src-tree/welcome/components.json -t "$pkgdir/usr/share/decky/plugins/kettle-welcome"
 }

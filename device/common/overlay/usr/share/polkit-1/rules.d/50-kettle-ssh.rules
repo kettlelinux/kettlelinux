@@ -1,0 +1,11 @@
+// Game Mode's Welcome (kettle-decky-welcome) starts and stops the SSH server, where no password
+// prompt can be shown. Only start and stop: enabling it at every start-up (manage-unit-files)
+// can link any unit file, so that keeps its password prompt, in the desktop's Kettle Welcome.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") == "sshd.service" &&
+        (action.lookup("verb") == "start" || action.lookup("verb") == "stop") &&
+        subject.local && subject.active && subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+});

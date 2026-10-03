@@ -11,8 +11,8 @@ include(KDECompilerSettings NO_POLICY_SCOPE)
 find_package(Qt6 6.7 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Widgets)
 find_package(KF6 6.5 REQUIRED COMPONENTS CoreAddons Config DBusAddons KIO Service WindowSystem)
 
-# where welcome-flatpak lives, and the window icon (the Plasma splash's kettle)
-set(KETTLE_LIBDIR "${CMAKE_INSTALL_PREFIX}/lib/kettle" CACHE PATH "Directory with welcome-flatpak")
+# where welcome-flatpak and welcome-proton live, and the window icon (the Plasma splash's kettle)
+set(KETTLE_LIBDIR "${CMAKE_INSTALL_PREFIX}/lib/kettle" CACHE PATH "Directory with welcome-flatpak and welcome-proton")
 set(KETTLE_ICON "/usr/share/plasma/look-and-feel/org.kettle.splash/contents/splash/images/kettle.png" CACHE FILEPATH "Window icon")
 
 qt_policy(SET QTP0001 NEW)
@@ -39,6 +39,7 @@ qt_add_qml_module(kettle-welcome
         src/qml/GamesPage.qml
         src/qml/AndroidPage.qml
         src/qml/ExtrasPage.qml
+        src/qml/ProtonSection.qml
         src/qml/SystemPage.qml
 )
 
@@ -47,7 +48,7 @@ target_link_libraries(kettle-welcome PRIVATE
     KF6::CoreAddons KF6::ConfigCore KF6::DBusAddons KF6::KIOGui KF6::Service KF6::WindowSystem)
 
 install(TARGETS kettle-welcome ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
-install(PROGRAMS welcome-flatpak DESTINATION ${KETTLE_LIBDIR})
+install(PROGRAMS welcome-flatpak welcome-proton DESTINATION ${KETTLE_LIBDIR})
 install(FILES org.kettle.Welcome.desktop org.kettle.GamingExtras.desktop DESTINATION ${KDE_INSTALL_APPDIR})
 install(FILES org.kettle.Welcome.autostart.desktop DESTINATION ${KDE_INSTALL_AUTOSTARTDIR} RENAME org.kettle.Welcome.desktop)
 # a shortcut on the Plasma desktop, next to steamdeck-kde-presets' Return to Gaming Mode: new home

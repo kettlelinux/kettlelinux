@@ -1,7 +1,7 @@
-# Welcome: a page shown once on first boot (a tour of Kettle and a setup checklist), then kept
-# in the Quick Access menu.
+# Welcome: Game Mode's counterpart of the desktop's Kettle Welcome, shown once on first boot,
+# then kept in the Quick Access menu: a tour, Gaming Extras, Android games and remote access.
 #
-# Setup lists optional components: software Kettle can't ship in the image (license or no
+# Gaming Extras lists optional components: software Kettle can't ship in the image (license or no
 #    source build), downloaded on request from its official upstream source. components.json,
 #    next to this file, lists them; each entry:
 #      {"id": "name-like-this", "name": ..., "description": ..., "license": ..., "homepage": ...,
@@ -13,18 +13,36 @@
 #    Components land in ~/.local/share/kettle/components/<id>; what's installed (and which
 #    version) is recorded in the plugin's installed.json.
 #
+# It also offers the community Protons with ARM64 builds (GE-Proton, Proton-CachyOS), through
+#    kettle-welcome's welcome-proton: the latest release from the project's own GitHub releases,
+#    checked against its published sha512sum, unpacked into Steam's compatibilitytools.d. It runs
+#    as a systemd user unit, so the desktop's Kettle Welcome shows the same install and builds.
+#
+# Gaming Extras: the Flathub apps of the desktop's Kettle Welcome that work with a controller,
+#    installed by kettle-welcome's welcome-flatpak (the same systemd user unit, so both show the
+#    same install), and added to Steam as shortcuts by the frontend (shortcuts.json records
+#    which, by Steam appid).
+#
+# Android games, with kettle-lepton: kettle-android-games adds F-Droid apps and APK files to
+#    Steam, one command at a time; its download progress comes on stderr.
+#
 # Welcome also sets what the device starts up in, Game Mode or the desktop: steamos-manager's
-#    default login mode, through steamosctl on the user's session bus.
+#    default login mode, through steamosctl on the user's session bus. And it starts and stops
+#    the SSH server: Game Mode has no password prompt, so polkit lets the active local user do
+#    that, and only that, for sshd.service (50-kettle-ssh.rules); enabling it at every start-up
+#    stays with the desktop's Kettle Welcome.
 import asyncio
 import hashlib
 import json
 import os
+import pwd
 import re
 import shutil
 import subprocess
 import tarfile
 import tempfile
 import threading
+import time
 import urllib.request
 import zipfile
 
@@ -45,16 +63,106 @@ _SHA = re.compile(r"[0-9a-f]{64}")
 
 
 _MODES = ("game", "desktop")
+PROTON = "/usr/lib/kettle/welcome-proton"  # package kettle-welcome
+FLATPAK = "/usr/lib/kettle/welcome-flatpak"  # package kettle-welcome
+ANDROID = "/usr/bin/kettle-android-games"  # package kettle-lepton
+SHORTCUTS = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "shortcuts.json")  # Flatpak app -> Steam appid
+FLATPAK_ICONS = os.path.join(decky.DECKY_USER_HOME, ".local", "share", "flatpak", "exports", "share", "icons", "hicolor")
+PLUGINS = "/usr/share/decky/plugins"  # Kettle's own: kettle-<name>
+_APP_ID = re.compile(r"^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$")
+_ANDROID_COMMANDS = ("add", "remove", "fdroid-search", "fdroid-add")
+# the running or last kettle-android-games command: {"command", "busy", "done", "total", "result"}
+_android: dict = {"command": None, "busy": False, "done": 0, "total": 0, "result": None}
+_PROTON_TOOLS = ("ge", "cachyos")
+_latest: tuple[float, dict[str, str]] = (0.0, {})  # when looked up, tool -> newest build
+
+
+def _session_env() -> dict:
+    # Decky starts this backend as the user but without the session's environment
+    run = f"/run/user/{os.getuid()}"
+    return {**os.environ, "HOME": decky.DECKY_USER_HOME, "XDG_RUNTIME_DIR": run,
+            "DBUS_SESSION_BUS_ADDRESS": f"unix:path={run}/bus"}
 
 
 def _steamosctl(*args: str) -> str:
-    # Decky starts this backend as the user but without the session's environment
-    run = f"/run/user/{os.getuid()}"
-    env = {**os.environ, "XDG_RUNTIME_DIR": run, "DBUS_SESSION_BUS_ADDRESS": f"unix:path={run}/bus"}
-    r = subprocess.run(["steamosctl", *args], env=env, capture_output=True, text=True, timeout=10)
+    r = subprocess.run(["steamosctl", *args], env=_session_env(), capture_output=True, text=True, timeout=10)
     if r.returncode != 0:
         raise RuntimeError(r.stderr.strip() or f"steamosctl {args[0]} failed")
     return r.stdout.strip()
+
+
+def _helper(path: str, *args: str, timeout: int = 15) -> str:
+    r = subprocess.run([path, *args], env=_session_env(), capture_output=True, text=True, timeout=timeout)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip() or f"{os.path.basename(path)} {args[0]} failed")
+    return r.stdout.strip()
+
+
+def _proton(*args: str, timeout: int = 15) -> str:
+    return _helper(PROTON, *args, timeout=timeout)
+
+
+def _flatpak_icon(app: str) -> str:
+    """The app's largest exported PNG icon, for its Steam shortcut ("" if none)."""
+    best = (0, "")
+    try:
+        sizes = os.listdir(FLATPAK_ICONS)
+    except OSError:
+        return ""
+    for d in sizes:
+        path = os.path.join(FLATPAK_ICONS, d, "apps", app + ".png")
+        px = int(d.split("x")[0]) if re.fullmatch(r"\d+x\d+", d) else 0
+        if px > best[0] and os.path.isfile(path):
+            best = (px, path)
+    return best[1]
+
+
+def _addresses() -> list[str]:
+    """This device's IPv4 addresses, for "ssh user@address"."""
+    try:
+        out = subprocess.run(["ip", "-4", "-o", "addr", "show", "scope", "global"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    # "2: wlan0    inet 192.168.1.5/24 ...", leaving out container networks (Lepton's podman)
+    return [a for i, a in re.findall(r"^\d+:\s+(\S+)\s+inet (\d+\.\d+\.\d+\.\d+)/", out, re.M)
+            if not i.startswith(("podman", "docker", "br-", "veth", "virbr", "cni"))]
+
+
+def _systemctl(*args: str) -> int:
+    return subprocess.run(["systemctl", *args, "sshd.service"], capture_output=True, timeout=30).returncode
+
+
+async def _android_run(command: str, arg: str):
+    """Runs kettle-android-games, following its PROGRESS lines; the JSON result ends up in _android."""
+    try:
+        p = await asyncio.create_subprocess_exec(ANDROID, command, arg, env=_session_env(),
+                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        err = []
+
+        async def follow():
+            async for line in p.stderr:
+                parts = line.decode(errors="replace").split()
+                if len(parts) == 3 and parts[0] == "PROGRESS":
+                    _android["done"], _android["total"] = int(parts[1]), int(parts[2])
+                else:
+                    err.append(" ".join(parts))
+
+        out, _ = await asyncio.gather(p.stdout.read(), follow())
+        await p.wait()
+        try:
+            result = json.loads(out)
+        except ValueError:
+            result = {"ok": False, "error": (err[-1] if err else "") or "kettle-android-games failed."}
+    except OSError as e:
+        result = {"ok": False, "error": str(e)}
+    if not result.get("ok"):
+        decky.logger.warning("kettle-android-games %s: %s", command, result.get("error"))
+    _android.update(busy=False, result=result)
+
+
+def _pairs(out: str) -> list[tuple[str, str]]:
+    return [tuple(l.split(" ", 1)) for l in out.splitlines() if l.count(" ") == 1]
 
 
 def _valid_download(d) -> bool:
@@ -267,6 +375,110 @@ class Plugin:
             installed.pop(cid, None)
             _write_json(INSTALLED, installed)
         _jobs.pop(cid, None)
+
+    async def proton_status(self) -> dict:
+        """welcome-proton's status line (idle | running TOOL download BYTES TOTAL | running TOOL
+        unpack | done TOOL NAME | error TOOL MESSAGE) and the installed builds, newest first."""
+        if not os.access(PROTON, os.X_OK):
+            return {"available": False, "status": "idle", "installed": []}
+        status, installed = await asyncio.gather(asyncio.to_thread(_proton, "status"),
+                                                 asyncio.to_thread(_proton, "installed"))
+        return {"available": True, "status": status or "idle",
+                "installed": [{"tool": t, "name": n} for t, n in _pairs(installed)]}
+
+    async def proton_latest(self) -> dict[str, str]:
+        """Tool -> its newest release's build name ("-" if it couldn't be looked up). Kept for
+        ten minutes: GitHub allows 60 lookups an hour without an account."""
+        global _latest
+        if time.monotonic() - _latest[0] > 600 or "-" in _latest[1].values():
+            found = dict(_pairs(await asyncio.to_thread(_proton, "latest", timeout=90)))
+            _latest = (time.monotonic(), found)
+        return _latest[1]
+
+    async def proton_install(self, tool: str):
+        if tool not in _PROTON_TOOLS:
+            raise ValueError(f"unknown Proton {tool!r}")
+        await asyncio.to_thread(_proton, "start", tool)
+        decky.logger.info("installing Proton %s", tool)
+
+    async def proton_remove(self, name: str):
+        await asyncio.to_thread(_proton, "remove", name)
+        decky.logger.info("removed Proton %s", name)
+
+    async def features(self) -> dict:
+        """What this device has: Kettle's Decky plugins (by name, e.g. "screens"), whether the
+        Flatpak installs and Android games are there, and where to look for an APK file."""
+        try:
+            plugins = sorted(d[len("kettle-"):] for d in os.listdir(PLUGINS) if d.startswith("kettle-"))
+        except OSError:
+            plugins = []
+        downloads = os.path.join(decky.DECKY_USER_HOME, "Downloads")
+        return {"plugins": plugins, "extras": os.access(FLATPAK, os.X_OK), "android": os.access(ANDROID, os.X_OK),
+                "files": downloads if os.path.isdir(downloads) else decky.DECKY_USER_HOME}
+
+    async def extras_status(self) -> dict:
+        """welcome-flatpak's status line (idle | running I N ID | done N | error ID MESSAGE), the
+        user's installed Flatpak apps, and the Steam shortcuts added for them (app -> appid)."""
+        status, installed = await asyncio.gather(asyncio.to_thread(_helper, FLATPAK, "status"),
+                                                 asyncio.to_thread(_helper, FLATPAK, "installed"))
+        return {"status": status or "idle", "installed": installed.split(), "shortcuts": _read_json(SHORTCUTS, {})}
+
+    async def extras_install(self, app: str):
+        if not _APP_ID.match(app):
+            raise ValueError(f"not an app ID: {app!r}")
+        await asyncio.to_thread(_helper, FLATPAK, "start", app)
+        decky.logger.info("installing %s from Flathub", app)
+
+    async def flatpak_icon(self, app: str) -> str:
+        return _flatpak_icon(app) if _APP_ID.match(app) else ""
+
+    async def remember_shortcut(self, app: str, appid: int):
+        """Records the Steam shortcut added for app (appid 0: none any more)."""
+        if not _APP_ID.match(app):
+            raise ValueError(f"not an app ID: {app!r}")
+        with _state_lock:
+            shortcuts = _read_json(SHORTCUTS, {})
+            if appid:
+                shortcuts[app] = int(appid)
+            else:
+                shortcuts.pop(app, None)
+            _write_json(SHORTCUTS, shortcuts)
+
+    async def android_list(self) -> dict:
+        r = await asyncio.create_subprocess_exec(ANDROID, "list", env=_session_env(), stdout=asyncio.subprocess.PIPE,
+                                                 stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await r.communicate()
+        try:
+            return json.loads(out)
+        except ValueError:
+            return {"ok": False, "games": []}
+
+    async def android_start(self, command: str, arg: str):
+        """Starts a kettle-android-games command (add FILE, remove PACKAGE, fdroid-search TEXT,
+        fdroid-add PACKAGE); android_job says how it goes. One at a time."""
+        if command not in _ANDROID_COMMANDS:
+            raise ValueError(f"unknown command {command!r}")
+        if command == "add" and not os.path.isfile(arg):
+            raise ValueError(f"no such file: {arg}")
+        if _android["busy"]:
+            raise ValueError("busy with another game")
+        _android.update(command=command, busy=True, done=0, total=0, result=None)
+        asyncio.get_running_loop().create_task(_android_run(command, arg))
+
+    async def android_job(self) -> dict:
+        return _android
+
+    async def ssh_status(self) -> dict:
+        """The SSH server: running now, and enabled at start-up (set from the desktop)."""
+        active, enabled = await asyncio.gather(asyncio.to_thread(_systemctl, "is-active", "-q"),
+                                               asyncio.to_thread(_systemctl, "is-enabled", "-q"))
+        return {"active": active == 0, "enabled": enabled == 0, "user": pwd.getpwuid(os.getuid()).pw_name,
+                "addresses": await asyncio.to_thread(_addresses)}
+
+    async def set_ssh(self, on: bool):
+        if await asyncio.to_thread(_systemctl, "start" if on else "stop") != 0:
+            raise RuntimeError("systemd refused")
+        decky.logger.info("SSH server %s", "started" if on else "stopped")
 
     async def _main(self):
         decky.logger.info("welcome: %d optional components offered", len(_manifest(log=True)))
