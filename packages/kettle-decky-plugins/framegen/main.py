@@ -23,13 +23,15 @@ LAYER = "/usr/lib/libVkLayer_kettle_framegen.so"
 
 DEFAULTS = {
     "enabled": False,
-    "multiplier": 2,
+    "multiplier": 2,            # 2, 3 or "auto": the layer picks the fewest that fill the display
     "flow_scale": 0.5,          # 0.8 costs twice the motion time on the Adreno 740, no visible gain
     "fifo": True,               # pace generated frames with FIFO
     "preserve_images": False,   # no extra swapchain images for generated frames
+    "low_latency": False,       # latency = low: hold the game until its previous frame is shown
     "bypass_wsi": True,         # ENABLE_GAMESCOPE_WSI=0 (launch option, frontend)
     # base frame cap via DXVK_CONFIG/VKD3D_FRAME_RATE (launch option); "auto" = autocap's
-    # measured pick (3x/4x from a ~30 base warp visibly, so the multiplier stays the user's)
+    # measured pick (3x from a ~30 base warps visibly, so the multiplier stays the user's); with
+    # multiplier auto the layer holds the game at refresh / multiplier itself, so auto = no cap
     "fps_cap": "auto",
 }
 FPS_CAPS = ("auto", "off", "30", "40", "60")
@@ -39,15 +41,17 @@ STATE = ("measure", "failed_caps")
 FPS_FILE = f"/run/user/{os.getuid()}/kettle-fps"
 SAMPLE_S = 2
 _refresh = 120      # last display refresh mangoapp reported
+_refresh_seen = False  # mangoapp reported one since the plugin started
 _session = None     # the running game's measurement, see _Session
 
 
 def _clamp(s: dict) -> dict:
     out = dict(DEFAULTS)
     out.update({k: s[k] for k in DEFAULTS if k in s})
-    out["multiplier"] = max(2, min(4, int(out["multiplier"])))
+    if out["multiplier"] != "auto":
+        out["multiplier"] = max(2, min(3, int(out["multiplier"])))  # older versions went to 4
     out["flow_scale"] = round(max(0.25, min(1.0, float(out["flow_scale"]))), 2)
-    for k in ("enabled", "fifo", "preserve_images", "bypass_wsi"):
+    for k in ("enabled", "fifo", "preserve_images", "low_latency", "bypass_wsi"):
         out[k] = bool(out[k])
     if out["fps_cap"] not in FPS_CAPS:
         out["fps_cap"] = DEFAULTS["fps_cap"]
@@ -60,7 +64,13 @@ def _view(appid: int, s: dict) -> dict:
     live = _session.summary() if _session and _session.appid == appid else None
     return {**{k: s[k] for k in DEFAULTS}, "refresh": _refresh, "live": live,
             "measure": s.get("measure"),
-            "auto_cap": autocap.decide(s.get("measure"), _refresh, s["multiplier"], s.get("failed_caps", []))}
+            "auto_cap": _auto_cap(s)}
+
+
+def _auto_cap(s: dict) -> int | None:
+    if s["multiplier"] == "auto":
+        return None
+    return autocap.decide(s.get("measure"), _refresh, s["multiplier"], s.get("failed_caps", []))
 
 
 # ---------- per-game store ----------
@@ -90,7 +100,9 @@ def _fmt(v) -> str:
 
 
 def _sync(games: dict[int, dict]):
-    """One settings file per enabled game; the layer rereads it while the game runs."""
+    """One settings file per enabled game; the layer rereads it while the game runs.
+    Only the Adreno 750 and newer tell the layer the display's refresh rate, so with multiplier
+    auto it gets the one mangoapp reports (without one it measures it, and can settle too low)."""
     os.makedirs(CONF_DIR, exist_ok=True)
     for appid, s in games.items():
         path = os.path.join(CONF_DIR, f"{appid}.conf")
@@ -100,7 +112,10 @@ def _sync(games: dict[int, dict]):
             continue
         text = ("# Written by the Kettle Linux Frame Generation plugin\n"
                 f"multiplier = {s['multiplier']}\nflow_scale = {s['flow_scale']}\n"
-                f"fifo = {_fmt(s['fifo'])}\npreserve_images = {_fmt(s['preserve_images'])}\n")
+                f"fifo = {_fmt(s['fifo'])}\npreserve_images = {_fmt(s['preserve_images'])}\n"
+                f"latency = {'low' if s['low_latency'] else 'normal'}\n")
+        if s["multiplier"] == "auto" and _refresh_seen:
+            text += f"refresh = {_refresh}\n"
         try:
             with open(path, encoding="utf-8") as f:
                 if f.read() == text:
@@ -123,7 +138,10 @@ class _Session:
         self.start = time.monotonic()
         self.samples: list[float] = []
 
-    def add(self, fps: float, multiplier: int):
+    def add(self, fps: float, multiplier: int | str):
+        # with multiplier auto the base rate isn't known here: the layer changes it as it goes
+        if self.fg and multiplier == "auto":
+            return
         if time.monotonic() - self.start >= autocap.WARMUP_S and fps > 1:
             self.samples.append(fps / multiplier if self.fg else fps)
 
@@ -172,12 +190,11 @@ def _finish_session():
     g["measure"] = summary
     games[s.appid] = g
     _save_games(games)
-    decky.logger.info("frame rate %s: %s -> auto cap %s", s.appid, summary,
-                      autocap.decide(summary, _refresh, g["multiplier"], g["failed_caps"]))
+    decky.logger.info("frame rate %s: %s -> auto cap %s", s.appid, summary, _auto_cap(g))
 
 
 async def _sampler():
-    global _session, _refresh
+    global _session, _refresh, _refresh_seen
     while True:
         await asyncio.sleep(SAMPLE_S)
         try:
@@ -186,7 +203,9 @@ async def _sampler():
             d = _read_fps()
             if not d or d["age"] > 3 * SAMPLE_S or d["steam"]:
                 continue  # no frames lately, or Steam's UI in front of the game
-            _refresh = d["refresh"] or _refresh
+            if d["refresh"] and (d["refresh"] != _refresh or not _refresh_seen):
+                _refresh, _refresh_seen = d["refresh"], True
+                _sync(_load_games())  # refresh for multiplier auto
             if not _session or _session.pid != d["pid"]:
                 game = _game_of(d["pid"])
                 if not game:

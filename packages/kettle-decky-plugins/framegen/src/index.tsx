@@ -8,14 +8,15 @@ import { GamePicker, InstalledGame, gameName, runningAppId, useSelectedGame } fr
 type Status = { layer: boolean; enabled_games: number[] };
 type Game = {
   enabled: boolean;
-  multiplier: number;
+  multiplier: number | "auto";
   flow_scale: number;
   fifo: boolean;
   preserve_images: boolean;
+  low_latency: boolean;
   bypass_wsi: boolean;
   fps_cap: string;
   // from the backend: automatic cap and what it's based on
-  auto_cap: number;
+  auto_cap: number | null; // null with multiplier auto: the layer paces the game itself
   refresh: number;
   measure: Measure | null;
   live: Measure | null;
@@ -48,11 +49,20 @@ const FPS_CAPS = [
   { data: "40", label: "40 fps" },
   { data: "60", label: "60 fps" },
 ];
+const MULTIPLIERS = [
+  { data: "auto", label: "Auto" },
+  { data: 2, label: "2×" },
+  { data: 3, label: "3×" },
+];
 const baseCap = (g: Game): string | null =>
-  g.fps_cap === "off" ? null : g.fps_cap === "auto" ? String(g.auto_cap) : g.fps_cap;
+  g.fps_cap === "off" ? null : g.fps_cap === "auto" ? (g.auto_cap ? String(g.auto_cap) : null) : g.fps_cap;
 
 function capDescription(g: Game): string {
   const cap = baseCap(g);
+  if (g.multiplier === "auto") {
+    if (g.fps_cap === "auto") return `No cap: the layer holds the game at what fills the ${g.refresh} Hz display.`;
+    return `${cap ? `${cap} fps` : "No cap"}. Leave Steam's frame limit off.`;
+  }
   const m = g.live ?? g.measure;
   const seen = m ? `${g.live ? "running at" : "last ran at"} ~${Math.round(m.base)} fps` : "not measured yet";
   const shown = cap ? ` → ${Number(cap) * g.multiplier} fps shown` : "";
@@ -126,17 +136,16 @@ function GameSettings({ appid, name, s, onChanged }: { appid: number; name: stri
         />
       </PanelSectionRow>
       <PanelSectionRow>
-        <SliderField
+        <DropdownItem
           label="Multiplier"
-          description="Frames shown per rendered frame. Above 2× needs a high base frame rate, or motion warps."
-          value={g.multiplier}
-          min={2}
-          max={4}
-          step={1}
-          notchCount={3}
-          notchLabels={[2, 3, 4].map((v, i) => ({ notchIndex: i, label: `${v}×`, value: v }))}
-          notchTicksVisible
-          onChange={(multiplier) => update({ multiplier })}
+          description={
+            g.multiplier === "auto"
+              ? "The fewest frames per rendered frame that fill every refresh, up to 3×"
+              : "Frames shown per rendered frame. 3× needs a high base frame rate, or motion warps."
+          }
+          rgOptions={MULTIPLIERS}
+          selectedOption={g.multiplier}
+          onChange={(o) => update({ multiplier: o.data })}
         />
       </PanelSectionRow>
       <PanelSectionRow>
@@ -175,6 +184,14 @@ function GameSettings({ appid, name, s, onChanged }: { appid: number; name: stri
           description="Don't add swapchain images for generated frames (less latency, may stutter)"
           checked={g.preserve_images}
           onChange={(preserve_images) => update({ preserve_images })}
+        />
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <ToggleField
+          label="Low latency"
+          description="Hold the game until its previous frame is on screen. Less input lag, may lower the frame rate."
+          checked={g.low_latency}
+          onChange={(low_latency) => update({ low_latency })}
         />
       </PanelSectionRow>
       <PanelSectionRow>

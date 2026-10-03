@@ -4,8 +4,8 @@
 # Proton ARM64 games (x86 code via FEX inside Wine) use the native aarch64 Vulkan loader, so
 # this one layer covers them and native arm64 games.
 pkgname=kettle-framegen
-pkgver=0.1.0
-pkgrel=6
+pkgver=0.2.0
+pkgrel=1
 pkgdesc='Kettle Linux frame generation Vulkan layer'
 arch=(aarch64)
 url='https://github.com/kettlelinux/kettle-framegen'
