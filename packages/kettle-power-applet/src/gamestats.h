@@ -77,6 +77,7 @@ private:
     QString m_appid;
     QString m_name;
     bool m_layer = false; // the Frame Generation layer is loaded in the game
+    QString m_fgStatus;   // ...and the file it reports its multiplier in
     double m_fps = 0;
     double m_frameTime = 0;
     double m_low1 = 0;

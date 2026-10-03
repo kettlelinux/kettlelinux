@@ -8,7 +8,7 @@
 # Steam's values with Quick Access > Performance.
 pkgname=kettle-power-applet
 pkgver=1.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Kettle Linux power, fan and clock controls: the desktop tray applet and the Performance app'
 arch=(aarch64)
 license=(BSD-3-Clause)

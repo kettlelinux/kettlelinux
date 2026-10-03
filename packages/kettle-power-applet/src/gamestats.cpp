@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFile>
 #include <QRegularExpression>
+#include <QStandardPaths>
 
 #include <algorithm>
 
@@ -88,11 +89,15 @@ void GameStats::identify(uint pid)
     m_appid.clear();
     m_name.clear();
     m_layer = false;
+    m_fgStatus.clear();
     m_frameTimes.clear();
     if (!pid)
         return;
     const QString proc = QStringLiteral("/proc/%1/").arg(pid);
+    QString runtimeDir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
     for (const QByteArray &var : readFile(proc + QStringLiteral("environ")).split('\0')) {
+        if (var.startsWith("XDG_RUNTIME_DIR="))
+            runtimeDir = QString::fromUtf8(var.mid(16));
         if (var.startsWith("SteamAppId=")) {
             const QByteArray id = var.mid(11);
             if (!id.isEmpty() && id != "0")
@@ -100,6 +105,10 @@ void GameStats::identify(uint pid)
         }
     }
     m_layer = readFile(proc + QStringLiteral("maps")).contains("libVkLayer_kettle_framegen");
+    // in the game's runtime dir, which Proton's container (pressure-vessel) keeps apart from
+    // ours: read it through the game's root
+    if (m_layer)
+        m_fgStatus = proc + QStringLiteral("root") + runtimeDir + QStringLiteral("/kettle-framegen/%1").arg(pid);
     m_name = nameOf(m_appid);
     if (m_name.isEmpty())
         m_name = QString::fromUtf8(readFile(proc + QStringLiteral("comm")).trimmed());
@@ -178,12 +187,12 @@ void GameStats::poll()
         m_low1 = 0;
     }
 
-    // the multiplier is the Frame Generation plugin's, reread while the game runs
+    // the multiplier in use, as the layer reports it (with multiplier = auto it changes as the
+    // game runs)
     m_frameGen = 0;
-    if (m_layer && !m_appid.isEmpty()) {
-        static const QRegularExpression multRe(QStringLiteral("^\\s*multiplier\\s*=\\s*(\\d+)"), QRegularExpression::MultilineOption);
-        const QString conf = QString::fromUtf8(readFile(QDir::homePath() + QStringLiteral("/.config/kettle-framegen/%1.conf").arg(m_appid)));
-        const auto m = multRe.match(conf);
+    if (!m_fgStatus.isEmpty()) {
+        static const QRegularExpression multRe(QStringLiteral("^multiplier=(\\d+)"), QRegularExpression::MultilineOption);
+        const auto m = multRe.match(QString::fromLatin1(readFile(m_fgStatus)));
         if (m.hasMatch())
             m_frameGen = m.captured(1).toInt();
     }

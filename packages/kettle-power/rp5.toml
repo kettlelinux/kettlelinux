@@ -19,7 +19,8 @@ load = "/sys/kernel/debug/dri/ae01000.display-controller/perf_now"
 # lowest clock offered for a fixed (manual) GPU clock, MHz
 manual_min_mhz = 305
 # highest clock in auto and for the TDP limit, MHz: 670, the SD870's stock top (in mainline's
-# A650 table). Skyrim SE on a charging RP5 at 670: GPU 73 C, fan level 6 (587: 67 C). The
+# A650 table). Skyrim SE on battery, same spot: 587 MHz 23.5 fps at 5.8 W, GPU 62 C; 670 MHz
+# 25.8 fps (+10%) at 6.8 W, GPU 67 C. Voting DDR's top level at 670 gained nothing. The
 # overclock OPPs above it (kernel 21-sm8250/0111, to 750 MHz, with ACD from 0112) are only for
 # a manual GPU clock, which Steam keeps per game. Tested in Cleared Hot on a charging RP5 with
 # ACD: 700 MHz +10%, 750 MHz +11% fps, GPU at most 80 C (the passive trip is 85 C), no GPU
