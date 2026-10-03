@@ -1,0 +1,6 @@
+# Keep the SoC temperature sensors (Qualcomm TSENS) from waking the system. On suspend the driver
+# arms its threshold interrupt as a wake source, so a SoC sitting near a trip point (warm from
+# charging, next to the RP5's 45 C fan trip) crosses it within seconds and s2idle resumes in
+# full: the screen comes back on. A wake can't cool anything down, and the hardware still
+# resets the SoC on its own if it overheats.
+ACTION=="bind", SUBSYSTEM=="platform", DRIVER=="qcom-tsens", ATTR{power/wakeup}="disabled"

@@ -24,7 +24,7 @@ setting instead, from the device's `device.conf` or one of its overlay's files.
 ## What a device directory holds
 | File | What it is | Read by |
 |---|---|---|
-| `device.conf` | `MODEL`, `DTB`, `ABL_DTBS`, `RAUC_COMPATIBLE`, `PAD_NAME`, `FACE_BUTTONS` (all required); `DTB_ALT` (optional) | `scripts/build-image.sh`; installed in the image as `/usr/lib/kettle/device.conf` |
+| `device.conf` | `MODEL`, `DTB`, `ABL_DTBS`, `RAUC_COMPATIBLE`, `PAD_NAME`, `FACE_BUTTONS` (all required); `DTB_ALT`, `CMDLINE_EXTRA` (optional) | `scripts/build-image.sh`; installed in the image as `/usr/lib/kettle/device.conf` |
 | `packages.txt` | packages only this device's image gets, added to `image/packages.txt` | `scripts/build-image.sh` |
 | `overlay/` | files copied over `device/common/overlay` | `scripts/build-image.sh` |
 | `overlay/usr/lib/kettle/gamescope.conf` | Game Mode's screen: `GAMESCOPE_ORIENTATION`, `GAMESCOPE_OUTPUT`, a second screen's `GAMESCOPE_LEASE_*` (required) | `gamescope-session` |
@@ -45,6 +45,8 @@ Devicetree settings (the image build copies them into `/usr/lib/kettle/boot.conf
 - `DTB_ALT`: revisions of the device that nothing can tell apart before the kernel runs, as
   `NAME:DTB` pairs (the RP5's `visionox:...-rp5-visionox.dtb`). An empty file `NAME` or `NAME.txt`
   in the top folder of the KETTLE partition makes GRUB and extlinux boot that DTB instead.
+- `CMDLINE_EXTRA`: kernel options for this device only, appended to boot.conf's shared `CMDLINE`
+  (the SM8550 devices' `pcie_ports=compat`).
 - `PAD_NAME` also goes into the udev rule that keeps the pad a joystick
   (`60-input-kettle-gamepad.rules`).
 
