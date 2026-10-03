@@ -11,8 +11,8 @@
 class QQuickWindow;
 
 // What the QML side can't do itself: start apps and settings modules, remember the "show at
-// login" choice, set what the device starts up in, switch the SSH server, and run welcome-flatpak (Gaming Extras)
-// without blocking the UI.
+// login" choice, set what the device starts up in, switch the SSH server, and run welcome-flatpak and
+// welcome-proton (Gaming Extras) without blocking the UI.
 class Backend : public QObject
 {
     Q_OBJECT
@@ -21,6 +21,12 @@ class Backend : public QObject
     // welcome-flatpak's status line: idle | running I N ID | done N | error ID MESSAGE
     Q_PROPERTY(QString installStatus READ installStatus NOTIFY installStatusChanged)
     Q_PROPERTY(QString screenshotDir READ screenshotDir CONSTANT)
+    // welcome-proton: "TOOL NAME" per installed build, newest first; tool -> newest release's
+    // folder name ("-" when it couldn't be looked up, missing until then); the status line:
+    // idle | running TOOL download BYTES TOTAL | running TOOL unpack | done TOOL NAME | error TOOL MESSAGE
+    Q_PROPERTY(QStringList protonInstalled READ protonInstalled NOTIFY protonInstalledChanged)
+    Q_PROPERTY(QVariantMap protonLatest READ protonLatest NOTIFY protonLatestChanged)
+    Q_PROPERTY(QString protonStatus READ protonStatus NOTIFY protonStatusChanged)
     // steamos-manager's default login mode: game | desktop, empty while unknown
     Q_PROPERTY(QString bootMode READ bootMode WRITE setBootMode NOTIFY bootModeChanged)
     // the SSH server (sshd.service) enabled and running; sshBusy while a change is pending
@@ -44,6 +50,9 @@ public:
     QStringList installedApps() const { return m_installedApps; }
     QString installStatus() const { return m_installStatus; }
     QString screenshotDir() const { return m_screenshotDir; }
+    QStringList protonInstalled() const { return m_protonInstalled; }
+    QVariantMap protonLatest() const { return m_protonLatest; }
+    QString protonStatus() const { return m_protonStatus; }
     QString bootMode() const { return m_bootMode; }
     void setBootMode(const QString &mode);
     bool sshEnabled() const { return m_sshEnabled; }
@@ -66,6 +75,11 @@ public:
     Q_INVOKABLE void installApps(const QStringList &ids);
     Q_INVOKABLE void refreshApps();
 
+    // tool: ge | cachyos. refreshProton looks up the newest releases too (network).
+    Q_INVOKABLE void installProton(const QString &tool);
+    Q_INVOKABLE void removeProton(const QString &name);
+    Q_INVOKABLE void refreshProton();
+
     Q_INVOKABLE bool saveScreenshot(QQuickWindow *window, const QString &name);
 
     // kettle-android-games COMMAND ARG (add FILE, fdroid-search TEXT, fdroid-add PACKAGE); its
@@ -76,6 +90,9 @@ Q_SIGNALS:
     void showAtLoginChanged();
     void installedAppsChanged();
     void installStatusChanged();
+    void protonInstalledChanged();
+    void protonLatestChanged();
+    void protonStatusChanged();
     void bootModeChanged();
     void sshChanged();
     // a second start (menu entry, Gaming Extras entry) asks the open window to show a page
@@ -89,6 +106,10 @@ private:
     void run(const QString &program, const QStringList &args, std::function<void(int, const QString &, const QString &)> done,
              std::function<void(const QByteArray &)> stderrLine = {});
     void runHelper(const QStringList &args, std::function<void(int, const QString &, const QString &)> done);
+    void runProtonHelper(const QStringList &args, std::function<void(int, const QString &, const QString &)> done);
+    void refreshProtonInstalled();
+    void pollProton();
+    void setProtonStatus(const QString &status);
     void refreshBootMode();
     void refreshSsh();
     void pollStatus();
@@ -104,4 +125,8 @@ private:
     double m_androidDownloaded = 0;
     double m_androidDownloadTotal = 0;
     QTimer m_poll;
+    QStringList m_protonInstalled;
+    QVariantMap m_protonLatest;
+    QString m_protonStatus = QStringLiteral("idle");
+    QTimer m_protonPoll;
 };

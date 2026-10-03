@@ -1,0 +1,67 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] tty: serial: qcom-geni: power down open ports in system suspend
+
+uart_suspend_port() turns an open port off through qcom_geni_serial_pm(),
+which drops the port's runtime PM reference with pm_runtime_put_sync().
+During system suspend the PM core holds a runtime PM reference of its
+own (device_prepare()), so the runtime suspend never runs and
+geni_serial_resources_off() is never called: the SE clocks, the OPP
+(CX) vote and the QUP-core and config NoC interconnect votes stay on
+through s2idle. On the Retroid Pocket 5 the Bluetooth UART (3000 kBps)
+and the gamepad UART (115 kBps) keep the QUP0, CN0 and SN11 BCMs voted
+in the RPMh sleep set, and the SoC never reaches CX collapse
+(qcom_stats aosd/cxsd stay at 0).
+
+Force the runtime suspend in the late phase, after uart_suspend_port()
+has shut the port down, and force the resume in the early phase, before
+uart_resume_port() powers the port back on. Consoles keep their own
+handling (an ACTIVE_ONLY interconnect tag in qcom_geni_serial_suspend()).
+
+---
+--- a/drivers/tty/serial/qcom_geni_serial.c
++++ b/drivers/tty/serial/qcom_geni_serial.c
+@@ -2030,6 +2030,35 @@
+ 	return ret;
+ }
+ 
++/*
++ * uart_suspend_port() releases the port's runtime PM reference
++ * (qcom_geni_serial_pm(OFF)), but the PM core holds one of its own for the
++ * whole system transition, so the runtime suspend never runs: an open port
++ * (a serdev peer such as Bluetooth or a gamepad MCU) keeps its SE clocks, its
++ * OPP vote and its QUP/config NoC interconnect votes through s2idle, and the
++ * SoC can't power-collapse CX. Run the runtime suspend here instead, once
++ * uart_suspend_port() has shut the port down. Consoles keep their own path.
++ */
++static int qcom_geni_serial_suspend_late(struct device *dev)
++{
++	struct qcom_geni_serial_port *port = dev_get_drvdata(dev);
++
++	if (uart_console(&port->uport))
++		return 0;
++
++	return pm_runtime_force_suspend(dev);
++}
++
++static int qcom_geni_serial_resume_early(struct device *dev)
++{
++	struct qcom_geni_serial_port *port = dev_get_drvdata(dev);
++
++	if (uart_console(&port->uport))
++		return 0;
++
++	return pm_runtime_force_resume(dev);
++}
++
+ #if IS_ENABLED(CONFIG_SERIAL_QCOM_GENI_CONSOLE)
+ static const struct qcom_geni_device_data qcom_geni_console_data = {
+ 	.console = true,
+@@ -2076,6 +2105,8 @@
+ 	SET_RUNTIME_PM_OPS(qcom_geni_serial_runtime_suspend,
+ 			   qcom_geni_serial_runtime_resume, NULL)
+ 	SYSTEM_SLEEP_PM_OPS(qcom_geni_serial_suspend, qcom_geni_serial_resume)
++	LATE_SYSTEM_SLEEP_PM_OPS(qcom_geni_serial_suspend_late,
++				 qcom_geni_serial_resume_early)
+ };
+ 
+ static const struct of_device_id qcom_geni_serial_match_table[] = {

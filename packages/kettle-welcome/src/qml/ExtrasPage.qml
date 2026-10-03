@@ -2,6 +2,9 @@
 // Gaming Extras: optional apps from Flathub, installed for this user only. Every app listed
 // has an aarch64 build on Flathub; x86-only ones (PCSX2, DuckStation, Cemu, Bottles, ...) are
 // left out. The installs run in welcome-flatpak, outside this window, so closing it is fine.
+// Below them, community Proton builds for Steam (ProtonSection, welcome-proton).
+// Game Mode's Welcome (kettle-decky-plugins welcome/src/extras.tsx) offers the ones that work with
+// a controller: keep the two lists in step.
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
@@ -177,5 +180,9 @@ BasePage {
                 }
             }
         }
+    }
+
+    ProtonSection {
+        maximumWidth: page.width
     }
 }

@@ -1,0 +1,154 @@
+#!/bin/bash
+# Installs the community Proton builds that have ARM64 releases (GE-Proton, Proton-CachyOS) into
+# Steam's compatibilitytools.d, for the calling user only (no root). Downloads the latest release
+# from the project's own GitHub releases and checks it against the sha512sum published with it.
+#
+#   welcome-proton start TOOL     install in the background (a transient systemd user unit, so it
+#                                 carries on when the Welcome Center is closed)
+#   welcome-proton install TOOL   install in the foreground (what the unit runs)
+#   welcome-proton status         one line: idle | running TOOL download BYTES TOTAL |
+#                                 running TOOL unpack | done TOOL NAME | error TOOL MESSAGE
+#   welcome-proton latest         TOOL NAME per line, the newest release's folder name (- if unknown)
+#   welcome-proton installed      TOOL NAME per line, newest first
+#   welcome-proton remove NAME    delete an installed build
+# TOOL is ge or cachyos.
+set -uo pipefail
+
+dir="${XDG_RUNTIME_DIR:-/tmp}/kettle-welcome"
+state="$dir/proton.status"
+partial="$dir/proton.partial"   # path of the download in progress, for status
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/kettle-welcome"
+unit=kettle-welcome-proton
+tools=(ge cachyos)
+mkdir -p "$dir"
+
+# Steam's own folder for user compatibility tools (~/.steam/root links to it once Steam has run)
+if [ -d "$HOME/.steam/root" ]; then
+  compat="$HOME/.steam/root/compatibilitytools.d"
+else
+  compat="$HOME/.local/share/Steam/compatibilitytools.d"
+fi
+
+# per tool: GitHub repository, release asset (the folder it unpacks to plus this), folder glob
+repo()  { case $1 in ge) echo GloriousEggroll/proton-ge-custom ;; cachyos) echo CachyOS/proton-cachyos ;; esac; }
+asset() { case $1 in ge) echo '-aarch64\.tar\.gz$' ;; cachyos) echo '-arm64\.tar\.xz$' ;; esac; }
+glob()  { case $1 in ge) echo 'GE-Proton*-aarch64' ;; cachyos) echo 'proton-cachyos-*-arm64' ;; esac; }
+
+check_tool() {
+  [[ " ${tools[*]} " == *" ${1:-} "* ]] || { echo "not a tool: ${1:-}" >&2; exit 2; }
+}
+
+# the newest release (not a draft or pre-release) with an ARM64 build: "NAME URL SIZE SUMURL"
+latest_release() {
+  curl -fsSL --max-time 30 -H 'Accept: application/vnd.github+json' \
+      "https://api.github.com/repos/$(repo "$1")/releases?per_page=10" |
+    jq -r --arg re "$(asset "$1")" '
+      [.[] | select(.draft | not) | select(.prerelease | not)
+           | . as $r | ($r.assets[] | select(.name | test($re))) as $a
+           | ($r.assets[] | select(.name == ($a.name | sub("\\.tar\\.[gx]z$"; ".sha512sum")))) as $s
+           | [($a.name | sub("\\.tar\\.[gx]z$"; "")), $a.browser_download_url, $a.size, $s.browser_download_url]
+      ] | first // empty | @tsv'
+}
+
+installed() {
+  local t g
+  for t in "${tools[@]}"; do
+    g=$(glob "$t")
+    # shellcheck disable=SC2086  # the glob is meant to expand
+    for d in "$compat"/$g; do
+      if [ -d "$d" ]; then echo "$t ${d##*/}"; fi
+    done | sort -k2 -rV
+  done
+}
+
+fail() {  # TOOL MESSAGE
+  echo "error $1 $2" >"$state"
+  rm -f "$partial"
+  exit 1
+}
+
+case "${1:-}" in
+  start)
+    check_tool "${2:-}"
+    systemctl --user -q is-active "$unit" && { echo "already installing" >&2; exit 1; }
+    echo "running $2 download 0 0" >"$state"
+    rm -f "$partial"
+    if ! systemd-run --user --collect --quiet --unit="$unit" "$(realpath "$0")" install "$2"; then
+      echo "error $2 Could not start the installation." >"$state"
+      exit 1
+    fi
+    ;;
+  install)
+    t="${2:-}"; check_tool "$t"
+    echo "running $t download 0 0" >"$state"
+    rel=$(latest_release "$t") && [ -n "$rel" ] ||
+      fail "$t" "Could not find the latest release. Check the internet connection."
+    IFS=$'\t' read -r name url size sumurl <<<"$rel"
+    [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || fail "$t" "Unexpected release name: $name"
+    file="$cache/${url##*/}"
+
+    # room for the download and what it unpacks to (about three times its size)
+    mkdir -p "$cache" "$compat"
+    free=$(df -B1 --output=avail "$compat" | tail -n 1)
+    [ "$free" -gt $((size * 4)) ] ||
+      fail "$t" "Not enough free space: $((size * 4 / 1073741824 + 1)) GB needed."
+
+    echo "$file" >"$partial"
+    echo "running $t download 0 $size" >"$state"
+    sum=$(curl -fsSL --max-time 60 "$sumurl") || fail "$t" "Could not download the checksum."
+    curl -fsSL --retry 3 -o "$file" "$url" || { rm -f "$file"; fail "$t" "The download failed. Check the internet connection."; }
+    rm -f "$partial"
+    echo "${sum%% *}  $file" | sha512sum -c --status - ||
+      { rm -f "$file"; fail "$t" "The download is damaged (checksum mismatch). Try again."; }
+
+    # unpack next to the final folder, then move it in, so Steam never sees half a tool
+    echo "running $t unpack" >"$state"
+    tmp=$(mktemp -d "$compat/.kettle-unpack.XXXXXX")
+    if ! tar -xf "$file" -C "$tmp" || [ ! -f "$tmp/$name/proton" ]; then
+      rm -rf "$tmp" "$file"
+      fail "$t" "Could not unpack the download (is the disk full?)."
+    fi
+    rm -rf "${compat:?}/$name"
+    mv "$tmp/$name" "$compat/$name"
+    rm -rf "$tmp" "$file"
+    echo "done $t $name" >"$state"
+    ;;
+  status)
+    if [ -f "$state" ]; then
+      read -r line <"$state"
+      if [[ $line == running* ]]; then
+        # a run that died without saying so (the unit was stopped, or the user logged out)
+        if ! systemctl --user -q is-active "$unit"; then
+          read -r _ t _ <<<"$line"
+          line="error $t The installation stopped unexpectedly."
+        elif [[ $line == "running "*" download "* ]] && [ -f "$partial" ]; then
+          read -r _ t _ _ total <<<"$line"
+          f=$(<"$partial")
+          line="running $t download $(stat -c %s "$f" 2>/dev/null || echo 0) $total"
+        fi
+      fi
+      echo "$line"
+    else
+      echo idle
+    fi
+    ;;
+  latest)
+    for t in "${tools[@]}"; do
+      rel=$(latest_release "$t")
+      echo "$t ${rel%%$'\t'*}" | sed 's/ $/ -/'
+    done
+    ;;
+  installed)
+    installed
+    ;;
+  remove)
+    name="${2:-}"
+    installed | awk '{print $2}' | grep -qxF -- "$name" || { echo "not installed: $name" >&2; exit 2; }
+    systemctl --user -q is-active "$unit" && { echo "an installation is running" >&2; exit 1; }
+    rm -rf "${compat:?}/$name"
+    ;;
+  *)
+    sed -n '2,14p' "$0" >&2
+    exit 2
+    ;;
+esac

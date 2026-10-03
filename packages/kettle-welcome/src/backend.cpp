@@ -19,6 +19,7 @@
 namespace
 {
 const QString helper = QStringLiteral(KETTLE_LIBDIR "/welcome-flatpak");
+const QString protonHelper = QStringLiteral(KETTLE_LIBDIR "/welcome-proton");
 const QString steamosctl = QStringLiteral("steamosctl");
 const QString androidGamesHelper = QStringLiteral("/usr/bin/kettle-android-games");
 
@@ -36,6 +37,10 @@ Backend::Backend(const QString &screenshotDir, QObject *parent)
     connect(&m_poll, &QTimer::timeout, this, &Backend::pollStatus);
     refreshApps();
     pollStatus(); // picks up an install started before the window was reopened
+    m_protonPoll.setInterval(1000);
+    connect(&m_protonPoll, &QTimer::timeout, this, &Backend::pollProton);
+    refreshProtonInstalled();
+    pollProton();
     refreshBootMode();
     refreshSsh();
 }
@@ -201,6 +206,80 @@ void Backend::setInstallStatus(const QString &status)
         return;
     m_installStatus = status;
     Q_EMIT installStatusChanged();
+}
+
+void Backend::installProton(const QString &tool)
+{
+    if (m_protonStatus.startsWith(QLatin1String("running")))
+        return;
+    setProtonStatus(QStringLiteral("running %1 download 0 0").arg(tool));
+    runProtonHelper({QStringLiteral("start"), tool}, [this, tool](int code, const QString &, const QString &err) {
+        if (code != 0) {
+            setProtonStatus(QStringLiteral("error %1 ").arg(tool) + (err.isEmpty() ? QStringLiteral("Could not start the installation.") : err));
+            return;
+        }
+        m_protonPoll.start();
+    });
+}
+
+void Backend::removeProton(const QString &name)
+{
+    runProtonHelper({QStringLiteral("remove"), name}, [this](int, const QString &, const QString &) {
+        refreshProtonInstalled();
+    });
+}
+
+void Backend::refreshProton()
+{
+    refreshProtonInstalled();
+    runProtonHelper({QStringLiteral("latest")}, [this](int, const QString &out, const QString &) {
+        QVariantMap latest;
+        const QStringList lines = out.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        for (const QString &line : lines) {
+            const QStringList parts = line.split(QLatin1Char(' '));
+            if (parts.size() == 2)
+                latest.insert(parts[0], parts[1]);
+        }
+        m_protonLatest = latest;
+        Q_EMIT protonLatestChanged();
+    });
+}
+
+void Backend::refreshProtonInstalled()
+{
+    runProtonHelper({QStringLiteral("installed")}, [this](int, const QString &out, const QString &) {
+        const QStringList builds = out.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        if (builds != m_protonInstalled) {
+            m_protonInstalled = builds;
+            Q_EMIT protonInstalledChanged();
+        }
+    });
+}
+
+void Backend::pollProton()
+{
+    runProtonHelper({QStringLiteral("status")}, [this](int, const QString &out, const QString &) {
+        setProtonStatus(out.isEmpty() ? QStringLiteral("idle") : out);
+        if (m_protonStatus.startsWith(QLatin1String("running"))) {
+            m_protonPoll.start();
+        } else {
+            m_protonPoll.stop();
+            refreshProtonInstalled();
+        }
+    });
+}
+
+void Backend::setProtonStatus(const QString &status)
+{
+    if (status == m_protonStatus)
+        return;
+    m_protonStatus = status;
+    Q_EMIT protonStatusChanged();
+}
+
+void Backend::runProtonHelper(const QStringList &args, std::function<void(int, const QString &, const QString &)> done)
+{
+    run(protonHelper, args, std::move(done));
 }
 
 void Backend::runHelper(const QStringList &args, std::function<void(int, const QString &, const QString &)> done)
