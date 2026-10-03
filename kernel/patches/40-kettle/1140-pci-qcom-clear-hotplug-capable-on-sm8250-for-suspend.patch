@@ -1,0 +1,54 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] PCI: qcom: clear Hot-Plug Capable on SM8250 so suspend can power PCIe down
+
+The SM8250 Root Port advertises Hot-Plug Capable, though on the Retroid
+Pocket 5 its only endpoint, the QCA6390 Wi-Fi, is soldered down. With
+no pciehp driving the port, pci_bridge_d3_possible() refuses D3 for it
+(and pcie_port_pm=force can't override that), so during system suspend
+the port stays in D0, pci_host_common_d3cold_possible() fails, and
+dw_pcie_suspend_noirq() keeps the link up with its interconnect and CX
+votes. The SoC then never reaches CX collapse or DDR self-refresh in
+s2idle (qcom_stats aosd/cxsd/ddr stay at 0).
+
+Clear HPC on SM8250, as mainline did before it switched to setting NCCS.
+
+---
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -377,6 +377,27 @@
+ 	dw_pcie_dbi_ro_wr_dis(pci);
+ }
+ 
++/*
++ * The SM8250 Root Port's only endpoint (the QCA6390 Wi-Fi) is soldered down, but the port
++ * advertises Hot-Plug Capable. Without pciehp driving it, pci_bridge_d3_possible() never lets
++ * such a port into D3, so on suspend dw_pcie_suspend_noirq() finds the bus can't go to D3cold
++ * and keeps the link, its interconnect votes and CX up: the SoC never reaches CX collapse and
++ * s2idle drains the battery. Clear HPC, as mainline did before it started setting NCCS.
++ */
++static void qcom_pcie_clear_hpc(struct dw_pcie *pci)
++{
++	u16 offset = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
++	u32 val;
++
++	dw_pcie_dbi_ro_wr_en(pci);
++
++	val = readl(pci->dbi_base + offset + PCI_EXP_SLTCAP);
++	val &= ~PCI_EXP_SLTCAP_HPC;
++	writel(val, pci->dbi_base + offset + PCI_EXP_SLTCAP);
++
++	dw_pcie_dbi_ro_wr_dis(pci);
++}
++
+ static void qcom_pcie_configure_dbi_base(struct qcom_pcie *pcie)
+ {
+ 	struct dw_pcie *pci = pcie->pci;
+@@ -1079,6 +1100,8 @@
+ 				pcie->parf + PARF_NO_SNOOP_OVERRIDE);
+ 
+ 	qcom_pcie_set_slot_nccs(pcie->pci);
++	if (of_device_is_compatible(pcie->pci->dev->of_node, "qcom,pcie-sm8250"))
++		qcom_pcie_clear_hpc(pcie->pci);
+ 
+ 	return 0;
+ }
