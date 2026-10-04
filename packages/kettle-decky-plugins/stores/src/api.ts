@@ -8,7 +8,7 @@ export const NAMES: Record<Store, string> = { epic: "Epic Games", gog: "GOG", am
 // kind: an install or an update; base: where it installs (the running job only)
 export type Job = { store: Store; id: string; title: string; kind: "install" | "update"; percent?: number; eta?: string; speed?: number };
 export type Login = { store: Store | null; state: "idle" | "waiting" | "done" | "failed"; error: string };
-export type Status = { users: Record<Store, string | null>; job: Job | null; queue: Job[]; login: Login };
+export type Status = { users: Record<Store, string | null>; job: Job | null; queue: Job[]; login: Login; cloud_saves: boolean };
 
 // note: why it can't be installed here ("" if it can); busy: queued or running ("install"|"update")
 export type Game = {
@@ -36,6 +36,7 @@ export const gameInfo = callable<[store: Store, id: string], GameInfo>("game_inf
 export const details = callable<[store: Store, id: string], Details>("details");
 export const locations = callable<[], { locations: Location[]; current: string }>("locations");
 export const setLocation = callable<[path: string], void>("set_location");
+export const setCloudSaves = callable<[on: boolean], void>("set_cloud_saves");
 export const install = callable<[store: Store, id: string, title: string, kind: "install" | "update"], void>("install");
 export const cancel = callable<[store: Store, id: string], void>("cancel");
 export const uninstall = callable<[store: Store, id: string], number | null>("uninstall");

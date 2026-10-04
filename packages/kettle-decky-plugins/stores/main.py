@@ -22,6 +22,7 @@
 #   queue      waiting installs and updates: {"store", "id", "title", "kind": "install"|"update"}
 #   job        the one running (same fields)
 #   install_dir  where new games go (default ~/Games/Heroic, Heroic's default)
+#   cloud_saves  false: kettle-store-run doesn't sync saves (it reads this file; default on)
 import asyncio, base64, glob, json, os, re, shutil, subprocess, time, urllib.parse, urllib.request
 
 import decky
@@ -622,7 +623,8 @@ class Plugin:
         job = s.get("job")
         if job:
             job = dict(job, **_progress(_log_tail()))
-        return {"users": _users(), "job": job, "queue": s.get("queue", []), "login": self.login}
+        return {"users": _users(), "job": job, "queue": s.get("queue", []), "login": self.login,
+                "cloud_saves": s.get("cloud_saves", True) is not False}
 
     async def login_start(self, store: str) -> str:
         """The store's login page (the frontend opens it in Steam's browser); a task waits for the sign-in."""
@@ -698,6 +700,12 @@ class Plugin:
     async def locations(self) -> dict:
         return {"locations": await asyncio.to_thread(_locations),
                 "current": self._state().get("install_dir") or DEFAULT_DIR}
+
+    async def set_cloud_saves(self, on: bool):
+        async with self.lock:
+            s = self._state()
+            s["cloud_saves"] = bool(on)
+            self._save(s)
 
     async def set_location(self, path: str):
         async with self.lock:

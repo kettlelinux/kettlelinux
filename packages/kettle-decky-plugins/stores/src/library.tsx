@@ -9,10 +9,11 @@ import {
   ProgressBarWithInfo,
   SidebarNavigation,
   TextField,
+  ToggleField,
 } from "@decky/ui";
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { FaBoxOpen, FaCompactDisc, FaDownload, FaStore, FaUserCircle } from "react-icons/fa";
-import { Game, Job, NAMES, STORES, Store, cancel, library, locations, logout, setLocation, size, status } from "./api";
+import { Game, Job, NAMES, STORES, Store, cancel, library, locations, logout, setCloudSaves, setLocation, size, status } from "./api";
 import { ROUTE, act, dim, openGame, signIn, small, usePoll } from "./ui";
 
 const CSS = `
@@ -144,6 +145,13 @@ function DownloadsTab() {
           </DialogButton>
         </Field>
       ))}
+      <h3 style={{ margin: "24px 0 4px" }}>Cloud saves</h3>
+      <ToggleField
+        label="Sync saves with the store"
+        description="Epic and GOG games: newer saves from the store are downloaded before a game starts, and new ones uploaded after it closes. Amazon games keep their own."
+        checked={s.cloud_saves}
+        onChange={(on) => act(() => setCloudSaves(on), "Changing cloud saves failed")}
+      />
       {loc && (
         <>
           <h3 style={{ margin: "24px 0 4px" }}>Where games go</h3>
