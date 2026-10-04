@@ -11,6 +11,11 @@
 # who applies one from the database can say whether it worked for them too. Nothing is sent
 # unless the user asks. With a share or a vote goes the game's engine (gameengine.py: found from
 # its files, kept per Steam build in engines.json), so what works can be told apart by engine.
+#
+# With "Use verified settings automatically" on (off by default; settings.json), a game the
+# player hasn't changed gets the best verified entry for this device type, checked when it's
+# first seen and then daily. The player's own changes always win, and an entry they reset is
+# never put back.
 import asyncio
 import hashlib
 import json
@@ -31,12 +36,14 @@ GAMES = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "games.json")
 PROFILES = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "profiles.json")
 ENGINES = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "engines.json")
 INSTALL_ID = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "install-id")
+SETTINGS = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "settings.json")
 SERVER_CONF = "/usr/lib/kettle/games.conf"  # KETTLE_GAMES_URL=https://...; none: no database
 PLAYED_MIN_S = 300  # play time with a profile before it can be shared or confirmed
 CACHE_S = 600  # the database's answer for a game
 RATINGS = ("great", "playable")
 MAX_NOTES = 500
 MAX_PROFILES = 50
+AUTO_RECHECK_S = 86400  # a game's verified entries are looked at again after this
 
 EMPTY = {"settings": {}, "env": [], "dlls": [], "compat_tool": None}
 GAME_DEFAULTS = {
@@ -45,11 +52,14 @@ GAME_DEFAULTS = {
     # what was there before it (None: nothing), which the frontend puts back when it's dropped
     "owned": {"options": {}, "env": {}, "dlls": {}},
     "compat_before": None,  # Steam's tool before the plugin changed it ("" = Steam's default)
-    "source": None,         # {id, status, hash}: applied from the game database
+    "source": None,         # {id, status, hash, auto}: applied from the game database (auto: by
+                            # "Use verified settings automatically", not the player)
     "played": None,         # {hash, seconds, compat_tool}: play time with one profile
     "verdict": None,        # {hash, works}: the user's own verdict on a profile
     "shared": None,         # {id, hash}: shared to the game database
     "voted": [],            # database profiles this device confirmed or reported
+    "auto_skip": [],        # database profiles applied automatically that the player took off
+    "auto_checked": 0,      # when the game was last looked up for a verified entry
 }
 
 _cat = None
@@ -183,6 +193,9 @@ def _view(appid: int, g: dict) -> dict:
         "works": works,
         "broken": broken,
         "from_database": source,
+        # what automatic settings may replace: nothing the player set, only an untouched profile
+        # or one the switch applied
+        "auto_eligible": _is_empty(g) or bool(source and source.get("auto")),
         "is_shared": shared,
         "can_submit": bool(_server()) and works and seconds >= PLAYED_MIN_S and not shared and not source,
         "can_vote": bool(_server()) and bool(source) and source["id"] not in g["voted"] and seconds > 0,
@@ -369,7 +382,8 @@ class Plugin:
         if "source" in patch:
             s = patch["source"]
             g["source"] = ({"id": str(s["id"])[:32], "status": str(s.get("status", "pending"))[:16],
-                            "hash": profile_hash(g)} if isinstance(s, dict) and s.get("id") else None)
+                            "hash": profile_hash(g), "auto": bool(s.get("auto"))}
+                           if isinstance(s, dict) and s.get("id") else None)
         if "verdict" in patch:
             g["verdict"] = {"hash": profile_hash(g), "works": bool(patch["verdict"])} \
                 if patch["verdict"] is not None else None
@@ -381,7 +395,12 @@ class Plugin:
         """Forget a game's profile; what it has learnt about sharing and votes stays."""
         games = _load_games()
         old = games.get(appid) or GAME_DEFAULTS
-        games[appid] = {**GAME_DEFAULTS, "voted": old["voted"], "shared": old["shared"]}
+        skip = list(old.get("auto_skip") or [])
+        src = _view(appid, old)["from_database"] if appid in games else None
+        if src and src.get("auto") and src["id"] not in skip:
+            skip.append(src["id"])  # the player didn't want it: don't put it back
+        games[appid] = {**GAME_DEFAULTS, "voted": old["voted"], "shared": old["shared"],
+                        "auto_skip": skip[-50:], "auto_checked": old.get("auto_checked") or 0}
         _save_games(games)
         return _view(appid, games[appid])
 
@@ -399,6 +418,54 @@ class Plugin:
         g["played"] = played
         games[appid] = g
         _save_games(games)
+
+    # ----- verified settings automatically -----
+
+    async def get_auto(self) -> bool:
+        s = _read_json(SETTINGS, {})
+        return bool(s.get("auto_apply")) if isinstance(s, dict) else False
+
+    async def set_auto(self, on: bool) -> bool:
+        s = _read_json(SETTINGS, {})
+        s = s if isinstance(s, dict) else {}
+        s["auto_apply"] = bool(on)
+        _write_json(SETTINGS, s)
+        decky.logger.info("verified settings automatically: %s", "on" if on else "off")
+        return bool(on)
+
+    async def auto_pending(self, force: bool = False) -> list[dict]:
+        """Installed games the switch may give a verified entry now: ones the player hasn't
+        changed, not looked up in the last day (force: all of them), and the best verified
+        entry for this device type for each, if there's one other than what they have."""
+        if not await self.get_auto() or not _server():
+            return []
+        games = _load_games()
+        variant = _device()["variant"]
+        now = time.time()
+        out = []
+        for inst in steamlib.installed_games():
+            appid = inst["appid"]
+            g = games.get(appid) or {**GAME_DEFAULTS}
+            v = _view(appid, g)
+            if not v["auto_eligible"] or (not force and now - (g.get("auto_checked") or 0) < AUTO_RECHECK_S):
+                continue
+            try:
+                profiles = (await asyncio.to_thread(_fetch, appid))["profiles"]
+            except Exception as e:
+                decky.logger.warning("verified settings: %s: %r", appid, e)
+                continue
+            g["auto_checked"] = int(now)
+            games[appid] = g
+            ok = [p for p in profiles if p["status"] == "approved" and p["variant"] == variant
+                  and p["id"] not in (g.get("auto_skip") or [])]
+            if not ok:
+                continue
+            best = max(ok, key=lambda p: p["works"] - p["broken"])
+            current = v["from_database"]["id"] if v["from_database"] else None
+            if best["id"] != current:
+                out.append({"appid": appid, "name": inst["name"], "entry": best})
+        _save_games(games)
+        return out
 
     # ----- saved profiles -----
 

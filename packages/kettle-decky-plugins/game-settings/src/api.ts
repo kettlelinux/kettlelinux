@@ -21,7 +21,8 @@ export type Game = Profile & {
   played_min_s: number;
   works: boolean;
   broken: boolean;
-  from_database: { id: string; status: string; hash: string } | null;
+  from_database: { id: string; status: string; hash: string; auto?: boolean } | null;
+  auto_eligible: boolean;
   is_shared: boolean;
   can_submit: boolean;
   can_vote: boolean;
@@ -29,7 +30,7 @@ export type Game = Profile & {
 type Patch = Partial<Profile> & {
   owned?: Owned;
   compat_before?: string | null;
-  source?: { id: string; status: string } | null;
+  source?: { id: string; status: string; auto?: boolean } | null;
   verdict?: boolean | null;
 };
 export type DbProfile = Profile & {
@@ -61,6 +62,9 @@ export const deleteProfile = callable<[name: string], Saved[]>("delete_profile")
 export const community = callable<[appid: number], Community>("community");
 export const submit = callable<[appid: number, game: string, rating: string, notes: string], { id: string; url: string }>("submit");
 const vote = callable<[appid: number, works: boolean], Game>("vote");
+export const getAuto = callable<[], boolean>("get_auto");
+export const setAuto = callable<[on: boolean], boolean>("set_auto");
+export const autoPending = callable<[force: boolean], { appid: number; name: string; entry: DbProfile }[]>("auto_pending");
 
 export async function currentTool(appid: number): Promise<string> {
   const d = (await getFreshAppDetails(appid)) as { strCompatToolName?: string } | null;
