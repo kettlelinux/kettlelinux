@@ -84,6 +84,10 @@ LINUX = [
                   "createdump": elf(size=900), "MonoGame.Framework.dll": b""}, "Stardew Valley", "x86_64"),
     ("dotnet", {"Game": elf(size=10), "Game.runtimeconfig.json": b"", "Game.dll": b"", "Tool": elf(size=900)},
      "Game", "x86_64"),
+    # Terraria: Mono runs the .NET exe from a native program named like it; a server next to it
+    ("fna", {"Terraria": b"#!/bin/bash", "Terraria.bin.x86_64": elf(size=500), "Terraria.exe": pe(0x14c, dotnet=True, size=900),
+             "TerrariaServer.bin.x86_64": elf(size=500), "TerrariaServer.exe": pe(0x14c, dotnet=True), "FNA.dll": b""},
+     "Terraria.bin.x86_64", "x86_64"),
     ("unknown", {"game.arm64": elf(0xB7), "readme": b"plain text"}, "game.arm64", "arm64"),
 ]
 
@@ -114,6 +118,10 @@ class Detect(unittest.TestCase):
     def test_windows_build_over_linux_helpers(self):
         r = gameengine.detect(self.tree({"Game.exe": pe(), "helper": elf()}))
         self.assertEqual((r["exe"], r["platform"]), ("Game.exe", "windows"))
+
+    def test_windows_dotnet_build_without_linux_programs(self):
+        r = gameengine.detect(self.tree({"Terraria.exe": pe(0x14c, dotnet=True), "FNA.dll": b""}))
+        self.assertEqual((r["exe"], r["platform"], r["arch"]), ("Terraria.exe", "windows", "x86"))
 
     def test_every_engine_has_a_case_and_a_label(self):
         with open(os.path.join(HERE, "engines.json"), encoding="utf-8") as f:
