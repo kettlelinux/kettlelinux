@@ -23,7 +23,15 @@ settings that worked to the Kettle game database, where other players find and a
   through Proton and its ARM64EC FEX) or a native Linux one (FEX's Linux build), the main
   program's CPU (32 or 64-bit x86), and anti-cheat it ships (Easy Anti-Cheat, BattlEye), with a
   warning. Kept per Steam build in the plugin's `engines.json`, so it's looked up again after an
-  update. It only shows for now; FEX defaults per engine are to come from the database (below).
+  update.
+- **Suggested**: settings for the game's engine, each applied only when the player selects
+  Apply (into the launch options, like any other setting). Two kinds: the catalog's presets with
+  a `for` (engines, platforms, archs) the game matches, kept to well-founded ones (full x87
+  precision for 32-bit games: FEX runs x87 at reduced precision, which only 32-bit code really
+  uses); and "Worked for other <engine> games", from the game database (below), once there's
+  enough to go by. Nothing is applied by itself: Steam's Proton and its FEX tool for native
+  Linux games keep their own FEX config (Valve can send per-game TSO and Multiblock values),
+  and the launch options' `FEX_*` variables, which both read, stay the player's choice.
 - **Custom**: environment variables (`PROTON_`, `DXVK_`, `VKD3D_`, `WINE`, `FEX_`, `MESA_`, `SDL_`,
   `STAGING_`; not the ones the options above or the other plugins manage) and Wine DLL overrides.
 
@@ -114,6 +122,7 @@ images.
 | `GET /v1/catalog` | the plugin's options (labels, choices, launch option targets) |
 | `GET /v1/games` | games with entries: verified / community counts, devices, last update |
 | `GET /v1/games/<app id>` | a game's entries, verified first, and its engine (the one most devices reported) |
+| `GET /v1/engines/<engine>` | FEX settings in entries for at least 3 of the engine's games, confirmed at least 3 times as often as reported broken (one value per option): Game Settings' "Worked for other games" |
 | `POST /v1/profiles` | share (5 a minute per address) |
 | `POST /v1/profiles/<id>/votes` | works / doesn't work (30 a minute per address) |
 | `GET /`, `GET /g/<app id>` | redirect to the site's Games page |

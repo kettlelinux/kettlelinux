@@ -6,6 +6,8 @@ export type Engine = { engine: string; platform: string; arch: string; exe: stri
 
 const label = (list: { id: string; label: string }[], id: string) => list.find((x) => x.id === id)?.label ?? id;
 
+export const engineLabel = (e: Engine) => label(ENGINES.engines, e.engine);
+
 export const engineText = (e: Engine) =>
   [
     label(ENGINES.engines, e.engine),

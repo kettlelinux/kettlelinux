@@ -269,9 +269,10 @@ async function loadEngines() {
                 `${e.approved} verified · works ${e.works}, broken ${e.broken}` }),
               rows.length
                 ? el("div", { className: "votes" }, el("table", {},
-                    el("tr", {}, ...["Setting", "Entries", "Works", "Broken"].map((h) => el("td", {}, el("b", { textContent: h })))),
+                    el("tr", {}, ...["Setting", "Games", "Entries", "Works", "Broken"].map((h) => el("td", {}, el("b", { textContent: h })))),
                     ...rows.map(([kv, n]) => el("tr", {},
                       el("td", { textContent: setting(kv) }),
+                      el("td", { textContent: String(n.games) }),
                       el("td", { textContent: String(n.entries) }),
                       el("td", { textContent: String(n.works) }),
                       el("td", { textContent: String(n.broken) })))))

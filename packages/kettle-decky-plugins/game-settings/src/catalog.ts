@@ -16,7 +16,9 @@ export type Choice = { value: string; label: string };
 export type Target = { env?: string; flags?: string; flag?: string; dxvk?: string };
 export type Option = { id: string; section: string; label: string; help: string; target: Target; choices: Choice[] };
 export type Section = { id: string; title: string; help: string };
-export type Preset = { id: string; label: string; help: string; section?: string; settings: Record<string, string> };
+// for: shown only as a suggestion for games it matches (gameengine.py's engine, platform, arch)
+export type PresetFor = { engines?: string[]; platforms?: string[]; archs?: string[] };
+export type Preset = { id: string; label: string; help: string; section?: string; for?: PresetFor; settings: Record<string, string> };
 type Catalog = {
   sections: Section[];
   options: Option[];
@@ -35,6 +37,15 @@ type Catalog = {
 
 export const CATALOG = raw as unknown as Catalog;
 export const OPTIONS = CATALOG.options;
+// the Presets list: the ones for any game
+export const PRESETS = CATALOG.presets.filter((p) => !p.for);
+
+export function presetsFor(e: { engine: string; platform: string; arch: string }): Preset[] {
+  const ok = (list: string[] | undefined, v: string) => !list || list.includes(v);
+  return CATALOG.presets.filter(
+    (p) => p.for && ok(p.for.engines, e.engine) && ok(p.for.platforms, e.platform) && ok(p.for.archs, e.arch),
+  );
+}
 export const optionById = new Map(OPTIONS.map((o) => [o.id, o]));
 
 export type Profile = {
