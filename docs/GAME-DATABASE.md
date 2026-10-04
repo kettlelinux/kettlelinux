@@ -72,6 +72,22 @@ only its SHA-256), so each device counts once. Nothing is sent unless the player
 answers. The engine goes with votes too, so the database knows it for games whose settings
 someone confirmed.
 
+**Use verified settings automatically** (Game Settings > All games; off until the player turns
+it on, and only on images with the database): games the player hasn't changed get the best
+verified entry for this device type (same image variant; most confirmations net of reports).
+Each installed game is looked up when the switch is turned on, when Game Mode starts, every 10
+minutes for games installed since, and otherwise once a day (`auto_checked` in `games.json`).
+What it doesn't do:
+
+- touch a game whose settings the player set or changed (only an empty profile, or one it
+  applied itself and nobody changed since, `auto_eligible`)
+- put back an entry the player took off with Reset (`auto_skip`); a different verified entry
+  still can be applied later
+- apply an entry that needs a Proton version that isn't installed, or change the running game
+
+An entry applied this way shows as "From the game database (verified, applied automatically)",
+with the same "Works here" / "Doesn't work" answers as one applied by hand.
+
 A player who applies an entry (Known good settings > Apply) can answer whether it worked for
 them: "Doesn't work" after any launch, "Works here" after 5 minutes. Sharing settings someone on
 the same kind of device already shared counts as a "works" for that entry.

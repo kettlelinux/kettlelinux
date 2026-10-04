@@ -39,18 +39,21 @@ import {
   currentTool,
   engineSuggestions,
   EngineSuggestions,
+  getAuto,
   getEngine,
   getGame,
   installedGames,
   openDatabase,
   recordPlay,
   resetGame,
+  setAuto,
   setGame,
   status,
 } from "./api";
 import { AddDllModal, AddEnvModal, ProfilesModal, ShareModal } from "./modals";
 import { Engine, anticheatText, engineLabel, engineText } from "../../shared/engines";
 import { DatabasePage } from "./database";
+import { AUTO_EVERY_MS, AUTO_FIRST_MS, autoSync } from "./auto";
 
 const small: React.CSSProperties = { fontSize: "12px", lineHeight: "16px" };
 const mono: React.CSSProperties = { ...small, fontFamily: "monospace", wordBreak: "break-all" };
@@ -370,7 +373,9 @@ function Feedback({ appid, name, g, setG }: { appid: number; name: string; g: Ga
     return (
       <PanelSectionRow>
         <Field
-          label={`From the game database (${g.from_database.status === "approved" ? "verified" : "community"})`}
+          label={`From the game database (${g.from_database.status === "approved" ? "verified" : "community"}${
+            g.from_database.auto ? ", applied automatically" : ""
+          })`}
           description={
             voted
               ? "Thanks, your answer was sent."
@@ -445,10 +450,13 @@ function Content() {
   const [s, setS] = useState<Status | null>(null);
   const [games, setGames] = useState<InstalledGame[] | null>(null);
   const [appid, pick] = useSelectedGame(games);
+  const [auto, setAutoState] = useState(false);
+  const [panelKey, setPanelKey] = useState(0);
   const refresh = () => status().then(setS);
   useEffect(() => {
     refresh();
     installedGames().then(setGames);
+    getAuto().then(setAutoState);
   }, []);
   if (!s || !games) return null;
   const name = appid !== null ? gameName(games, appid) : "";
@@ -456,13 +464,31 @@ function Content() {
     <>
       <PanelSection title="Game">
         <GamePicker games={games} appid={appid} onChange={pick} />
-        {appid !== null && <GamePanel key={appid} appid={appid} name={name} s={s} onChanged={refresh} />}
+        {appid !== null && <GamePanel key={`${appid}-${panelKey}`} appid={appid} name={name} s={s} onChanged={refresh} />}
       </PanelSection>
-      {s.configured.length > 0 && (
+      {(s.can_share || s.configured.length > 0) && (
         <PanelSection title="All games">
-          <PanelSectionRow>
-            <div style={small}>Changed for: {s.configured.map((a) => gameName(games, a)).join(", ")}</div>
-          </PanelSectionRow>
+          {s.can_share && (
+            <PanelSectionRow>
+              <ToggleField
+                label="Use verified settings automatically"
+                description="Games you haven't changed get the settings the Kettle team verified for this device. Your own changes always win, and Reset takes them off for good."
+                checked={auto}
+                onChange={async (on) => {
+                  setAutoState(await setAuto(on));
+                  if (on && (await autoSync(true))) {
+                    refresh();
+                    setPanelKey((k) => k + 1);
+                  }
+                }}
+              />
+            </PanelSectionRow>
+          )}
+          {s.configured.length > 0 && (
+            <PanelSectionRow>
+              <div style={small}>Changed for: {s.configured.map((a) => gameName(games, a)).join(", ")}</div>
+            </PanelSectionRow>
+          )}
         </PanelSection>
       )}
     </>
@@ -489,12 +515,16 @@ export default definePlugin(() => {
       }
     },
   );
+  const first = setTimeout(() => autoSync(), AUTO_FIRST_MS);
+  const every = setInterval(() => autoSync(), AUTO_EVERY_MS);
   return {
     name: "Game Settings",
     titleView: <div className={staticClasses.Title}>Game Settings</div>,
     content: <Content />,
     icon: <FaSlidersH />,
     onDismount: () => {
+      clearTimeout(first);
+      clearInterval(every);
       lifetime.unregister();
       routerHook.removeRoute(`${ROUTE}/:appid`);
     },
