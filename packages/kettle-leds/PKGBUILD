@@ -1,0 +1,20 @@
+# kettle-ledd: the RGB rings around the sticks on Kettle's handhelds (the Odin 2 Portal, the Thor,
+# the Retroid Pocket 5): off, a color, the battery level, breathe or rainbow, dark while asleep.
+# Their one writer, as root; serves org.kettlelinux.Leds1 to the Lights plugin
+# (kettle-decky-lights). Sources live next to this PKGBUILD.
+pkgname=kettle-leds
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Kettle Linux stick lights daemon'
+arch=(any)
+license=(BSD-3-Clause)
+depends=(python python-gobject)
+
+package() {
+  cd "$startdir"
+  install -Dm755 kettle-ledd -t "$pkgdir/usr/lib/kettle-leds"
+  install -Dm644 kettle-ledd.service -t "$pkgdir/usr/lib/systemd/system"
+  install -Dm644 org.kettlelinux.Leds1.conf -t "$pkgdir/usr/share/dbus-1/system.d"
+  install -Dm644 org.kettlelinux.Leds1.service -t "$pkgdir/usr/share/dbus-1/system-services"
+  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+}

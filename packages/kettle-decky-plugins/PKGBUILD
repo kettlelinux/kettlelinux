@@ -23,12 +23,15 @@
 #              settings players share once they've played with them
 #   screens    the AYN Thor's bottom screen from Game Mode: on/off and its own brightness
 #              (installed on the Thor only: device/thor/packages.txt)
+#   lights     the RGB rings around the sticks: off, a color (both sticks or each its own), the
+#              battery level, breathe or rainbow, and their brightness (through kettle-ledd,
+#              packages/kettle-leds, which sets them as root and keeps them dark while asleep)
 # Sources live next to this PKGBUILD; shared/ holds code both frontends use.
 pkgbase=kettle-decky-plugins
 pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome kettle-decky-power
-         kettle-decky-screens kettle-decky-crash kettle-decky-game-settings)
+         kettle-decky-screens kettle-decky-crash kettle-decky-game-settings kettle-decky-lights)
 pkgver=1.12.0
-pkgrel=19
+pkgrel=20
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
@@ -36,8 +39,8 @@ makedepends=(nodejs npm)
 
 prepare() {
   rm -rf src-tree; mkdir src-tree
-  cp -r "$startdir"/{package.json,pnpm-lock.yaml,shared,framegen,upscaling,welcome,power,screens,crash,game-settings} src-tree/
-  rm -rf src-tree/{framegen,upscaling,welcome,power,screens,crash,game-settings}/dist
+  cp -r "$startdir"/{package.json,pnpm-lock.yaml,shared,framegen,upscaling,welcome,power,screens,crash,game-settings,lights} src-tree/
+  rm -rf src-tree/{framegen,upscaling,welcome,power,screens,crash,game-settings,lights}/dist
 }
 
 build() {
@@ -101,4 +104,10 @@ package_kettle-decky-game-settings() {
   depends=(decky-loader)
   _install_plugin kettle-game-settings game-settings
   install -Dm644 src-tree/shared/game-options.json -t "$pkgdir/usr/share/decky/plugins/kettle-game-settings"
+}
+
+package_kettle-decky-lights() {
+  pkgdesc='Lights Decky plugin (the RGB stick lights: color, battery level, effects, brightness)'
+  depends=(decky-loader kettle-leds python-gobject)
+  _install_plugin kettle-lights lights
 }

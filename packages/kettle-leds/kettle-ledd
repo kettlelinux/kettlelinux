@@ -1,0 +1,357 @@
+#!/usr/bin/python3
+"""kettle-ledd: the RGB rings around the sticks on Kettle Linux's handhelds.
+
+The Odin 2 Portal, the Thor and the Retroid Pocket 5 have four RGB LEDs round each stick, each
+a kernel multicolor group: rgb:l1..l4 and rgb:r1..r4. A group's channel order is its multi_index
+("blue green red" on these devices), read, not assumed. kettle-ledd is their one writer, as root,
+in Game Mode and Desktop Mode alike. Modes:
+
+  off       dark
+  solid     a color, both sticks the same or each its own
+  battery   red when empty, yellow at half, green when full; pulsing while charging, blinking
+            red below 10 % while discharging
+  breathe   the color fading in and out
+  rainbow   the colors going round each ring
+
+Each LED's brightness stays at its top; the level is in the color's intensities, so a change is one
+multi_intensity write. Writing brightness as well loses changes: when a brightness change is still
+queued (these LEDs are on I2C), led_set_brightness() queues the new one without updating
+led_cdev->brightness, and the next multi_intensity write applies that stale value again.
+
+The rings go dark while the device sleeps (a logind delay lock): their chips (HTR3212 on the
+Portal and the Thor) stay powered through suspend, and their driver leaves them as they were.
+org.kettlelinux.Leds1 serves the setting to the Lights plugin (kettle-decky-lights):
+
+  Get() -> s          the setting and what the device has, JSON
+  Set(s changes) -> s some of the setting's keys, JSON; returns what Get does
+
+  kettle-ledd        run the daemon (system bus, root)
+  kettle-ledd --off  turn the rings off (ExecStopPost)
+"""
+import colorsys
+import glob
+import json
+import math
+import os
+import signal
+import sys
+import time
+import warnings
+
+from gi.repository import Gio, GLib
+
+# as kettle-powerd: register_object with Python callables and unix_signal_add are deprecated in
+# newer PyGObject, still work, and the image's 3.48 has no replacement for either
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+LEDS = os.environ.get("KETTLE_LEDS_SYSFS", "/sys/class/leds")
+BATTERY = "/sys/class/power_supply/battery"
+STATE = os.environ.get("KETTLE_LEDS_STATE", "/var/lib/kettle-leds/state.json")
+BUS = Gio.BusType.SESSION if os.environ.get("KETTLE_LEDS_BUS") == "session" else Gio.BusType.SYSTEM
+BUS_NAME = "org.kettlelinux.Leds1"
+OBJ_PATH = "/org/kettlelinux/Leds1"
+MODES = ("off", "solid", "battery", "breathe", "rainbow")
+DEFAULT = {
+    "mode": "off",
+    "brightness": 60,                    # percent
+    "sync": True,                        # the right stick takes the left's color
+    "left": {"hue": 200, "sat": 100},
+    "right": {"hue": 200, "sat": 100},
+    "speed": 40,                         # breathe and rainbow, percent
+}
+FRAME = 1 / 20                           # animations: 20 updates a second
+BATTERY_POLL = 30
+CRITICAL = 10                            # percent: blink red at or below, discharging
+
+
+def log(msg: str):
+    print(msg, file=sys.stderr, flush=True)
+
+
+def read(path: str) -> str:
+    with open(path) as f:
+        return f.read().strip()
+
+
+def hsv(hue: float, sat: float, value: float = 1.0) -> tuple[int, int, int]:
+    r, g, b = colorsys.hsv_to_rgb((hue % 360) / 360, max(0, min(100, sat)) / 100, value)
+    return round(r * 255), round(g * 255), round(b * 255)
+
+
+class Led:
+    """One multicolor group: an LED of a stick's ring."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self.name = os.path.basename(path)
+        self.order = read(os.path.join(path, "multi_index")).split()
+        self.max = int(read(os.path.join(path, "max_brightness")))
+        try:   # each channel's own top value (newer kernels say)
+            self.top = [int(v) for v in read(os.path.join(path, "multi_max_intensity")).split()]
+        except OSError:
+            self.top = [self.max] * len(self.order)
+        self.last: str | None = None     # what was written last: not written again
+        self.full = False                # brightness at its top (see above)
+
+    def set(self, rgb: tuple[int, int, int], level: float):
+        """rgb 0-255 each, level 0-1 of the LED's full brightness."""
+        level = max(0.0, min(1.0, level))
+        channels = dict(zip(("red", "green", "blue"), rgb))
+        intensity = " ".join(str(round(channels.get(c, 0) * level * top / 255))
+                             for c, top in zip(self.order, self.top))
+        if not self.full:
+            if int(read(os.path.join(self.path, "brightness"))) != self.max:
+                with open(os.path.join(self.path, "brightness"), "w") as f:
+                    f.write(str(self.max))
+            self.full = True
+        if self.last == intensity:
+            return
+        with open(os.path.join(self.path, "multi_intensity"), "w") as f:
+            f.write(intensity)
+        self.last = intensity
+
+
+def find_leds() -> dict[str, list[Led]]:
+    sticks = {}
+    for side in ("l", "r"):
+        sticks[side] = []
+        for p in sorted(glob.glob(os.path.join(LEDS, f"rgb:{side}[0-9]"))):
+            try:
+                sticks[side].append(Led(p))
+            except (OSError, ValueError) as e:
+                log(f"{p} unusable: {e}")
+    return sticks
+
+
+def load() -> dict:
+    s = json.loads(json.dumps(DEFAULT))
+    try:
+        saved = json.loads(read(STATE))
+        s.update({k: v for k, v in saved.items() if k in DEFAULT})
+    except (OSError, ValueError, AttributeError):
+        pass
+    return normalize(s, s)
+
+
+def normalize(s: dict, changes: dict) -> dict:
+    s = dict(s)
+    for k, v in changes.items():
+        if k in ("left", "right"):
+            s[k] = {"hue": int(v["hue"]) % 360, "sat": max(0, min(100, int(v["sat"])))}
+        elif k in ("brightness", "speed"):
+            s[k] = max(0, min(100, int(v)))
+        elif k == "sync":
+            s[k] = bool(v)
+        elif k == "mode":
+            s[k] = v if v in MODES else "off"
+    return s
+
+
+def battery() -> tuple[int, str] | None:
+    try:
+        return int(read(os.path.join(BATTERY, "capacity"))), read(os.path.join(BATTERY, "status"))
+    except (OSError, ValueError):
+        return None
+
+
+class Daemon:
+    def __init__(self):
+        self.sticks = find_leds()
+        self.state = load()
+        self.error: str | None = None
+        self.asleep = False
+        self.start = time.monotonic()
+        self.timer = 0
+        self.inhibit_fd = -1
+        self.conn = None
+
+    def save(self):
+        os.makedirs(os.path.dirname(STATE), exist_ok=True)
+        with open(STATE + ".new", "w") as f:
+            json.dump(self.state, f)
+        os.replace(STATE + ".new", STATE)
+
+    # --- the lights ---
+
+    def paint(self, frame):
+        """frame(side, i) -> (rgb, level) for each LED."""
+        for side, leds in self.sticks.items():
+            for i, led in enumerate(leds):
+                rgb, level = frame(side, i)
+                try:
+                    led.set(rgb, level)
+                    self.error = None
+                except OSError as e:
+                    if self.error is None:
+                        log(f"writing {led.name}: {e}")
+                    self.error = f"Can't set the lights: {e.strerror or e}"
+                    led.last = None
+                    led.full = False
+
+    def off(self):
+        self.paint(lambda side, i: ((0, 0, 0), 0.0))
+
+    def render(self, t: float) -> float | None:
+        """The frame for time t; how long until the next one (None: until the setting changes)."""
+        s = self.state
+        level = s["brightness"] / 100
+        colors = {"l": s["left"], "r": s["left"] if s["sync"] else s["right"]}
+        speed = s["speed"] / 100
+        mode = s["mode"]
+
+        def color(side):
+            return hsv(colors[side]["hue"], colors[side]["sat"])
+
+        if mode == "off":
+            self.off()
+            return None
+        if mode == "solid":
+            self.paint(lambda side, i: (color(side), level))
+            return None
+        if mode == "breathe":
+            period = 8 - 6.5 * speed                      # 8 s slowest, 1.5 s fastest
+            k = 0.06 + 0.94 * (0.5 - 0.5 * math.cos(2 * math.pi * t / period))
+            self.paint(lambda side, i: (color(side), level * k))
+            return FRAME
+        if mode == "rainbow":
+            turn = 20 + 220 * speed                       # degrees of hue a second
+            # a ring's four LEDs a quarter of the wheel apart: the colors go round the stick
+            self.paint(lambda side, i: (hsv(t * turn + i * 90, 100), level))
+            return FRAME
+
+        # battery
+        b = battery()
+        if b is None:
+            self.off()
+            return BATTERY_POLL
+        cap, status = b
+        rgb = hsv(1.2 * max(0, min(100, cap)), 100)       # 0 % red, 50 % yellow, 100 % green
+        if status == "Discharging" and cap <= CRITICAL:
+            on = int(t * 2) % 2 == 0                      # blinking once a second
+            self.paint(lambda side, i: ((255, 0, 0), level if on else 0.0))
+            return 0.5 - (t % 0.5)
+        if status == "Charging":
+            k = 0.25 + 0.75 * (0.5 - 0.5 * math.cos(2 * math.pi * t / 4))
+            self.paint(lambda side, i: (rgb, level * k))
+            return FRAME
+        self.paint(lambda side, i: (rgb, level))
+        return BATTERY_POLL
+
+    def tick(self) -> bool:
+        self.timer = 0
+        if self.asleep:
+            return False
+        try:
+            wait = self.render(time.monotonic() - self.start)
+        except Exception as e:
+            log(f"frame failed: {e!r}")
+            wait = BATTERY_POLL
+        if wait is not None:
+            self.timer = GLib.timeout_add(max(1, round(wait * 1000)), self.tick)
+        return False
+
+    def redraw(self):
+        if self.timer:
+            GLib.source_remove(self.timer)
+        self.tick()
+
+    # --- sleep ---
+
+    def inhibit(self):
+        """A delay lock: logind waits for the rings to go dark before the device sleeps."""
+        try:
+            r, fds = self.conn.call_with_unix_fd_list_sync(
+                "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager",
+                "Inhibit", GLib.Variant("(ssss)", ("sleep", "kettle-ledd", "Stick lights off", "delay")),
+                GLib.VariantType("(h)"), Gio.DBusCallFlags.NONE, -1, None, None)
+            self.inhibit_fd = fds.get(r.unpack()[0])
+        except GLib.Error as e:
+            log(f"no sleep delay lock: {e.message}")
+
+    def on_sleep(self, conn, sender, path, iface, signal_name, params):
+        going = params.unpack()[0]
+        if going:
+            self.asleep = True
+            if self.timer:
+                GLib.source_remove(self.timer)
+                self.timer = 0
+            self.off()
+            if self.inhibit_fd >= 0:
+                os.close(self.inhibit_fd)
+                self.inhibit_fd = -1
+        else:
+            self.asleep = False
+            self.inhibit()
+            self.redraw()
+
+    # --- D-Bus ---
+
+    def info(self) -> str:
+        return json.dumps({**self.state,
+                           "available": any(self.sticks.values()),
+                           "leds": sum(len(v) for v in self.sticks.values()),
+                           "error": self.error})
+
+    def on_method(self, conn, sender, path, iface, name, params, invocation):
+        try:
+            if name == "Set":
+                changes = json.loads(params.unpack()[0])
+                if not isinstance(changes, dict):
+                    raise ValueError("Set takes a JSON object")
+                self.state = normalize(self.state, changes)
+                self.save()
+                self.redraw()
+            elif name != "Get":
+                raise ValueError(name)
+            invocation.return_value(GLib.Variant("(s)", (self.info(),)))
+        except Exception as e:
+            invocation.return_dbus_error("org.kettlelinux.Leds1.Error", str(e))
+
+    def on_bus(self, conn, name):
+        self.conn = conn
+        node = Gio.DBusNodeInfo.new_for_xml(INTROSPECTION)
+        conn.register_object(OBJ_PATH, node.interfaces[0], self.on_method, None, None)
+        if BUS == Gio.BusType.SYSTEM:
+            conn.signal_subscribe("org.freedesktop.login1", "org.freedesktop.login1.Manager",
+                                  "PrepareForSleep", "/org/freedesktop/login1", None,
+                                  Gio.DBusSignalFlags.NONE, self.on_sleep)
+            self.inhibit()
+
+    def run(self):
+        log(f"{len(self.sticks['l'])}+{len(self.sticks['r'])} stick LEDs, mode {self.state['mode']}")
+        self.tick()
+        loop = GLib.MainLoop()
+
+        def stop():
+            loop.quit()
+            return False
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            GLib.unix_signal_add(GLib.PRIORITY_HIGH, sig, stop)
+        Gio.bus_own_name(BUS, BUS_NAME, Gio.BusNameOwnerFlags.NONE, self.on_bus, None,
+                         lambda *_: log(f"lost the bus name {BUS_NAME}"))
+        loop.run()
+
+
+INTROSPECTION = """<node>
+  <interface name="org.kettlelinux.Leds1">
+    <method name="Get"><arg type="s" direction="out"/></method>
+    <method name="Set"><arg name="changes" type="s"/><arg type="s" direction="out"/></method>
+  </interface>
+</node>"""
+
+
+def main():
+    if "--off" in sys.argv[1:]:
+        for leds in find_leds().values():
+            for led in leds:
+                try:
+                    led.set((0, 0, 0), 0.0)
+                except OSError:
+                    pass
+        return
+    Daemon().run()
+
+
+if __name__ == "__main__":
+    main()

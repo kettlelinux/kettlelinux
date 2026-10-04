@@ -1,0 +1,11 @@
+{
+  "name": "Lights",
+  "author": "Kettle Linux",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["rgb", "led", "lights"],
+    "description": "The RGB lights around the sticks: a color, the battery level, breathe or rainbow, and their brightness.",
+    "image": ""
+  }
+}
