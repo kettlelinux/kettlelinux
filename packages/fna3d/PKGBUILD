@@ -1,0 +1,39 @@
+# FNA3D: XNA graphics for FNA, on SDL 3's GPU API (Vulkan). With packages/faudio, packages/sdl3
+# and Mono this is what an FNA game (Terraria, Celeste, ...) needs to run natively on ARM64 rather
+# than as its x86-64 build under FEX: the game's own .NET code is architecture-neutral, only these
+# native libraries aren't. MojoShader (zlib) is built in, at the commit the release tag records.
+pkgname=fna3d
+pkgver=26.10
+pkgrel=1
+pkgdesc='XNA graphics for FNA (SDL GPU)'
+arch=(aarch64)
+url='https://github.com/FNA-XNA/FNA3D'
+license=(Zlib)
+depends=(glibc sdl3)
+makedepends=(git cmake ninja)
+source=("git+https://github.com/FNA-XNA/FNA3D.git#tag=$pkgver"
+        "git+https://github.com/icculus/mojoshader.git")
+sha256sums=('SKIP' 'SKIP')
+
+prepare() {
+  cd FNA3D
+  git submodule init MojoShader
+  git config submodule.MojoShader.url "$srcdir/mojoshader"
+  git -c protocol.file.allow=always submodule update MojoShader
+}
+
+build() {
+  cmake -S FNA3D -B build -G Ninja -DCMAKE_BUILD_TYPE=None -DCMAKE_INSTALL_PREFIX=/usr \
+    -DBUILD_SDL3=ON
+  cmake --build build
+}
+
+package() {
+  install -Dm755 build/libFNA3D.so.0.* -t "$pkgdir/usr/lib"
+  local so=(build/libFNA3D.so.0.*)
+  ln -s "${so##*/}" "$pkgdir/usr/lib/libFNA3D.so.0"
+  ln -s libFNA3D.so.0 "$pkgdir/usr/lib/libFNA3D.so"
+  install -Dm644 FNA3D/include/*.h -t "$pkgdir/usr/include/FNA3D"
+  install -Dm644 FNA3D/LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+  install -Dm644 FNA3D/MojoShader/LICENSE.txt "$pkgdir/usr/share/licenses/$pkgname/LICENSE.MojoShader"
+}

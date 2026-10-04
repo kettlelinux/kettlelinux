@@ -1,0 +1,30 @@
+# SDL 3: for FNA games run natively on ARM64 (FNA3D, FAudio and FNA itself use it; see
+# packages/fna3d) instead of their x86-64 builds under FEX. SteamOS's ARM repos have no SDL 3.
+# Backends are loaded at run time (Wayland, X11, PipeWire, PulseAudio, ALSA), as in Arch's.
+pkgname=sdl3
+pkgver=3.4.18
+pkgrel=1
+pkgdesc='Simple DirectMedia Layer 3'
+arch=(aarch64)
+url='https://www.libsdl.org'
+license=(Zlib)
+depends=(glibc libx11 libxext libxcursor libxrender libusb)
+makedepends=(git cmake ninja alsa-lib libpulse libpipewire wayland wayland-protocols libxkbcommon
+             libdecor libxi libxfixes libxrandr libxss libxtst libxinerama vulkan-headers mesa ibus)
+optdepends=('libpipewire: PipeWire audio' 'libpulse: PulseAudio audio' 'alsa-lib: ALSA audio'
+            'wayland: Wayland video' 'libxkbcommon: Wayland keyboard' 'libdecor: Wayland decorations'
+            'vulkan-icd-loader: Vulkan and the SDL GPU API')
+source=("git+https://github.com/libsdl-org/SDL.git#tag=release-$pkgver")
+sha256sums=('SKIP')
+
+build() {
+  cmake -S SDL -B build -G Ninja -DCMAKE_BUILD_TYPE=None -DCMAKE_INSTALL_PREFIX=/usr \
+    -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DSDL_RPATH=OFF \
+    -DSDL_HIDAPI_LIBUSB=ON -DSDL_SNDIO=OFF -DSDL_JACK=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm644 SDL/LICENSE.txt -t "$pkgdir/usr/share/licenses/$pkgname"
+}
