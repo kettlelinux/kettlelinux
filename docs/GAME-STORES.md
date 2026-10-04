@@ -44,6 +44,13 @@ Downloads. The plugin's own state is in `~/homebrew/settings/kettle-stores/`:
 - `library-<store>.json`: each store's game list, refreshed daily or with Refresh
 - `job.log`: the running job's output
 
+## A game's page
+
+Each game's page shows its size and its buttons (Install, Play, Update, Uninstall). Under them, in
+About, are the game's summary, developer, publisher, release date, genres and play modes. For Epic
+and GOG games these come from GOG's game database (`gamesdb.gog.com`, which knows Epic games by
+their app name), and for Amazon games from Amazon's library (`nile_config/nile/library.json`).
+
 ## Installing
 
 Installs and updates run one at a time as a user systemd unit, `kettle-stores-job`, at a lower

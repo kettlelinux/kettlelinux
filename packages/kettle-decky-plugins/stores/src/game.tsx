@@ -1,16 +1,51 @@
 // A store game's page: its size, and installing, playing, updating and uninstalling it.
-import { ButtonItem, ConfirmModal, Focusable, Navigation, showModal, useParams } from "@decky/ui";
+import { ButtonItem, ConfirmModal, Field, Focusable, Navigation, showModal, useParams } from "@decky/ui";
 import { useEffect, useState } from "react";
-import { Game, GameInfo, NAMES, Store, cancel, gameInfo, install, library, size, status, uninstall } from "./api";
+import { Details, Game, GameInfo, NAMES, Store, cancel, details, gameInfo, install, library, size, status, uninstall } from "./api";
 import { JobProgress } from "./library";
 import { addShortcut, inLibrary, play, removeShortcut } from "./shortcuts";
 import { act, dim, small, usePoll } from "./ui";
+
+const date = (d: string) => {
+  const t = Date.parse(d);
+  return isNaN(t) ? d : new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric", timeZone: "UTC" });
+};
+
+// The game's summary and facts, under the buttons (focusable, so the controller scrolls to them)
+function About({ d }: { d: Details }) {
+  const rows: [string, string][] = [
+    ["Developer", d.developer],
+    ["Publisher", d.publisher],
+    ["Released", d.released ? date(d.released) : ""],
+    ["Genres", d.genres.join(", ")],
+    ["Modes", d.modes.join(", ")],
+  ];
+  if (!d.summary && !rows.some(([, v]) => v)) return null;
+  return (
+    <Focusable style={{ marginTop: "20px" }}>
+      <h3 style={{ margin: "0 0 8px" }}>About</h3>
+      {d.summary && (
+        <Focusable onActivate={() => {}} style={{ whiteSpace: "pre-line", lineHeight: "22px", marginBottom: "8px" }}>
+          {d.summary}
+        </Focusable>
+      )}
+      {rows
+        .filter(([, v]) => v)
+        .map(([k, v]) => (
+          <Field key={k} label={k} focusable bottomSeparator="thick">
+            {v}
+          </Field>
+        ))}
+    </Focusable>
+  );
+}
 
 export function GamePage() {
   const { store, id: raw } = useParams<{ store: Store; id: string }>();
   const id = decodeURIComponent(raw);
   const [game, setGame] = useState<Game | null | undefined>(undefined);
   const [info, setInfo] = useState<GameInfo | null>(null);
+  const [about, setAbout] = useState<Details | null>(null);
   const [s] = usePoll(status, 1000);
   const [n, setN] = useState(0);
   const reload = () => setN(n + 1);
@@ -23,6 +58,9 @@ export function GamePage() {
   useEffect(() => {
     gameInfo(store, id).then(setInfo).catch(() => setInfo(null));
   }, [store, id, game?.installed]);
+  useEffect(() => {
+    details(store, id).then(setAbout).catch(() => setAbout(null));
+  }, [store, id]);
 
   // the download ending (it leaves the job and the queue) shows the game as installed
   const running = s?.job && s.job.store === store && s.job.id === id ? s.job : null;
@@ -62,7 +100,7 @@ export function GamePage() {
           <div style={{ position: "absolute", inset: 0, background: "linear-gradient(transparent 40%, #0e141b)" }} />
         </div>
       )}
-      <div style={{ padding: "8px 24px 24px", maxWidth: "760px" }}>
+      <div style={{ padding: "8px 24px 80px", maxWidth: "760px" }}>
         <h2 style={{ margin: "0 0 4px" }}>{game.title}</h2>
         <div style={{ ...small, ...dim, marginBottom: "12px" }}>
           {NAMES[store]}
@@ -73,7 +111,8 @@ export function GamePage() {
               : " · Getting the size…"}
         </div>
         {game.note && !game.installed && <p style={dim}>{game.note}: it can't be installed here.</p>}
-        <Focusable>
+        {/* autoFocus: the page opens on its buttons, not on About (which loads after them) */}
+        <Focusable autoFocus>
           {running && <JobProgress job={running} />}
           {busy && (
             <ButtonItem layout="below" onClick={() => act(() => cancel(store, id), "Cancelling failed")}>
@@ -118,6 +157,7 @@ export function GamePage() {
             any other game.
           </p>
         )}
+        {about && <About d={about} />}
       </div>
     </div>
   );
