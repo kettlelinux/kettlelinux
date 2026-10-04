@@ -18,6 +18,7 @@ FEX, as without this.
 import hashlib
 import os
 import re
+import signal
 import subprocess
 import sys
 
@@ -127,6 +128,10 @@ RUNNERS = {"fna": fna}
 
 
 def main():
+    # Python ignores SIGPIPE and SIGXFSZ, and exec keeps that: give whatever runs next the
+    # defaults it expects (FEX crashes at start with them ignored)
+    for s in (signal.SIGPIPE, signal.SIGXFSZ):
+        signal.signal(s, signal.SIG_DFL)
     cmd = sys.argv[1:]
     if not cmd:
         sys.exit("usage: kettle-native %command%   (in a Steam game's launch options)")

@@ -4,7 +4,7 @@
 # (kettle-decky-plugins/shared).
 pkgname=kettle-native
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Run Steam games natively on ARM64 where their engine allows'
 arch=(any)
 license=(BSD-3-Clause)
