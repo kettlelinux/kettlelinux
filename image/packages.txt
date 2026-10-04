@@ -188,6 +188,16 @@ cabextract
 lutris
 heroic-games-launcher
 
+# Steam games run natively on ARM64 (Game Settings > Run natively; packages/kettle-native): a
+# game's own .NET code on Mono with ARM64 FNA libraries instead of its x86-64 build under FEX,
+# and our pass-through Steam API for it (packages/kettle-steam-api)
+kettle-native
+mono
+sdl3
+faudio
+fna3d
+kettle-steam-api
+
 # Android games in Steam (built by us, packages/kettle-lepton): Valve's Lepton launcher as the
 # "Lepton (Kettle)" compatibility tool, on the Android image of Steam's own Lepton (app
 # 3029110); pulls in rootless podman and Valve's Android Mesa. Only runs for games set to it.

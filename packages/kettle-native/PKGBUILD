@@ -1,0 +1,18 @@
+# kettle-native: runs a Steam game's own code natively on ARM64 instead of its x86-64 build under
+# FEX, for engines whose code isn't x86 machine code (FNA's .NET so far), from its launch options
+# (Game Settings > Run natively). See kettle-native. gameengine.py is Game Settings'
+# (kettle-decky-plugins/shared).
+pkgname=kettle-native
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Run Steam games natively on ARM64 where their engine allows'
+arch=(any)
+license=(BSD-3-Clause)
+depends=(python mono sdl3 faudio fna3d kettle-steam-api)
+
+package() {
+  cd "$startdir"
+  install -Dm755 kettle-native -t "$pkgdir/usr/bin"
+  install -Dm644 gameengine.py -t "$pkgdir/usr/lib/kettle-native"
+  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+}

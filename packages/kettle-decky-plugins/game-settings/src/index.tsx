@@ -14,7 +14,7 @@ import { definePlugin, routerHook, toaster } from "@decky/api";
 import { useEffect, useState } from "react";
 import { FaSlidersH } from "react-icons/fa";
 import { GamePicker, InstalledGame, gameName, runningAppId, useSelectedGame } from "../../shared/GamePicker";
-import { editLaunchOptions, getLaunchOptions } from "../../shared/launchOptions";
+import { editLaunchOptions, getLaunchOptions, hasWrapper, withWrapper, withoutWrapper } from "../../shared/launchOptions";
 import { fixesFor } from "../../shared/gameFixes";
 import {
   CATALOG,
@@ -51,7 +51,7 @@ import {
   status,
 } from "./api";
 import { AddDllModal, AddEnvModal, ProfilesModal, ShareModal } from "./modals";
-import { Engine, anticheatText, engineLabel, engineText } from "../../shared/engines";
+import { Engine, NATIVE_WRAPPER, anticheatText, engineLabel, engineText, runsNatively } from "../../shared/engines";
 import { DatabasePage } from "./database";
 import { AUTO_EVERY_MS, AUTO_FIRST_MS, autoSync } from "./auto";
 
@@ -174,6 +174,22 @@ function GamePanel({ appid, name, s, onChanged }: { appid: number; name: string;
   return (
     <>
       {engine && <EngineRow e={engine} />}
+      {engine && runsNatively(engine) && (
+        <PanelSectionRow>
+          <ToggleField
+            label="Run natively on ARM64"
+            description={`Runs the game's own code with ARM64 libraries instead of its x86-64 build under FEX (kettle-native). Experimental: turn it off if ${name} doesn't start or misbehaves.`}
+            checked={hasWrapper(opts, NATIVE_WRAPPER)}
+            onChange={async (on) => {
+              await editLaunchOptions(appid, (o) =>
+                on ? (hasWrapper(o, NATIVE_WRAPPER) ? o : withWrapper(o, NATIVE_WRAPPER)) : withoutWrapper(o, NATIVE_WRAPPER),
+              );
+              setOpts(await getLaunchOptions(appid));
+              restartToast(appid, name);
+            }}
+          />
+        </PanelSectionRow>
+      )}
       {engine && (
         <Suggestions
           appid={appid}

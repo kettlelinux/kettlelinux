@@ -1,0 +1,153 @@
+#!/usr/bin/python3
+"""kettle-native: run a Steam game's own code natively on ARM64 instead of its x86-64 build under FEX.
+
+In a game's launch options (Game Settings > Run natively writes it):  kettle-native %command%
+
+Games whose code isn't x86 machine code (.NET) only need native versions of the libraries
+around it. For the engines below, this finds the game (SteamAppId), checks what it's built on
+(gameengine.py) and starts its code with the native runtime instead of Steam's command:
+
+  fna   FNA games' Linux builds (Terraria, Celeste...): system Mono, with sdl3, faudio and fna3d
+
+Their Steam API calls go through Kettle's ARM64 libsteam_api.so (packages/kettle-steam-api),
+with the map of the game's own x86-64 one (cached in ~/.cache/kettle-native), and Steam's ARM64
+overlay is preloaded in place of the x86-64 one Steam offers (without it Steam Input doesn't
+work in the game). Anything else, or anything missing, runs Steam's command unchanged: under
+FEX, as without this.
+"""
+import hashlib
+import os
+import re
+import subprocess
+import sys
+
+sys.path.insert(0, "/usr/lib/kettle-native")
+import gameengine  # noqa: E402
+
+STEAM = os.path.expanduser("~/.local/share/Steam")
+CACHE = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "kettle-native")
+# where Kettle's packages put them; the variables are for trying builds that aren't installed
+STEAM_API = os.environ.get("KETTLE_NATIVE_STEAM_API", "/usr/lib/kettle-steam-api")
+MONO = os.environ.get("KETTLE_NATIVE_MONO", "/usr/bin/mono")
+OVERLAY = os.path.join(STEAM, "steamrtarm64", "gameoverlayrenderer.so")
+NATIVE = {"fna"}  # engines run natively (linux builds); Game Settings: shared/engines.json "native"
+
+
+def log(msg):
+    print(f"kettle-native: {msg}", file=sys.stderr, flush=True)
+
+
+def install_dir(appid):
+    libs = [STEAM]
+    try:
+        with open(os.path.join(STEAM, "steamapps", "libraryfolders.vdf"), encoding="utf-8") as f:
+            libs += re.findall(r'"path"\s+"([^"]+)"', f.read())
+    except OSError:
+        pass
+    for lib in dict.fromkeys(libs):
+        try:
+            with open(os.path.join(lib, "steamapps", f"appmanifest_{appid}.acf"), encoding="utf-8", errors="replace") as f:
+                m = re.search(r'"installdir"\s+"([^"]*)"', f.read())
+        except OSError:
+            continue
+        if m and os.path.isdir(d := os.path.join(lib, "steamapps", "common", m.group(1))):
+            return d
+    return None
+
+
+def game_args(cmd, root):
+    """What Steam passes the game itself: the arguments after its executable in Steam's command
+    (which starts with Steam's launch wrapper, reaper and compatibility tool)."""
+    root = os.path.realpath(root) + os.sep
+    for i in range(len(cmd) - 1, -1, -1):
+        if os.path.realpath(cmd[i]).startswith(root):
+            return cmd[i + 1:]
+    return []
+
+
+def steam_api_map(root):
+    """The map of the game's x86-64 libsteam_api.so for Kettle's ARM64 one (None: it has none)."""
+    found = []
+    for d, dirs, files in os.walk(root):
+        if d[len(root):].count(os.sep) >= 3:
+            dirs[:] = []
+        if "libsteam_api.so" in files:
+            found.append(os.path.join(d, "libsteam_api.so"))
+    for lib in sorted(found, key=lambda p: ("64" not in p, len(p))):
+        with open(lib, "rb") as f:
+            data = f.read()
+        if data[:4] != b"\x7fELF" or data[18:20] != b"\x3e\x00":  # x86-64
+            continue
+        path = os.path.join(CACHE, "steamapi", hashlib.sha256(data).hexdigest()[:24] + ".map")
+        if not os.path.exists(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            out = subprocess.run([sys.executable, os.path.join(STEAM_API, "steamapi-map"), lib],
+                                 capture_output=True, text=True, check=True).stdout
+            with open(path + ".tmp", "w") as f:
+                f.write(out)
+            os.replace(path + ".tmp", path)
+            log(f"mapped {lib}")
+        return path
+    return None
+
+
+def native_env(root):
+    env = dict(os.environ)
+    env["LD_LIBRARY_PATH"] = ":".join(p for p in (STEAM_API, env.get("LD_LIBRARY_PATH")) if p)
+    m = steam_api_map(root)
+    if m:
+        env["KETTLE_STEAM_API_MAP"] = m
+    # Steam's overlay (and Steam Input with it) for ARM64, not the x86-64 one Steam offers
+    pre = [p for p in env.get("LD_PRELOAD", "").replace(":", " ").split() if not p.endswith("/gameoverlayrenderer.so")]
+    if os.path.exists(OVERLAY):
+        pre.insert(0, OVERLAY)
+    env["LD_PRELOAD"] = ":".join(pre)
+    return env
+
+
+def fna(root, found, args):
+    """An FNA game's .exe on Mono: the one named like its Linux program (Terraria.bin.x86_64 runs
+    Terraria.exe), else the only .NET exe at the top."""
+    if not os.access(MONO, os.X_OK):
+        return None
+    prog = found.get("exe") or ""
+    stem = os.path.basename(prog).split(".")[0]
+    d = os.path.join(root, os.path.dirname(prog))
+    exe = os.path.join(d, stem + ".exe")
+    if not os.path.isfile(exe):
+        exes = [os.path.join(d, f) for f in os.listdir(d) if f.endswith(".exe")
+                and gameengine.binary_info(os.path.join(d, f))["dotnet"] and "server" not in f.lower()]
+        exe = exes[0] if len(exes) == 1 else None
+    if not exe:
+        return None
+    return d, [MONO, exe, *args]
+
+
+RUNNERS = {"fna": fna}
+
+
+def main():
+    cmd = sys.argv[1:]
+    if not cmd:
+        sys.exit("usage: kettle-native %command%   (in a Steam game's launch options)")
+    appid = os.environ.get("SteamAppId") or os.environ.get("SteamGameId") or ""
+    root = install_dir(appid) if appid.isdigit() else None
+    found = gameengine.detect(root) if root else {}
+    run = None
+    if found.get("platform") == "linux" and found.get("engine") in NATIVE:
+        try:
+            run = RUNNERS[found["engine"]](root, found, game_args(cmd, root))
+        except Exception as e:
+            log(f"can't run it natively: {e!r}")
+    if not run:
+        log(f"app {appid or '?'} ({found.get('engine', 'not found')}, {found.get('platform') or '?'}): "
+            "not run natively, starting Steam's command")
+        os.execvp(cmd[0], cmd)
+    cwd, argv = run
+    log(f"app {appid}: {found['engine']} natively: {' '.join(argv)}")
+    os.chdir(cwd)
+    os.execve(argv[0], argv, native_env(root))
+
+
+if __name__ == "__main__":
+    main()
