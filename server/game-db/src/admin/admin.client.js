@@ -206,6 +206,7 @@ function updateBulk() {
 
 async function loadList(append = false) {
   if (state.tab === "bans") return loadBans();
+  if (state.tab === "engines") return loadEngines();
   if (!append) state.offset = 0;
   const qs = new URLSearchParams({ status: state.tab, q: state.q, offset: String(state.offset) });
   if (state.submitter) qs.set("submitter", state.submitter);
@@ -244,6 +245,42 @@ async function loadBans() {
   );
 }
 
+// what devices found the games with entries built on, and per engine how each setting fared:
+// the starting point for FEX defaults per engine
+async function loadEngines() {
+  const { engines, labels } = await api("/v1/admin/engines");
+  const opts = new Map(state.catalog.options.map((o) => [o.id, o]));
+  const setting = (kv) => {
+    const [id, v] = kv.split("=");
+    const o = opts.get(id);
+    return o ? `${o.label}: ${o.choices.find((c) => c.value === v)?.label ?? v}` : kv;
+  };
+  $("more").classList.add("hidden");
+  $("list").replaceChildren(
+    engines.length
+      ? el("div", {}, ...engines.map((e) => {
+          const rows = Object.entries(e.settings).sort((a, b) => b[1].entries - a[1].entries);
+          return el("div", { className: "card", style: "grid-template-columns: 1fr" },
+            el("div", {},
+              el("div", { className: "head" }, el("h3", { textContent: labels[e.engine] ?? e.engine })),
+              el("div", { className: "small muted", textContent:
+                `${e.games} games (${e.x86} 32-bit, ${e.linux} native Linux, ${e.anticheat} with anti-cheat) · ` +
+                `${e.entries} entries, ` +
+                `${e.approved} verified · works ${e.works}, broken ${e.broken}` }),
+              rows.length
+                ? el("div", { className: "votes" }, el("table", {},
+                    el("tr", {}, ...["Setting", "Entries", "Works", "Broken"].map((h) => el("td", {}, el("b", { textContent: h })))),
+                    ...rows.map(([kv, n]) => el("tr", {},
+                      el("td", { textContent: setting(kv) }),
+                      el("td", { textContent: String(n.entries) }),
+                      el("td", { textContent: String(n.works) }),
+                      el("td", { textContent: String(n.broken) })))))
+                : el("div", { className: "small muted", textContent: "No settings in its entries yet." })));
+        }))
+      : el("p", { className: "muted", textContent: "No engine reports yet: they come with shares and votes from Game Settings." }),
+  );
+}
+
 async function loadStats() {
   const s = await api("/v1/admin/stats");
   const stat = (label, n) => el("div", { className: "stat" }, el("b", { textContent: String(n) }), el("span", { className: "muted small", textContent: label }));
@@ -271,7 +308,7 @@ function reload() {
       reload();
     },
   }));
-  $("toolbar").classList.toggle("hidden", state.tab === "bans");
+  $("toolbar").classList.toggle("hidden", state.tab === "bans" || state.tab === "engines");
   loadList().catch((e) => toast(e.message));
 }
 

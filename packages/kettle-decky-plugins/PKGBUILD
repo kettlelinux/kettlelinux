@@ -18,8 +18,9 @@
 #              page, and a toast when a game, Game Mode or the GPU crashes; nothing is sent anywhere
 #   game-settings  per-game compatibility profiles: FEX, DXVK, vkd3d, Turnip and Proton options
 #              (shared/game-options.json) in the launch options, the Proton version, presets,
-#              saved profiles, the welcome game fixes; and the game database (server/game-db):
-#              known good settings players share once they've played with them
+#              saved profiles, the welcome game fixes, the engine the game is built on
+#              (shared/gameengine.py); and the game database (server/game-db): known good
+#              settings players share once they've played with them
 #   screens    the AYN Thor's bottom screen from Game Mode: on/off and its own brightness
 #              (installed on the Thor only: device/thor/packages.txt)
 # Sources live next to this PKGBUILD; shared/ holds code both frontends use.
@@ -27,7 +28,7 @@ pkgbase=kettle-decky-plugins
 pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome kettle-decky-power
          kettle-decky-screens kettle-decky-crash kettle-decky-game-settings)
 pkgver=1.12.0
-pkgrel=16
+pkgrel=17
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
@@ -51,7 +52,7 @@ _install_plugin() {
   install -Dm644 "src-tree/$2"/{plugin.json,package.json,main.py} -t "$d"
   install -Dm644 "src-tree/$2/dist/index.js" -t "$d/dist"
   if [ -d "src-tree/$2/py_modules" ]; then
-    install -Dm644 "src-tree/$2"/py_modules/*.py -t "$d/py_modules"   # steamlib.py: symlink to shared/
+    install -Dm644 "src-tree/$2"/py_modules/*.py -t "$d/py_modules"   # symlinks to shared/
   fi
   install -Dm644 "$startdir/LICENSE" -t "$d"
   install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"

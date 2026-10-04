@@ -17,6 +17,13 @@ settings that worked to the Kettle game database, where other players find and a
 - **Kettle fixes**: the game fixes Welcome applies (`shared/gameFixes.ts`), shown for the games they
   are for and can be turned off or back on.
 - **FEX, Graphics, Proton**: every option in the catalog, each "Default" until chosen.
+- **Engine**: what the game is built on, found from the files in its install folder
+  (`shared/gameengine.py`): the engine (`shared/engines.json`: Unity IL2CPP or Mono, Unreal,
+  Source, Godot, GameMaker, RPG Maker, .NET, ...), whether Steam installed a Windows build (run
+  through Proton and its ARM64EC FEX) or a native Linux one (FEX's Linux build), the main
+  program's CPU (32 or 64-bit x86), and anti-cheat it ships (Easy Anti-Cheat, BattlEye), with a
+  warning. Kept per Steam build in the plugin's `engines.json`, so it's looked up again after an
+  update. It only shows for now; FEX defaults per engine are to come from the database (below).
 - **Custom**: environment variables (`PROTON_`, `DXVK_`, `VKD3D_`, `WINE`, `FEX_`, `MESA_`, `SDL_`,
   `STAGING_`; not the ones the options above or the other plugins manage) and Wine DLL overrides.
 
@@ -51,9 +58,11 @@ with exactly those settings (the plugin counts play time per profile from Steam'
 notifications; any change starts the count again) and answered "Do these settings work?" with
 yes. What is sent: the game's app id and name, the settings and the Proton version it ran with,
 the device model, image variant and Kettle build, a rating (great / playable), an optional note,
-and a random id made for the install (`install-id` in the plugin's settings; the server keeps
+the game's engine, platform, CPU and anti-cheat as above (not the names of its files), and a
+random id made for the install (`install-id` in the plugin's settings; the server keeps
 only its SHA-256), so each device counts once. Nothing is sent unless the player shares or
-answers.
+answers. The engine goes with votes too, so the database knows it for games whose settings
+someone confirmed.
 
 A player who applies an entry (Known good settings > Apply) can answer whether it worked for
 them: "Doesn't work" after any launch, "Works here" after 5 minutes. Sharing settings someone on
@@ -80,6 +89,9 @@ allows any origin; served from `localhost`, it reads a local server on port 8787
 (`server/game-db/src/admin/`). Sign in with the admin token; it's kept in that browser tab only.
 
 - stats: entries by status, games, votes, shared in the last week, banned devices
+- **Engines**: per engine, its games (32-bit, native Linux, with anti-cheat), their entries and
+  votes, and every setting in those entries with how often it's there and how its entries'
+  votes went: where FEX defaults per engine are to come from (`GET /v1/admin/engines`)
 - Pending (oldest first), Approved, Rejected, All, searchable by game name or app id
 - per entry: approve, reject, back to pending, delete, edit its note and rating, its votes
   (which device and build said it works or not)
@@ -101,7 +113,7 @@ images.
 |---|---|
 | `GET /v1/catalog` | the plugin's options (labels, choices, launch option targets) |
 | `GET /v1/games` | games with entries: verified / community counts, devices, last update |
-| `GET /v1/games/<app id>` | a game's entries, verified first |
+| `GET /v1/games/<app id>` | a game's entries, verified first, and its engine (the one most devices reported) |
 | `POST /v1/profiles` | share (5 a minute per address) |
 | `POST /v1/profiles/<id>/votes` | works / doesn't work (30 a minute per address) |
 | `GET /`, `GET /g/<app id>` | redirect to the site's Games page |
@@ -116,7 +128,8 @@ One-time setup:
 5. `npx wrangler deploy` (custom domain `games.kettlelinux.org`).
 6. In `local.env`: `KETTLE_GAMES_URL=https://games.kettlelinux.org`, then build images as usual.
 
-After an update that changes `schema.sql` (it only adds tables), run step 3 again, then deploy.
+After an update that changes `schema.sql` (it only adds tables: `engine_reports` is the latest),
+run step 3 again, then deploy.
 
 Locally: `npx wrangler d1 execute kettle-games --local --file schema.sql`, `ADMIN_TOKEN=test` in
 `.dev.vars`, then `npx wrangler dev` serves it on `http://127.0.0.1:8787`; point a device at it

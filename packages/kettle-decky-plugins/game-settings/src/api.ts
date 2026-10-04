@@ -2,6 +2,7 @@
 // stored.
 import { Navigation } from "@decky/ui";
 import { callable } from "@decky/api";
+import { Engine } from "../../shared/engines";
 import { InstalledGame } from "../../shared/GamePicker";
 import { editLaunchOptions, getFreshAppDetails } from "../../shared/launchOptions";
 import { Owned, Profile, applyProfile } from "./catalog";
@@ -48,6 +49,7 @@ export type Saved = Profile & { name: string };
 export const status = callable<[], Status>("status");
 export const installedGames = callable<[], InstalledGame[]>("installed_games");
 export const getGame = callable<[appid: number], Game>("get_game");
+export const getEngine = callable<[appid: number], Engine | null>("engine");
 export const setGame = callable<[appid: number, patch: Patch], Game>("set_game");
 export const resetGame = callable<[appid: number], Game>("reset_game");
 export const recordPlay = callable<[appid: number, seconds: number, tool: string], void>("record_play");

@@ -7,13 +7,14 @@
 // Public (readable from any site):
 //   GET  /v1/catalog               the options Game Settings offers (shared/game-options.json)
 //   GET  /v1/games                 games with entries: [{app_id, game, approved, pending, variants, updated}]
-//   GET  /v1/games/<app id>        a game's entries, verified first
+//   GET  /v1/games/<app id>        a game's entries, verified first, and its engine
 //   POST /v1/profiles              share settings: answers {id, url}
-//   POST /v1/profiles/<id>/votes   {install_id, works, device, variant, build}
+//   POST /v1/profiles/<id>/votes   {install_id, works, device, variant, build, engine?}
 //   GET  /, /g/<app id>            redirect to the site's pages
 //
 // Admin (Authorization: Bearer $ADMIN_TOKEN, a wrangler secret); the page at /admin uses these:
 //   GET    /v1/admin/stats
+//   GET    /v1/admin/engines                per engine: games, entries, and how the settings in them fared
 //   GET    /v1/admin/profiles?status=pending|approved|rejected|all&q=<game or app id>&offset=
 //   GET    /v1/admin/profiles/<id>          the entry and its votes
 //   POST   /v1/admin/profiles/<id>          {status?, notes?, rating?}
@@ -25,7 +26,12 @@
 //
 // Every setting is checked against the plugin's own catalog (shared/game-options.json), so an
 // entry can only hold options Game Settings offers, never arbitrary launch options.
+//
+// A share or a vote can say which engine the device found the game built on ({engine, platform,
+// arch, anticheat}, ids from shared/engines.json): kept per game and device in engine_reports, so what
+// works can be told apart by engine. One the server doesn't know is left out, never refused.
 import catalog from "../../../packages/kettle-decky-plugins/shared/game-options.json";
+import engines from "../../../packages/kettle-decky-plugins/shared/engines.json";
 import ADMIN_HTML from "./admin/admin.html";
 import ADMIN_JS from "./admin/admin.client.js";
 
@@ -45,6 +51,10 @@ const ENV_NAME = new RegExp(catalog.custom.env_name);
 const ENV_VALUE = new RegExp(catalog.custom.env_value);
 const DLL_NAME = new RegExp(catalog.custom.dll_name);
 const DLL_MODES = new Set(catalog.custom.dll_modes.map((m) => m.value));
+const ENGINES = new Set(engines.engines.map((e) => e.id));
+const PLATFORMS = new Set(engines.platforms.map((p) => p.id));
+const ARCHS = new Set(engines.archs.map((a) => a.id));
+const ANTICHEAT = new Set(engines.anticheat.map((a) => a.id));
 // what the site and the admin page need to describe entries
 const PUBLIC_CATALOG = {
   sections: catalog.sections,
@@ -64,7 +74,11 @@ export default {
       if (p === "/v1/catalog" && req.method === "GET") return cors(json(PUBLIC_CATALOG, 200, 3600));
       if (p === "/v1/games" && req.method === "GET") return cors(json({ games: await index(env) }, 200, 120));
       if ((m = p.match(/^\/v1\/games\/(\d{1,10})$/)) && req.method === "GET")
-        return cors(json({ app_id: Number(m[1]), profiles: await forGame(env, Number(m[1])) }, 200, 60));
+        return cors(json({
+          app_id: Number(m[1]),
+          engine: await gameEngine(env, Number(m[1])),
+          profiles: await forGame(env, Number(m[1])),
+        }, 200, 60));
       if (p === "/v1/profiles") return req.method === "POST" ? await submit(req, env, url) : text("POST only", 405);
       if ((m = p.match(/^\/v1\/profiles\/([a-z2-7]{12})\/votes$/)))
         return req.method === "POST" ? await vote(req, env, m[1]) : text("POST only", 405);
@@ -187,6 +201,39 @@ function profile(b) {
   };
 }
 
+// the engine a device reported, or null (none, or not one this server knows)
+function engineReport(e) {
+  if (!e || typeof e !== "object" || !ENGINES.has(e.engine) || !PLATFORMS.has(e.platform ?? "") || !ARCHS.has(e.arch ?? ""))
+    return null;
+  const ac = Array.isArray(e.anticheat) ? e.anticheat : [];
+  if (ac.length > ANTICHEAT.size || !ac.every((a) => ANTICHEAT.has(a))) return null;
+  return { engine: e.engine, platform: e.platform ?? "", arch: e.arch ?? "", anticheat: [...new Set(ac)].sort() };
+}
+
+function saveEngine(env, appId, reporter, e) {
+  if (!e) return null;
+  return env.DB.prepare(
+    `INSERT INTO engine_reports (app_id, reporter, engine, platform, arch, anticheat, created) VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (app_id, reporter) DO UPDATE SET engine = excluded.engine, platform = excluded.platform,
+       arch = excluded.arch, anticheat = excluded.anticheat, created = excluded.created`,
+  ).bind(appId, reporter, e.engine, e.platform, e.arch, JSON.stringify(e.anticheat), now()).run();
+}
+
+// each game's engine: the one most devices reported
+// (with the platform, arch and anti-cheat of its latest report)
+const TOP_ENGINE = `top_engine AS (
+  SELECT app_id, engine, platform, arch, anticheat, n FROM (
+    SELECT *, ROW_NUMBER() OVER (PARTITION BY app_id ORDER BY n DESC, created DESC) AS r FROM (
+      SELECT *, COUNT(*) OVER (PARTITION BY app_id, engine) AS n FROM engine_reports))
+  WHERE r = 1)`;
+
+async function gameEngine(env, appId) {
+  const r = await env.DB.prepare(`WITH ${TOP_ENGINE} SELECT engine, platform, arch, anticheat, n FROM top_engine WHERE app_id = ?`)
+    .bind(appId)
+    .first();
+  return r ? { engine: r.engine, platform: r.platform, arch: r.arch, anticheat: JSON.parse(r.anticheat), reports: r.n } : null;
+}
+
 const clean = (s, max) => String(s ?? "").replace(/[\u0000-\u001f\u007f<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
 
 async function banned(env, hash) {
@@ -262,6 +309,7 @@ async function submit(req, env, url) {
   const submitter = await sha256(installId);
   if (await banned(env, submitter)) throw new Refused("Sharing from this device is turned off", 403);
   const hash = (await sha256(JSON.stringify(p))).slice(0, 32);
+  await saveEngine(env, b.app_id, submitter, engineReport(b.engine));
   const pageUrl = `${env.PUBLIC_URL ?? url.origin}/g/${b.app_id}`;
 
   // the same settings for the same game and device already shared: that's a vote for them
@@ -301,8 +349,9 @@ async function vote(req, env, id) {
   const variant = str(b.variant, /^[a-z0-9_-]{1,32}$/, "variant");
   const build = str(b.build, /^[A-Za-z0-9._-]{1,20}$/, "build");
   if (await banned(env, voter)) throw new Refused("Voting from this device is turned off", 403);
-  const p = await env.DB.prepare("SELECT submitter FROM profiles WHERE id = ? AND status != 'rejected'").bind(id).first();
+  const p = await env.DB.prepare("SELECT app_id, submitter FROM profiles WHERE id = ? AND status != 'rejected'").bind(id).first();
   if (!p) throw new Refused("No such entry", 404);
+  await saveEngine(env, p.app_id, voter, engineReport(b.engine));
   if (p.submitter !== voter) await addVote(env, id, voter, b.works, clean(b.device, 64) || variant, variant, build);
   return json({ ok: true });
 }
@@ -344,6 +393,37 @@ async function admin(req, env, url) {
       last_week: week.results[0].n,
       bans: bans.results[0].n,
       games: games.results[0].n,
+    });
+  }
+
+  // per engine: its games, their entries (not rejected) and, for every setting in them, how
+  // many entries have it and how their votes went (each entry counts its sharer as a works)
+  if (p === "/v1/admin/engines" && req.method === "GET") {
+    const [games, entries] = await env.DB.batch([
+      env.DB.prepare(`WITH ${TOP_ENGINE} SELECT engine, COUNT(*) AS games, SUM(anticheat != '[]') AS anticheat,
+                      SUM(arch = 'x86') AS x86, SUM(platform = 'linux') AS linux FROM top_engine GROUP BY engine`),
+      env.DB.prepare(`WITH ${TOP_ENGINE} SELECT t.engine, p.status, p.settings, ${COUNTS}
+                      FROM top_engine t JOIN profiles p ON p.app_id = t.app_id WHERE p.status != 'rejected'`),
+    ]);
+    const out = new Map(games.results.map((g) => [g.engine, {
+      ...g, entries: 0, approved: 0, works: 0, broken: 0, settings: {},
+    }]));
+    for (const r of entries.results) {
+      const e = out.get(r.engine);
+      e.entries++;
+      e.approved += r.status === "approved";
+      e.works += r.works;
+      e.broken += r.broken;
+      for (const [k, v] of Object.entries(JSON.parse(r.settings))) {
+        const s = (e.settings[`${k}=${v}`] ??= { entries: 0, works: 0, broken: 0 });
+        s.entries++;
+        s.works += r.works;
+        s.broken += r.broken;
+      }
+    }
+    return json({
+      engines: [...out.values()].sort((a, b) => b.games - a.games),
+      labels: Object.fromEntries(engines.engines.map((e) => [e.id, e.label])),
     });
   }
 
@@ -406,6 +486,7 @@ async function admin(req, env, url) {
         ).bind(hash, clean(b.reason, 200), now()),
         env.DB.prepare("UPDATE profiles SET status = 'rejected', reviewed = ? WHERE submitter = ? AND status != 'rejected'").bind(now(), hash),
         env.DB.prepare("DELETE FROM votes WHERE voter = ?").bind(hash),
+        env.DB.prepare("DELETE FROM engine_reports WHERE reporter = ?").bind(hash),
       ]);
       return json({ ok: true });
     }

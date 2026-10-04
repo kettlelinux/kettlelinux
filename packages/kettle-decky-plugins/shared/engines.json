@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "engines": [
+    { "id": "unity-il2cpp", "label": "Unity (IL2CPP)" },
+    { "id": "unity-mono", "label": "Unity (Mono)" },
+    { "id": "unreal", "label": "Unreal Engine 4/5" },
+    { "id": "unreal-3", "label": "Unreal Engine 3" },
+    { "id": "source", "label": "Source" },
+    { "id": "source2", "label": "Source 2" },
+    { "id": "godot", "label": "Godot" },
+    { "id": "gamemaker", "label": "GameMaker" },
+    { "id": "renpy", "label": "Ren'Py" },
+    { "id": "rpgmaker-mz", "label": "RPG Maker MZ" },
+    { "id": "rpgmaker-mv", "label": "RPG Maker MV" },
+    { "id": "rpgmaker-rgss", "label": "RPG Maker XP/VX" },
+    { "id": "nwjs", "label": "NW.js" },
+    { "id": "electron", "label": "Electron" },
+    { "id": "cryengine", "label": "CRYENGINE" },
+    { "id": "re-engine", "label": "RE Engine" },
+    { "id": "frostbite", "label": "Frostbite" },
+    { "id": "redengine", "label": "REDengine" },
+    { "id": "creation", "label": "Creation Engine" },
+    { "id": "fna", "label": "FNA" },
+    { "id": "monogame", "label": "MonoGame" },
+    { "id": "xna", "label": "XNA" },
+    { "id": "dotnet", "label": ".NET" },
+    { "id": "java", "label": "Java" },
+    { "id": "cef", "label": "Chromium (CEF)" },
+    { "id": "unknown", "label": "Unknown engine" }
+  ],
+  "platforms": [
+    { "id": "windows", "label": "Windows build" },
+    { "id": "linux", "label": "native Linux build" },
+    { "id": "", "label": "Unknown" }
+  ],
+  "archs": [
+    { "id": "x86", "label": "32-bit x86" },
+    { "id": "x86_64", "label": "64-bit x86" },
+    { "id": "arm64", "label": "ARM64" },
+    { "id": "arm64ec", "label": "ARM64EC" },
+    { "id": "", "label": "Unknown" }
+  ],
+  "anticheat": [
+    { "id": "eac", "label": "Easy Anti-Cheat" },
+    { "id": "battleye", "label": "BattlEye" }
+  ]
+}

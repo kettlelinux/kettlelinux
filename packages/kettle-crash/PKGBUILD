@@ -3,10 +3,11 @@
 # theirs: Wine's unhandled exceptions make no core dump), and udev hands it device dumps (GPU
 # hangs, firmware crashes) through kettle-devcoredump@.service; each crash becomes a report directory in
 # /var/log/kettle-crash with the game it belongs to, the system's versions and the game's Kettle
-# features. Nothing is sent anywhere. Sources live next to this PKGBUILD.
+# features. Nothing is sent anywhere. Sources live next to this PKGBUILD; gameengine.py (the
+# engine a game is built on, for its reports) is Game Settings' (kettle-decky-plugins/shared).
 pkgname=kettle-crash
 pkgver=0.1.0
-pkgrel=5
+pkgrel=6
 pkgdesc='Kettle Linux crash reports'
 arch=(any)
 license=(BSD-3-Clause)
@@ -16,6 +17,7 @@ depends=(python systemd libelf)
 package() {
   cd "$startdir"
   install -Dm755 kettle-crashd -t "$pkgdir/usr/lib/kettle-crash"
+  install -Dm644 gameengine.py -t "$pkgdir/usr/lib/kettle-crash"
   install -Dm644 kettle-crashd.service kettle-devcoredump@.service -t "$pkgdir/usr/lib/systemd/system"
   install -Dm644 60-kettle-devcoredump.rules -t "$pkgdir/usr/lib/udev/rules.d"
   install -Dm644 coredump.conf "$pkgdir/usr/lib/systemd/coredump.conf.d/60-kettle.conf"

@@ -16,7 +16,8 @@ Turns each crash into a report directory under /var/log/kettle-crash (/var/log i
                 stderr), which is followed here, keeping its last lines for the report.
 
 Each report is report.json (what crashed; the Steam game it belongs to, or the one running at
-the time; the system's versions; the game's Kettle features) and text and data files next to it.
+the time, and the engine it's built on (gameengine.py, shared with Game Settings); the system's
+versions; the game's Kettle features) and text and data files next to it.
 
   kettle-crashd                     follow the journal for coredumps and the game output
                                     (kettle-crashd.service)
@@ -34,6 +35,11 @@ import sys
 import threading
 import time
 from collections import deque
+
+try:
+    import gameengine  # next to this script; a report goes without the engine if it's missing
+except ImportError:
+    gameengine = None
 
 DIR = os.environ.get("KETTLE_CRASH_DIR", "/var/log/kettle-crash")
 CURSOR = os.path.join(DIR, ".cursor")
@@ -167,7 +173,8 @@ def steam_libraries():
 
 
 def game_info(app):
-    """Name and install folder from the game's appmanifest, and its Kettle features."""
+    """Name and install folder from the game's appmanifest, its engine, and its Kettle
+    features."""
     info = {"app_id": app}
     for lib in steam_libraries():
         acf = read(os.path.join(lib, "steamapps", f"appmanifest_{app}.acf"))
@@ -176,6 +183,12 @@ def game_info(app):
                 m = re.search(rf'"{key}"\s+"([^"]*)"', acf)
                 if m:
                     info[key] = m.group(1)
+            d = os.path.join(lib, "steamapps", "common", info.get("installdir", ""))
+            if gameengine and info.get("installdir") and os.path.isdir(d):
+                try:
+                    info["engine"] = gameengine.detect(d)
+                except Exception as e:  # never in the way of the report
+                    log(f"engine of {app}: {e!r}")
             break
     features = []
     if os.path.exists(f"{HOME}/.config/kettle-framegen/{app}.conf"):  # only while it's on

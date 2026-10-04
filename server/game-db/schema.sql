@@ -39,3 +39,17 @@ CREATE TABLE IF NOT EXISTS banned (
   reason      TEXT NOT NULL DEFAULT '',
   created     INTEGER NOT NULL
 );
+
+-- the engine each device found a game built on (packages/kettle-decky-plugins/shared/gameengine.py),
+-- sent with a share or a vote; one row per game and device, the latest wins
+CREATE TABLE IF NOT EXISTS engine_reports (
+  app_id      INTEGER NOT NULL,
+  reporter    TEXT NOT NULL,              -- SHA-256 of the install id
+  engine      TEXT NOT NULL,              -- an id from shared/engines.json
+  platform    TEXT NOT NULL,              -- the build Steam installed: windows, linux or ''
+  arch        TEXT NOT NULL,              -- the main exe's: x86, x86_64, arm64, arm64ec or ''
+  anticheat   TEXT NOT NULL,              -- JSON [ids]
+  created     INTEGER NOT NULL,
+  PRIMARY KEY (app_id, reporter)
+);
+CREATE INDEX IF NOT EXISTS engine_reports_engine ON engine_reports (engine);
