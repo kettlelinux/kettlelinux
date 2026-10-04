@@ -16,6 +16,7 @@ import { addEventListener, callable, definePlugin, removeEventListener, routerHo
 import { useEffect, useState } from "react";
 import { FaBug } from "react-icons/fa";
 import qrcode from "qrcode-generator";
+import { Engine, engineText } from "../../shared/engines";
 
 type Summary = {
   id: string;
@@ -35,7 +36,7 @@ type Report = {
   driver?: string;
   device?: string;
   compat_tool?: string | null;
-  game?: { app_id: number; name?: string; kettle_features?: string[] } | null;
+  game?: { app_id: number; name?: string; kettle_features?: string[]; engine?: Engine } | null;
   game_process?: boolean;
   dump_bytes?: number;
   dump_skipped?: string;
@@ -226,6 +227,7 @@ function Page() {
         ["Device", r.device ? `${r.device} (${r.driver})` : undefined],
         ["Dump", r.dump_skipped ?? (r.dump_bytes ? `${Math.round(r.dump_bytes / 1024)} KiB saved` : undefined)],
         [r.game_process ? "Game" : "Game running", r.game ? (r.game.name ?? `App ${r.game.app_id}`) : undefined],
+        ["Engine", r.game?.engine ? engineText(r.game.engine) : undefined],
         ["Compatibility tool", r.compat_tool ?? undefined],
         ["Kettle features", r.game ? (r.game.kettle_features ?? []).map((f) => FEATURES[f] ?? f).join(", ") || "None" : undefined],
         ["Kettle", sys ? `${sys.os.version_id ?? ""} build ${sys.os.build_id ?? "?"}, slot ${sys.slot ?? "?"}` : undefined],

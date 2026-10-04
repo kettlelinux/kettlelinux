@@ -17,7 +17,8 @@ it on GitHub. Nothing leaves the device unless the player shares a report.
 | `devcoredump` | a driver's device dump (GPU hang, firmware crash), through udev | `devcoredump.bin.gz` |
 
 Each also has `report.json` (what crashed; the game it belongs to or that was running, with the
-Kettle features on for it; the Kettle build, slot, kernel and package versions), `journal.txt`
+engine it's built on (`gameengine.py`, shared with Game Settings) and the Kettle features on for
+it; the Kettle build, slot, kernel and package versions), `journal.txt`
 and `kernel.txt`. Core files stay where systemd-coredump keeps them (`coredumpctl`), compressed
 and bounded (`/usr/lib/systemd/coredump.conf.d/60-kettle.conf`). A crash repeating within 30 s is
 counted in the same report.

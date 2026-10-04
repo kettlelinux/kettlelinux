@@ -30,7 +30,7 @@ def _manifest(path: str) -> dict:
             text = f.read()
     except OSError:
         return {}
-    return dict(re.findall(r'^\s*"(appid|name|installdir)"\s+"([^"]*)"', text, re.M))
+    return dict(re.findall(r'^\s*"(appid|name|installdir|buildid)"\s+"([^"]*)"', text, re.M))
 
 
 def installed_games() -> list[dict]:
@@ -50,12 +50,18 @@ def installed_games() -> list[dict]:
     return sorted(games.values(), key=lambda g: g["name"].lower())
 
 
-def install_dir(appid: int) -> str | None:
+def install(appid: int) -> tuple[str, str] | None:
+    """The game's install folder and Steam build id (which changes with every update)."""
     for lib in libraries():
         m = _manifest(os.path.join(lib, "steamapps", f"appmanifest_{appid}.acf"))
         if m.get("installdir"):
             d = os.path.join(lib, "steamapps", "common", m["installdir"])
             if os.path.isdir(d):
-                return d
+                return d, m.get("buildid", "")
     return None
+
+
+def install_dir(appid: int) -> str | None:
+    i = install(appid)
+    return i[0] if i else None
 

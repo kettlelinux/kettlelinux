@@ -24,6 +24,7 @@ import {
   commit,
   compatTools,
   currentTool,
+  getEngine,
   getGame,
   installedGames,
   openDatabase,
@@ -33,6 +34,7 @@ import {
   status,
 } from "./api";
 import { AddDllModal, AddEnvModal, ProfilesModal, ShareModal } from "./modals";
+import { Engine, anticheatText, engineText } from "../../shared/engines";
 import { DatabasePage } from "./database";
 
 const small: React.CSSProperties = { fontSize: "12px", lineHeight: "16px" };
@@ -45,6 +47,22 @@ function restartToast(appid: number, name: string) {
   if (runningAppId() === appid) toaster.toast({ title: "Game Settings", body: `Restart ${name} to apply` });
 }
 
+// What the game is built on (gameengine.py, from its files): its engine and the main exe's CPU
+function EngineRow({ e }: { e: Engine }) {
+  const ac = anticheatText(e);
+  return (
+    <PanelSectionRow>
+      <Field
+        label="Engine"
+        description={ac ? `Uses ${ac}: its online modes may refuse to run here.` : undefined}
+        bottomSeparator="none"
+      >
+        <div style={small}>{engineText(e)}</div>
+      </Field>
+    </PanelSectionRow>
+  );
+}
+
 function minutes(s: number) {
   return `${Math.floor(s / 60)} min`;
 }
@@ -55,6 +73,7 @@ function GamePanel({ appid, name, s, onChanged }: { appid: number; name: string;
   const [tools, setTools] = useState<{ strToolName: string; strDisplayName: string }[]>([]);
   const [tool, setTool] = useState("");
   const [count, setCount] = useState<number | null>(null);
+  const [engine, setEngine] = useState<Engine | null>(null);
   const [open, setOpen] = useState(new Set(opened));
 
   const reload = async () => {
@@ -66,6 +85,7 @@ function GamePanel({ appid, name, s, onChanged }: { appid: number; name: string;
   useEffect(() => {
     reload();
     compatTools(appid).then(setTools);
+    getEngine(appid).then(setEngine, () => {});
     if (s.can_share) openDatabase.count(appid).then(setCount);
   }, [appid]);
   if (!g) return null;
@@ -91,6 +111,7 @@ function GamePanel({ appid, name, s, onChanged }: { appid: number; name: string;
 
   return (
     <>
+      {engine && <EngineRow e={engine} />}
       {tools.length > 0 && (
         <PanelSectionRow>
           <DropdownItem

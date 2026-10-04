@@ -9,7 +9,8 @@
 # built) holds profiles players shared as known good. A profile can be shared only once the game
 # was played for PLAYED_MIN_S with exactly those settings and the user said it works; a player
 # who applies one from the database can say whether it worked for them too. Nothing is sent
-# unless the user asks.
+# unless the user asks. With a share or a vote goes the game's engine (gameengine.py: found from
+# its files, kept per Steam build in engines.json), so what works can be told apart by engine.
 import asyncio
 import hashlib
 import json
@@ -22,11 +23,13 @@ import urllib.parse
 import urllib.request
 
 import decky
+import gameengine
 import steamlib
 
 CATALOG = os.path.join(decky.DECKY_PLUGIN_DIR, "game-options.json")
 GAMES = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "games.json")
 PROFILES = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "profiles.json")
+ENGINES = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "engines.json")
 INSTALL_ID = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "install-id")
 SERVER_CONF = "/usr/lib/kettle/games.conf"  # KETTLE_GAMES_URL=https://...; none: no database
 PLAYED_MIN_S = 300  # play time with a profile before it can be shared or confirmed
@@ -249,6 +252,35 @@ def _request(method: str, path: str, body: dict | None = None) -> dict:
         raise RuntimeError(msg or f"the game database answered {e.code}") from e
 
 
+def _engine(appid: int) -> dict | None:
+    """What gameengine found in the game's install folder; None when it isn't installed. Kept
+    until Steam updates the game (its build id changes) or it moves."""
+    inst = steamlib.install(appid)
+    if not inst:
+        return None
+    d, build = inst
+    cache = _read_json(ENGINES, {})
+    cache = cache if isinstance(cache, dict) else {}
+    hit = cache.get(str(appid))
+    if isinstance(hit, dict) and hit.get("dir") == d and hit.get("build") == build and build:
+        return hit["found"]
+    found = gameengine.detect(d)
+    cache[str(appid)] = {"dir": d, "build": build, "found": found}
+    _write_json(ENGINES, cache)
+    decky.logger.info("engine: %s: %s", appid, found)
+    return found
+
+
+def _engine_report(appid: int) -> dict | None:
+    """The engine as the database takes it (not the exe's name or anything else on disk)."""
+    try:
+        e = _engine(appid)
+    except Exception as ex:  # a share or vote mustn't fail over it
+        decky.logger.warning("engine: %s: %r", appid, ex)
+        return None
+    return {k: e.get(k, "") for k in ("engine", "platform", "arch", "anticheat")} if e else None
+
+
 def _fetch(appid: int) -> dict:
     hit = _cache.get(appid)
     if hit and time.monotonic() - hit[0] < CACHE_S:
@@ -286,6 +318,9 @@ class Plugin:
 
     async def installed_games(self) -> list[dict]:
         return steamlib.installed_games()
+
+    async def engine(self, appid: int) -> dict | None:
+        return await asyncio.to_thread(_engine, appid)
 
     async def get_game(self, appid: int) -> dict:
         return _view(appid, _load_games().get(appid) or dict(GAME_DEFAULTS))
@@ -385,6 +420,7 @@ class Plugin:
             **clean_profile({**g, "compat_tool": g["played"].get("compat_tool") or None}),
             "rating": rating if rating in RATINGS else "playable",
             "notes": " ".join(str(notes).split())[:MAX_NOTES],
+            "engine": await asyncio.to_thread(_engine_report, appid),
         }
         try:
             out = await asyncio.to_thread(_request, "POST", "/v1/profiles", body)
@@ -412,7 +448,8 @@ class Plugin:
         try:
             await asyncio.to_thread(_request, "POST", f"/v1/profiles/{urllib.parse.quote(pid)}/votes", {
                 "install_id": _install_id(), "works": bool(works),
-                "device": d["model"], "variant": d["variant"], "build": d["build"]})
+                "device": d["model"], "variant": d["variant"], "build": d["build"],
+                "engine": await asyncio.to_thread(_engine_report, appid)})
         except Exception as e:
             raise RuntimeError(f"Couldn't send it: {e}") from e
         g["voted"] = (g["voted"] + [pid])[-200:]
