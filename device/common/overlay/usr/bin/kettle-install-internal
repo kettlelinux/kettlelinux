@@ -176,7 +176,13 @@ if [ "$REINSTALL" = 1 ]; then
   ask "Proceed?" || exit 1
 else
   [ "$STATE" = none ] || die "Kettle is already (or partly) installed internally; use --reinstall"
-  [ "$(last_part)" = "$UD" ] || die "userdata is not the last partition on $DISK; not a layout this installer knows"
+  # Kettle goes into the space userdata gives up, so nothing may follow it: typically another
+  # system installed next to Android (ROCKNIX, for one) that has to be removed first
+  after=$(parts_after "$UD")
+  if [ -n "$after" ]; then
+    sfdisk -d "$DISK" || true   # into the log
+    die "partitions that are not Kettle's follow Android's userdata on $DISK: $(echo $after). Remove that system (or restore a backup of the internal storage from before it was installed) first; nothing was changed"
+  fi
   [[ $ANDROID_GB =~ ^[0-9]+$ ]] && [ "$ANDROID_GB" -ge "$MIN_ANDROID_GB" ] || die "--android-size must be >= $MIN_ANDROID_GB"
   ud_start=$(( $(part_start_b "$UD") / SS ))
   ud_size=$(( ANDROID_GB * 1024 * MIB ))
