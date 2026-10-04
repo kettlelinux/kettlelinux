@@ -48,6 +48,9 @@ own *Check for updates*.
   Steam's Performance panel, the Power plugin, or a Desktop Mode tray applet.
 - **Games outside Steam**: ARM64EC Wine with FEX, DXVK and vkd3d-proton, plus Lutris and Heroic
   built for arm64.
+- **Epic Games, GOG and Amazon Games in Game Mode**: the Game Stores plugin signs in to each store,
+  lists your games, installs and updates them, and adds them to your Steam library to play with
+  Proton. Sign-ins and installs are shared with Heroic on the desktop. ([docs/GAME-STORES.md](docs/GAME-STORES.md))
 - **Native ARM64 games**: the Linux builds of FNA, XNA, MonoGame and .NET games (Terraria,
   Stardew Valley) run their own code on ARM64 instead of under FEX, from Game Settings.
   ([docs/NATIVE-GAMES.md](docs/NATIVE-GAMES.md))

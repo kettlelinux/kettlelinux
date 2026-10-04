@@ -1,0 +1,11 @@
+{
+  "name": "Game Stores",
+  "author": "Kettle Linux",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["epic", "gog", "amazon", "library"],
+    "description": "Epic Games, GOG and Amazon Games in Game Mode: sign in, browse your games, install them and play them from your Steam library.",
+    "image": ""
+  }
+}
