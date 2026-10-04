@@ -22,6 +22,8 @@ export type Game = {
   busy: "install" | "update" | null;
 };
 export type GameInfo = { download: number; disk: number; update?: boolean; installed: { path: string; version: string } | null };
+// the game's page's About section ("" or [] where the store doesn't say)
+export type Details = { summary: string; developer: string; publisher: string; released: string; genres: string[]; modes: string[] };
 export type Location = { path: string; label: string; free: number };
 export type ShortcutInfo = { title: string; exe: string; dir: string; launch: string };
 
@@ -31,6 +33,7 @@ export const loginCancel = callable<[], void>("login_cancel_wait");
 export const logout = callable<[store: Store], void>("logout");
 export const library = callable<[store: Store, refresh: boolean], { games: Game[]; fetched: number }>("library");
 export const gameInfo = callable<[store: Store, id: string], GameInfo>("game_info");
+export const details = callable<[store: Store, id: string], Details>("details");
 export const locations = callable<[], { locations: Location[]; current: string }>("locations");
 export const setLocation = callable<[path: string], void>("set_location");
 export const install = callable<[store: Store, id: string, title: string, kind: "install" | "update"], void>("install");

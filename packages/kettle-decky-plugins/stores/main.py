@@ -355,12 +355,43 @@ def _shortcut_info(store: str, gid: str) -> dict:
             "dir": os.path.join(g["path"], wd.replace("\\", "/")) if wd else g["path"]}
 
 
-def _gamesdb(gid: str) -> dict:
-    """GOG's game database entry (artwork), or {}."""
+def _gamesdb(gid: str, platform: str = "gog") -> dict:
+    """GOG's game database entry (artwork, details), or {}. It knows Epic games too, by app name."""
     try:
-        return _get_json(f"https://gamesdb.gog.com/platforms/gog/external_releases/{gid}").get("game") or {}
+        return _get_json(f"https://gamesdb.gog.com/platforms/{platform}/external_releases/{gid}").get("game") or {}
     except Exception:
         return {}
+
+
+def _text(v) -> str:
+    """A game database string: plain, or by language ("*" the default)."""
+    if isinstance(v, dict):
+        return v.get("en-US") or v.get("*") or next(iter(v.values()), "")
+    return v or ""
+
+
+def _details(store: str, gid: str) -> dict:
+    """What the game's page shows under its buttons: summary, developer, publisher, release date
+    (YYYY-MM-DD), genres and play modes. From GOG's game database for Epic and GOG games, from
+    Amazon's library for Amazon's."""
+    if store == "amazon":
+        p = next(((x.get("product") or {}) for x in _read_json(os.path.join(NILE, "library.json"), [])
+                  if (x.get("product") or {}).get("id") == gid), {})
+        d = (p.get("productDetail") or {}).get("details") or {}
+        return {"summary": p.get("description") or "", "developer": d.get("developer") or "",
+                "publisher": d.get("publisher") or "", "released": (d.get("releaseDate") or "")[:10],
+                "genres": d.get("genres") or [], "modes": d.get("gameModes") or []}
+    db = _gamesdb(gid, "epic" if store == "epic" else "gog")
+    out = {"summary": _text(db.get("summary")).strip(),
+           "developer": ", ".join(x.get("name", "") for x in db.get("developers") or []),
+           "publisher": ", ".join(x.get("name", "") for x in db.get("publishers") or []),
+           "released": (db.get("first_release_date") or "")[:10],
+           "genres": [_text(x.get("name")) for x in db.get("genres") or []],
+           "modes": [_text(x.get("name")) for x in db.get("game_modes") or []]}
+    if store == "epic" and not out["developer"]:
+        meta = _read_json(os.path.join(LEGENDARY, "metadata", f"{gid}.json"), {}).get("metadata") or {}
+        out["developer"] = meta.get("developer") or ""
+    return out
 
 
 def _art_urls(store: str, gid: str) -> dict:
@@ -575,6 +606,7 @@ class Plugin:
         self.login = {"store": None, "state": "idle", "error": ""}
         self.login_task = None
         self.login_cancel = False
+        self.details_cache = {}
 
     def _state(self) -> dict:
         return _read_json(STATE, {"shortcuts": {}, "pending": [], "queue": [], "job": None})
@@ -656,6 +688,12 @@ class Plugin:
         info = await asyncio.to_thread(_size_info, store, gid)
         info["installed"] = (await asyncio.to_thread(_installed, store)).get(gid)
         return info
+
+    async def details(self, store: str, gid: str) -> dict:
+        key = f"{store}:{gid}"
+        if key not in self.details_cache:
+            self.details_cache[key] = await asyncio.to_thread(_details, store, gid)
+        return self.details_cache[key]
 
     async def locations(self) -> dict:
         return {"locations": await asyncio.to_thread(_locations),
