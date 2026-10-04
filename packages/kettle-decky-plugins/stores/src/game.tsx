@@ -12,13 +12,14 @@ const date = (d: string) => {
 };
 
 // The game's summary and facts, under the buttons (focusable, so the controller scrolls to them)
-function About({ d }: { d: Details }) {
+function About({ d, dlc }: { d: Details; dlc: string[] }) {
   const rows: [string, string][] = [
     ["Developer", d.developer],
     ["Publisher", d.publisher],
     ["Released", d.released ? date(d.released) : ""],
     ["Genres", d.genres.join(", ")],
     ["Modes", d.modes.join(", ")],
+    ["DLC you own", dlc.join(", ")], // installed with the game
   ];
   if (!d.summary && !rows.some(([, v]) => v)) return null;
   return (
@@ -157,7 +158,7 @@ export function GamePage() {
             any other game.
           </p>
         )}
-        {about && <About d={about} />}
+        {about && <About d={about} dlc={game.dlc?.length ? game.dlc : (info?.dlc ?? [])} />}
       </div>
     </div>
   );
