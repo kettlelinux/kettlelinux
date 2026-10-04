@@ -1,0 +1,6 @@
+# Kettle Linux: let the SM8550's USB controller (dwc3-qcom) power down when nothing is plugged in.
+# The driver leaves runtime PM "on", so with no cable it stays powered in device role and holds a
+# 1 GB/s DDR vote. Plugging in a device still wakes it: the Type-C role switch resumes it (tested
+# on the Odin 2 Portal with a USB stick, which enumerated at SuperSpeed).
+ACTION=="add|bind", SUBSYSTEM=="platform", DRIVER=="dwc3-qcom", \
+  ENV{OF_COMPATIBLE_0}=="qcom,sm8550-dwc3", ATTR{power/control}="auto"
