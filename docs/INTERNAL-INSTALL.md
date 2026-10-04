@@ -37,6 +37,11 @@ It holds a copy of the card's system image (slot A), `/var` (settings, Wi-Fi, pa
 `/home` (Steam and your files; installed games too, unless you skip them). The system takes a
 fixed 25 GiB (two 12 GiB slots and small boot and `/var` partitions); `/home` gets the rest.
 
+Steam stays signed in on the device the card was used on. Installing a different device from
+the card (or booting the card in one) makes Steam ask to sign in again there: two devices with
+one saved login would sign each other out ("Session Replaced"), so `run-steam` keeps the login
+only on the device it was saved on (by the SoC's serial) and drops it elsewhere.
+
 ## What is erased
 
 Android's `userdata` (its apps and data) is metadata-encrypted with keys held in the TEE, so

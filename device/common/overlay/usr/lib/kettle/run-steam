@@ -17,6 +17,26 @@ if [ ! -e "$unpacked" ]; then
   sync -f "$root"
   touch "$unpacked"
 fi
+# Steam's saved login (local.vdf's ConnectCache) is one session: a second device using the same
+# one (an SD card moved to another device, or one device installed from a card used on another)
+# makes Steam sign each out ("Session Replaced") whenever the other signs in. So it's kept only
+# on the device it was saved on (the SoC's serial: an internal install keeps it); on another,
+# Steam asks to sign in again, as a session of its own. Library, settings and games stay.
+device=$(cat /sys/devices/soc0/serial_number 2>/dev/null || cat /etc/machine-id 2>/dev/null || true)
+if [ -n "$device" ]; then
+  device=$(printf '%s' "$device" | sha256sum | cut -c1-32)
+  mark="$root/.kettle-device"
+  if [ -s "$mark" ] && [ "$(cat "$mark")" != "$device" ] && [ -e "$root/local.vdf" ]; then
+    echo "kettle: Steam's saved login is another device's: signing in again on this one"
+    python3 - "$root/local.vdf" <<'EOF'
+import re, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8", errors="surrogateescape").read()
+open(p, "w", encoding="utf-8", errors="surrogateescape").write(re.sub(r'\s*"ConnectCache"\s*\{[^{}]*\}', "", s))
+EOF
+  fi
+  echo "$device" >"$mark"
+fi
 # Valve's steam-health-check (steam.service pre-start) treats a missing sentinel as a broken
 # install and re-unpacks the bootstrap over it; the client updates itself from there
 touch "$root/.install-complete"
