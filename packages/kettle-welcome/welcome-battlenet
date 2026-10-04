@@ -10,7 +10,15 @@
 #                               Once the installer has put the launcher in the shortcut's prefix,
 #                               status also switches the shortcut to start it.
 #   welcome-battlenet install   downloads Blizzard's installer, adds the shortcut (or reuses it),
-#                               sets Proton-CachyOS and starts the installer
+#                               sets Proton-CachyOS and starts the installer; also starts prepare
+#   welcome-battlenet prepare   waits (up to an hour) for Proton to create the shortcut's prefix,
+#                               then turns off the launcher's hardware acceleration there (a
+#                               transient systemd user unit, started by install)
+#
+# The launcher's hardware acceleration is off (Battle.net.config, Client.HardwareAcceleration):
+# with it on, its Chromium GPU process crashes under FEX (once after an hour of a game download,
+# then again at every start), leaving the window frozen or on its loading spinner while the Agent
+# carries on. status turns it off too, for a launcher installed before prepare existed.
 #
 # Errors go to stderr, with exit status 1. The installer comes from Blizzard's own download link:
 # Blizzard publishes no checksum and changes the file with every release, so the download is
@@ -23,6 +31,7 @@ import socket
 import struct
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -35,6 +44,7 @@ SETUP = os.path.join(DIR, "Battle.net-Setup.exe")
 STATE = os.path.join(DIR, "shortcut.json")  # {"appid": ..., "ready": true once it starts the launcher}
 COMPATDATA = os.path.join(HOME, ".local", "share", "Steam", "steamapps", "compatdata")
 LAUNCHER = ("pfx", "drive_c", "Program Files (x86)", "Battle.net", "Battle.net Launcher.exe")
+CONFIG = ("pfx", "drive_c", "users", "steamuser", "AppData", "Roaming", "Battle.net", "Battle.net.config")
 PROTON = "/usr/lib/kettle/welcome-proton"
 CEF = ("127.0.0.1", 8080)
 
@@ -71,6 +81,33 @@ def newest_proton():
 def launcher(appid) -> str:
     path = os.path.join(COMPATDATA, str(appid), *LAUNCHER) if appid else ""
     return path if path and os.path.isfile(path) else ""
+
+
+def no_hardware_acceleration(appid) -> bool:
+    """Sets Client.HardwareAcceleration to "false" in the prefix's Battle.net.config, creating it
+    if need be; False while the prefix doesn't exist yet."""
+    path = os.path.join(COMPATDATA, str(appid), *CONFIG)
+    roaming = os.path.dirname(os.path.dirname(path))
+    if not os.path.isdir(roaming):
+        return False
+    try:
+        with open(path, encoding="utf-8") as f:
+            config = json.load(f)
+    except (OSError, ValueError):
+        config = {}
+    if not isinstance(config, dict):
+        config = {}
+    client = config.setdefault("Client", {})
+    if isinstance(client, dict) and client.get("HardwareAcceleration") == "false":
+        return True
+    if not isinstance(client, dict):
+        client = config["Client"] = {}
+    client["HardwareAcceleration"] = "false"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=4)
+    os.replace(path + ".tmp", path)
+    return True
 
 
 def download():
@@ -186,6 +223,8 @@ def cmd_status():
         try:
             present = in_library(appid)
             exe = launcher(appid)
+            if present and exe:
+                no_hardware_acceleration(appid)
             if present and exe and not state.get("ready"):
                 cef_eval("(() => { %s point(%d, %s); return 1; })()" % (POINT, appid, json.dumps(exe)))
                 write_state(appid, True)
@@ -224,16 +263,26 @@ def cmd_install():
     r = cef_eval(js) or {}
     if r.get("id"):
         write_state(int(r["id"]), False)
+        subprocess.run(["systemd-run", "--user", "--collect", "--quiet", "--unit=kettle-welcome-battlenet",
+                        os.path.abspath(__file__), "prepare"], capture_output=True, timeout=30)
     if r.get("error"):
         raise Failed(r["error"])
     if not r.get("started"):
         raise Failed("Battle.net is in your Steam library: start it from there.")
 
 
+def cmd_prepare():
+    appid = read_state().get("appid")
+    for _ in range(1800):
+        if not appid or no_hardware_acceleration(appid):
+            return
+        time.sleep(2)
+
+
 def main(argv):
-    commands = {"status": cmd_status, "install": cmd_install}
+    commands = {"status": cmd_status, "install": cmd_install, "prepare": cmd_prepare}
     if len(argv) != 2 or argv[1] not in commands:
-        print("usage: welcome-battlenet status|install", file=sys.stderr)
+        print("usage: welcome-battlenet status|install|prepare", file=sys.stderr)
         return 2
     try:
         commands[argv[1]]()
