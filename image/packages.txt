@@ -180,6 +180,10 @@ kettle-decky-game-settings
 # brightness. kettle-ledd sets them; the Lights plugin is its Game Mode UI
 kettle-leds
 kettle-decky-lights
+# Game Stores (built by us, packages/kettle-decky-plugins): Epic Games, GOG and Amazon Games in
+# Game Mode: sign in, browse, install, update, and play from the Steam library (Proton shortcuts
+# through kettle-store-run), with Heroic's store tools and config (desktop Heroic shares them)
+kettle-decky-stores
 
 # Desktop Mode welcome (built by us, packages/kettle-welcome): Kettle Welcome, our own hub app.
 # Opens on the first desktop login; setup shortcuts (password, Wi-Fi, ...), controls, games

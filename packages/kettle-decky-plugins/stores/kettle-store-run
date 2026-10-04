@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+# kettle-store-run: starts a game from Epic, GOG or Amazon that the Game Stores plugin added to
+# Steam. The shortcut points at the game's .exe with Proton, and its launch options are
+#   kettle-store-run <epic|gog|amazon> <id> %command%
+# so Steam runs this with its whole command (reaper, the runtime, Proton, the .exe); this adds
+# what the store needs after it and runs it:
+#   epic    legendary's launch arguments: the Epic login (a new one-time code each time) and the
+#           game's own; offline, the game starts without them
+#   gog     the primary play task's arguments (goggame-<id>.info)
+#   amazon  nile's: fuel.json's arguments and the Amazon Games SDK variables
+# Logins and installs are Heroic's (~/.config/heroic), as in the plugin.
+# A log of the last starts: ~/.local/state/kettle-stores/run.log (Epic's code left out).
+import json, os, shlex, subprocess, sys, time
+
+HEROIC = os.path.expanduser("~/.config/heroic")
+os.environ.setdefault("LEGENDARY_CONFIG_PATH", os.path.join(HEROIC, "legendaryConfig", "legendary"))
+os.environ.setdefault("NILE_CONFIG_PATH", os.path.join(HEROIC, "nile_config"))
+os.environ.setdefault("GOGDL_CONFIG_PATH", os.path.join(HEROIC, "gogdlConfig"))
+STATE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "kettle-stores")
+
+
+def log(*a):
+    try:
+        os.makedirs(STATE, exist_ok=True)
+        path = os.path.join(STATE, "run.log")
+        if os.path.exists(path) and os.path.getsize(path) > 256 << 10:
+            os.replace(path, path + ".old")
+        with open(path, "a") as f:
+            print(time.strftime("%F %T"), *a, file=f)
+    except OSError:
+        pass
+
+
+def masked(args):
+    return [a.split("=", 1)[0] + "=…" if a.startswith("-AUTH_PASSWORD=") else a for a in args]
+
+
+def epic(gid):
+    for extra in ([], ["--offline"]):
+        try:
+            r = subprocess.run(["legendary", "launch", gid, "--json", *extra], capture_output=True, text=True, timeout=60)
+        except subprocess.TimeoutExpired:
+            log("legendary launch timed out", extra)
+            continue
+        if r.returncode == 0:
+            d = json.loads(r.stdout)
+            return d.get("egl_parameters", []) + d.get("game_parameters", []) + d.get("user_parameters", []), {}
+        log("legendary launch", *extra, "failed:", r.stderr.strip()[-400:])
+    return [], {}
+
+
+def gog(gid):
+    info = os.path.join(os.getcwd(), f"goggame-{gid}.info")
+    path = os.getcwd()
+    # the shortcut may start in the play task's working folder: look up from there
+    while not os.path.exists(info) and os.path.dirname(path) != path:
+        path = os.path.dirname(path)
+        info = os.path.join(path, f"goggame-{gid}.info")
+    try:
+        with open(info) as f:
+            task = next((t for t in json.load(f).get("playTasks", []) if t.get("isPrimary")), {})
+    except (OSError, ValueError) as e:
+        log("no play task:", e)
+        return [], {}
+    return shlex.split(task.get("arguments") or "", posix=False), {}
+
+
+def amazon(gid):
+    try:
+        r = subprocess.run(["nile", "launch", gid, "--json"], capture_output=True, text=True, timeout=60)
+        d = json.loads(r.stdout.strip().splitlines()[-1])
+    except (subprocess.TimeoutExpired, ValueError, IndexError) as e:
+        log("nile launch failed:", e)
+        return [], {}
+    return (d.get("command") or {}).get("arguments") or [], d.get("env") or {}
+
+
+def main():
+    if len(sys.argv) < 4:
+        sys.exit("usage: kettle-store-run <epic|gog|amazon> <id> <command...>")
+    store, gid, cmd = sys.argv[1], sys.argv[2], sys.argv[3:]
+    extra, env = {"epic": epic, "gog": gog, "amazon": amazon}.get(store, lambda _: ([], {}))(gid)
+    log("start", store, gid, "args:", masked(extra), "env:", sorted(env))
+    os.environ.update(env)
+    os.execvp(cmd[0], cmd + extra)
+
+
+main()
