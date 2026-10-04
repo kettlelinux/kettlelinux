@@ -1,0 +1,38 @@
+# python-protobuf for the image's Python 3.11. Valve's deckard hotfix repo carries a
+# python-protobuf 25.3 built for Python 3.12 (its files are in /usr/lib/python3.12), which the
+# image's Python 3.11 never sees, so nile (Amazon games, in Heroic and the Game Stores plugin)
+# failed with "No module named 'google'". Same protobuf release (4.25.3, protobuf 25.3), built
+# here from PyPI's source release with its upb C extension; the [kettle] repo comes first, so this
+# replaces the hotfix package.
+pkgname=python-protobuf
+_pyver=4.25.3
+pkgver=25.3
+pkgrel=6
+pkgdesc='Protocol Buffers, Google data interchange format (Python 3 bindings)'
+arch=(aarch64)
+url='https://developers.google.com/protocol-buffers/'
+license=(BSD-3-Clause)
+depends=(python)
+makedepends=(python-build python-installer python-wheel python-setuptools)
+source=("https://files.pythonhosted.org/packages/source/p/protobuf/protobuf-$_pyver.tar.gz"
+        "LICENSE-$pkgver::https://raw.githubusercontent.com/protocolbuffers/protobuf/v$pkgver/LICENSE")
+sha256sums=('25b5d0b42fd000320bd7830b349e3b696435f3b329810427a6bcce6a5492cc5c'
+            '6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d')
+
+build() {
+  cd protobuf-$_pyver
+  python -m build --wheel --no-isolation
+}
+
+check() {
+  cd protobuf-$_pyver
+  # the C implementation (upb) must be the one in use, built for this Python
+  PYTHONPATH="$PWD/build/lib.linux-$CARCH-cpython-$(python -c 'import sys; print(f"{sys.version_info[0]}{sys.version_info[1]}")')" \
+    python -c 'from google.protobuf.internal import api_implementation as a; assert a.Type() == "upb", a.Type()'
+}
+
+package() {
+  cd protobuf-$_pyver
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  install -Dm644 "$srcdir/LICENSE-$pkgver" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
