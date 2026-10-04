@@ -10,3 +10,5 @@ kettle-ucm-thor
 plasma-mobile
 # Quick Access > Screens: the bottom screen on or off, and its brightness
 kettle-decky-screens
+# AYN's U-Boot for the loader partition, put on the KETTLE partition too (docs/INSTALL.md)
+u-boot-ayn

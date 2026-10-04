@@ -4,3 +4,5 @@
 kettle-firmware-odin2portal
 # ALSA UCM profile for the "AYN-Odin2" card (packages/kettle-ucm-ayn)
 kettle-ucm-odin2portal
+# AYN's U-Boot for the loader partition, put on the KETTLE partition too (docs/INSTALL.md)
+u-boot-ayn

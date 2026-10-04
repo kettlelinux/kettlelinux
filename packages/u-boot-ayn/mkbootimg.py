@@ -1,0 +1,1 @@
+../steamos-customizations-kettle/mkbootimg.py

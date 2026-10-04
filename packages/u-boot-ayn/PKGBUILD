@@ -1,0 +1,42 @@
+# U-Boot for the AYN SM8550 handhelds (Odin 2 Portal, Thor), built from AYN's published source
+# (AYNTechnologies/u-boot, branch ayn-sm8550) with their recipe, at the commit AYN ships in the
+# devices' "loader" partition (U-Boot 2025.01-rc2-00231-g5698f9a35201, byte for byte the same on
+# a Portal and a Thor). AYN's stock bootloader (ABL) boots that partition when fastboot mode's
+# default boot is set to Loader: no bootloader unlock, Android stays as it is. This U-Boot boots
+# \EFI\BOOT\BOOTAA64.EFI (EFI boot manager), which is steamcl, so the A/B slots fall back.
+#
+# Units ship with it; this is for a loader partition that is empty or was overwritten. Installs
+# /usr/share/kettle/u-boot/u-boot-ayn.img (an Android boot image); the image build also puts it
+# on the KETTLE partition for `fastboot flash loader u-boot-ayn.img` (docs/INSTALL.md). One
+# devicetree (odin2-common, only for U-Boot itself) serves every model; Linux gets its own from
+# GRUB.
+pkgname=u-boot-ayn
+_commit=5698f9a3520107d6fd0cf5440db8fba0a477b0c7   # ayn-sm8550, 2025-02-24
+pkgver=2025.01rc2.r231
+pkgrel=1
+pkgdesc='U-Boot for the AYN SM8550 handhelds, as an Android boot image for their loader partition'
+arch=(aarch64)
+url='https://github.com/AYNTechnologies/u-boot'
+license=(GPL-2.0-or-later)
+makedepends=(git bc dtc python python-setuptools python-pyelftools swig openssl gnutls util-linux xxd)
+options=(!strip)
+source=("u-boot::git+https://github.com/AYNTechnologies/u-boot.git#commit=$_commit"
+        mkbootimg.py)   # steamos-customizations-kettle's (symlink)
+sha256sums=('SKIP'
+            'cb8c07b9dde2c1ab060433af0a6406020ec07774b208450a0210c7e848b5ae6a')
+
+build() {
+  cd u-boot
+  make O=out qcom_defconfig
+  make O=out DEVICE_TREE=qcom/qcs8550-ayn-odin2-common
+  gzip -9n -c out/u-boot-nodtb.bin >out/kernel-dtb
+  cat out/dts/upstream/src/arm64/qcom/qcs8550-ayn-odin2-common.dtb >>out/kernel-dtb
+  # AYN's: mkbootimg --kernel_offset 0x00008000 --pagesize 4096 --cmdline nodtbo
+  python3 "$srcdir/mkbootimg.py" --kernel out/kernel-dtb --kernel_offset 0x8000 \
+    --pagesize 4096 --cmdline nodtbo -o out/u-boot-ayn.img
+}
+
+package() {
+  install -Dm644 u-boot/out/u-boot-ayn.img "$pkgdir/usr/share/kettle/u-boot/u-boot-ayn.img"
+  install -Dm644 u-boot/Licenses/README "$pkgdir/usr/share/licenses/$pkgname/README"
+}

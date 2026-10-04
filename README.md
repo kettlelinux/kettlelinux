@@ -82,6 +82,7 @@ Kettle Linux is built on the work of many projects and people. Thank you all.
 - [ROCKNIX](https://github.com/ROCKNIX): SM8550 kernel patches, the Odin 2 device trees,
   [extra firmware](https://github.com/ROCKNIX/extra-firmware) and the [ABL](https://github.com/ROCKNIX/abl)
 - Teguh Sobirin: the Odin 2 family and Thor device trees
+- [AYN](https://github.com/AYNTechnologies): [U-Boot for SM8550](https://github.com/AYNTechnologies/u-boot), shipped on the Portal and Thor and on Kettle's card
 - Luke Johnson (ROCKNIX): the Thor's ALSA UCM profile
 - [pocknix-os](https://github.com/shuuri-labs/pocknix-os): suspend, UFS and SD patches
 - Aaron Kling: the upstream "Support AYN QCS8550 Devices" series
