@@ -461,6 +461,15 @@
 	};
 };
 
+/*
+ * The Odin 2's and the Portal's power button light (LPG channels 1-3) isn't there on the Thor:
+ * lit red, green or blue, nothing shows. Without the node, the Lights plugin offers no power
+ * light here. Channel 4 is the fan's (qcs8550-ayn-common.dtsi), so the LPG stays.
+ */
+&pm8550_pwm {
+	/delete-node/ power_led;
+};
+
 &remoteproc_adsp {
 	firmware-name = "qcom/sm8550/ayn/thor/adsp.mbn",
 			"qcom/sm8550/ayn/thor/adsp_dtb.mbn";
