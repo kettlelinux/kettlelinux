@@ -1,0 +1,10 @@
+[Unit]
+Description=Point RetroArch's core downloader at the aarch64 cores
+Before=graphical-session-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/kettle/retroarch-cores
+
+[Install]
+WantedBy=graphical-session-pre.target

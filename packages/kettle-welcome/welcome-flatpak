@@ -51,6 +51,10 @@ case "${1:-}" in
         echo "error $id ${msg:-flatpak install failed}" >"$state"
         exit 1
       fi
+      # before its first start, so the core downloader works from the outset (image overlay)
+      if [ "$id" = org.libretro.RetroArch ] && [ -x /usr/lib/kettle/retroarch-cores ]; then
+        /usr/lib/kettle/retroarch-cores >>"$log" 2>&1 || true
+      fi
     done
     echo "done $n" >"$state"
     ;;

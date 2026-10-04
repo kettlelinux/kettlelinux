@@ -1,0 +1,24 @@
+#!/bin/bash
+# Kettle Linux: give Flathub's RetroArch a server to download cores from. RetroArch only builds in
+# one for x86 and 32-bit ARM Linux, so on aarch64 core_updater_buildbot_cores_url is empty and
+# Online Updater > Core Downloader has nothing to offer. Sets it to libretro's aarch64 buildbot when
+# it is missing or empty; a URL the user set is left alone. Runs at login
+# (kettle-retroarch-cores.service) and from welcome-flatpak right after it installs RetroArch.
+set -euo pipefail
+APP=org.libretro.RetroArch
+KEY=core_updater_buildbot_cores_url
+URL=http://buildbot.libretro.com/nightly/linux/aarch64/latest/
+cfg=$HOME/.var/app/$APP/config/retroarch/retroarch.cfg
+
+app=$(flatpak info -l "$APP" 2>/dev/null) || exit 0  # not installed
+# RetroArch writes out its whole config when it quits, which would undo this
+! flatpak ps --columns=application | grep -qx "$APP" || exit 0
+
+if [ ! -e "$cfg" ]; then
+  # Never started: begin from the flatpak's own config (its asset, shader and core info paths),
+  # which RetroArch reads only while the user has none of their own
+  install -Dm644 "$app/files/etc/retroarch.cfg" "$cfg"
+fi
+grep -q "^$KEY = \"..*\"" "$cfg" && exit 0
+sed -i "/^$KEY *=/d" "$cfg"
+echo "$KEY = \"$URL\"" >>"$cfg"
