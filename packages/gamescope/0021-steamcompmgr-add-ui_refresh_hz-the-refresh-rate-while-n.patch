@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Sun, 4 Oct 2026 14:00:00 -0500
+Subject: [PATCH] steamcompmgr: add ui_refresh_hz, the refresh rate while no
+ game is open
+
+With no game open the display always runs at its highest refresh rate.
+On a handheld the Steam UI is where much of the idle time goes: on the
+AYN Odin 2 Portal, Steam's three full-screen layers at 120 Hz cost a
+7.8 GB/s display bandwidth vote, which keeps DDR at 1555 MHz while idle.
+
+Add a ui_refresh_hz ConVar (also settable as gamescope_ui_refresh_hz in
+the environment or with gamescopectl): when it names one of the
+display's valid refresh rates, the display runs at that rate while no
+game is open. Games and the frame-cap refresh rate are unchanged. The
+default, 0, keeps the highest rate.
+---
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -295,6 +295,7 @@
+ update_runtime_info();
+ 
+ gamescope::ConVar<bool> cv_adaptive_sync( "adaptive_sync", false, "Whether or not adaptive sync is enabled if available." );
++gamescope::ConVar<int> cv_ui_refresh_hz( "ui_refresh_hz", 0, "Refresh rate (Hz) to run the display at while no game is open, if the display supports it. 0 uses its highest." );
+ gamescope::ConVar<bool> cv_adaptive_sync_ignore_overlay( "adaptive_sync_ignore_overlay", false, "Whether or not to ignore overlay planes for pushing commits with adaptive sync." );
+ gamescope::ConVar<int> cv_adaptive_sync_overlay_cycles( "adaptive_sync_overlay_cycles", 1, "Number of vblank cycles to ignore overlay repaints before forcing a commit with adaptive sync." );
+ 
+@@ -3309,9 +3310,12 @@
+ 
+ 		int nDynamicRefreshHz = g_nDynamicRefreshRate[GetBackend()->GetScreenType()];
+ 
+-		int nTargetRefreshHz = nDynamicRefreshHz && steamcompmgr_window_should_refresh_switch( pFocus->focusWindow )
+-			? nDynamicRefreshHz
+-			: int( rates[ rates.size() - 1 ] );
++		int nTargetRefreshHz = int( rates[ rates.size() - 1 ] );
++		if ( nDynamicRefreshHz && steamcompmgr_window_should_refresh_switch( pFocus->focusWindow ) )
++			nTargetRefreshHz = nDynamicRefreshHz;
++		else if ( cv_ui_refresh_hz > 0 && !steamcompmgr_user_has_any_game_open() &&
++		          std::find( rates.begin(), rates.end(), uint32_t( cv_ui_refresh_hz ) ) != rates.end() )
++			nTargetRefreshHz = cv_ui_refresh_hz;
+ 
+ 		uint64_t now = get_time_in_nanos();
+ 

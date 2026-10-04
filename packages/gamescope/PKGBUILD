@@ -35,12 +35,14 @@
 #   gamescope listed none for the Portal's 60/120 Hz panel, so it could never leave 120 Hz.
 # 0020 (ours) runs a frame-capped game at the lowest refresh rate the cap divides, not the
 #   highest: a 30 or 60 fps cap on the Portal runs the panel at 60 Hz instead of 120.
+# 0021 (ours) adds ui_refresh_hz (env gamescope_ui_refresh_hz): the refresh rate while no game is
+#   open, for a lower-power Steam UI; 0 (default) keeps the display's highest.
 #
 # To follow a newer deckard gamescope, move _commit to the one its `gamescopectl version`
 # names and drop whichever of 0001-0008 it already contains.
 pkgname=gamescope
 pkgver=3.16.28
-pkgrel=2.10
+pkgrel=2.11
 _commit=e383171ff1c0f7b5b37f05f2bb67f7c5282b087f
 pkgdesc='gaming shell based on Xwayland, powered by Vulkan and DRM (deckard + Kettle Linux, SGSR 1)'
 arch=(aarch64)
@@ -75,7 +77,8 @@ source=("git+https://github.com/ValveSoftware/gamescope.git#commit=$_commit"
         0017-mangoapp-a-drm-lease-client-gamescope-sends-mangoapp.patch
         0018-wlserver-touches-passed-to-a-lease-companion-still-c.patch
         0019-DRM-offer-an-EDID-less-internal-panel-s-native-modes-.patch
-        0020-steamcompmgr-run-a-frame-capped-game-at-the-lowest-re.patch)
+        0020-steamcompmgr-run-a-frame-capped-game-at-the-lowest-re.patch
+        0021-steamcompmgr-add-ui_refresh_hz-the-refresh-rate-while-n.patch)
 sha256sums=('SKIP'
             'SKIP'
             'a34b30f8c58881f29a632ae1b4c8d7fbd7ba8c1ae6509d2b85afe362cad6de93'
@@ -98,7 +101,8 @@ sha256sums=('SKIP'
             'a7bfd70b27c550b88752d5bd8246a6bcb678f45d6e1cfeba8f3b45ada4ee0bd7'
             '2e2b46c5bcd2534cb1baaf7e7a81b6bc60ea5d97c63c14eed8f6bed90e05b335'
             'e945d6e3a54820f103108533529d1dfd360fdae45674595bb5c450ed28d946ec'
-            '0dc6b3bd79d32fea9d52aa6ad7a783c0bcde38deed9688c8001b449c0e1aee93')
+            '0dc6b3bd79d32fea9d52aa6ad7a783c0bcde38deed9688c8001b449c0e1aee93'
+            '6a606555838276f200b7e6a03d6197c17e84dd86f2a5d4620410d76746143b27')
 
 prepare() {
   cd gamescope
