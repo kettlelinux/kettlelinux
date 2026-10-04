@@ -40,7 +40,7 @@
     { "id": "arm64ec", "label": "ARM64EC" },
     { "id": "", "label": "Unknown" }
   ],
-  "native": ["fna"],
+  "native": ["fna", "monogame", "xna", "dotnet"],
   "anticheat": [
     { "id": "eac", "label": "Easy Anti-Cheat" },
     { "id": "battleye", "label": "BattlEye" }

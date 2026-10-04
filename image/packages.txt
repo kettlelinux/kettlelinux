@@ -189,10 +189,11 @@ lutris
 heroic-games-launcher
 
 # Steam games run natively on ARM64 (Game Settings > Run natively; packages/kettle-native): a
-# game's own .NET code on Mono with ARM64 FNA libraries instead of its x86-64 build under FEX,
-# and our pass-through Steam API for it (packages/kettle-steam-api)
+# game's own .NET code on Mono (with ARM64 FNA libraries) or .NET instead of its x86-64 build
+# under FEX, and our pass-through Steam API for it (packages/kettle-steam-api)
 kettle-native
 mono
+dotnet-runtime-bin
 sdl3
 faudio
 fna3d
