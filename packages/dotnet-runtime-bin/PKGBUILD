@@ -1,0 +1,30 @@
+# The .NET runtime (Microsoft.NETCore.App) for kettle-native: .NET Core / 5+ games' code is IL,
+# so their Linux builds run natively on it instead of on the x86-64 runtime they bundle. One LTS
+# runtime serves them all: kettle-native has games roll forward to it (Stardew Valley, built
+# for .NET 6, runs on 10).
+#
+# Microsoft's arm64 release (MIT; its third-party notices ship in the tarball): building .NET
+# (source-build) needs a .NET SDK to bootstrap and hours per build, and no deckard snapshot has
+# .NET. Laid out like Arch's dotnet-host/dotnet-runtime: /usr/share/dotnet, /usr/bin/dotnet.
+pkgname=dotnet-runtime-bin
+pkgver=10.0.12
+pkgrel=1
+pkgdesc='The .NET runtime (Microsoft.NETCore.App), upstream arm64 release'
+arch=(aarch64)
+url='https://dotnet.microsoft.com'
+license=(MIT)
+depends=(gcc-libs glibc icu openssl zlib)
+optdepends=('krb5: System.Net.Security (Negotiate authentication)'
+            'lttng-ust2.12: runtime tracing')
+provides=(dotnet-host "dotnet-runtime=$pkgver" "dotnet-runtime-${pkgver%.*}=$pkgver")
+conflicts=(dotnet-host dotnet-runtime "dotnet-runtime-${pkgver%.*}")
+options=(!strip)  # upstream's binaries come stripped
+source=("https://builds.dotnet.microsoft.com/dotnet/Runtime/$pkgver/dotnet-runtime-$pkgver-linux-arm64.tar.gz")
+sha256sums=('faa0a5d136fd9d582db4e6b3b9faf81715dc1c879c9072efc08122fba1623727')
+
+package() {
+  install -d "$pkgdir/usr/share/dotnet" "$pkgdir/usr/bin"
+  cp -a dotnet host shared "$pkgdir/usr/share/dotnet/"
+  ln -s /usr/share/dotnet/dotnet "$pkgdir/usr/bin/dotnet"
+  install -Dm644 LICENSE.txt ThirdPartyNotices.txt -t "$pkgdir/usr/share/licenses/$pkgname"
+}

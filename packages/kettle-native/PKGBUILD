@@ -1,18 +1,42 @@
 # kettle-native: runs a Steam game's own code natively on ARM64 instead of its x86-64 build under
-# FEX, for engines whose code isn't x86 machine code (FNA's .NET so far), from its launch options
-# (Game Settings > Run natively). See kettle-native. gameengine.py is Game Settings'
-# (kettle-decky-plugins/shared).
+# FEX, for engines whose code isn't x86 machine code (.NET: FNA, MonoGame, XNA and other .NET
+# games), from its launch options (Game Settings > Run natively). See kettle-native.
+# gameengine.py is Game Settings' (kettle-decky-plugins/shared).
+#
+# Native libraries .NET games bring along, for ARM64:
+#   liblwjgl_lz4.so  lwjgl_lz4.c: the LWJGL LZ4 functions games call, on the system's liblz4
+#   libSkiaSharp.so  SkiaSharp's arm64 releases (MIT; NuGet), one per milestone, as games need
+#                    their own: 2.80 (Stardew Valley) and 2.88
 pkgname=kettle-native
-pkgver=0.1.0
-pkgrel=2
+pkgver=0.2.0
+pkgrel=1
+_skia=(2.80.4 2.88.9)
 pkgdesc='Run Steam games natively on ARM64 where their engine allows'
-arch=(any)
-license=(BSD-3-Clause)
-depends=(python mono sdl3 faudio fna3d kettle-steam-api)
+arch=(aarch64)
+license=(BSD-3-Clause MIT)
+depends=(python lz4 mono dotnet-runtime-bin sdl2 sdl3 faudio fna3d openal fontconfig kettle-steam-api)
+source=() noextract=()
+for _v in "${_skia[@]}"; do
+  source+=("skiasharp-$_v.zip::https://api.nuget.org/v3-flatcontainer/skiasharp.nativeassets.linux/$_v/skiasharp.nativeassets.linux.$_v.nupkg")
+  noextract+=("skiasharp-$_v.zip")
+done
+sha256sums=('8fb3dd91bb8ebac5a57dd55606a437589ded12985ffe49cd715e7c97dbea01c7'
+            '990fe805aa9147bd567d2eba9890af71cdee296ec23441e83cdd898a50dbc3f0')
+
+build() {
+  cc $CFLAGS $LDFLAGS -shared -fPIC -fvisibility=hidden -o liblwjgl_lz4.so "$startdir/lwjgl_lz4.c" -llz4
+}
 
 package() {
-  cd "$startdir"
-  install -Dm755 kettle-native -t "$pkgdir/usr/bin"
-  install -Dm644 gameengine.py -t "$pkgdir/usr/lib/kettle-native"
-  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+  local lib="$pkgdir/usr/lib/kettle-native"
+  install -Dm755 "$startdir/kettle-native" -t "$pkgdir/usr/bin"
+  install -Dm644 "$startdir/gameengine.py" -t "$lib"
+  install -Dm755 liblwjgl_lz4.so -t "$lib/lib"
+  for _v in "${_skia[@]}"; do
+    bsdtar -xf "skiasharp-$_v.zip" -C "$srcdir" runtimes/linux-arm64/native/libSkiaSharp.so LICENSE.txt THIRD-PARTY-NOTICES.txt
+    install -Dm755 runtimes/linux-arm64/native/libSkiaSharp.so -t "$lib/skiasharp/${_v%.*}"
+    install -Dm644 LICENSE.txt "$pkgdir/usr/share/licenses/$pkgname/SkiaSharp-LICENSE.txt"
+    install -Dm644 THIRD-PARTY-NOTICES.txt "$pkgdir/usr/share/licenses/$pkgname/SkiaSharp-$_v-THIRD-PARTY-NOTICES.txt"
+  done
+  install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
 }

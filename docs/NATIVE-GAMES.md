@@ -11,15 +11,42 @@ Game Settings shows the game's engine (`shared/gameengine.py`). For an engine Ke
 natively (`shared/engines.json` `"native"`), on a Linux build, it offers **Run natively on
 ARM64**, which adds `kettle-native` to the game's launch options. Off takes it out again.
 
-| Engine | Runs with | Tested |
+| Game built as | Runs with | Tested |
 |---|---|---|
-| FNA (Linux builds) | Mono (SteamOS repos), `sdl3`, `faudio`, `fna3d` (ours, built from source) | Terraria 1.4.5.8 on the Thor |
+| .NET Framework (FNA, XNA, MonoGame on Mono: Linux builds with an `.exe`) | Mono (SteamOS repos), `sdl3`, `faudio`, `fna3d` (ours, built from source) | Terraria 1.4.5.8 on the Thor |
+| .NET Core / 5+ (MonoGame and other .NET games: a `<name>.runtimeconfig.json`) | .NET 10 (`dotnet-runtime-bin`), the system's SDL2, OpenAL and FAudio | Stardew Valley 1.6 (.NET 6) on the Thor |
+
+Engines offered: FNA, XNA, MonoGame and plain .NET (`"native"`); which runtime runs a game
+depends on how it was built, not on the engine.
+
+## .NET Core / 5+ games
+
+These games usually ship self-contained: their own x86-64 .NET runtime beside their code.
+kettle-native runs their code on the system's ARM64 .NET instead, which games roll forward to
+(one LTS runtime serves .NET 6, 7, 8 and 10 games). The game's folder stays as Steam installed
+it; kettle-native runs a shadow of it (`~/.cache/kettle-native/dotnet/<appid>`, rebuilt after
+an update) of symlinks to the game's files, except:
+
+- `<name>.runtimeconfig.json` and `<name>.deps.json` say framework-dependent: the bundled
+  runtime's files are left out of what the host loads.
+- IL-only assemblies marked x86-64 (the compiler's `x64` platform target; their code is still IL)
+  are copies with an ARM64 mark, which ARM64 .NET otherwise refuses.
+- x86-64 native libraries are left out, so the system's ARM64 ones load by name (SDL2, OpenAL,
+  FAudio, `libsteam_api.so` from kettle-steam-api), or replaced by kettle-native's
+  (`/usr/lib/kettle-native`): `liblwjgl_lz4.so` (a shim over the system liblz4 for the LWJGL
+  functions games call: Stardew's co-op compression) and `libSkiaSharp.so` (SkiaSharp's ARM64
+  release for the game's milestone, 2.80 or 2.88: Stardew's map screenshots).
+
+The .NET runtime and SkiaSharp are upstream's ARM64 releases (MIT): .NET's source build needs
+a .NET SDK to bootstrap and hours per build, and Skia's is similar. Not available: GOG Galaxy
+(`libGalaxy64.so`, proprietary and x86-64 only; Stardew uses it for invite-code co-op, Steam
+co-op doesn't need it), and games needing ASP.NET Core or Windows Desktop frameworks.
 
 ## kettle-native
 
 `packages/kettle-native`: `kettle-native %command%` finds the game (SteamAppId), checks its
-engine, and starts its code with the native runtime in its folder, with the arguments Steam
-gives the game. Anything it can't run natively (another engine, a Windows build, a missing
+engine, and starts its code with a native runtime (.NET for a `runtimeconfig.json`, else Mono),
+with the arguments Steam gives the game. Anything it can't run natively (another engine, a Windows build, a missing
 runtime) runs Steam's command unchanged, so the switch can't keep a game from starting. Its
 messages start with `kettle-native:` in the game's output.
 
@@ -46,7 +73,10 @@ Steam Cloud are Steam's own:
 - `steam_api.c` does the rest: connecting to Steam, interfaces, the context cache C++ games use,
   callbacks and call results (both `SteamAPI_RunCallbacks` and manual dispatch).
 
-No Steamworks SDK files are used. Not covered yet: game servers, the flat helpers that aren't a
-plain virtual call (some networking ones, about 25 per library); a game that calls one stops
+A few flat helpers aren't one virtual call: the networking ones games use (config values,
+`InitRelayNetworkAccess`, `IsFakeIPv4`) are written out in `steam_api.c` on the methods they
+wrap, and `steamapi-map` also follows functions that widen 32-bit arguments, copy stack
+arguments or return a packed struct. No Steamworks SDK files are used. Not covered yet: game
+servers, and the remaining helpers that aren't a plain virtual call; a game that calls one stops
 with `kettle-steam-api: <function>: not passed through`. A flat function newer than
 `names.txt` isn't exported at all: add it from the game's map.

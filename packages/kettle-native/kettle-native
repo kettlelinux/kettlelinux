@@ -4,10 +4,20 @@
 In a game's launch options (Game Settings > Run natively writes it):  kettle-native %command%
 
 Games whose code isn't x86 machine code (.NET) only need native versions of the libraries
-around it. For the engines below, this finds the game (SteamAppId), checks what it's built on
-(gameengine.py) and starts its code with the native runtime instead of Steam's command:
+around it. For the engines below (NATIVE), this finds the game (SteamAppId), checks what it's
+built on (gameengine.py) and starts its code with a native runtime instead of Steam's command.
+Their Linux builds run one of two ways:
 
-  fna   FNA games' Linux builds (Terraria, Celeste...): system Mono, with sdl3, faudio and fna3d
+  dotnet  .NET Core / 5+ (a <name>.runtimeconfig.json next to the program: Stardew Valley...):
+          the system's .NET, which the game rolls forward to. Its x86-64 runtime (bundled with
+          a self-contained game) is left out, and IL-only assemblies marked x86-64 are given an
+          ARM64 mark, in a shadow of the game's folder (~/.cache/kettle-native/dotnet/<appid>:
+          symlinks to the game's files, so they stay as Steam installed them)
+  mono    .NET Framework (an .exe the Linux program runs: Terraria, Celeste...): system Mono,
+          with sdl3, faudio and fna3d for FNA
+
+x86-64 native libraries the game brings are replaced by ARM64 ones: the system's (SDL, OpenAL,
+FAudio...) and Kettle's for those it doesn't have (LIBS).
 
 Their Steam API calls go through Kettle's ARM64 libsteam_api.so (packages/kettle-steam-api),
 with the map of the game's own x86-64 one (cached in ~/.cache/kettle-native), and Steam's ARM64
@@ -16,9 +26,12 @@ work in the game). Anything else, or anything missing, runs Steam's command unch
 FEX, as without this.
 """
 import hashlib
+import json
 import os
 import re
+import shutil
 import signal
+import struct
 import subprocess
 import sys
 
@@ -30,8 +43,12 @@ CACHE = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.
 # where Kettle's packages put them; the variables are for trying builds that aren't installed
 STEAM_API = os.environ.get("KETTLE_NATIVE_STEAM_API", "/usr/lib/kettle-steam-api")
 MONO = os.environ.get("KETTLE_NATIVE_MONO", "/usr/bin/mono")
+DOTNET = os.environ.get("KETTLE_NATIVE_DOTNET", "/usr/share/dotnet")
+LIB = os.environ.get("KETTLE_NATIVE_LIB", "/usr/lib/kettle-native")
 OVERLAY = os.path.join(STEAM, "steamrtarm64", "gameoverlayrenderer.so")
-NATIVE = {"fna"}  # engines run natively (linux builds); Game Settings: shared/engines.json "native"
+# engines run natively (linux builds); Game Settings: shared/engines.json "native"
+NATIVE = {"fna", "monogame", "xna", "dotnet"}
+SHADOW_VERSION = "1"  # bump when shadow() makes something different
 
 
 def log(msg):
@@ -106,9 +123,9 @@ def native_env(root):
     return env
 
 
-def fna(root, found, args):
-    """An FNA game's .exe on Mono: the one named like its Linux program (Terraria.bin.x86_64 runs
-    Terraria.exe), else the only .NET exe at the top."""
+def mono(root, found, args):
+    """A .NET Framework game's .exe on Mono: the one named like its Linux program
+    (Terraria.bin.x86_64 runs Terraria.exe), else the only .NET exe at the top."""
     if not os.access(MONO, os.X_OK):
         return None
     prog = found.get("exe") or ""
@@ -124,7 +141,161 @@ def fna(root, found, args):
     return d, [MONO, exe, *args]
 
 
-RUNNERS = {"fna": fna}
+def _x86_64_elf(path):
+    try:
+        with open(path, "rb") as f:
+            head = f.read(20)
+    except OSError:
+        return False
+    return head[:4] == b"\x7fELF" and head[18:20] == b"\x3e\x00"
+
+
+def _il_only_x64(path):
+    """The offset of an x86-64-marked IL-only .NET assembly's machine field (None: not one).
+    The mark is all that's x86 about them (ARM64 .NET refuses them for it); assemblies with
+    x86-64 code in them (ReadyToRun, mixed mode) are marked differently."""
+    try:
+        with open(path, "rb") as f:
+            b = f.read(4096)
+        pe = struct.unpack_from("<I", b, 0x3C)[0]
+        if b[:2] != b"MZ" or b[pe:pe + 4] != b"PE\0\0" or struct.unpack_from("<H", b, pe + 4)[0] != 0x8664:
+            return None
+        opt = pe + 24
+        if struct.unpack_from("<H", b, opt)[0] != 0x20B:  # PE32+
+            return None
+        clr_size = struct.unpack_from("<I", b, opt + 112 + 14 * 8 + 4)[0]  # the CLR header's directory
+        if not clr_size:
+            return None
+        clr = _rva_offset(b, pe, struct.unpack_from("<I", b, opt + 112 + 14 * 8)[0])
+        flags = struct.unpack_from("<I", b, clr + 16)[0] if clr is not None and clr + 20 <= len(b) else 0
+        return pe + 4 if flags & 1 else None  # COMIMAGE_FLAGS_ILONLY
+    except (OSError, struct.error):
+        return None
+
+
+def _rva_offset(b, pe, rva):
+    sections = pe + 24 + struct.unpack_from("<H", b, pe + 20)[0]
+    for i in range(struct.unpack_from("<H", b, pe + 6)[0]):
+        vsize, va, size, raw = struct.unpack_from("<IIII", b, sections + i * 40 + 8)
+        if va <= rva < va + max(size, vsize):
+            return rva - va + raw
+    return None
+
+
+def _framework_deps(deps):
+    """A self-contained game's deps.json, as a framework-dependent one: without its runtime pack
+    (the x86-64 .NET it bundles), whose files the host would otherwise load from the game."""
+    packs = {k for k, v in deps.get("libraries", {}).items() if v.get("type") == "runtimepack"}
+    names = {k.split("/")[0] for k in packs}
+    for k in packs:
+        del deps["libraries"][k]
+    for target in deps.get("targets", {}).values():
+        for k in packs & target.keys():
+            del target[k]
+        for lib in target.values():
+            for n in names:
+                lib.get("dependencies", {}).pop(n, None)
+    return deps
+
+
+def _replacement(name, deps):
+    """Kettle's ARM64 build of a native library a game brings (None: there's none)."""
+    if name == "libSkiaSharp.so":
+        # SkiaSharp wants its native library from the same milestone as itself
+        ver = next((k.split("/")[1] for k in deps.get("libraries", {}) if k.startswith("SkiaSharp/")), "")
+        p = os.path.join(LIB, "skiasharp", ".".join(ver.split("-")[0].split(".")[:2]), name)
+    else:
+        p = os.path.join(LIB, "lib", name)
+    return p if os.path.exists(p) else None
+
+
+def _shadow(src, dst, stem, config, deps):
+    """dst: the game's folder src as symlinks, with what ARM64 .NET runs instead (see the top)."""
+    tmp = dst + ".new"
+    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(tmp)
+    for name in os.listdir(src):
+        s, d = os.path.join(src, name), os.path.join(tmp, name)
+        if name == f"{stem}.runtimeconfig.json":
+            with open(d, "w") as f:
+                json.dump(config, f, indent=1)
+        elif name == f"{stem}.deps.json":
+            with open(d, "w") as f:
+                json.dump(deps, f, indent=1)
+        elif not os.path.isfile(s):
+            os.symlink(s, d)
+        elif _x86_64_elf(s):
+            # the system's ARM64 library loads by name when the game's isn't there
+            if rep := _replacement(name, deps):
+                os.symlink(rep, d)
+        elif name.lower().endswith((".dll", ".exe")) and (off := _il_only_x64(s)) is not None:
+            with open(s, "rb") as f:
+                data = bytearray(f.read())
+            struct.pack_into("<H", data, off, 0xAA64)
+            with open(d, "wb") as f:
+                f.write(data)
+        else:
+            os.symlink(s, d)
+    shutil.rmtree(dst, ignore_errors=True)
+    os.rename(tmp, dst)
+
+
+def _runtime_majors():
+    try:
+        vers = os.listdir(os.path.join(DOTNET, "shared", "Microsoft.NETCore.App"))
+    except OSError:
+        return []
+    return [int(v.split(".")[0]) for v in vers if v.split(".")[0].isdigit()]
+
+
+def dotnet(root, found, args):
+    """A .NET Core / 5+ game's <name>.dll on the system's .NET, from a shadow of its folder."""
+    prog = found.get("exe") or ""
+    d = os.path.join(root, os.path.dirname(prog))
+    stem = os.path.basename(prog)
+    with open(os.path.join(d, f"{stem}.runtimeconfig.json"), encoding="utf-8-sig") as f:
+        opts = json.load(f).get("runtimeOptions", {})
+    fws = opts.get("includedFrameworks") or opts.get("frameworks") or [opts.get("framework") or {}]
+    if [fw.get("name") for fw in fws] != ["Microsoft.NETCore.App"]:  # ASP.NET, WinForms/WPF...
+        log(f"needs {', '.join(str(fw.get('name')) for fw in fws)}: only Microsoft.NETCore.App is here")
+        return None
+    version = fws[0].get("version") or "0"
+    major = int(version.split(".")[0])
+    if not any(m >= major for m in _runtime_majors()) or not os.path.isfile(os.path.join(d, f"{stem}.dll")):
+        return None
+    config = {"runtimeOptions": {
+        "tfm": opts.get("tfm") or f"net{major}.0",
+        "framework": {"name": "Microsoft.NETCore.App", "version": version},
+        "rollForward": "Major",  # to the system's runtime
+        "configProperties": opts.get("configProperties", {}),
+    }}
+    try:
+        with open(os.path.join(d, f"{stem}.deps.json"), encoding="utf-8-sig") as f:
+            deps = _framework_deps(json.load(f))
+    except FileNotFoundError:
+        deps = {}
+    # rebuilt when the game's files change (a Steam update)
+    stamp = hashlib.sha256(json.dumps([SHADOW_VERSION, d, sorted(
+        (e.name, e.stat().st_size, e.stat().st_mtime_ns) for e in os.scandir(d))]).encode()).hexdigest()
+    appid = os.environ.get("SteamAppId") or os.environ.get("SteamGameId")
+    shadow = os.path.join(CACHE, "dotnet", appid)
+    try:
+        with open(os.path.join(shadow, ".kettle-native")) as f:
+            fresh = f.read() == stamp
+    except OSError:
+        fresh = False
+    if not fresh:
+        _shadow(d, shadow, stem, config, deps)
+        with open(os.path.join(shadow, ".kettle-native"), "w") as f:
+            f.write(stamp)
+        log(f"made {shadow}")
+    return shadow, [os.path.join(DOTNET, "dotnet"), os.path.join(shadow, f"{stem}.dll"), *args]
+
+
+def runner(root, found):
+    """dotnet for a .NET Core / 5+ program, else mono."""
+    prog = os.path.join(root, found.get("exe") or "")
+    return dotnet if os.path.isfile(f"{prog}.runtimeconfig.json") else mono
 
 
 def main():
@@ -141,7 +312,7 @@ def main():
     run = None
     if found.get("platform") == "linux" and found.get("engine") in NATIVE:
         try:
-            run = RUNNERS[found["engine"]](root, found, game_args(cmd, root))
+            run = runner(root, found)(root, found, game_args(cmd, root))
         except Exception as e:
             log(f"can't run it natively: {e!r}")
     if not run:

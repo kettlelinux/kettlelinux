@@ -15,6 +15,7 @@
     "strict": true,
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
+    "resolveJsonModule": true,
     "rootDir": ".."
   },
   "include": [
