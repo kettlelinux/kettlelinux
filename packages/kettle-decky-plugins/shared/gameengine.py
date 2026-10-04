@@ -62,7 +62,8 @@ _NOT_GAME = re.compile(
     r"unins|setup|install|redist|dxweb|directx|crash|report|uploader|prereq|easyanticheat|"
     r"beservice|battleye|start_protected_game|notification_helper|helper$|oalinst|physx|dotnet|"
     r"touchup|cleanup|^java|^python|^7z|^nwjc|^cefsharp|^qtwebengineprocess|^ue4?prereq|"
-    r"subprocess|^crs-|^vc_?redist|^launcherpatcher|_be$|^createdump$|^crashpad_handler$", re.I)
+    r"subprocess|^crs-|^vc_?redist|^launcherpatcher|_be$|^createdump$|^crashpad_handler$|"
+    r"server(\.bin)?$", re.I)
 
 _PE_MACHINES = {0x14c: "x86", 0x8664: "x86_64", 0xaa64: "arm64", 0xa641: "arm64ec"}
 _ELF_MACHINES = {0x03: "x86", 0x3E: "x86_64", 0xB7: "arm64"}
@@ -154,14 +155,19 @@ def _stem(rel: str) -> str:
     return _STEM.sub("", rel.lower())
 
 
-def _main_exe(paths: list[str], bins: dict[str, tuple[int, str]], engine: str) -> str | None:
+def _main_exe(root: str, paths: list[str], bins: dict[str, tuple[int, str]], engine: str) -> str | None:
     """The game's own program: the engine's, else the biggest one nearest the top that isn't an
-    installer, crash reporter or anti-cheat. A Windows build's when there's one (that's what
-    Steam runs through Proton), else a native Linux build's."""
+    installer, crash reporter, server or anti-cheat. A Windows build's when there's one (that's
+    what Steam runs through Proton), else a native Linux build's. .NET exes next to native Linux
+    programs are a Linux build's (Mono runs them: Terraria's Terraria.bin.x86_64 runs
+    Terraria.exe), so the Linux program is the one named like them."""
     game = lambda rs: [r for r in rs if not _NOT_GAME.search(os.path.basename(_stem(r)))]
     win = [r for r, (_, k) in bins.items() if k == "windows"]
     linux = [r for r, (_, k) in bins.items() if k == "linux"]
     cands = win if game(win) else linux or win
+    if game(win) and game(linux) and all(binary_info(os.path.join(root, r))["dotnet"] for r in game(win)):
+        stems = {_stem(r) for r in game(win)}
+        cands = [r for r in game(linux) if _stem(r).split(".")[0] in stems] or linux
     if not cands:
         return None
     size = lambda r: bins[r][0]
@@ -205,7 +211,7 @@ def detect(root: str) -> dict:
     if engine == "unity":
         il2cpp = any(re.search(r"(^|/)gameassembly\.(dll|so)$|_data/il2cpp_data/$", p) for p in paths)
         engine = "unity-il2cpp" if il2cpp else "unity-mono"
-    exe = _main_exe(paths, bins, engine or "")
+    exe = _main_exe(root, paths, bins, engine or "")
     info = binary_info(os.path.join(root, exe)) if exe else {"platform": "", "arch": "", "dotnet": False}
     if engine is None:
         if info["dotnet"]:
