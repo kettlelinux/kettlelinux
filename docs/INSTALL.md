@@ -1,9 +1,9 @@
 # Installing Kettle Linux
 
 Kettle Linux runs from a microSD card in the AYN Odin 2 Portal and the AYN Thor. Android on the
-internal storage stays as it is, and you can start either one. The only change to the device
-itself is a one-time bootloader swap, below, so it can start Linux. If your device already runs
-the ROCKNIX ABL or U-Boot (from ROCKNIX or another Linux distro, for example), skip that step.
+internal storage stays as it is, and you can start either one. Nothing on the device is
+replaced: AYN ships both with U-Boot, a second bootloader next to Android's, and Kettle starts
+through it. You only tell the device once to start U-Boot instead of Android.
 
 The steps are the same on both devices, with the differences noted. The Thor is newer to Kettle
 than the Portal: see its release notes for what has been tested on it.
@@ -11,8 +11,8 @@ than the Portal: see its release notes for what has been tested on it.
 Kettle is early and in active development. Check the known issues in the release notes on
 [kettlelinux.org](https://kettlelinux.org) before you start.
 
-**Retroid Pocket 5:** it starts Kettle differently (no bootloader swap, a U-Boot flashed from a
-computer instead). Follow [INSTALL-RP5.md](INSTALL-RP5.md).
+**Retroid Pocket 5:** it starts Kettle with a U-Boot flashed from a computer. Follow
+[INSTALL-RP5.md](INSTALL-RP5.md).
 
 ## What you need
 
@@ -20,30 +20,8 @@ computer instead). Follow [INSTALL-RP5.md](INSTALL-RP5.md).
 - A microSD card of **32 GB or more**. Games are installed to it too, so bigger and faster
   (A2 / U3) is better. Everything on it is erased.
 - A computer to write the card from (Windows, macOS or Linux)
-- Root in Android (Magisk) or an ADB root shell, for the one-time bootloader step (not needed
-  if you already have the ROCKNIX ABL or U-Boot)
 
-## 1. Install the ROCKNIX bootloader (once)
-
-**Skip this step** if your device already has the ROCKNIX ABL or U-Boot: Kettle's card works
-with both as they are. Go on to step 2.
-
-The stock bootloader (ABL) only starts Android. The ROCKNIX ABL adds a menu that can
-start Linux from the SD card, and still starts Android. You only do this once; Kettle updates
-never touch it.
-
-Get the latest release from [github.com/ROCKNIX/abl](https://github.com/ROCKNIX/abl)
-(tested: v1.1.8). Then, in Android:
-
-1. Copy the release's scripts and its `abl_signed-*.elf` to the device.
-2. **Back up the stock ABL first:** run `backup_abl.sh`. It writes `abl_a.img` and `abl_b.img`.
-   Copy both **off the device** (to a computer or cloud storage): they are the only way back to
-   the stock bootloader.
-3. Run `flash_abl.sh`. It writes the ROCKNIX ABL to both `abl_a` and `abl_b`.
-
-`restore_backup_abl.sh` puts the stock bootloader back at any time.
-
-## 2. Download and check the image
+## 1. Download and check the image
 
 Download the latest image for your device from [kettlelinux.org](https://kettlelinux.org)
 (about 4 GB): `kettle-<build>-odin2portal.img.xz` for the Portal, `kettle-<build>-thor.img.xz`
@@ -55,7 +33,7 @@ download, compare it with:
 
 If they differ, download it again.
 
-## 3. Write it to the microSD card
+## 2. Write it to the microSD card
 
 You don't need to unpack the `.img.xz` first: these tools read it as it is.
 
@@ -69,15 +47,53 @@ You don't need to unpack the `.img.xz` first: these tools read it as it is.
   xzcat kettle-*.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
   ```
 
+## 3. Start U-Boot instead of Android (once)
+
+1. Turn the device off. Hold **Power + Volume Down** until the fastboot screen appears.
+2. With the volume keys, select the option that sets the default boot to **Loader** (instead
+   of Android), and press **Power** to choose it.
+
+From then on the device starts U-Boot, which starts Kettle from the SD card. This only changes
+which bootloader starts by default: Android, its apps and its data are not touched, and Kettle
+updates never change it. To go back, choose Android as the default the same way.
+
+**If you have the ROCKNIX ABL** (installed for ROCKNIX, Batocera, Knulli, ...), skip this step:
+Kettle's card works with it as it is. With U-Boot, though, a failed update falls back to the
+version that worked (below); ROCKNIX's `restore_backup_abl.sh` puts the stock bootloader back,
+and with it the Loader option.
+
+### If U-Boot doesn't start
+
+U-Boot lives in the device's `loader` partition. If that was erased or overwritten, Kettle's
+card carries AYN's U-Boot to put back, from a computer:
+
+1. Install Google's **fastboot** on the computer:
+   [SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools)
+   (Windows, macOS, Linux; on Linux also your package manager, e.g. `sudo apt install fastboot`).
+2. Put the card you wrote in the computer. Copy **`u-boot-ayn.img`** from the drive called
+   **KETTLE** to the computer, next to `fastboot`.
+3. Put the card back in the device, start fastboot mode (step 3 above) and connect it to the
+   computer by USB. `fastboot devices` should list it.
+4. Try it without writing anything: `fastboot boot u-boot-ayn.img`. The device starts U-Boot,
+   which starts Kettle.
+5. If that worked, go back into fastboot mode and write it for good:
+
+   ```sh
+   fastboot flash loader u-boot-ayn.img
+   ```
+
+   This writes only the `loader` partition. Then set the default boot to Loader (step 3).
+
+`u-boot-ayn.img` is built from AYN's own source ([AYNTechnologies/u-boot](https://github.com/AYNTechnologies/u-boot)), the same version the devices ship with.
+
 ## 4. First start
 
-1. Put the card in the device and start it from the card:
+1. Put the card in the device and turn it on:
+   - **U-Boot:** it starts Kettle from the card by itself.
    - **ROCKNIX ABL:** hold **Vol−** while powering on to open its menu, and set
      **Device model:** Odin 2 Portal (or your Thor), **Boot source:** SD, **Boot mode:** Linux.
      On the Thor, Kettle has so far been started through U-Boot; whether the ROCKNIX ABL's
      menu offers a Thor hasn't been checked yet.
-   - **U-Boot:** start from the SD card as you would any other card. Kettle's card has the
-     `extlinux.conf` and EFI loader U-Boot looks for.
 2. The first start takes a little longer than later ones: Kettle sets itself up on the
    rest of the card (the space for games and your files, and a second system slot for updates).
 3. Kettle starts in **Game Mode**, Steam's handheld interface. Connect to Wi-Fi and sign in to
@@ -100,9 +116,9 @@ You only need to write a new image to the card to start over from scratch.
 
 ## Starting Android
 
-With the ROCKNIX ABL, hold **Vol+** while powering on, or set **Boot mode: Android** in its menu
-(**Vol−**). With U-Boot, start Android the way your setup does. Android is exactly as you left
-it.
+With U-Boot, set the default boot back to **Android** in fastboot mode (step 3). With the
+ROCKNIX ABL, hold **Vol+** while powering on, or set **Boot mode: Android** in its menu
+(**Vol−**). Android is exactly as you left it.
 
 ## Writing a new image over an existing Kettle card
 
