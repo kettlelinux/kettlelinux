@@ -1,0 +1,34 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] power: supply: qcom_battmgr: don't wake the system on charger updates
+
+The ADSP charger firmware sends BATTMGR_NOTIFICATION on every battery or
+USB change, many per minute while charging. Each one calls
+power_supply_changed(), whose pm_stay_awake() is a wakeup event: with the
+IPCC mailbox IRQ left unmasked in suspend (as it is upstream), s2idle
+resumes in full within minutes.
+
+Register the power supplies without a wakeup source, so the notifications
+are handled in suspend without waking the system. Masking the IPCC IRQ
+across suspend instead (the old 20-sm8550/0502) keeps the AP asleep but
+leaves the firmware's messages unanswered: about five minutes into s2idle
+the charger stops drawing power, and a device asleep on its charger runs
+the battery flat.
+---
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -1656,6 +1656,15 @@
+ 	psy_cfg_supply.supplied_to = qcom_battmgr_battery;
+ 	psy_cfg_supply.num_supplicants = 1;
+ 
++	/*
++	 * The charger firmware sends a notification on every change, and
++	 * power_supply_changed() reports each one as a wakeup event, which
++	 * aborts suspend-to-idle within minutes. Those updates aren't a reason
++	 * to wake the system.
++	 */
++	psy_cfg.no_wakeup_source = true;
++	psy_cfg_supply.no_wakeup_source = true;
++
+ 	mutex_init(&battmgr->lock);
+ 	init_completion(&battmgr->ack);
+ 

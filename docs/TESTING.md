@@ -72,10 +72,6 @@ Login: `kettle` / `kettle` (sudo via wheel), on the panel console or `ssh kettle
 
 Suspend is the least proven area: nobody has validated s2idle on a Portal yet. After a
 resume check `dmesg | tail -50`, that the gamepad still reports input, and Wi-Fi reconnects.
-If it reboots instead of waking, the journal stops at `PM: suspend entry`; on a Portal the
-console of the boot that died (every device's suspend/resume callback, in order) is kept in RAM:
-`sudo ls -R /var/lib/systemd/pstore` after the reboot (`console-ramoops-0`; the last lines name the
-step that never finished). `dmesg | grep ramoops` should show it registered on every boot.
 
 ## 4. Power/performance A/B runs
 
