@@ -104,7 +104,8 @@ _FRAME = re.compile(rb"\x48\x83[\xec\xc4][\x00-\x7f]|\x41[\x54-\x57\x5c-\x5f]|[\
 
 
 def _widen(code, i):
-    """movzbl/movzwl/movsbl/movswl or movslq of a register into itself: its length, or 0."""
+    """movzbl/movzwl/movsbl/movswl, movslq or a 32-bit mov of a register into itself: its length,
+    or 0."""
     j = i
     rex = code[j] if j < len(code) and 0x40 <= code[j] <= 0x4F else None
     if rex is not None:
@@ -114,12 +115,25 @@ def _widen(code, i):
     elif code[j:j + 1] == b"\x63" and rex is not None and rex & 8 and j + 1 < len(code):
         m = code[j + 1]
         j -= 1
+    elif code[j:j + 1] in (b"\x89", b"\x8b") and not (rex or 0) & 8 and j + 1 < len(code):
+        m = code[j + 1]  # mov %e?x,%e?x: zero-extends a 32-bit argument
+        j -= 1
     else:
         return 0
     r = rex or 0
     if m >> 6 == 3 and ((m >> 3) & 7) | ((r & 4) << 1) == (m & 7) | ((r & 1) << 3):
         return j + 3 - i
     return 0
+
+
+# Copying a stack-passed argument from the caller's frame to the outgoing area, through %r8 or
+# %r10: x86-64 passes arguments after the sixth (and structs over 16 bytes) on the stack; ARM64
+# passes eight in registers and big structs by pointer, so there the plain jump is the same call.
+_STACK_COPY = re.compile(rb"[\x44\x4c][\x8b\x89](?:[\x04\x14]\x24|[\x44\x54]\x24[\x00-\x7f])")
+
+# Functions whose x86-64 code only re-packs the (packed, at most 16-byte) struct the virtual method
+# returns: on ARM64 it comes back in registers the same way from both, so the jump is the same.
+PACKED_RETURNS = {"SteamAPI_ISteamInput_GetAnalogActionData", "SteamAPI_ISteamController_GetAnalogActionData"}
 
 
 def _disp(code, i, base):
@@ -155,6 +169,10 @@ def forward_offset(code):
         n = _widen(code, i)
         if n:
             i += n
+            continue
+        m = _STACK_COPY.match(code, i)
+        if m:
+            i = m.end()
             continue
         if not vtable and code[i:i + 3] in (b"\x48\x8b\x07", b"\x48\x8b\x06"):
             vtable, i = True, i + 3
@@ -216,6 +234,15 @@ def accessor_version(elf, addr):
 ACCESSOR = re.compile(r"SteamAPI_Steam(\w+?)(_SteamAPI)?_v\d{3}")
 
 
+def packed_return_offset(code):
+    """The vtable offset a PACKED_RETURNS function calls: `mov (%rdi),%rax` then `call *off(%rax)`."""
+    m = re.match(rb"\x48\x83\xec[\x00-\x7f]\x48\x8b\x07\xff(\x50.|\x90....)", code, re.S)
+    if not m:
+        return None
+    g = m.group(1)
+    return g[1] if g[0] == 0x50 else struct.unpack_from("<I", g, 1)[0]
+
+
 def build(path):
     elf = Elf(path)
     out = {"forward": {}, "user": {}, "gs": {}, "unmapped": []}
@@ -223,7 +250,10 @@ def build(path):
     out["client"] = clients[-1][:-1].decode() if clients else None
     for name, addr in sorted(elf.syms.items()):
         if name.startswith("SteamAPI_ISteam"):
-            off = forward_offset(elf.at(addr, 32))
+            code = elf.at(addr, 64)
+            off = forward_offset(code)
+            if off is None and name in PACKED_RETURNS:
+                off = packed_return_offset(code)
             if off is None:
                 out["unmapped"].append(name)
             else:
