@@ -16,7 +16,20 @@ import { FaSlidersH } from "react-icons/fa";
 import { GamePicker, InstalledGame, gameName, runningAppId, useSelectedGame } from "../../shared/GamePicker";
 import { editLaunchOptions, getLaunchOptions } from "../../shared/launchOptions";
 import { fixesFor } from "../../shared/gameFixes";
-import { CATALOG, EMPTY, OPTIONS, Profile, applyProfile, changedIn, isEmpty, profileOf, withPreset } from "./catalog";
+import {
+  CATALOG,
+  EMPTY,
+  OPTIONS,
+  PRESETS,
+  Profile,
+  applyProfile,
+  changedIn,
+  isEmpty,
+  optionById,
+  presetsFor,
+  profileOf,
+  withPreset,
+} from "./catalog";
 import {
   Game,
   ROUTE,
@@ -24,6 +37,8 @@ import {
   commit,
   compatTools,
   currentTool,
+  engineSuggestions,
+  EngineSuggestions,
   getEngine,
   getGame,
   installedGames,
@@ -34,7 +49,7 @@ import {
   status,
 } from "./api";
 import { AddDllModal, AddEnvModal, ProfilesModal, ShareModal } from "./modals";
-import { Engine, anticheatText, engineText } from "../../shared/engines";
+import { Engine, anticheatText, engineLabel, engineText } from "../../shared/engines";
 import { DatabasePage } from "./database";
 
 const small: React.CSSProperties = { fontSize: "12px", lineHeight: "16px" };
@@ -60,6 +75,50 @@ function EngineRow({ e }: { e: Engine }) {
         <div style={small}>{engineText(e)}</div>
       </Field>
     </PanelSectionRow>
+  );
+}
+
+// Settings suggested for the game's engine: the catalog's presets for it (well-founded ones, such
+// as full x87 precision for 32-bit games) and what worked for other games on the same engine in
+// the game database. Only ever applied when the player chooses to.
+function Suggestions({ appid, e, p, db, apply }: {
+  appid: number;
+  e: Engine;
+  p: Profile;
+  db: boolean;
+  apply: (label: string, settings: Record<string, string>) => void;
+}) {
+  const [fromDb, setFromDb] = useState<EngineSuggestions | null>(null);
+  useEffect(() => {
+    if (db) engineSuggestions(appid).then(setFromDb, () => {});
+  }, [appid, db]);
+  const applied = (s: Record<string, string>) => Object.entries(s).every(([k, v]) => p.settings[k] === v);
+  const describe = (id: string, value: string) => {
+    const o = optionById.get(id);
+    return o ? `${o.label}: ${o.choices.find((c) => c.value === value)?.label ?? value}` : `${id}=${value}`;
+  };
+  const rows = presetsFor(e).map((pr) => ({ key: pr.id, label: pr.label, help: pr.help, settings: pr.settings }));
+  if (fromDb?.settings.length) {
+    const settings = Object.fromEntries(fromDb.settings.map((x) => [x.id, x.value]));
+    rows.push({
+      key: "database",
+      label: `Worked for other ${engineLabel(e)} games`,
+      help: fromDb.settings.map((x) => `${describe(x.id, x.value)} (${x.games} games)`).join(" · "),
+      settings,
+    });
+  }
+  return (
+    <>
+      {rows.map((r) => (
+        <PanelSectionRow key={r.key}>
+          <Field label={`Suggested: ${r.label}`} description={r.help} childrenLayout="below">
+            <DialogButton disabled={applied(r.settings)} onClick={() => apply(r.label, r.settings)}>
+              {applied(r.settings) ? "Applied" : "Apply"}
+            </DialogButton>
+          </Field>
+        </PanelSectionRow>
+      ))}
+    </>
   );
 }
 
@@ -112,6 +171,18 @@ function GamePanel({ appid, name, s, onChanged }: { appid: number; name: string;
   return (
     <>
       {engine && <EngineRow e={engine} />}
+      {engine && (
+        <Suggestions
+          appid={appid}
+          e={engine}
+          p={p}
+          db={s.can_share}
+          apply={(label, settings) => {
+            update({ ...p, settings: { ...p.settings, ...settings } });
+            toaster.toast({ title: "Game Settings", body: `Applied: ${label}` });
+          }}
+        />
+      )}
       {tools.length > 0 && (
         <PanelSectionRow>
           <DropdownItem
@@ -131,7 +202,7 @@ function GamePanel({ appid, name, s, onChanged }: { appid: number; name: string;
           label="Presets"
           description="Starting points; change single options below"
           strDefaultLabel="Apply a preset…"
-          rgOptions={CATALOG.presets.map((pr) => ({ data: pr.id, label: pr.label }))}
+          rgOptions={PRESETS.map((pr) => ({ data: pr.id, label: pr.label }))}
           selectedOption={null}
           onChange={(o) => {
             const pr = CATALOG.presets.find((x) => x.id === o.data)!;

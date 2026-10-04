@@ -329,6 +329,13 @@
       }
     },
     {
+      "id": "x87-32bit",
+      "label": "32-bit game: full x87 precision",
+      "help": "32-bit games do their floating point on the x87 unit, which FEX runs at reduced precision for speed (64-bit games hardly use it). Full precision fixes physics, camera and geometry glitches in them; a little slower.",
+      "for": { "archs": ["x86"] },
+      "settings": { "fex_x87": "0" }
+    },
+    {
       "id": "dx12-requirements",
       "label": "DirectX 12: pass GPU checks",
       "help": "For DirectX 12 games that stop at \"GPU does not meet the minimum requirements\".",

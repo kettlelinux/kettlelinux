@@ -8,6 +8,7 @@
 //   GET  /v1/catalog               the options Game Settings offers (shared/game-options.json)
 //   GET  /v1/games                 games with entries: [{app_id, game, approved, pending, variants, updated}]
 //   GET  /v1/games/<app id>        a game's entries, verified first, and its engine
+//   GET  /v1/engines/<engine>      FEX settings that worked for several games on that engine
 //   POST /v1/profiles              share settings: answers {id, url}
 //   POST /v1/profiles/<id>/votes   {install_id, works, device, variant, build, engine?}
 //   GET  /, /g/<app id>            redirect to the site's pages
@@ -79,6 +80,10 @@ export default {
           engine: await gameEngine(env, Number(m[1])),
           profiles: await forGame(env, Number(m[1])),
         }, 200, 60));
+      if ((m = p.match(/^\/v1\/engines\/([a-z0-9-]{1,32})$/)) && req.method === "GET") {
+        if (!ENGINES.has(m[1])) return text("No such engine", 404);
+        return cors(json(await engineSuggestions(env, m[1]), 200, 3600));
+      }
       if (p === "/v1/profiles") return req.method === "POST" ? await submit(req, env, url) : text("POST only", 405);
       if ((m = p.match(/^\/v1\/profiles\/([a-z2-7]{12})\/votes$/)))
         return req.method === "POST" ? await vote(req, env, m[1]) : text("POST only", 405);
@@ -226,6 +231,61 @@ const TOP_ENGINE = `top_engine AS (
     SELECT *, ROW_NUMBER() OVER (PARTITION BY app_id ORDER BY n DESC, created DESC) AS r FROM (
       SELECT *, COUNT(*) OVER (PARTITION BY app_id, engine) AS n FROM engine_reports))
   WHERE r = 1)`;
+
+// Per engine (or just one): its games, their entries (not rejected) and, for every setting in
+// them, how many entries and games have it and how their votes went (each entry counts its
+// sharer as a works)
+async function engineStats(env, only = null) {
+  const where = only ? "WHERE engine = ?" : "";
+  const bind = (stmt) => (only ? stmt.bind(only) : stmt);
+  const [games, entries] = await env.DB.batch([
+    bind(env.DB.prepare(`WITH ${TOP_ENGINE} SELECT engine, COUNT(*) AS games, SUM(anticheat != '[]') AS anticheat,
+                         SUM(arch = 'x86') AS x86, SUM(platform = 'linux') AS linux FROM top_engine ${where} GROUP BY engine`)),
+    bind(env.DB.prepare(`WITH ${TOP_ENGINE} SELECT t.engine, p.app_id, p.status, p.settings, ${COUNTS}
+                         FROM top_engine t JOIN profiles p ON p.app_id = t.app_id
+                         WHERE p.status != 'rejected' ${only ? "AND t.engine = ?" : ""}`)),
+  ]);
+  const out = new Map(games.results.map((g) => [g.engine, {
+    ...g, entries: 0, approved: 0, works: 0, broken: 0, settings: {},
+  }]));
+  const gamesOf = new Map();
+  for (const r of entries.results) {
+    const e = out.get(r.engine);
+    e.entries++;
+    e.approved += r.status === "approved";
+    e.works += r.works;
+    e.broken += r.broken;
+    for (const [k, v] of Object.entries(JSON.parse(r.settings))) {
+      const key = `${r.engine} ${k}=${v}`;
+      const s = (e.settings[`${k}=${v}`] ??= { entries: 0, games: 0, works: 0, broken: 0 });
+      if (!gamesOf.has(key)) gamesOf.set(key, new Set());
+      gamesOf.get(key).add(r.app_id);
+      s.games = gamesOf.get(key).size;
+      s.entries++;
+      s.works += r.works;
+      s.broken += r.broken;
+    }
+  }
+  return out;
+}
+
+// what Game Settings suggests for an engine: FEX settings in entries for at least SUGGEST_GAMES
+// of its games, confirmed SUGGEST_RATIO times as often as reported broken; one value per option
+const SUGGEST_GAMES = 3;
+const SUGGEST_RATIO = 3;
+const FEX_OPTIONS = new Set(catalog.options.filter((o) => o.section === "fex").map((o) => o.id));
+
+async function engineSuggestions(env, engine) {
+  const e = (await engineStats(env, engine)).get(engine);
+  if (!e) return { engine, games: 0, settings: [] };
+  const best = new Map();
+  for (const [kv, s] of Object.entries(e.settings)) {
+    const [id, value] = kv.split("=");
+    if (!FEX_OPTIONS.has(id) || s.games < SUGGEST_GAMES || s.works < SUGGEST_RATIO * s.broken) continue;
+    if (!best.has(id) || best.get(id).games < s.games) best.set(id, { id, value, games: s.games, works: s.works, broken: s.broken });
+  }
+  return { engine, games: e.games, settings: [...best.values()].sort((a, b) => b.games - a.games) };
+}
 
 async function gameEngine(env, appId) {
   const r = await env.DB.prepare(`WITH ${TOP_ENGINE} SELECT engine, platform, arch, anticheat, n FROM top_engine WHERE app_id = ?`)
@@ -396,33 +456,10 @@ async function admin(req, env, url) {
     });
   }
 
-  // per engine: its games, their entries (not rejected) and, for every setting in them, how
-  // many entries have it and how their votes went (each entry counts its sharer as a works)
   if (p === "/v1/admin/engines" && req.method === "GET") {
-    const [games, entries] = await env.DB.batch([
-      env.DB.prepare(`WITH ${TOP_ENGINE} SELECT engine, COUNT(*) AS games, SUM(anticheat != '[]') AS anticheat,
-                      SUM(arch = 'x86') AS x86, SUM(platform = 'linux') AS linux FROM top_engine GROUP BY engine`),
-      env.DB.prepare(`WITH ${TOP_ENGINE} SELECT t.engine, p.status, p.settings, ${COUNTS}
-                      FROM top_engine t JOIN profiles p ON p.app_id = t.app_id WHERE p.status != 'rejected'`),
-    ]);
-    const out = new Map(games.results.map((g) => [g.engine, {
-      ...g, entries: 0, approved: 0, works: 0, broken: 0, settings: {},
-    }]));
-    for (const r of entries.results) {
-      const e = out.get(r.engine);
-      e.entries++;
-      e.approved += r.status === "approved";
-      e.works += r.works;
-      e.broken += r.broken;
-      for (const [k, v] of Object.entries(JSON.parse(r.settings))) {
-        const s = (e.settings[`${k}=${v}`] ??= { entries: 0, works: 0, broken: 0 });
-        s.entries++;
-        s.works += r.works;
-        s.broken += r.broken;
-      }
-    }
+    const stats = await engineStats(env);
     return json({
-      engines: [...out.values()].sort((a, b) => b.games - a.games),
+      engines: [...stats.values()].sort((a, b) => b.games - a.games),
       labels: Object.fromEntries(engines.engines.map((e) => [e.id, e.label])),
     });
   }

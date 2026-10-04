@@ -54,6 +54,7 @@ GAME_DEFAULTS = {
 
 _cat = None
 _cache: dict[int, tuple[float, dict]] = {}
+_engine_cache: dict[str, tuple[float, dict]] = {}
 
 
 # ---------- catalog and validation ----------
@@ -281,6 +282,23 @@ def _engine_report(appid: int) -> dict | None:
     return {k: e.get(k, "") for k in ("engine", "platform", "arch", "anticheat")} if e else None
 
 
+def _fetch_engine(engine: str) -> dict:
+    """FEX settings that worked for several games on this engine (the database's
+    /v1/engines/<engine>), only options and values the catalog has."""
+    hit = _engine_cache.get(engine)
+    if hit and time.monotonic() - hit[0] < CACHE_S:
+        return hit[1]
+    out = _request("GET", f"/v1/engines/{urllib.parse.quote(engine)}")
+    choices = _catalog()["choices"]
+    settings = []
+    for x in out.get("settings", []) if isinstance(out, dict) else []:
+        if isinstance(x, dict) and x.get("value") in choices.get(x.get("id"), ()):
+            settings.append({"id": x["id"], "value": x["value"], "games": int(x.get("games") or 0)})
+    data = {"games": int(out.get("games") or 0) if isinstance(out, dict) else 0, "settings": settings}
+    _engine_cache[engine] = (time.monotonic(), data)
+    return data
+
+
 def _fetch(appid: int) -> dict:
     hit = _cache.get(appid)
     if hit and time.monotonic() - hit[0] < CACHE_S:
@@ -321,6 +339,19 @@ class Plugin:
 
     async def engine(self, appid: int) -> dict | None:
         return await asyncio.to_thread(_engine, appid)
+
+    async def engine_suggestions(self, appid: int) -> dict:
+        """What worked for other games on this game's engine; nothing without a database or an
+        engine to go by."""
+        none = {"games": 0, "settings": []}
+        e = await asyncio.to_thread(_engine, appid)
+        if not _server() or not e or e["engine"] == "unknown":
+            return none
+        try:
+            return await asyncio.to_thread(_fetch_engine, e["engine"])
+        except Exception as ex:
+            decky.logger.warning("game database: engine %s: %r", e["engine"], ex)
+            return none
 
     async def get_game(self, appid: int) -> dict:
         return _view(appid, _load_games().get(appid) or dict(GAME_DEFAULTS))
