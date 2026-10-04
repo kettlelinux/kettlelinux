@@ -1,7 +1,7 @@
 From: gennro <gennro2004@gmail.com>
 Subject: [PATCH] drm/panel: icna35xx: keep the Portal backlight above its usable floor
 
-On the Odin2 Portal's ICNA3512 panel, DCS brightness below about 1330
+On the Odin2 Portal's ICNA3512 panel, DCS brightness below about 1130
 (of 4096) shifts the panel's colours, and values near zero turn the
 screen black. The Steam brightness slider reaches those values.
 
@@ -29,7 +29,7 @@ sends 0. actual_brightness is mapped back to the same scale.
  	.format = MIPI_DSI_FMT_RGB888,
  	.mode_flags = MIPI_DSI_MODE_NO_EOT_PACKET | MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
  	.init_sequence = icna3512_init_sequence,
-+	.bl_min = 1330,
++	.bl_min = 1130,
  	.dsc = {
  		.dsc_version_major = 0x1,
  		.dsc_version_minor = 0x1,
