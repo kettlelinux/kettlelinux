@@ -10,10 +10,14 @@
 #   kettle-wallpaper       the default Plasma wallpaper (desktop and lock screen): the kettle as
 #                          a faint ghost on black (render-wallpaper.sh), so OLED screens keep
 #                          their pixels off and a desktop left open doesn't burn the logo in.
+#   kettle-desktop-art     Steam library artwork for the Desktop entry (the Plasma desktop nested
+#                          in Game Mode, added by the Welcome plugin): the kettle in a desktop
+#                          window, with DESKTOP in the wordmark's strokes (render-desktop-art.py)
 pkgbase=kettle-branding
-pkgname=(kettle-plymouth-theme kettle-steam-startup kettle-plasma-splash kettle-wallpaper)
+pkgname=(kettle-plymouth-theme kettle-steam-startup kettle-plasma-splash kettle-wallpaper
+         kettle-desktop-art)
 pkgver=1.0.0
-pkgrel=4
+pkgrel=5
 arch=(any)
 license=(BSD-3-Clause)
 makedepends=(librsvg ffmpeg python)
@@ -43,6 +47,8 @@ build() {
   done
 
   python "$startdir/render-startup.py" "$startdir/art" startup.webm
+
+  python "$startdir/render-desktop-art.py" "$startdir/art" desktop-art
 }
 
 package_kettle-plymouth-theme() {
@@ -83,5 +89,12 @@ package_kettle-wallpaper() {
   install -Dm644 wallpaper/*.png -t "$dir/contents/images"
   install -Dm644 wallpaper/1920x1080.png "$dir/contents/screenshot.png"
   install -Dm644 "$startdir/wallpaper/plasmarc" -t "$pkgdir/etc/xdg"
+  install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}
+
+package_kettle-desktop-art() {
+  pkgdesc='Kettle Linux Steam library artwork for the desktop in Game Mode'
+  install -Dm644 desktop-art/{capsule,header,hero,logo,icon}.png \
+    -t "$pkgdir/usr/share/kettle/nested-desktop/art"
   install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
 }

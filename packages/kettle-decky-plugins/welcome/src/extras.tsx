@@ -1,10 +1,11 @@
 // Gaming Extras in Game Mode: what the desktop's Kettle Welcome offers on its Gaming Extras page
 // that works with a controller (Flathub apps, through the same welcome-flatpak), each added to
-// Steam as a shortcut so it can be started here; the community Protons (welcome-proton); and the
-// optional components Kettle can't ship itself (components.json).
+// Steam as a shortcut so it can be started here; Battle.net (battlenet.tsx); the community Protons
+// (welcome-proton); and the optional components Kettle can't ship itself (components.json).
 import { ButtonItem, ConfirmModal, Field, ProgressBarWithInfo, showModal } from "@decky/ui";
 import { callable } from "@decky/api";
 import { useEffect, useState } from "react";
+import { BattleNet } from "./battlenet";
 import { Heading, Plain, Row, Text, act, red, size, small, usePoll } from "./ui";
 
 type Component = {
@@ -317,6 +318,8 @@ export function ExtrasPage({ flatpak }: { flatpak: boolean }) {
         </p>
       </Text>
       {flatpak && <FlatpakApps />}
+      <Heading>Game stores</Heading>
+      <BattleNet />
       <Heading>Proton versions and graphics</Heading>
       <Text>
         <p style={small}>

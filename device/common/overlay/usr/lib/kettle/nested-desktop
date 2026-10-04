@@ -1,0 +1,115 @@
+#!/bin/bash
+# The Plasma desktop inside Game Mode, as a Steam app: Desktop Mode's own Plasma (the same
+# settings, apps and files), nested in gamescope, so using the desktop needs no session switch:
+# Steam stays up behind it (the Steam button). As SteamOS's Nested Desktop (steamos-nested-desktop):
+#  - its own session bus and runtime dir: startplasma finds no systemd user manager there, so
+#    Desktop Mode's services (kettle-desktop-controller, ...) stay off, and nothing in it answers
+#    to Steam's; the system bus (NetworkManager, BlueZ, logind) is shared. Audio goes to the
+#    session's PipeWire.
+#  - KWin's windowed X11 backend, as a window of gamescope's Xwayland, the size of gamescope's
+#    screen. Logging out (or the desktop's Return to Gaming Mode) ends it; so does Exit Game.
+set -u
+[ -n "${DISPLAY:-}" ] || { echo "nested-desktop: no X display from gamescope" >&2; exit 1; }
+
+# gamescope's screen, as its Xwayland sees it (the panel turned to landscape)
+size=$(xdpyinfo 2>/dev/null | sed -n 's/^ *dimensions: *\([0-9]*x[0-9]*\) pixels.*/\1/p')
+width=${size%x*} height=${size#*x}
+[ -n "$size" ] && [ "$width" -gt 0 ] 2>/dev/null || { width=1920 height=1080; }
+
+# Nothing of Steam's game launch, gamescope's session or Game Mode's input method reaches the
+# desktop: Steam's runtime libraries and overlay, the Steam cursor, xim. Only the login's own
+# environment goes on (startplasma adds the user's environment.d).
+outer_runtime=$XDG_RUNTIME_DIR
+keep=(HOME USER LOGNAME SHELL PATH LANG LANGUAGE TZ DISPLAY XDG_SEAT XDG_SESSION_ID XDG_VTNR
+      XDG_SESSION_CLASS XDG_DATA_DIRS KWIN_IM_SHOW_ALWAYS)
+env=()
+for v in "${keep[@]}"; do [ -n "${!v+x}" ] && env+=("$v=${!v}"); done
+while IFS='=' read -r v _; do env+=("$v=${!v}"); done < <(env | grep '^LC_[A-Z_]*=')
+
+runtime=$outer_runtime/nested-desktop
+# What the desktop started and outlives it (daemons that don't end with its session bus, apps)
+# would keep Steam's reaper, and so the app, running: everything carrying this session's mark
+# ends with it.
+mark="KETTLE_NESTED_DESKTOP=$$"
+stop_leftovers() {
+  local sig=$1 pids=() e
+  for e in /proc/[0-9]*/environ; do
+    [ -O "$e" ] && grep -qxzF "$mark" "$e" 2>/dev/null && pids+=("$(basename "${e%/environ}")")
+  done
+  [ ${#pids[@]} -gt 0 ] && kill "-$sig" "${pids[@]}" 2>/dev/null
+}
+cleanup() {
+  stop_leftovers TERM && sleep 2 && stop_leftovers KILL
+  umount --recursive "$runtime" 2>/dev/null
+  rm -rf "$runtime"
+}
+trap cleanup EXIT
+# Exit Game: Steam ends everything it started, then the cleanup runs
+trap "exit 143" TERM INT HUP
+cleanup
+mkdir -m 0700 "$runtime" "$runtime/pulse" "$runtime/bin"
+ln -s "$outer_runtime/pulse/native" "$runtime/pulse/native"
+for s in "$outer_runtime"/pipewire-*; do [ -e "$s" ] && ln -s "$s" "$runtime/"; done
+
+# startplasma starts KWin through kwin_wayland_wrapper: give it gamescope's size, no lock screen
+# (Steam's own lock screen covers Game Mode)
+cat >"$runtime/bin/kwin_wayland_wrapper" <<EOF
+#!/bin/sh
+exec /usr/bin/kwin_wayland_wrapper --width $width --height $height --no-lockscreen "\$@"
+EOF
+chmod +x "$runtime/bin/kwin_wayland_wrapper"
+
+# The desktop's scale, on its built-in panel, for the nested screen too (KWin's own output
+# settings: nested in X, its --scale enlarges its window instead, which gamescope shrinks back).
+# Set before every start, on the nested output's entry only (X11-0, kept next to the real ones).
+python3 - "$HOME/.config/kwinoutputconfig.json" "$width" "$height" "${NESTED_DESKTOP_SCALE:-}" <<'EOF'
+import json, sys
+path, width, height, scale = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
+try:
+    with open(path) as f:
+        config = json.load(f)
+except (OSError, ValueError):
+    config = []
+sections = {s.get("name"): s for s in config if isinstance(s, dict)}
+outputs = sections.setdefault("outputs", {"name": "outputs", "data": []})["data"]
+setups = sections.setdefault("setups", {"name": "setups", "data": []})["data"]
+if not scale:
+    panel = next((o for o in outputs
+                  if str(o.get("connectorName", "")).startswith(("DSI", "eDP"))), None)
+    scale = panel.get("scale", 1.5) if panel else 1.5
+nested = next((o for o in outputs if o.get("connectorName") == "X11-0"), None)
+if nested is None:
+    nested = {"connectorName": "X11-0", "edidIdentifier": "", "transform": "Normal",
+              "autoRotation": "InTabletMode", "overscan": 0, "rgbRange": "Automatic",
+              "vrrPolicy": "Automatic", "brightness": 1, "sdrBrightness": 200,
+              "highDynamicRange": False, "wideColorGamut": False, "sdrGamutWideness": 0,
+              "allowSdrSoftwareBrightness": True, "colorProfileSource": "sRGB",
+              "iccProfilePath": ""}
+    outputs.append(nested)
+nested["mode"] = {"width": width, "height": height, "refreshRate": 60000}
+nested["scale"] = float(scale)
+index = outputs.index(nested)
+if not any([o.get("outputIndex") for o in s.get("outputs", [])] == [index] for s in setups):
+    setups.append({"lidClosed": False, "outputs": [
+        {"enabled": True, "outputIndex": index, "position": {"x": 0, "y": 0}, "priority": 0}]})
+with open(path + ".nested-desktop", "w") as f:
+    json.dump(list(sections.values()), f, indent=4)
+import os
+os.replace(path + ".nested-desktop", path)
+EOF
+
+env+=(
+  XDG_RUNTIME_DIR="$runtime"
+  PATH="$runtime/bin:/usr/local/bin:/usr/bin"
+  # Desktop Mode's autostarts, less the ones that belong to Game Mode or the desktop alone
+  # (Steam, powerdevil's idle dimming and suspend next to Steam's, Kettle Welcome, and Baloo's
+  # file indexing, kept out of Game Mode's power)
+  XDG_CONFIG_DIRS=/usr/share/kettle/nested-desktop/xdg:/etc/xdg
+  XCURSOR_THEME=breeze_cursors XCURSOR_SIZE=24
+  # No explicit sync in this KWin (packages/kwin 0002): nested in X, its clients hang with it
+  KWIN_NO_EXPLICIT_SYNC=1
+  # apps here are KWin's, not gamescope's clients (gamescope's Vulkan layer would look for it)
+  DISABLE_GAMESCOPE_WSI=1
+  "$mark"
+)
+env -i "${env[@]}" dbus-run-session startplasma-wayland

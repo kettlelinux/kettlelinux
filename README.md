@@ -35,6 +35,8 @@ own *Check for updates*.
   and restore. ([docs/INTERNAL-INSTALL.md](docs/INTERNAL-INSTALL.md))
 - **Controller support**: InputPlumber presents the built-in pad to Steam as a Steam Deck
   controller. In Desktop Mode the gamepad works as mouse and keyboard, with an on-screen keyboard.
+- **The desktop in Game Mode**: Desktop in Steam's library opens the Plasma desktop inside Game
+  Mode, without a session switch, with the desktop's controls. ([docs/NESTED-DESKTOP.md](docs/NESTED-DESKTOP.md))
 - **Game Mode plugins** (Decky Loader), all off by default and enabled per game:
   - **Frame Generation**: Kettle's own Vulkan layer, 2×, 3× or an automatic multiplier, with automatic frame rate capping.
   - **Upscaling**: gamescope SGSR 1, and SGSR 2, Arm ASR or FSR 2.2 through an ARM64EC build of OptiScaler.

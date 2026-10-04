@@ -3,6 +3,7 @@ import { callable, definePlugin, routerHook, toaster } from "@decky/api";
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { FaAndroid, FaDesktop, FaDownload, FaGamepad, FaHandSparkles, FaMugHot, FaNetworkWired } from "react-icons/fa";
 import { applyGameFixes } from "./fixes";
+import { addDesktop } from "./desktop";
 import { AndroidPage } from "./android";
 import { ExtrasPage, Setup, status } from "./extras";
 import { Heading, Text, act, red, small, usePoll } from "./ui";
@@ -382,6 +383,7 @@ export default definePlugin(() => {
   // after sign-in, and a moment for Game Mode's home screen to come up
   const stopWaiting = whenSignedIn(() => {
     applySteamDefaults();
+    addDesktop().catch((e) => console.error("Welcome: adding the Desktop to Steam failed", e));
     firstRun()
       .then((first) => first && setTimeout(openWelcome, 3000))
       .catch(() => {});

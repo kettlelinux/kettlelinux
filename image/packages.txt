@@ -147,6 +147,9 @@ kettle-plymouth-theme
 kettle-steam-startup
 kettle-plasma-splash
 kettle-wallpaper
+# the library artwork of the desktop in Game Mode (usr/lib/kettle/nested-desktop), whose entry
+# the Welcome plugin adds
+kettle-desktop-art
 
 # Game Mode plugins (built by us, packages/): Decky Loader (native aarch64, no self-update)
 # with our Frame Generation (our own kettle-framegen layer) and Upscaling (per-game gamescope

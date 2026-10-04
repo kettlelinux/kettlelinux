@@ -16,15 +16,17 @@
 # user into Steam's compatibilitytools.d by welcome-proton, from the projects' own GitHub releases
 # (checked against their sha512sum), in a transient systemd user unit like welcome-flatpak. Not in
 # the image: about 2 GB each.
+# And Battle.net: Blizzard's installer, from Blizzard's own download link, added to Steam with
+# Proton-CachyOS by welcome-battlenet (also used by Game Mode's Welcome, kettle-decky-welcome).
 pkgname=kettle-welcome
 pkgver=2.0.0
-pkgrel=11
+pkgrel=12
 pkgdesc='Kettle Linux welcome and setup hub for the desktop'
 arch=(aarch64)
 license=(BSD-3-Clause)
 depends=(qt6-base qt6-declarative kirigami kirigami-addons kcoreaddons kconfig kdbusaddons kio
          kservice kwindowsystem qqc2-desktop-style kde-cli-tools flatpak systemd curl jq
-         kettle-plasma-splash)
+         kettle-plasma-splash python)
 makedepends=(cmake ninja extra-cmake-modules)
 
 build() {
