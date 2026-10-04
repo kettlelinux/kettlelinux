@@ -1,0 +1,15 @@
+[Unit]
+Description=Kettle Linux stick lights
+
+[Service]
+Type=dbus
+BusName=org.kettlelinux.Leds1
+ExecStart=/usr/lib/kettle-leds/kettle-ledd
+# However it stopped: the rings dark, not stuck on an animation's last frame
+ExecStopPost=/usr/lib/kettle-leds/kettle-ledd --off
+Restart=on-failure
+RestartSec=2
+StateDirectory=kettle-leds
+
+[Install]
+WantedBy=multi-user.target
