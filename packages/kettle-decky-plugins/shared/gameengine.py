@@ -1,10 +1,13 @@
 # Which engine a game is built on, from the files in its install folder, and the platform
-# (a Windows build, run through Proton, or a native Linux one) and CPU of its main program. Game Settings shows it and sends it with settings shared to the
-# game database (server/game-db), so FEX defaults per engine can come from what works;
-# kettle-crashd puts it in crash reports. Engine ids and labels: engines.json, next to this.
+# (a Windows build, run through Proton, or a native Linux one) and CPU of its main program.
+# Game Settings shows it and sends it with settings shared to the game database
+# (server/game-db), so FEX defaults per engine can come from what works; kettle-crashd puts it
+# in crash reports; kettle-native runs the engines it can natively. Engine ids and labels:
+# engines.json, next to this.
 #
-# Only names are looked at (plus the first bytes of programs: PE and ELF headers), at most MAX_DEPTH folders down and
-# MAX_ENTRIES entries, so a scan of a big game on an SD card stays well under a second.
+# Only names are looked at (plus the first bytes of programs: PE and ELF headers), at most
+# MAX_DEPTH folders down and MAX_ENTRIES entries, so a scan of a big game on an SD card stays
+# well under a second.
 # No imports beyond the standard library: kettle-crashd runs it as root outside Decky.
 #
 #   python3 gameengine.py <install folder>   prints what it found as JSON

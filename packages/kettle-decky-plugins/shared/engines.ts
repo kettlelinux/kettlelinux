@@ -15,4 +15,8 @@ export const engineText = (e: Engine) =>
     e.arch && label(ENGINES.archs, e.arch),
   ].filter(Boolean).join(" · ");
 
+// Engines kettle-native runs natively on ARM64 (their Linux builds; its NATIVE has the same list)
+export const runsNatively = (e: Engine) => e.platform === "linux" && ENGINES.native.includes(e.engine);
+export const NATIVE_WRAPPER = "kettle-native";
+
 export const anticheatText = (e: Engine) => e.anticheat.map((a) => label(ENGINES.anticheat, a)).join(" and ");
