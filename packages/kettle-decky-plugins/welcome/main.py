@@ -23,6 +23,14 @@
 #    same install), and added to Steam as shortcuts by the frontend (shortcuts.json records
 #    which, by Steam appid).
 #
+# The desktop in Game Mode (usr/lib/kettle/nested-desktop) is added to the library once per
+#    device as "Desktop", with its artwork and the desktop's controls as its layout (src/desktop.ts);
+#    welcome.json records the shortcut's appid.
+#
+# Battle.net: Blizzard's launcher, added to Steam with Proton-CachyOS and its installer started,
+#    by kettle-welcome's welcome-battlenet (the desktop's Kettle Welcome uses it too, so both show
+#    the same Steam entry); its status also switches the entry to the installed launcher.
+#
 # Android games, with kettle-lepton: kettle-android-games adds F-Droid apps and APK files to
 #    Steam, one command at a time; its download progress comes on stderr.
 #
@@ -32,6 +40,7 @@
 #    that, and only that, for sshd.service (50-kettle-ssh.rules); enabling it at every start-up
 #    stays with the desktop's Kettle Welcome.
 import asyncio
+import base64
 import hashlib
 import json
 import os
@@ -65,8 +74,12 @@ _SHA = re.compile(r"[0-9a-f]{64}")
 _MODES = ("game", "desktop")
 PROTON = "/usr/lib/kettle/welcome-proton"  # package kettle-welcome
 FLATPAK = "/usr/lib/kettle/welcome-flatpak"  # package kettle-welcome
+BATTLENET = "/usr/lib/kettle/welcome-battlenet"  # package kettle-welcome
 ANDROID = "/usr/bin/kettle-android-games"  # package kettle-lepton
 SHORTCUTS = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "shortcuts.json")  # Flatpak app -> Steam appid
+# the Desktop entry's artwork (package kettle-desktop-art), by SetCustomArtworkForApp asset type
+DESKTOP_ART = "/usr/share/kettle/nested-desktop/art"
+_DESKTOP_ASSETS = {0: "capsule.png", 1: "hero.png", 2: "logo.png", 3: "header.png"}
 FLATPAK_ICONS = os.path.join(decky.DECKY_USER_HOME, ".local", "share", "flatpak", "exports", "share", "icons", "hicolor")
 PLUGINS = "/usr/share/decky/plugins"  # Kettle's own: kettle-<name>
 _APP_ID = re.compile(r"^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$")
@@ -405,6 +418,15 @@ class Plugin:
         await asyncio.to_thread(_proton, "remove", name)
         decky.logger.info("removed Proton %s", name)
 
+    async def battlenet_status(self) -> dict:
+        """welcome-battlenet status: {proton, steam, appid, in_steam, ready}."""
+        return json.loads(await asyncio.to_thread(_helper, BATTLENET, "status", timeout=30))
+
+    async def battlenet_install(self):
+        """Downloads Battle.net's installer, adds it to Steam and starts it; raises with the reason."""
+        await asyncio.to_thread(_helper, BATTLENET, "install", timeout=180)
+        decky.logger.info("Battle.net added to Steam, installer started")
+
     async def features(self) -> dict:
         """What this device has: Kettle's Decky plugins (by name, e.g. "screens"), whether the
         Flatpak installs and Android games are there, and where to look for an APK file."""
@@ -443,6 +465,29 @@ class Plugin:
             else:
                 shortcuts.pop(app, None)
             _write_json(SHORTCUTS, shortcuts)
+
+    async def desktop_art(self) -> dict:
+        """The Desktop entry's library artwork (asset type -> PNG as base64) and icon path."""
+        art = {}
+        for kind, name in _DESKTOP_ASSETS.items():
+            try:
+                with open(os.path.join(DESKTOP_ART, name), "rb") as f:
+                    art[str(kind)] = base64.b64encode(f.read()).decode()
+            except OSError:
+                pass
+        icon = os.path.join(DESKTOP_ART, "icon.png")
+        return {"art": art, "icon": icon if os.path.isfile(icon) else ""}
+
+    async def remember_desktop(self, appid: int):
+        """Records the Steam shortcut added for the desktop in Game Mode (src/desktop.ts)."""
+        with _state_lock:
+            state = _read_json(WELCOME, {})
+            state["desktop"] = int(appid)
+            _write_json(WELCOME, state)
+
+    async def desktop_appid(self) -> int | None:
+        appid = _read_json(WELCOME, {}).get("desktop")
+        return appid if isinstance(appid, int) else None
 
     async def android_list(self) -> dict:
         r = await asyncio.create_subprocess_exec(ANDROID, "list", env=_session_env(), stdout=asyncio.subprocess.PIPE,

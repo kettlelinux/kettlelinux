@@ -1,0 +1,5 @@
+[Desktop Entry]
+# Not in the desktop nested in Game Mode (usr/lib/kettle/nested-desktop)
+Type=Application
+Name=steam
+Hidden=true

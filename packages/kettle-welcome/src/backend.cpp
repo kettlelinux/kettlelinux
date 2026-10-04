@@ -20,6 +20,7 @@ namespace
 {
 const QString helper = QStringLiteral(KETTLE_LIBDIR "/welcome-flatpak");
 const QString protonHelper = QStringLiteral(KETTLE_LIBDIR "/welcome-proton");
+const QString battlenetHelper = QStringLiteral(KETTLE_LIBDIR "/welcome-battlenet");
 const QString steamosctl = QStringLiteral("steamosctl");
 const QString androidGamesHelper = QStringLiteral("/usr/bin/kettle-android-games");
 
@@ -275,6 +276,33 @@ void Backend::setProtonStatus(const QString &status)
         return;
     m_protonStatus = status;
     Q_EMIT protonStatusChanged();
+}
+
+void Backend::installBattlenet()
+{
+    if (m_battlenetBusy)
+        return;
+    m_battlenetBusy = true;
+    m_battlenetError.clear();
+    Q_EMIT battlenetChanged();
+    run(battlenetHelper, {QStringLiteral("install")}, [this](int code, const QString &, const QString &err) {
+        m_battlenetBusy = false;
+        if (code != 0)
+            m_battlenetError = err.isEmpty() ? QStringLiteral("Battle.net could not be installed.") : err;
+        Q_EMIT battlenetChanged();
+        refreshBattlenet();
+    });
+}
+
+void Backend::refreshBattlenet()
+{
+    run(battlenetHelper, {QStringLiteral("status")}, [this](int, const QString &out, const QString &) {
+        const QVariantMap status = QJsonDocument::fromJson(out.toUtf8()).object().toVariantMap();
+        if (status != m_battlenet) {
+            m_battlenet = status;
+            Q_EMIT battlenetChanged();
+        }
+    });
 }
 
 void Backend::runProtonHelper(const QStringList &args, std::function<void(int, const QString &, const QString &)> done)

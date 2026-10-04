@@ -9,11 +9,14 @@
 #   welcome    opens once on first boot: Game Mode's counterpart of the desktop's Kettle Welcome.
 #              A tour, the start-up mode, Gaming Extras (the controller-friendly Flathub apps
 #              through kettle-welcome's welcome-flatpak, added to Steam as shortcuts; GE-Proton /
-#              Proton-CachyOS through its welcome-proton; optional components, components.json,
+#              Proton-CachyOS through its welcome-proton; Battle.net, through its welcome-battlenet;
+#              optional components, components.json,
 #              downloaded from their upstream source), Android games from F-Droid or an APK file
 #              (kettle-lepton's kettle-android-games), and the SSH server (started and stopped
 #              only: 50-kettle-ssh.rules); also applies game fixes (welcome/src/fixes.ts): launch
-#              options a game needs to run at all
+#              options a game needs to run at all; and adds the desktop in Game Mode to the
+#              library once (welcome/src/desktop.ts: its artwork, kettle-desktop-art, and the
+#              desktop's controls as its controller layout)
 #   crash      the crash reports kettle-crashd keeps (packages/kettle-crash): a list, each report's
 #              page, and a toast when a game, Game Mode or the GPU crashes; nothing is sent anywhere
 #   game-settings  per-game compatibility profiles: FEX, DXVK, vkd3d, Turnip and Proton options
@@ -31,7 +34,7 @@ pkgbase=kettle-decky-plugins
 pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome kettle-decky-power
          kettle-decky-screens kettle-decky-crash kettle-decky-game-settings kettle-decky-lights)
 pkgver=1.12.0
-pkgrel=20
+pkgrel=21
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
@@ -75,8 +78,9 @@ package_kettle-decky-upscaling() {
 
 package_kettle-decky-welcome() {
   pkgdesc='Welcome Decky plugin (first-boot tour, Gaming Extras, Android games, remote access)'
-  depends=(decky-loader kettle-welcome)  # welcome-flatpak, welcome-proton
-  optdepends=('kettle-lepton: Android games')
+  depends=(decky-loader kettle-welcome)  # welcome-flatpak, welcome-proton, welcome-battlenet
+  optdepends=('kettle-lepton: Android games'
+              'kettle-desktop-art: the Desktop entry'"'"'s library artwork')
   _install_plugin kettle-welcome welcome
   install -Dm644 src-tree/welcome/components.json -t "$pkgdir/usr/share/decky/plugins/kettle-welcome"
 }

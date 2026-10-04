@@ -11,8 +11,8 @@
 class QQuickWindow;
 
 // What the QML side can't do itself: start apps and settings modules, remember the "show at
-// login" choice, set what the device starts up in, switch the SSH server, and run welcome-flatpak and
-// welcome-proton (Gaming Extras) without blocking the UI.
+// login" choice, set what the device starts up in, switch the SSH server, and run welcome-flatpak,
+// welcome-proton and welcome-battlenet (Gaming Extras) without blocking the UI.
 class Backend : public QObject
 {
     Q_OBJECT
@@ -27,6 +27,11 @@ class Backend : public QObject
     Q_PROPERTY(QStringList protonInstalled READ protonInstalled NOTIFY protonInstalledChanged)
     Q_PROPERTY(QVariantMap protonLatest READ protonLatest NOTIFY protonLatestChanged)
     Q_PROPERTY(QString protonStatus READ protonStatus NOTIFY protonStatusChanged)
+    // welcome-battlenet status: {proton, steam, appid, in_steam, ready} (empty until known); busy
+    // while its install runs; the last install's error ("" if none)
+    Q_PROPERTY(QVariantMap battlenet READ battlenet NOTIFY battlenetChanged)
+    Q_PROPERTY(bool battlenetBusy READ battlenetBusy NOTIFY battlenetChanged)
+    Q_PROPERTY(QString battlenetError READ battlenetError NOTIFY battlenetChanged)
     // steamos-manager's default login mode: game | desktop, empty while unknown
     Q_PROPERTY(QString bootMode READ bootMode WRITE setBootMode NOTIFY bootModeChanged)
     // the SSH server (sshd.service) enabled and running; sshBusy while a change is pending
@@ -53,6 +58,9 @@ public:
     QStringList protonInstalled() const { return m_protonInstalled; }
     QVariantMap protonLatest() const { return m_protonLatest; }
     QString protonStatus() const { return m_protonStatus; }
+    QVariantMap battlenet() const { return m_battlenet; }
+    bool battlenetBusy() const { return m_battlenetBusy; }
+    QString battlenetError() const { return m_battlenetError; }
     QString bootMode() const { return m_bootMode; }
     void setBootMode(const QString &mode);
     bool sshEnabled() const { return m_sshEnabled; }
@@ -80,6 +88,10 @@ public:
     Q_INVOKABLE void removeProton(const QString &name);
     Q_INVOKABLE void refreshProton();
 
+    // welcome-battlenet: adds Battle.net to Steam and starts its installer (Steam must be running)
+    Q_INVOKABLE void installBattlenet();
+    Q_INVOKABLE void refreshBattlenet();
+
     Q_INVOKABLE bool saveScreenshot(QQuickWindow *window, const QString &name);
 
     // kettle-android-games COMMAND ARG (add FILE, fdroid-search TEXT, fdroid-add PACKAGE); its
@@ -93,6 +105,7 @@ Q_SIGNALS:
     void protonInstalledChanged();
     void protonLatestChanged();
     void protonStatusChanged();
+    void battlenetChanged();
     void bootModeChanged();
     void sshChanged();
     // a second start (menu entry, Gaming Extras entry) asks the open window to show a page
@@ -129,4 +142,7 @@ private:
     QVariantMap m_protonLatest;
     QString m_protonStatus = QStringLiteral("idle");
     QTimer m_protonPoll;
+    QVariantMap m_battlenet;
+    bool m_battlenetBusy = false;
+    QString m_battlenetError;
 };

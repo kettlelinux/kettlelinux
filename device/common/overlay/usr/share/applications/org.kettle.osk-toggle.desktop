@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Show or Hide the On-Screen Keyboard
+Icon=input-keyboard-virtual
+Exec=/usr/lib/kettle/osk-toggle
+NoDisplay=true
+OnlyShowIn=KDE;
+# Sent by the X button of the Game Mode desktop's controller layout
+# (usr/share/kettle/nested-desktop/controller.vdf)
+X-KDE-Shortcuts=Ctrl+Alt+Meta+F12

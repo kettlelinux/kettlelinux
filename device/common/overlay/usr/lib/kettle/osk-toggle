@@ -1,0 +1,11 @@
+#!/bin/bash
+# Shows the on-screen keyboard (plasma-keyboard, KWin's input method), or hides it if shown: what
+# the controller's X button does on the desktop (desktop-controller) and, through this script's
+# shortcut (usr/share/applications/org.kettle.osk-toggle.desktop), in the desktop nested in Game
+# Mode, where Steam Input has the pad and can only send keys.
+kwin() { busctl --user "$1" org.kde.KWin /VirtualKeyboard org.kde.kwin.VirtualKeyboard "${@:2}"; }
+if [ "$(kwin get-property visible 2>/dev/null)" = "b true" ]; then
+  kwin set-property active b false
+else
+  kwin call forceActivate
+fi

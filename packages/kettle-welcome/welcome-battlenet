@@ -1,0 +1,247 @@
+#!/usr/bin/python3
+# Battle.net in Steam, for the desktop's Kettle Welcome and Game Mode's Welcome (Decky): Blizzard's
+# launcher, which Kettle can't ship, added to Steam as "Battle.net" and run with Proton-CachyOS
+# (with Valve's Proton the launcher's sign-in page shows no text fields).
+#
+#   welcome-battlenet status    one JSON line: {"proton": newest Proton-CachyOS build or null,
+#                               "steam": Steam is running, "appid": the shortcut or null,
+#                               "in_steam": it is in the library (null when Steam isn't running),
+#                               "ready": it starts the installed launcher}
+#                               Once the installer has put the launcher in the shortcut's prefix,
+#                               status also switches the shortcut to start it.
+#   welcome-battlenet install   downloads Blizzard's installer, adds the shortcut (or reuses it),
+#                               sets Proton-CachyOS and starts the installer
+#
+# Errors go to stderr, with exit status 1. The installer comes from Blizzard's own download link:
+# Blizzard publishes no checksum and changes the file with every release, so the download is
+# checked to come from Blizzard over HTTPS and to be a Windows program. Steam is driven through its
+# CEF devtools port (as kettle-android-games does), so it has to be running.
+import base64
+import json
+import os
+import socket
+import struct
+import subprocess
+import sys
+import urllib.parse
+import urllib.request
+
+NAME = "Battle.net"
+URL = "https://downloader.battle.net/download/getInstaller?os=win&installer=Battle.net-Setup.exe"
+HOSTS = (".battle.net", ".blizzard.com", ".blzstatic.cn")
+HOME = os.path.expanduser("~")
+DIR = os.path.join(HOME, ".local", "share", "kettle", "battlenet")
+SETUP = os.path.join(DIR, "Battle.net-Setup.exe")
+STATE = os.path.join(DIR, "shortcut.json")  # {"appid": ..., "ready": true once it starts the launcher}
+COMPATDATA = os.path.join(HOME, ".local", "share", "Steam", "steamapps", "compatdata")
+LAUNCHER = ("pfx", "drive_c", "Program Files (x86)", "Battle.net", "Battle.net Launcher.exe")
+PROTON = "/usr/lib/kettle/welcome-proton"
+CEF = ("127.0.0.1", 8080)
+
+
+class Failed(Exception):
+    pass
+
+
+def read_state() -> dict:
+    try:
+        with open(STATE, encoding="utf-8") as f:
+            s = json.load(f)
+        return s if isinstance(s, dict) and isinstance(s.get("appid"), int) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_state(appid: int, ready: bool):
+    os.makedirs(DIR, exist_ok=True)
+    with open(STATE + ".tmp", "w", encoding="utf-8") as f:
+        json.dump({"appid": appid, "ready": ready}, f)
+    os.replace(STATE + ".tmp", STATE)
+
+
+def newest_proton():
+    """The newest installed Proton-CachyOS build (welcome-proton lists them newest first)."""
+    try:
+        out = subprocess.run([PROTON, "installed"], capture_output=True, text=True, timeout=15).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return next((l.split(" ", 1)[1] for l in out.splitlines() if l.startswith("cachyos ")), None)
+
+
+def launcher(appid) -> str:
+    path = os.path.join(COMPATDATA, str(appid), *LAUNCHER) if appid else ""
+    return path if path and os.path.isfile(path) else ""
+
+
+def download():
+    os.makedirs(DIR, exist_ok=True)
+    tmp = SETUP + ".part"
+    req = urllib.request.Request(URL, headers={"User-Agent": "kettle-welcome"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r, open(tmp, "wb") as f:
+            u = urllib.parse.urlsplit(r.geturl())
+            if u.scheme != "https" or not ("." + (u.hostname or "")).endswith(HOSTS):
+                raise Failed(f"The download was sent to {u.hostname}, not Blizzard.")
+            while chunk := r.read(1 << 16):
+                f.write(chunk)
+                if f.tell() > 100 << 20:
+                    raise Failed("The download is far bigger than Battle.net's installer.")
+        with open(tmp, "rb") as f:
+            if f.read(2) != b"MZ":
+                raise Failed("The download isn't a Windows program.")
+    except (OSError, Failed) as e:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise e if isinstance(e, Failed) else Failed(f"Couldn't download Battle.net's installer: {e}")
+    os.replace(tmp, SETUP)
+
+
+def steam_running() -> bool:
+    try:
+        urllib.request.urlopen("http://%s:%d/json/version" % CEF, timeout=3).close()
+        return True
+    except OSError:
+        return False
+
+
+def cef_eval(expression: str):
+    """Runs JavaScript in Steam's SharedJSContext and returns its value."""
+    try:
+        targets = json.load(urllib.request.urlopen("http://%s:%d/json" % CEF, timeout=5))
+    except OSError:
+        raise Failed("Steam isn't running. Start Steam, then try again.")
+    url = next((t["webSocketDebuggerUrl"] for t in targets if t.get("title") == "SharedJSContext"), None)
+    if not url:
+        raise Failed("Steam hasn't finished starting. Try again in a moment.")
+    path = "/" + url.split("/", 3)[3]
+    s = socket.create_connection(CEF, timeout=30)
+    key = base64.b64encode(os.urandom(16)).decode()
+    s.sendall(("GET %s HTTP/1.1\r\nHost: %s:%d\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+               "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n" % (path, CEF[0], CEF[1], key)).encode())
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = s.recv(4096)
+        if not chunk:
+            raise Failed("Steam refused the connection.")
+        buf += chunk
+    rest = [buf.split(b"\r\n\r\n", 1)[1]]
+
+    def recvn(n):
+        while len(rest[0]) < n:
+            chunk = s.recv(65536)
+            if not chunk:
+                raise Failed("Steam closed the connection.")
+            rest[0] += chunk
+        out, rest[0] = rest[0][:n], rest[0][n:]
+        return out
+
+    msg = json.dumps({"id": 1, "method": "Runtime.evaluate",
+                      "params": {"expression": expression, "awaitPromise": True, "returnByValue": True}}).encode()
+    n = len(msg)
+    hdr = bytes([0x81]) + (bytes([0x80 | n]) if n < 126 else bytes([0x80 | 126]) + struct.pack(">H", n)
+                           if n < 65536 else bytes([0x80 | 127]) + struct.pack(">Q", n))
+    mask = os.urandom(4)
+    s.sendall(hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(msg)))
+    while True:
+        payload = b""
+        while True:
+            b0, b1 = recvn(2)
+            n = b1 & 0x7F
+            if n == 126:
+                n = struct.unpack(">H", recvn(2))[0]
+            elif n == 127:
+                n = struct.unpack(">Q", recvn(8))[0]
+            payload += recvn(n)
+            if b0 & 0x80:
+                break
+        reply = json.loads(payload)
+        if reply.get("id") == 1:
+            s.close()
+            result = reply.get("result", {})
+            if "exceptionDetails" in result:
+                e = result["exceptionDetails"]
+                raise Failed(e.get("exception", {}).get("description") or e.get("text") or "Steam reported an error.")
+            return result.get("result", {}).get("value")
+
+
+# Points the shortcut at exe (with its folder as the start folder)
+POINT = """const point = (id, exe) => {
+  SteamClient.Apps.SetShortcutName(id, %s);
+  SteamClient.Apps.SetShortcutExe(id, '"' + exe + '"');
+  SteamClient.Apps.SetShortcutStartDir(id, '"' + exe.slice(0, exe.lastIndexOf("/")) + '"');
+  SteamClient.Apps.SetShortcutLaunchOptions(id, "");
+};""" % json.dumps(NAME)
+
+
+def in_library(appid) -> bool:
+    return bool(appid) and bool(cef_eval("!!appStore.GetAppOverviewByAppID(%d)" % appid))
+
+
+def cmd_status():
+    state = read_state()
+    appid = state.get("appid")
+    steam = steam_running()
+    present = None
+    if steam:
+        try:
+            present = in_library(appid)
+            exe = launcher(appid)
+            if present and exe and not state.get("ready"):
+                cef_eval("(() => { %s point(%d, %s); return 1; })()" % (POINT, appid, json.dumps(exe)))
+                write_state(appid, True)
+                state["ready"] = True
+        except Failed:
+            present = None
+    print(json.dumps({"proton": newest_proton(), "steam": steam, "appid": appid, "in_steam": present,
+                      "ready": bool(state.get("ready"))}))
+
+
+def cmd_install():
+    tool = newest_proton()
+    if not tool:
+        raise Failed("Install Proton-CachyOS first, then restart Steam.")
+    if not steam_running():
+        raise Failed("Steam isn't running. Start Steam, then try again.")
+    download()
+    appid = read_state().get("appid")
+    js = """(async () => {
+  %s
+  const tool = %s, setup = %s, known = %d;
+  let id = known && appStore.GetAppOverviewByAppID(known) ? known : 0;
+  if (!id) id = await SteamClient.Apps.AddShortcut(%s, setup, setup.slice(0, setup.lastIndexOf("/")), "");
+  if (!id) throw new Error("Steam didn't create the shortcut.");
+  point(id, setup);
+  const tools = (await SteamClient.Apps.GetAvailableCompatTools(id)) || [];
+  if (!tools.some((t) => t.strToolName === tool))
+    return {id, error: "Steam doesn't list " + tool + " yet. Restart Steam, then try again."};
+  SteamClient.Apps.SpecifyCompatTool(id, tool);
+  // a new shortcut shows up in the library a moment later
+  for (let i = 0; i < 20 && !appStore.GetAppOverviewByAppID(id)?.m_gameid; i++) await new Promise((r) => setTimeout(r, 250));
+  const gameid = appStore.GetAppOverviewByAppID(id)?.m_gameid;
+  if (gameid) SteamClient.Apps.RunGame(gameid, "", -1, 100);
+  return {id, started: !!gameid};
+})()""" % (POINT, json.dumps(tool), json.dumps(SETUP), appid or 0, json.dumps(NAME))
+    r = cef_eval(js) or {}
+    if r.get("id"):
+        write_state(int(r["id"]), False)
+    if r.get("error"):
+        raise Failed(r["error"])
+    if not r.get("started"):
+        raise Failed("Battle.net is in your Steam library: start it from there.")
+
+
+def main(argv):
+    commands = {"status": cmd_status, "install": cmd_install}
+    if len(argv) != 2 or argv[1] not in commands:
+        print("usage: welcome-battlenet status|install", file=sys.stderr)
+        return 2
+    try:
+        commands[argv[1]]()
+    except Failed as e:
+        print(e, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
