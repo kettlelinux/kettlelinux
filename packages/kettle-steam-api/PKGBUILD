@@ -1,0 +1,27 @@
+# Kettle's libsteam_api.so for ARM64: the Steam API for games run natively on ARM64 (their .NET or
+# C++ code without FEX, see packages/kettle-native), passed through to Steam's own ARM64
+# steamclient.so. Games ship libsteam_api.so for x86-64 only; steamapi-map.py reads from a game's
+# which Steam method each of its functions calls, and this library follows that map. Our own code
+# (steam_api.c, gen-flat.py), no Steamworks SDK files: see steam_api.c.
+pkgname=kettle-steam-api
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Steam API for ARM64 games, passed through to Steam's ARM64 client"
+arch=(aarch64)
+license=(BSD-3-Clause)
+depends=(glibc python)
+makedepends=(python)
+
+build() {
+  cd "$startdir"
+  mkdir -p "$srcdir/gen"
+  python3 gen-flat.py names.txt "$srcdir/gen"
+  cc $CFLAGS -O2 -fPIC -shared -fvisibility=hidden -Wall -Wextra -I"$srcdir/gen" \
+    -Wl,-soname,libsteam_api.so $LDFLAGS -o "$srcdir/libsteam_api.so" steam_api.c "$srcdir/gen/flat.S" -ldl -lpthread
+}
+
+package() {
+  install -Dm755 "$srcdir/libsteam_api.so" -t "$pkgdir/usr/lib/kettle-steam-api"
+  install -Dm755 "$startdir/steamapi-map.py" "$pkgdir/usr/lib/kettle-steam-api/steamapi-map"
+  install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}

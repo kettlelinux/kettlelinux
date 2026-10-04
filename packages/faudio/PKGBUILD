@@ -1,0 +1,23 @@
+# FAudio: XAudio and XNA audio, the sound of FNA games run natively on ARM64 (packages/fna3d).
+pkgname=faudio
+pkgver=26.10
+pkgrel=1
+pkgdesc='XAudio reimplementation (FNA audio)'
+arch=(aarch64)
+url='https://github.com/FNA-XNA/FAudio'
+license=(Zlib)
+depends=(glibc sdl3)
+makedepends=(git cmake ninja)
+source=("git+https://github.com/FNA-XNA/FAudio.git#tag=$pkgver")
+sha256sums=('SKIP')
+
+build() {
+  cmake -S FAudio -B build -G Ninja -DCMAKE_BUILD_TYPE=None -DCMAKE_INSTALL_PREFIX=/usr \
+    -DBUILD_SDL3=ON
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm644 FAudio/LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+}
