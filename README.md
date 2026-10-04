@@ -40,10 +40,17 @@ own *Check for updates*.
   - **Upscaling**: gamescope SGSR 1, and SGSR 2, Arm ASR or FSR 2.2 through an ARM64EC build of OptiScaler.
   - **Game Settings**: per-game profiles of FEX, DXVK, vkd3d, Turnip and Proton options, the Proton
     version, and known good settings from the Kettle game database. ([docs/GAME-DATABASE.md](docs/GAME-DATABASE.md))
+  - **Lights**: the RGB rings around the sticks (a color, the battery level, breathe or rainbow),
+    and the Portal's power button light.
 - **Power control**: TDP budget, performance profiles, GPU clock and per-game fan curves from
   Steam's Performance panel, the Power plugin, or a Desktop Mode tray applet.
 - **Games outside Steam**: ARM64EC Wine with FEX, DXVK and vkd3d-proton, plus Lutris and Heroic
   built for arm64.
+- **Native ARM64 games**: the Linux builds of FNA, XNA, MonoGame and .NET games (Terraria,
+  Stardew Valley) run their own code on ARM64 instead of under FEX, from Game Settings.
+  ([docs/NATIVE-GAMES.md](docs/NATIVE-GAMES.md))
+- **Community Proton builds**: GE-Proton and Proton-CachyOS (their ARM64 releases), installed
+  and updated from Kettle Welcome.
 - **Android games**: add an Android game to Steam and play it in Game Mode, through Lepton, the
   Android layer Valve made for the Steam Frame (APK files, F-Droid, or opt-in Google Play).
 - **Hardware video in Firefox**: H.264, HEVC, VP9 and AV1 on the SoC's video decoder, YouTube
