@@ -197,8 +197,11 @@ def _view(appid: int, g: dict) -> dict:
         # or one the switch applied
         "auto_eligible": _is_empty(g) or bool(source and source.get("auto")),
         "is_shared": shared,
-        "can_submit": bool(_server()) and works and seconds >= PLAYED_MIN_S and not shared and not source,
-        "can_vote": bool(_server()) and bool(source) and source["id"] not in g["voted"] and seconds > 0,
+        # the game database knows games by Steam appid: a non-Steam shortcut's is only this device's
+        "can_submit": bool(_server()) and not steamlib.is_shortcut(appid) and works and seconds >= PLAYED_MIN_S
+                      and not shared and not source,
+        "can_vote": bool(_server()) and not steamlib.is_shortcut(appid) and bool(source)
+                    and source["id"] not in g["voted"] and seconds > 0,
     }
 
 
@@ -445,6 +448,8 @@ class Plugin:
         out = []
         for inst in steamlib.installed_games():
             appid = inst["appid"]
+            if inst.get("shortcut"):  # not in the database (see _view)
+                continue
             g = games.get(appid) or {**GAME_DEFAULTS}
             v = _view(appid, g)
             if not v["auto_eligible"] or (not force and now - (g.get("auto_checked") or 0) < AUTO_RECHECK_S):
@@ -491,7 +496,7 @@ class Plugin:
     # ----- game database -----
 
     async def community(self, appid: int) -> dict:
-        if not _server():
+        if not _server() or steamlib.is_shortcut(appid):
             return {"profiles": [], "page": None, "error": None, "enabled": False}
         try:
             data = await asyncio.to_thread(_fetch, appid)

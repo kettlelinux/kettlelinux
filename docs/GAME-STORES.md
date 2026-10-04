@@ -80,9 +80,14 @@ store needs to it:
 - **GOG:** the primary play task's arguments.
 - **Amazon:** `nile launch --json`'s arguments and the Amazon Games SDK variables (`FUEL_DIR` …).
 
-It logs each start, with Epic's code left out, to `~/.local/state/kettle-stores/run.log`. Game
-Settings and the other per-game plugins work on these shortcuts as on any other game: they add
-their options around the wrapper.
+It logs each start, with Epic's code left out, to `~/.local/state/kettle-stores/run.log`.
+
+Game Settings, Frame Generation, Upscaling and Power list these games, and every other non-Steam
+shortcut, next to Steam's: `shared/steamlib.py` reads the shortcuts from Steam's
+`userdata/*/config/shortcuts.vdf`, and uses the .exe's folder as the game's install folder (for
+engine detection and OptiScaler). They add their options around the wrapper in the launch
+options. The game database is left out for shortcuts: it knows games by Steam appid, and a
+shortcut's appid is only this device's.
 
 ## Not done yet
 
