@@ -378,6 +378,101 @@ void *kettle_accessor(int i) {
     return interface(user_, accessor_version[i]);
 }
 
+// ---------------------------------------------------------------- networking helpers
+// ISteamNetworkingUtils' convenience functions: inline in the API, so each game's library has
+// its own copy of them built on the interface's virtual methods (SetConfigValue and others),
+// which are in the map like any other. The values below are the API's public enum values
+// (also seen in the games' own libraries).
+
+enum { SCOPE_GLOBAL = 1, SCOPE_CONNECTION = 4 };
+enum { TYPE_INT32 = 1, TYPE_FLOAT = 3, TYPE_STRING = 4, TYPE_PTR = 5 };
+#define UTILS "SteamAPI_ISteamNetworkingUtils_"
+
+static long method(const char *name) {
+    int i = find(kettle_flat_names, KETTLE_FLAT_COUNT, name);
+    if (i < 0 || !kettle_flat_off[i]) {
+        say("%s: not in the game's map", name);
+        return -1;
+    }
+    return (long)kettle_flat_off[i] - 1;
+}
+
+#define METHOD(self, off, type) ((type)((*(void ***)(self))[(off) / sizeof(void *)]))
+
+static bool set_config(void *self, int value, int scope, intptr_t obj, int type, const void *arg) {
+    static long off = -2;
+    if (off == -2)
+        off = method(UTILS "SetConfigValue");
+    if (off < 0)
+        return false;
+    return METHOD(self, off, bool (*)(void *, int, int, intptr_t, int, const void *))(self, value, scope, obj, type, arg);
+}
+
+EXPORT bool SteamAPI_ISteamNetworkingUtils_SetGlobalConfigValueInt32(void *s, int value, int32_t v) {
+    return set_config(s, value, SCOPE_GLOBAL, 0, TYPE_INT32, &v);
+}
+EXPORT bool SteamAPI_ISteamNetworkingUtils_SetGlobalConfigValueFloat(void *s, int value, float v) {
+    return set_config(s, value, SCOPE_GLOBAL, 0, TYPE_FLOAT, &v);
+}
+EXPORT bool SteamAPI_ISteamNetworkingUtils_SetGlobalConfigValueString(void *s, int value, const char *v) {
+    return set_config(s, value, SCOPE_GLOBAL, 0, TYPE_STRING, v);
+}
+EXPORT bool SteamAPI_ISteamNetworkingUtils_SetGlobalConfigValuePtr(void *s, int value, void *v) {
+    return set_config(s, value, SCOPE_GLOBAL, 0, TYPE_PTR, &v);
+}
+EXPORT bool SteamAPI_ISteamNetworkingUtils_SetConnectionConfigValueInt32(void *s, uint32_t conn, int value, int32_t v) {
+    return set_config(s, value, SCOPE_CONNECTION, conn, TYPE_INT32, &v);
+}
+EXPORT bool SteamAPI_ISteamNetworkingUtils_SetConnectionConfigValueFloat(void *s, uint32_t conn, int value, float v) {
+    return set_config(s, value, SCOPE_CONNECTION, conn, TYPE_FLOAT, &v);
+}
+EXPORT bool SteamAPI_ISteamNetworkingUtils_SetConnectionConfigValueString(void *s, uint32_t conn, int value,
+                                                                          const char *v) {
+    return set_config(s, value, SCOPE_CONNECTION, conn, TYPE_STRING, v);
+}
+
+#define GLOBAL_CALLBACK(name, id)                                                    \
+    EXPORT bool SteamAPI_ISteamNetworkingUtils_SetGlobalCallback_##name(void *s, void *fn) { \
+        return set_config(s, id, SCOPE_GLOBAL, 0, TYPE_PTR, &fn);                    \
+    }
+GLOBAL_CALLBACK(SteamNetConnectionStatusChanged, 201)
+GLOBAL_CALLBACK(SteamNetAuthenticationStatusChanged, 202)
+GLOBAL_CALLBACK(SteamRelayNetworkStatusChanged, 203)
+GLOBAL_CALLBACK(MessagesSessionRequest, 204)
+GLOBAL_CALLBACK(MessagesSessionFailed, 205)
+GLOBAL_CALLBACK(FakeIPResult, 207)
+
+// SteamNetworkingConfigValue_t: which value, its type, then the value (a string by its pointer)
+typedef struct {
+    int value;
+    int type;
+    union {
+        int32_t i32;
+        int64_t i64;
+        float f;
+        const char *str;
+        void *ptr;
+    } v;
+} ConfigValue;
+
+EXPORT bool SteamAPI_ISteamNetworkingUtils_SetConfigValueStruct(void *s, const ConfigValue *opt, int scope,
+                                                                intptr_t obj) {
+    return set_config(s, opt->value, scope, obj, opt->type, opt->type == TYPE_STRING ? (const void *)opt->v.str
+                                                                                     : (const void *)&opt->v);
+}
+
+// Relay network access: ping data of any age (the API's own helper asks for 1e10 seconds)
+EXPORT void SteamAPI_ISteamNetworkingUtils_InitRelayNetworkAccess(void *s) {
+    long off = method(UTILS "CheckPingDataUpToDate");
+    if (off >= 0)
+        METHOD(s, off, bool (*)(void *, float))(s, 1e10f);
+}
+
+EXPORT bool SteamAPI_ISteamNetworkingUtils_IsFakeIPv4(void *s, uint32_t ip) {
+    long off = method(UTILS "GetIPv4FakeIPType");
+    return off >= 0 && METHOD(s, off, int (*)(void *, uint32_t))(s, ip) > 1;  // k_ESteamNetworkingFakeIPType_FakeIP
+}
+
 // ---------------------------------------------------------------- callbacks
 
 typedef struct {
