@@ -8,15 +8,27 @@
 #           game's own; offline, the game starts without them
 #   gog     the primary play task's arguments (goggame-<id>.info)
 #   amazon  nile's: fuel.json's arguments and the Amazon Games SDK variables
-# Logins and installs are Heroic's (~/.config/heroic), as in the plugin.
+# Cloud saves (Epic and GOG; Amazon games keep their own): newer saves are downloaded into the
+# shortcut's Proton prefix before the game starts and new ones uploaded after it exits, unless
+# the plugin's Cloud saves setting is off. A prefix that doesn't exist yet is fine: Proton keeps
+# files already there when it creates one. Save folders are the store's (Epic's CloudSaveFolder,
+# GOG's cloud storage locations), with the Windows folders resolved in the prefix.
+# Logins, installs and GOG's sync times are Heroic's (~/.config/heroic), as in the plugin.
 # A log of the last starts: ~/.local/state/kettle-stores/run.log (Epic's code left out).
-import json, os, shlex, subprocess, sys, time
+import json, os, re, shlex, signal, subprocess, sys, time, urllib.request
 
-HEROIC = os.path.expanduser("~/.config/heroic")
-os.environ.setdefault("LEGENDARY_CONFIG_PATH", os.path.join(HEROIC, "legendaryConfig", "legendary"))
+HOME = os.path.expanduser("~")
+HEROIC = os.path.join(HOME, ".config", "heroic")
+LEGENDARY = os.path.join(HEROIC, "legendaryConfig", "legendary")
+GOGDL = os.path.join(HEROIC, "gogdlConfig")
+GOG_AUTH = os.path.join(HEROIC, "gog_store", "auth.json")
+GOG_SYNC = os.path.join(HEROIC, "gog_store", "saveTimestamps.json")  # Heroic's: {id: {location: ts}}
+os.environ.setdefault("LEGENDARY_CONFIG_PATH", LEGENDARY)
 os.environ.setdefault("NILE_CONFIG_PATH", os.path.join(HEROIC, "nile_config"))
-os.environ.setdefault("GOGDL_CONFIG_PATH", os.path.join(HEROIC, "gogdlConfig"))
-STATE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "kettle-stores")
+os.environ.setdefault("GOGDL_CONFIG_PATH", GOGDL)
+PLUGIN_STATE = os.path.join(HOME, "homebrew", "settings", "kettle-stores", "stores.json")
+STATE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.join(HOME, ".local", "state"), "kettle-stores")
+SYNC_TIMEOUT = 120
 
 
 def log(*a):
@@ -31,8 +43,59 @@ def log(*a):
         pass
 
 
+def read_json(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
 def masked(args):
     return [a.split("=", 1)[0] + "=…" if a.startswith("-AUTH_PASSWORD=") else a for a in args]
+
+
+def run(cmd, timeout=SYNC_TIMEOUT):
+    """A sync command: its result, or None when it failed or took too long (logged)."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        log(cmd[0], cmd[1], "failed:", e)
+        return None
+    if r.returncode != 0:
+        log(cmd[0], cmd[1], "failed:", r.stderr.strip()[-400:])
+        return None
+    return r
+
+
+# --- the Windows folders in the shortcut's Proton prefix ------------------------------------------
+
+def user_dir() -> str | None:
+    data = os.environ.get("STEAM_COMPAT_DATA_PATH")
+    return os.path.join(data, "pfx", "drive_c", "users", "steamuser") if data else None
+
+
+def windows_folders() -> dict:
+    u = user_dir()
+    return {"USERPROFILE": u, "LOCALAPPDATA": f"{u}/AppData/Local", "APPDATA": f"{u}/AppData/Roaming",
+            "DOCUMENTS": f"{u}/Documents", "SAVED_GAMES": f"{u}/Saved Games"}
+
+
+def resolve(path: str) -> str:
+    """%VAR% Windows variables in a path, in the prefix; backslashes and .. tidied."""
+    w = windows_folders()
+    path = re.sub(r"%(\w+)%", lambda m: w.get(m.group(1).upper(), m.group(0)), path)
+    return os.path.normpath(path.replace("\\", "/"))
+
+
+# --- the stores ---------------------------------------------------------------------------------
+
+def game_dir(gid: str) -> str:
+    """The GOG game's folder: where goggame-<id>.info is, the start dir or above it."""
+    path = os.getcwd()
+    while not os.path.exists(os.path.join(path, f"goggame-{gid}.info")) and os.path.dirname(path) != path:
+        path = os.path.dirname(path)
+    return path
 
 
 def epic(gid):
@@ -50,18 +113,11 @@ def epic(gid):
 
 
 def gog(gid):
-    info = os.path.join(os.getcwd(), f"goggame-{gid}.info")
-    path = os.getcwd()
-    # the shortcut may start in the play task's working folder: look up from there
-    while not os.path.exists(info) and os.path.dirname(path) != path:
-        path = os.path.dirname(path)
-        info = os.path.join(path, f"goggame-{gid}.info")
-    try:
-        with open(info) as f:
-            task = next((t for t in json.load(f).get("playTasks", []) if t.get("isPrimary")), {})
-    except (OSError, ValueError) as e:
-        log("no play task:", e)
+    info = read_json(os.path.join(game_dir(gid), f"goggame-{gid}.info"), None)
+    if info is None:
+        log("no goggame info for", gid)
         return [], {}
+    task = next((t for t in info.get("playTasks", []) if t.get("isPrimary")), {})
     return shlex.split(task.get("arguments") or "", posix=False), {}
 
 
@@ -75,14 +131,116 @@ def amazon(gid):
     return (d.get("command") or {}).get("arguments") or [], d.get("env") or {}
 
 
+# --- cloud saves --------------------------------------------------------------------------------
+
+def epic_save_path(gid: str) -> str | None:
+    """Epic's CloudSaveFolder for the game, in the prefix (None: no cloud saves)."""
+    meta = read_json(os.path.join(LEGENDARY, "metadata", f"{gid}.json"), {}).get("metadata") or {}
+    folder = ((meta.get("customAttributes") or {}).get("CloudSaveFolder") or {}).get("value")
+    game = read_json(os.path.join(LEGENDARY, "installed.json"), {}).get(gid)
+    if not folder or not game or not user_dir():
+        return None
+    w = windows_folders()
+    known = {"installdir": game["install_path"],
+             "epicid": read_json(os.path.join(LEGENDARY, "user.json"), {}).get("account_id", ""),
+             "appdata": w["LOCALAPPDATA"], "userdir": w["DOCUMENTS"], "userprofile": w["USERPROFILE"],
+             "usersavedgames": w["SAVED_GAMES"]}
+    path = re.sub(r"\{(\w+)\}", lambda m: known.get(m.group(1).lower(), m.group(0)), folder)
+    return resolve(path)
+
+
+def epic_sync(gid: str, direction: str):
+    path = epic_save_path(gid)
+    if not path:
+        return
+    os.makedirs(path, exist_ok=True)
+    skip = "--skip-upload" if direction == "down" else "--skip-download"
+    if run(["legendary", "-y", "sync-saves", gid, "--save-path", path, skip]):
+        log("epic saves", direction, gid, "ok")
+
+
+GOG_VARS = {"INSTALL": None, "SAVED_GAMES": "%SAVED_GAMES%", "APPLICATION_DATA_LOCAL": "%LOCALAPPDATA%",
+            "APPLICATION_DATA_LOCAL_LOW": "%APPDATA%\\..\\LocalLow", "APPLICATION_DATA_ROAMING": "%APPDATA%",
+            "DOCUMENTS": "%DOCUMENTS%"}
+
+
+def gog_locations(gid: str) -> list[dict]:
+    """The game's cloud save locations, {"name", "path"} in the prefix (as Heroic resolves them)."""
+    if not user_dir():
+        return []
+    root = game_dir(gid)
+    client = (read_json(os.path.join(GOGDL, "heroic_gogdl", "manifests", gid), {}).get("clientId")
+              or read_json(os.path.join(root, f"goggame-{gid}.info"), {}).get("clientId"))
+    if not client:
+        return []
+    try:
+        with urllib.request.urlopen(f"https://remote-config.gog.com/components/galaxy_client/clients/{client}"
+                                    "?component_version=2.0.45", timeout=15) as r:
+            storage = json.load(r)["content"]["Windows"]["cloudStorage"]
+    except Exception as e:
+        log("gog cloud storage config:", e)
+        return []
+    if not storage.get("enabled"):
+        return []
+    locations = storage.get("locations") or [
+        {"name": "__default", "location": f"%LOCALAPPDATA%/GOG.com/Galaxy/Applications/{client}/Storage/Shared/Files"}]
+    out = []
+    for loc in locations:
+        path = re.sub(r"<\?(\w+)\?>", lambda m: root if m.group(1) == "INSTALL" else GOG_VARS.get(m.group(1), m.group(0)),
+                      loc["location"])
+        if "<?" in path:  # a folder variable Heroic doesn't know either: leave that location out
+            log("gog save location with an unknown folder:", loc["location"])
+            continue
+        out.append({"name": loc["name"], "path": resolve(path)})
+    return out
+
+
+def gog_sync(gid: str, direction: str, locations: list[dict]):
+    times = read_json(GOG_SYNC, {})
+    for loc in locations:
+        os.makedirs(loc["path"], exist_ok=True)
+        ts = str((times.get(gid) or {}).get(loc["name"], "0"))
+        r = run(["gogdl", "--auth-config-path", GOG_AUTH, "save-sync", loc["path"], gid, "--os", "windows",
+                 "--ts", ts, "--name", loc["name"], "--skip-upload" if direction == "down" else "--skip-download"])
+        if r and r.stdout.strip():
+            times = read_json(GOG_SYNC, {})
+            times.setdefault(gid, {})[loc["name"]] = r.stdout.strip().splitlines()[-1]
+            try:
+                with open(GOG_SYNC + ".tmp", "w") as f:
+                    json.dump(times, f)
+                os.replace(GOG_SYNC + ".tmp", GOG_SYNC)
+            except OSError as e:
+                log("gog sync times:", e)
+            log("gog saves", direction, gid, loc["name"], "ok")
+
+
+def cloud_saves_on() -> bool:
+    return read_json(PLUGIN_STATE, {}).get("cloud_saves", True) is not False
+
+
+# --- the game -----------------------------------------------------------------------------------
+
 def main():
     if len(sys.argv) < 4:
         sys.exit("usage: kettle-store-run <epic|gog|amazon> <id> <command...>")
     store, gid, cmd = sys.argv[1], sys.argv[2], sys.argv[3:]
+    sync = cloud_saves_on() and store in ("epic", "gog")
+    gog_locs = gog_locations(gid) if sync and store == "gog" else []
+    if sync:
+        epic_sync(gid, "down") if store == "epic" else gog_sync(gid, "down", gog_locs)
     extra, env = {"epic": epic, "gog": gog, "amazon": amazon}.get(store, lambda _: ([], {}))(gid)
     log("start", store, gid, "args:", masked(extra), "env:", sorted(env))
     os.environ.update(env)
-    os.execvp(cmd[0], cmd + extra)
+    if not sync:
+        os.execvp(cmd[0], cmd + extra)
+    # run the game and wait, to upload its saves after; Steam's stop reaches the game through this
+    game = subprocess.Popen(cmd + extra)
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, lambda s, _f: game.send_signal(s))
+    code = game.wait()
+    log("exit", store, gid, code)
+    epic_sync(gid, "up") if store == "epic" else gog_sync(gid, "up", gog_locs)
+    sys.exit(code if code >= 0 else 128 - code)
 
 
 main()

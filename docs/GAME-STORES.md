@@ -82,6 +82,26 @@ store needs to it:
 
 It logs each start, with Epic's code left out, to `~/.local/state/kettle-stores/run.log`.
 
+## Cloud saves
+
+Epic and GOG games sync their saves with the store, unless **Cloud saves** under Downloads is
+off (`cloud_saves` in `stores.json`, which `kettle-store-run` reads). Before the game starts,
+newer saves are downloaded. The wrapper then runs the game and waits for it, rather than handing
+over to it, so that after the game exits it can upload the new saves. That includes a game closed
+with Steam's Exit game: the wrapper passes Steam's signal on to the game and uploads after it.
+
+The save folders are the store's, resolved in the shortcut's Proton prefix
+(`compatdata/<appid>/pfx/drive_c/users/steamuser`):
+
+| Store | Where the folder comes from | Synced with |
+|---|---|---|
+| Epic | the game's `CloudSaveFolder` (`{AppData}`, `{UserDir}`, `{InstallDir}`, `{EpicID}` …, as legendary resolves them on Windows) | `legendary sync-saves --save-path` |
+| GOG | the locations in the game's cloud storage config (`remote-config.gog.com`, by the game's client id), as Heroic resolves them | `gogdl save-sync`, with the last sync time per location in Heroic's `gog_store/saveTimestamps.json` |
+
+A game's first start downloads its saves into a prefix that doesn't exist yet. That's safe:
+Proton keeps any file already there when it creates the prefix. Amazon games keep their saves
+themselves.
+
 Game Settings, Frame Generation, Upscaling and Power list these games, and every other non-Steam
 shortcut, next to Steam's: `shared/steamlib.py` reads the shortcuts from Steam's
 `userdata/*/config/shortcuts.vdf`, and uses the .exe's folder as the game's install folder (for
@@ -91,8 +111,6 @@ shortcut's appid is only this device's.
 
 ## Not done yet
 
-- **Cloud saves:** neither `legendary sync-saves` nor `gogdl save-sync` runs. Saves stay in the
-  shortcut's Proton prefix.
 - **DLC:** installs skip DLC (`--skip-dlcs`).
 - **GOG extras:** Galaxy achievements (comet) and the redistributables some GOG games list are
   not installed.
