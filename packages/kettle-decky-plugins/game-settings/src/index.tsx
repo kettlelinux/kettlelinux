@@ -130,6 +130,8 @@ function minutes(s: number) {
 }
 
 function GamePanel({ appid, name, s, onChanged }: { appid: number; name: string; s: Status; onChanged: () => void }) {
+  // the game database knows games by Steam appid; a non-Steam shortcut's (top bit set) is this device's own
+  const db = s.can_share && appid < 2 ** 31;
   const [g, setG] = useState<Game | null>(null);
   const [opts, setOpts] = useState("");
   const [tools, setTools] = useState<{ strToolName: string; strDisplayName: string }[]>([]);
@@ -148,7 +150,7 @@ function GamePanel({ appid, name, s, onChanged }: { appid: number; name: string;
     reload();
     compatTools(appid).then(setTools);
     getEngine(appid).then(setEngine, () => {});
-    if (s.can_share) openDatabase.count(appid).then(setCount);
+    if (db) openDatabase.count(appid).then(setCount);
   }, [appid]);
   if (!g) return null;
   const p = profileOf(g);
@@ -251,7 +253,7 @@ function GamePanel({ appid, name, s, onChanged }: { appid: number; name: string;
         </PanelSectionRow>
       ))}
 
-      {s.can_share && (
+      {db && (
         <>
           <PanelSectionRow>
             <ButtonItem layout="below" onClick={() => openDatabase.page(appid)}>
