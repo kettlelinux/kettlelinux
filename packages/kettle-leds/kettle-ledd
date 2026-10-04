@@ -1,10 +1,8 @@
 #!/usr/bin/python3
-"""kettle-ledd: the RGB rings around the sticks on Kettle Linux's handhelds.
+"""kettle-ledd: the RGB lights on Kettle Linux's handhelds.
 
-The Odin 2 Portal, the Thor and the Retroid Pocket 5 have four RGB LEDs round each stick, each
-a kernel multicolor group: rgb:l1..l4 and rgb:r1..r4. A group's channel order is its multi_index
-("blue green red" on these devices), read, not assumed. kettle-ledd is their one writer, as root,
-in Game Mode and Desktop Mode alike. Modes:
+Stick lights: the Odin 2 Portal, the Thor and the Retroid Pocket 5 have four RGB LEDs round each
+stick, each a kernel multicolor group: rgb:l1..l4 and rgb:r1..r4. Modes:
 
   off       dark
   solid     a color, both sticks the same or each its own
@@ -13,20 +11,35 @@ in Game Mode and Desktop Mode alike. Modes:
   breathe   the color fading in and out
   rainbow   the colors going round each ring
 
+Power light: the Portal's RGB LED by the power button, power-led (the PMIC's LPG; on the Thor the
+same channels light nothing, and its device tree drops the node). Modes:
+
+  battery   on while the device is, in the battery's color as the sticks' battery mode shows it
+  charging  orange while charging, green when full or held at the charge limit; dark on battery
+  solid     a color, on while the device is
+  off       dark
+
+A group's channel order is its multi_index ("blue green red" on the sticks, "red green blue" on
+power-led), read, not assumed. kettle-ledd is their one writer, as root, in Game Mode and Desktop
+Mode alike. A plug or unplug shows at once: power_supply uevents redraw the lights.
+
 Each LED's brightness stays at its top; the level is in the color's intensities, so a change is one
 multi_intensity write. Writing brightness as well loses changes: when a brightness change is still
-queued (these LEDs are on I2C), led_set_brightness() queues the new one without updating
+queued (the stick LEDs are on I2C), led_set_brightness() queues the new one without updating
 led_cdev->brightness, and the next multi_intensity write applies that stale value again.
 
-The rings go dark while the device sleeps (a logind delay lock): their chips (HTR3212 on the
-Portal and the Thor) stay powered through suspend, and their driver leaves them as they were.
+While the device sleeps (a logind delay lock) the sticks go dark: their chips (HTR3212 on the
+Portal and the Thor) stay powered through suspend and their driver leaves them as they were. The
+power light ("sleep": true) stays on, very dim, in the color it had going to sleep: orange while
+charging, green when full or held at the charge limit, the battery's color on battery. It isn't
+changed until the device wakes: nothing is woken to follow a plug or unplug.
 org.kettlelinux.Leds1 serves the setting to the Lights plugin (kettle-decky-lights):
 
   Get() -> s          the setting and what the device has, JSON
   Set(s changes) -> s some of the setting's keys, JSON; returns what Get does
 
   kettle-ledd        run the daemon (system bus, root)
-  kettle-ledd --off  turn the rings off (ExecStopPost)
+  kettle-ledd --off  turn every light off (ExecStopPost)
 """
 import colorsys
 import glob
@@ -34,6 +47,7 @@ import json
 import math
 import os
 import signal
+import socket
 import sys
 import time
 import warnings
@@ -51,6 +65,7 @@ BUS = Gio.BusType.SESSION if os.environ.get("KETTLE_LEDS_BUS") == "session" else
 BUS_NAME = "org.kettlelinux.Leds1"
 OBJ_PATH = "/org/kettlelinux/Leds1"
 MODES = ("off", "solid", "battery", "breathe", "rainbow")
+POWER_MODES = ("off", "solid", "battery", "charging")
 DEFAULT = {
     "mode": "off",
     "brightness": 60,                    # percent
@@ -58,10 +73,20 @@ DEFAULT = {
     "left": {"hue": 200, "sat": 100},
     "right": {"hue": 200, "sat": 100},
     "speed": 40,                         # breathe and rainbow, percent
+    "power": {
+        "mode": "battery",
+        "brightness": 30,
+        "color": {"hue": 200, "sat": 100},
+        "sleep": True,                   # charging and full shown while asleep
+    },
 }
+SLEEP_LEVEL = 0.01                       # the power light asleep: just enough to see it
 FRAME = 1 / 20                           # animations: 20 updates a second
-BATTERY_POLL = 30
+BATTERY_POLL = 60                        # uevents tell of a plug or unplug; this is the level
 CRITICAL = 10                            # percent: blink red at or below, discharging
+ORANGE = (255, 80, 0)
+GREEN = (0, 255, 0)
+NETLINK_KOBJECT_UEVENT = 15
 
 
 def log(msg: str):
@@ -78,8 +103,16 @@ def hsv(hue: float, sat: float, value: float = 1.0) -> tuple[int, int, int]:
     return round(r * 255), round(g * 255), round(b * 255)
 
 
+def battery_rgb(cap: int) -> tuple[int, int, int]:
+    return hsv(1.2 * max(0, min(100, cap)), 100)          # 0 % red, 50 % yellow, 100 % green
+
+
+def pulse(t: float, period: float = 4.0, low: float = 0.25) -> float:
+    return low + (1 - low) * (0.5 - 0.5 * math.cos(2 * math.pi * t / period))
+
+
 class Led:
-    """One multicolor group: an LED of a stick's ring."""
+    """One multicolor LED: an LED of a stick's ring, or the power light."""
 
     def __init__(self, path: str):
         self.path = path
@@ -111,7 +144,7 @@ class Led:
         self.last = intensity
 
 
-def find_leds() -> dict[str, list[Led]]:
+def find_leds() -> tuple[dict[str, list[Led]], Led | None]:
     sticks = {}
     for side in ("l", "r"):
         sticks[side] = []
@@ -120,43 +153,62 @@ def find_leds() -> dict[str, list[Led]]:
                 sticks[side].append(Led(p))
             except (OSError, ValueError) as e:
                 log(f"{p} unusable: {e}")
-    return sticks
+    power = None
+    if os.path.isdir(os.path.join(LEDS, "power-led")):
+        try:
+            power = Led(os.path.join(LEDS, "power-led"))
+        except (OSError, ValueError) as e:
+            log(f"power-led unusable: {e}")
+    return sticks, power
+
+
+def color(v) -> dict:
+    return {"hue": int(v["hue"]) % 360, "sat": max(0, min(100, int(v["sat"])))}
+
+
+def percent(v) -> int:
+    return max(0, min(100, int(v)))
 
 
 def load() -> dict:
     s = json.loads(json.dumps(DEFAULT))
     try:
         saved = json.loads(read(STATE))
-        s.update({k: v for k, v in saved.items() if k in DEFAULT})
-    except (OSError, ValueError, AttributeError):
+        s = normalize(s, {k: v for k, v in saved.items() if k in DEFAULT})
+    except (OSError, ValueError, AttributeError, KeyError, TypeError):
         pass
-    return normalize(s, s)
+    return s
 
 
 def normalize(s: dict, changes: dict) -> dict:
     s = dict(s)
     for k, v in changes.items():
         if k in ("left", "right"):
-            s[k] = {"hue": int(v["hue"]) % 360, "sat": max(0, min(100, int(v["sat"])))}
+            s[k] = color(v)
         elif k in ("brightness", "speed"):
-            s[k] = max(0, min(100, int(v)))
+            s[k] = percent(v)
         elif k == "sync":
             s[k] = bool(v)
         elif k == "mode":
             s[k] = v if v in MODES else "off"
+        elif k == "power":
+            p = dict(s["power"])
+            for pk, pv in v.items():
+                if pk == "mode":
+                    p[pk] = pv if pv in POWER_MODES else "off"
+                elif pk == "brightness":
+                    p[pk] = percent(pv)
+                elif pk == "color":
+                    p[pk] = color(pv)
+                elif pk == "sleep":
+                    p[pk] = bool(pv)
+            s[k] = p
     return s
-
-
-def battery() -> tuple[int, str] | None:
-    try:
-        return int(read(os.path.join(BATTERY, "capacity"))), read(os.path.join(BATTERY, "status"))
-    except (OSError, ValueError):
-        return None
 
 
 class Daemon:
     def __init__(self):
-        self.sticks = find_leds()
+        self.sticks, self.power = find_leds()
         self.state = load()
         self.error: str | None = None
         self.asleep = False
@@ -164,6 +216,8 @@ class Daemon:
         self.timer = 0
         self.inhibit_fd = -1
         self.conn = None
+        self.bat: tuple[int, str] | None = None
+        self.bat_read = -BATTERY_POLL    # when self.bat was read (monotonic)
 
     def save(self):
         os.makedirs(os.path.dirname(STATE), exist_ok=True)
@@ -171,47 +225,61 @@ class Daemon:
             json.dump(self.state, f)
         os.replace(STATE + ".new", STATE)
 
+    def battery(self) -> tuple[int, str] | None:
+        """(capacity, status), read at most once a BATTERY_POLL (and after each uevent)."""
+        now = time.monotonic()
+        if now - self.bat_read >= BATTERY_POLL:
+            try:
+                self.bat = (int(read(os.path.join(BATTERY, "capacity"))),
+                            read(os.path.join(BATTERY, "status")))
+            except (OSError, ValueError):
+                self.bat = None
+            self.bat_read = now
+        return self.bat
+
     # --- the lights ---
 
+    def write(self, led: Led, rgb, level):
+        try:
+            led.set(rgb, level)
+            self.error = None
+        except OSError as e:
+            if self.error is None:
+                log(f"writing {led.name}: {e}")
+            self.error = f"Can't set the lights: {e.strerror or e}"
+            led.last = None
+            led.full = False
+
     def paint(self, frame):
-        """frame(side, i) -> (rgb, level) for each LED."""
+        """frame(side, i) -> (rgb, level) for each stick LED."""
         for side, leds in self.sticks.items():
             for i, led in enumerate(leds):
-                rgb, level = frame(side, i)
-                try:
-                    led.set(rgb, level)
-                    self.error = None
-                except OSError as e:
-                    if self.error is None:
-                        log(f"writing {led.name}: {e}")
-                    self.error = f"Can't set the lights: {e.strerror or e}"
-                    led.last = None
-                    led.full = False
+                self.write(led, *frame(side, i))
 
     def off(self):
         self.paint(lambda side, i: ((0, 0, 0), 0.0))
 
-    def render(self, t: float) -> float | None:
-        """The frame for time t; how long until the next one (None: until the setting changes)."""
+    def render_sticks(self, t: float) -> float | None:
+        """The sticks' frame for time t; how long until the next (None: until the setting changes)."""
         s = self.state
         level = s["brightness"] / 100
         colors = {"l": s["left"], "r": s["left"] if s["sync"] else s["right"]}
         speed = s["speed"] / 100
         mode = s["mode"]
 
-        def color(side):
+        def rgb(side):
             return hsv(colors[side]["hue"], colors[side]["sat"])
 
         if mode == "off":
             self.off()
             return None
         if mode == "solid":
-            self.paint(lambda side, i: (color(side), level))
+            self.paint(lambda side, i: (rgb(side), level))
             return None
         if mode == "breathe":
             period = 8 - 6.5 * speed                      # 8 s slowest, 1.5 s fastest
-            k = 0.06 + 0.94 * (0.5 - 0.5 * math.cos(2 * math.pi * t / period))
-            self.paint(lambda side, i: (color(side), level * k))
+            k = pulse(t, period, 0.06)
+            self.paint(lambda side, i: (rgb(side), level * k))
             return FRAME
         if mode == "rainbow":
             turn = 20 + 220 * speed                       # degrees of hue a second
@@ -220,22 +288,82 @@ class Daemon:
             return FRAME
 
         # battery
-        b = battery()
+        b = self.battery()
         if b is None:
             self.off()
             return BATTERY_POLL
         cap, status = b
-        rgb = hsv(1.2 * max(0, min(100, cap)), 100)       # 0 % red, 50 % yellow, 100 % green
         if status == "Discharging" and cap <= CRITICAL:
             on = int(t * 2) % 2 == 0                      # blinking once a second
             self.paint(lambda side, i: ((255, 0, 0), level if on else 0.0))
             return 0.5 - (t % 0.5)
         if status == "Charging":
-            k = 0.25 + 0.75 * (0.5 - 0.5 * math.cos(2 * math.pi * t / 4))
-            self.paint(lambda side, i: (rgb, level * k))
+            k = pulse(t)
+            self.paint(lambda side, i: (battery_rgb(cap), level * k))
             return FRAME
-        self.paint(lambda side, i: (rgb, level))
+        self.paint(lambda side, i: (battery_rgb(cap), level))
         return BATTERY_POLL
+
+    def render_power(self, t: float) -> float | None:
+        if self.power is None:
+            return None
+        p = self.state["power"]
+        level = p["brightness"] / 100
+        mode = p["mode"]
+        if mode == "off":
+            self.write(self.power, (0, 0, 0), 0.0)
+            return None
+        if mode == "solid":
+            self.write(self.power, hsv(p["color"]["hue"], p["color"]["sat"]), level)
+            return None
+        b = self.battery()
+        if b is None:
+            self.write(self.power, (0, 0, 0), 0.0)
+            return BATTERY_POLL
+        cap, status = b
+        plugged = status in ("Charging", "Full", "Not charging")
+        if mode == "charging":
+            if status == "Charging":
+                self.write(self.power, ORANGE, level)
+            elif plugged:
+                self.write(self.power, GREEN, level)
+            else:
+                self.write(self.power, (0, 0, 0), 0.0)
+            return BATTERY_POLL
+        # battery
+        if status == "Discharging" and cap <= CRITICAL:
+            on = int(t * 2) % 2 == 0
+            self.write(self.power, (255, 0, 0), level if on else 0.0)
+            return 0.5 - (t % 0.5)
+        if status == "Charging":
+            self.write(self.power, battery_rgb(cap), level * pulse(t))
+            return FRAME
+        self.write(self.power, GREEN if status == "Full" else battery_rgb(cap), level)
+        return BATTERY_POLL
+
+    def sleep_light(self) -> tuple[tuple[int, int, int], float]:
+        """The power light while asleep: very dim, in the color of the moment."""
+        p = self.state["power"]
+        if not p["sleep"] or p["mode"] == "off":
+            return (0, 0, 0), 0.0
+        if p["mode"] == "solid":
+            return hsv(p["color"]["hue"], p["color"]["sat"]), SLEEP_LEVEL
+        self.bat_read = -BATTERY_POLL
+        b = self.battery()
+        if b is None:
+            return (0, 0, 0), 0.0
+        cap, status = b
+        if status == "Charging":
+            return ORANGE, SLEEP_LEVEL
+        if status in ("Full", "Not charging"):
+            return GREEN, SLEEP_LEVEL
+        if p["mode"] == "charging":                       # on battery: dark, as awake
+            return (0, 0, 0), 0.0
+        return battery_rgb(cap), SLEEP_LEVEL
+
+    def render(self, t: float) -> float | None:
+        waits = [w for w in (self.render_sticks(t), self.render_power(t)) if w is not None]
+        return min(waits) if waits else None
 
     def tick(self) -> bool:
         self.timer = 0
@@ -255,14 +383,37 @@ class Daemon:
             GLib.source_remove(self.timer)
         self.tick()
 
+    def watch_uevents(self):
+        """A plug or unplug (and the battery's level changing): power_supply uevents."""
+        try:
+            sock = socket.socket(socket.AF_NETLINK, socket.SOCK_DGRAM, NETLINK_KOBJECT_UEVENT)
+            sock.bind((0, 1))                             # the kernel's own uevents
+        except OSError as e:
+            log(f"no uevents, the battery is read every {BATTERY_POLL} s: {e}")
+            return
+
+        def on_uevent(fd, cond):
+            try:
+                data = sock.recv(16384)
+            except OSError:
+                return True
+            if b"SUBSYSTEM=power_supply" in data:
+                self.bat_read = -BATTERY_POLL
+                if not self.asleep:
+                    self.redraw()
+            return True
+
+        self.uevents = sock
+        GLib.io_add_watch(sock.fileno(), GLib.PRIORITY_DEFAULT, GLib.IO_IN, on_uevent)
+
     # --- sleep ---
 
     def inhibit(self):
-        """A delay lock: logind waits for the rings to go dark before the device sleeps."""
+        """A delay lock: logind waits for the lights to be set for sleep."""
         try:
             r, fds = self.conn.call_with_unix_fd_list_sync(
                 "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager",
-                "Inhibit", GLib.Variant("(ssss)", ("sleep", "kettle-ledd", "Stick lights off", "delay")),
+                "Inhibit", GLib.Variant("(ssss)", ("sleep", "kettle-ledd", "Lights set for sleep", "delay")),
                 GLib.VariantType("(h)"), Gio.DBusCallFlags.NONE, -1, None, None)
             self.inhibit_fd = fds.get(r.unpack()[0])
         except GLib.Error as e:
@@ -276,11 +427,14 @@ class Daemon:
                 GLib.source_remove(self.timer)
                 self.timer = 0
             self.off()
+            if self.power:
+                self.write(self.power, *self.sleep_light())
             if self.inhibit_fd >= 0:
                 os.close(self.inhibit_fd)
                 self.inhibit_fd = -1
         else:
             self.asleep = False
+            self.bat_read = -BATTERY_POLL
             self.inhibit()
             self.redraw()
 
@@ -290,6 +444,7 @@ class Daemon:
         return json.dumps({**self.state,
                            "available": any(self.sticks.values()),
                            "leds": sum(len(v) for v in self.sticks.values()),
+                           "power_available": self.power is not None,
                            "error": self.error})
 
     def on_method(self, conn, sender, path, iface, name, params, invocation):
@@ -318,7 +473,9 @@ class Daemon:
             self.inhibit()
 
     def run(self):
-        log(f"{len(self.sticks['l'])}+{len(self.sticks['r'])} stick LEDs, mode {self.state['mode']}")
+        log(f"{len(self.sticks['l'])}+{len(self.sticks['r'])} stick LEDs, mode {self.state['mode']}; "
+            f"power light: {self.state['power']['mode'] if self.power else 'none'}")
+        self.watch_uevents()
         self.tick()
         loop = GLib.MainLoop()
 
@@ -343,12 +500,12 @@ INTROSPECTION = """<node>
 
 def main():
     if "--off" in sys.argv[1:]:
-        for leds in find_leds().values():
-            for led in leds:
-                try:
-                    led.set((0, 0, 0), 0.0)
-                except OSError:
-                    pass
+        sticks, power = find_leds()
+        for led in [*sticks["l"], *sticks["r"], *([power] if power else [])]:
+            try:
+                led.set((0, 0, 0), 0.0)
+            except OSError:
+                pass
         return
     Daemon().run()
 

@@ -13,7 +13,9 @@ import { useEffect, useState } from "react";
 import { FaLightbulb } from "react-icons/fa";
 
 type Mode = "off" | "solid" | "battery" | "breathe" | "rainbow";
+type PowerMode = "off" | "solid" | "battery" | "charging";
 type Color = { hue: number; sat: number };
+type Power = { mode: PowerMode; brightness: number; color: Color; sleep: boolean };
 type State = {
   mode: Mode;
   brightness: number;
@@ -21,13 +23,16 @@ type State = {
   left: Color;
   right: Color;
   speed: number;
+  power: Power;
   available: boolean;
+  power_available: boolean;
   error: string | null;
 };
-type Settings = Omit<State, "available" | "error">;
+type Settings = Omit<State, "available" | "power_available" | "error" | "power">;
+type Changes = Partial<Settings> & { power?: Partial<Power> };
 
 const get = callable<[], State>("get");
-const set = callable<[changes: Partial<Settings>], State>("set");
+const set = callable<[changes: Changes], State>("set");
 
 const MODES: { data: Mode; label: string }[] = [
   { data: "off", label: "Off" },
@@ -35,6 +40,13 @@ const MODES: { data: Mode; label: string }[] = [
   { data: "battery", label: "Battery level" },
   { data: "breathe", label: "Breathe" },
   { data: "rainbow", label: "Rainbow" },
+];
+
+const POWER_MODES: { data: PowerMode; label: string }[] = [
+  { data: "battery", label: "Battery level" },
+  { data: "charging", label: "Charging only" },
+  { data: "solid", label: "Color" },
+  { data: "off", label: "Off" },
 ];
 
 const PRESETS: Color[] = [
@@ -101,11 +113,11 @@ function Content() {
     get().then(setS).catch(() => {});
   }, []);
   if (!s) return null;
-  if (!s.available)
+  if (!s.available && !s.power_available)
     return (
-      <PanelSection title="Stick lights">
+      <PanelSection title="Lights">
         <PanelSectionRow>
-          <div style={small}>{s.error ?? "This device has no stick lights Kettle knows how to set."}</div>
+          <div style={small}>{s.error ?? "This device has no lights Kettle knows how to set."}</div>
         </PanelSectionRow>
       </PanelSection>
     );
@@ -115,57 +127,99 @@ function Content() {
     setS((cur) => cur && { ...cur, ...changes });
     set(changes).then((r) => setS((cur) => cur && { ...cur, error: r.error })).catch(() => {});
   };
+  const updatePower = (changes: Partial<Power>) => {
+    setS((cur) => cur && { ...cur, power: { ...cur.power, ...changes } });
+    set({ power: changes }).then((r) => setS((cur) => cur && { ...cur, error: r.error })).catch(() => {});
+  };
+  const p = s.power;
   const colored = s.mode === "solid" || s.mode === "breathe";
   const animated = s.mode === "breathe" || s.mode === "rainbow";
 
   return (
     <>
-      <PanelSection title="Stick lights">
-        <PanelSectionRow>
-          <DropdownItem label="Mode" rgOptions={MODES} selectedOption={s.mode}
-            onChange={(o) => update({ mode: o.data })} />
-        </PanelSectionRow>
-        {s.mode === "battery" && (
+      {s.available && (
+        <>
+          <PanelSection title="Stick lights">
+            <PanelSectionRow>
+              <DropdownItem label="Mode" rgOptions={MODES} selectedOption={s.mode}
+                onChange={(o) => update({ mode: o.data })} />
+            </PanelSectionRow>
+            {s.mode === "battery" && (
+              <PanelSectionRow>
+                <div style={small}>
+                  Red when the battery is empty, yellow at half, green when full. Pulses while charging and
+                  blinks red below 10%.
+                </div>
+              </PanelSectionRow>
+            )}
+            {s.mode !== "off" && (
+              <PanelSectionRow>
+                <SliderField label="Brightness" value={s.brightness} min={5} max={100} step={5} showValue valueSuffix="%"
+                  onChange={(brightness) => update({ brightness })} />
+              </PanelSectionRow>
+            )}
+            {animated && (
+              <PanelSectionRow>
+                <SliderField label="Speed" value={s.speed} min={0} max={100} step={10} showValue valueSuffix="%"
+                  onChange={(speed) => update({ speed })} />
+              </PanelSectionRow>
+            )}
+            {colored && (
+              <PanelSectionRow>
+                <ToggleField label="Same color on both sticks" checked={s.sync}
+                  onChange={(sync) => update({ sync })} />
+              </PanelSectionRow>
+            )}
+            {s.error && (
+              <PanelSectionRow>
+                <div style={{ ...small, color: "#ff7b6b" }}>{s.error}</div>
+              </PanelSectionRow>
+            )}
+          </PanelSection>
+          {colored && (
+            <PanelSection title={s.sync ? "Color" : "Left stick"}>
+              <ColorPicker title={s.sync ? "Both sticks" : "Left stick"} color={s.left}
+                onChange={(left) => update({ left })} />
+            </PanelSection>
+          )}
+          {colored && !s.sync && (
+            <PanelSection title="Right stick">
+              <ColorPicker title="Right stick" color={s.right} onChange={(right) => update({ right })} />
+            </PanelSection>
+          )}
+        </>
+      )}
+      {s.power_available && (
+        <PanelSection title="Power light">
+          <PanelSectionRow>
+            <DropdownItem label="Mode" rgOptions={POWER_MODES} selectedOption={p.mode}
+              onChange={(o) => updatePower({ mode: o.data })} />
+          </PanelSectionRow>
           <PanelSectionRow>
             <div style={small}>
-              Red when the battery is empty, yellow at half, green when full. Pulses while charging and
-              blinks red below 10%.
+              {p.mode === "battery" &&
+                "On while the device is, in the battery's color: red when empty, yellow at half, green when full. Pulses while charging."}
+              {p.mode === "charging" && "Orange while charging, green when full. Dark on battery."}
+              {p.mode === "solid" && "On while the device is, in the color below."}
+              {p.mode === "off" && "The light by the power button stays dark."}
             </div>
           </PanelSectionRow>
-        )}
-        {s.mode !== "off" && (
-          <PanelSectionRow>
-            <SliderField label="Brightness" value={s.brightness} min={5} max={100} step={5} showValue valueSuffix="%"
-              onChange={(brightness) => update({ brightness })} />
-          </PanelSectionRow>
-        )}
-        {animated && (
-          <PanelSectionRow>
-            <SliderField label="Speed" value={s.speed} min={0} max={100} step={10} showValue valueSuffix="%"
-              onChange={(speed) => update({ speed })} />
-          </PanelSectionRow>
-        )}
-        {colored && (
-          <PanelSectionRow>
-            <ToggleField label="Same color on both sticks" checked={s.sync}
-              onChange={(sync) => update({ sync })} />
-          </PanelSectionRow>
-        )}
-        {s.error && (
-          <PanelSectionRow>
-            <div style={{ ...small, color: "#ff7b6b" }}>{s.error}</div>
-          </PanelSectionRow>
-        )}
-      </PanelSection>
-      {colored && (
-        <PanelSection title={s.sync ? "Color" : "Left stick"}>
-          <ColorPicker title={s.sync ? "Both sticks" : "Left stick"} color={s.left}
-            onChange={(left) => update({ left })} />
-        </PanelSection>
-      )}
-      {colored && !s.sync && (
-        <PanelSection title="Right stick">
-          <ColorPicker title="Right stick" color={s.right} onChange={(right) => update({ right })} />
+          {p.mode !== "off" && (
+            <>
+              <PanelSectionRow>
+                <SliderField label="Brightness" value={p.brightness} min={5} max={100} step={5} showValue
+                  valueSuffix="%" onChange={(brightness) => updatePower({ brightness })} />
+              </PanelSectionRow>
+              <PanelSectionRow>
+                <ToggleField label="Dim light while asleep" checked={p.sleep}
+                  description="Very dim, in its color going to sleep (orange while charging, green when full). It changes when the device wakes."
+                  onChange={(sleep) => updatePower({ sleep })} />
+              </PanelSectionRow>
+            </>
+          )}
+          {p.mode === "solid" && (
+            <ColorPicker title="Power light" color={p.color} onChange={(color) => updatePower({ color })} />
+          )}
         </PanelSection>
       )}
     </>
