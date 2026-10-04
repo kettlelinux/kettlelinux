@@ -20,8 +20,15 @@ export type Game = {
   update: boolean;
   appid: number | null;
   busy: "install" | "update" | null;
+  dlc?: string[]; // Epic: the DLC the player owns (GOG's come with GameInfo)
 };
-export type GameInfo = { download: number; disk: number; update?: boolean; installed: { path: string; version: string } | null };
+export type GameInfo = {
+  download: number;
+  disk: number;
+  update?: boolean;
+  dlc?: string[]; // GOG: the DLC the player owns
+  installed: { path: string; version: string } | null;
+};
 // the game's page's About section ("" or [] where the store doesn't say)
 export type Details = { summary: string; developer: string; publisher: string; released: string; genres: string[]; modes: string[] };
 export type Location = { path: string; label: string; free: number };

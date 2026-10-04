@@ -47,11 +47,15 @@ Downloads. The plugin's own state is in `~/homebrew/settings/kettle-stores/`:
 ## A game's page
 
 Each game's page shows its size and its buttons (Install, Play, Update, Uninstall). Under them, in
-About, are the game's summary, developer, publisher, release date, genres and play modes. For Epic
+About, are the game's summary, developer, publisher, release date, genres, play modes and the DLC
+the player owns. For Epic
 and GOG games these come from GOG's game database (`gamesdb.gog.com`, which knows Epic games by
 their app name), and for Amazon games from Amazon's library (`nile_config/nile/library.json`).
 
 ## Installing
+
+The DLC the player owns comes with the game and its updates (`--with-dlcs` for legendary and
+gogdl), and is listed in the game's About. Amazon has no separate DLC in nile.
 
 Installs and updates run one at a time as a user systemd unit, `kettle-stores-job`, at a lower
 priority, so they keep going if Decky restarts. The plugin reads the tool's progress lines from
@@ -111,7 +115,6 @@ shortcut's appid is only this device's.
 
 ## Not done yet
 
-- **DLC:** installs skip DLC (`--skip-dlcs`).
 - **GOG extras:** Galaxy achievements (comet) and the redistributables some GOG games list are
   not installed.
 - **Anti-cheat:** games with anti-cheat (EAC, BattlEye) mostly won't run under FEX.

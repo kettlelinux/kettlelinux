@@ -276,7 +276,8 @@ def _fetch_library(store: str) -> list[dict]:
                 note = f"Needs {attrs['ThirdPartyManagedApp'].get('value', 'another launcher')}"
             games.append({"id": g["app_name"], "title": g["app_title"],
                           "card": _sized(_epic_image(meta, "DieselGameBox"), 480, 270),
-                          "version": (win or {}).get("build_version", ""), "note": note})
+                          "version": (win or {}).get("build_version", ""), "note": note,
+                          "dlc": [d.get("app_title") or d.get("app_name") for d in g.get("dlcs") or []]})
     elif store == "gog":
         token = _gog_token()
         page = 1
@@ -446,7 +447,8 @@ def _size_info(store: str, gid: str) -> dict:
         lang = size.get("en-US") or next((v for k, v in size.items() if k != "*"), {})
         common = size.get("*", {})
         out = {"download": lang.get("download_size", 0) + common.get("download_size", 0),
-               "disk": lang.get("disk_size", 0) + common.get("disk_size", 0)}
+               "disk": lang.get("disk_size", 0) + common.get("disk_size", 0),
+               "dlc": [x.get("title") or str(x.get("id")) for x in d.get("dlcs") or []]}
         g = next((g for g in _gog_installed() if g["appName"] == gid), None)
         if g and d.get("buildId"):
             out["update"] = d["buildId"] != g.get("buildId")
@@ -463,14 +465,16 @@ def _size_info(store: str, gid: str) -> dict:
 def _job_command(job: dict, base: str) -> list[str]:
     store, gid, kind = job["store"], job["id"], job["kind"]
     if store == "epic":
-        return ["legendary", "-y", "update" if kind == "update" else "install", gid, "--base-path", base, "--skip-sdl"]
+        # the DLC the player owns comes with the game (and its updates)
+        return ["legendary", "-y", "update" if kind == "update" else "install", gid, "--base-path", base, "--skip-sdl",
+                "--with-dlcs"]
     if store == "gog":
         auth = ["gogdl", "--auth-config-path", GOG_AUTH]
         if kind == "update":
             g = next(g for g in _gog_installed() if g["appName"] == gid)
             return auth + ["update", gid, "--platform", "windows", "--path", g["install_path"], "--lang",
-                           g.get("language") or "en-US", "--skip-dlcs"]
-        return auth + ["download", gid, "--platform", "windows", "--path", base, "--lang", "en-US", "--skip-dlcs"]
+                           g.get("language") or "en-US", "--with-dlcs"]
+        return auth + ["download", gid, "--platform", "windows", "--path", base, "--lang", "en-US", "--with-dlcs"]
     if kind == "update":
         return ["nile", "update", gid]
     return ["nile", "install", gid, "--base-path", base]
@@ -557,7 +561,8 @@ def _gog_record(gid: str, base: str, kind: str):
                 pass
     entry = {"platform": "windows", "executable": "", "install_path": path,
              "install_size": f"{size / 2**30:.2f} GiB" if size >= 2**30 else f"{size / 2**20:.2f} MiB",
-             "is_dlc": False, "version": info.get("versionName") or "", "appName": gid, "installedDLCs": [],
+             "is_dlc": False, "version": info.get("versionName") or "", "appName": gid,
+             "installedDLCs": [str(d.get("id")) for d in info.get("dlcs") or [] if d.get("id")],
              "language": (old or {}).get("language") or "en-US", "versionEtag": info.get("versionEtag") or "",
              "buildId": info.get("buildId") or "", "pinnedVersion": False}
     data["installed"] = [g for g in installed if g["appName"] != gid] + [entry]
