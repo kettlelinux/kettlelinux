@@ -117,11 +117,15 @@ part_by_label() { blkid -c /dev/null -t PARTLABEL="$1" -o device 2>/dev/null | g
 partnum() { cat "/sys/class/block/$(basename "$1")/partition"; }
 part_start_b() { echo $(( $(cat "/sys/class/block/$(basename "$1")/start") * 512 )); }
 part_size_b() { echo $(( $(cat "/sys/class/block/$(basename "$1")/size") * 512 )); }
-# The partition that starts last on $DISK (by position, not number)
-last_part() {
-  sfdisk -d "$DISK" | awk -F'[ ,=]+' '/^\/dev\// {
-    for (i = 1; i < NF; i++) if ($i == "start") s = $(i + 1) + 0
-    if (s >= m) { m = s; p = $1 } } END { print p }'
+# The partitions on $DISK that start after partition $1 (by position, not number), in order,
+# as "<dev> (<partition label>)"
+parts_after() {
+  local u p
+  u=$(part_start_b "$1")
+  for p in $(sfdisk -d "$DISK" | sed -n 's|^\(/dev/[^ ]*\) :.*|\1|p'); do
+    [ "$(part_start_b "$p")" -gt "$u" ] || continue
+    echo "$(part_start_b "$p") $p ($(blkid -c /dev/null -s PARTLABEL -o value "$p" 2>/dev/null || true))"
+  done | sort -n | cut -d' ' -f2-
 }
 # Partition table dump with device names replaced, to compare tables across boots
 pt_norm() { sfdisk -d "$1" 2>/dev/null | sed -e 's|^/dev/[a-z]*\([0-9]*\) |p\1 |' -e '/^device:/d'; }
