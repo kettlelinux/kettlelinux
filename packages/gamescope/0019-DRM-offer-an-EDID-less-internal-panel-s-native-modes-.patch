@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Sun, 4 Oct 2026 12:00:00 -0500
+Subject: [PATCH] DRM: offer an EDID-less internal panel's native modes as
+ refresh rates
+
+An internal panel no known-display script describes gets its dynamic
+refresh rates from the connector's modes at the preferred size. That
+fallback sits in ParseEDID() after the EDID is parsed, so a panel with
+no EDID at all, as DSI panels are, never gets there: the AYN Odin 2
+Portal's panel driver offers 1080x1920 at 120 and 60 Hz, but gamescope
+lists no valid refresh rates and Steam's refresh rate setting only caps
+the frame rate, with the panel left at 120 Hz.
+
+Without an EDID, still collect the internal panel's native modes.
+---
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -508,6 +508,7 @@
+ 
+ 	private:
+ 		void ParseEDID();
++		void AddNativeModeRefreshRates();
+ 
+ 
+ 		CDRMBackend *m_pBackend = nullptr;
+@@ -2292,14 +2293,42 @@
+ 		}
+ 	}
+ 
+-	void CDRMConnector::ParseEDID()
++	void CDRMConnector::AddNativeModeRefreshRates()
+ 	{
+-		if ( !GetProperties().EDID )
++		const drmModeModeInfo *pPreferredMode = find_mode( m_pConnector.get(), 0, 0, 0 );
++		if ( !pPreferredMode )
+ 			return;
+ 
+-		uint64_t ulBlobId = GetProperties().EDID->GetCurrentValue();
++		// See if the connector has other modes at the preferred size for us.
++		for (int i = 0; i < m_pConnector->count_modes; i++)
++		{
++			const drmModeModeInfo *pMode = &m_pConnector->modes[i];
++
++			if ( pMode->hdisplay != pPreferredMode->hdisplay || pMode->vdisplay != pPreferredMode->vdisplay )
++				continue;
++
++			if ( !Algorithm::Contains( m_Mutable.ValidDynamicRefreshRates, pMode->vrefresh ) )
++			{
++				m_Mutable.ValidDynamicRefreshRates.push_back( pMode->vrefresh );
++			}
++		}
++
++		std::sort( m_Mutable.ValidDynamicRefreshRates.begin(), m_Mutable.ValidDynamicRefreshRates.end() );
++	}
++
++	void CDRMConnector::ParseEDID()
++	{
++		uint64_t ulBlobId = GetProperties().EDID ? GetProperties().EDID->GetCurrentValue() : 0;
+ 		if ( !ulBlobId )
++		{
++			// No EDID, as on DSI panels: there is no known display to look up, but the
++			// panel driver's own modes still give the refresh rates it can switch to.
++			m_Mutable.ValidDynamicRefreshRates.clear();
++			m_Mutable.fnDynamicModeGenerator = nullptr;
++			if ( GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL )
++				AddNativeModeRefreshRates();
+ 			return;
++		}
+ 
+ 		drmModePropertyBlobRes *pBlob = drmModeGetPropertyBlob( g_DRM.fd, ulBlobId );
+ 		if ( !pBlob )
+@@ -2459,29 +2488,7 @@
+ 			{
+ 				// Unknown display, see if there are any other refresh rates in the EDID we can get.
+ 				if ( GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL || cv_drm_allow_dynamic_modes_for_external_display )
+-				{
+-					const drmModeModeInfo *pPreferredMode = find_mode( m_pConnector.get(), 0, 0, 0 );
+-
+-					if ( pPreferredMode )
+-					{
+-						// See if the EDID has any modes for us.
+-						for (int i = 0; i < m_pConnector->count_modes; i++)
+-						{
+-							const drmModeModeInfo *pMode = &m_pConnector->modes[i];
+-
+-							if ( pMode->hdisplay != pPreferredMode->hdisplay || pMode->vdisplay != pPreferredMode->vdisplay )
+-								continue;
+-
+-							
+-							if ( !Algorithm::Contains( m_Mutable.ValidDynamicRefreshRates, pMode->vrefresh ) )
+-							{
+-								m_Mutable.ValidDynamicRefreshRates.push_back( pMode->vrefresh );
+-							}
+-						}
+-
+-						std::sort( m_Mutable.ValidDynamicRefreshRates.begin(), m_Mutable.ValidDynamicRefreshRates.end() );
+-					}
+-				}
++					AddNativeModeRefreshRates();
+ 			}
+ 		}
+ 
