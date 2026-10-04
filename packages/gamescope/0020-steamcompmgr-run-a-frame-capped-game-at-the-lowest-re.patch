@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Sun, 4 Oct 2026 13:00:00 -0500
+Subject: [PATCH] steamcompmgr: run a frame-capped game at the lowest refresh
+ rate the cap divides
+
+Steam's frame rate slider sets a target frame rate, and gamescope picks
+the panel refresh rate for it: the highest valid rate the target
+divides ("refresh doubling"), which only lowers latency. On the AYN
+Odin 2 Portal (60 and 120 Hz) every usual cap, 30 or 60 fps, therefore
+ran the panel at 120 Hz, refreshing the panel and the DSI link twice as
+often as the game draws.
+
+Pick the lowest such rate instead, for battery life on a handheld: a 30
+or 60 fps cap now runs at 60 Hz; 40 fps, 120 fps and uncapped stay at
+120 Hz.
+---
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -1146,8 +1146,9 @@
+ 	{
+ 		auto rates = GetBackend()->GetCurrentConnector()->GetValidDynamicRefreshRates();
+ 
+-		// Find highest mode to do refresh doubling with.
+-		for ( auto rate = rates.rbegin(); rate != rates.rend(); rate++ )
++		// Find the lowest mode the frame rate divides: a panel refreshing no faster than
++		// the game draws uses the least power (doubling would only lower latency).
++		for ( auto rate = rates.begin(); rate != rates.end(); rate++ )
+ 		{
+ 			if (*rate % target_fps == 0)
+ 			{

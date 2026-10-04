@@ -31,12 +31,16 @@
 #   gamescope uses the same message queue, and Game Mode's MangoHud flickered between the two.
 # 0018 (ours) counts the second screen's touches as input, which Steam's idle dimming and sleep
 #   go by: touching the bottom screen didn't bring back a dimmed top one.
+# 0019 (ours) gives an internal panel without an EDID (DSI) its native modes as refresh rates:
+#   gamescope listed none for the Portal's 60/120 Hz panel, so it could never leave 120 Hz.
+# 0020 (ours) runs a frame-capped game at the lowest refresh rate the cap divides, not the
+#   highest: a 30 or 60 fps cap on the Portal runs the panel at 60 Hz instead of 120.
 #
 # To follow a newer deckard gamescope, move _commit to the one its `gamescopectl version`
 # names and drop whichever of 0001-0008 it already contains.
 pkgname=gamescope
 pkgver=3.16.28
-pkgrel=2.8
+pkgrel=2.10
 _commit=e383171ff1c0f7b5b37f05f2bb67f7c5282b087f
 pkgdesc='gaming shell based on Xwayland, powered by Vulkan and DRM (deckard + Kettle Linux, SGSR 1)'
 arch=(aarch64)
@@ -69,7 +73,9 @@ source=("git+https://github.com/ValveSoftware/gamescope.git#commit=$_commit"
         0015-wlserver-always-swallow-the-ignored-touch-device.patch
         0016-DRM-blank-the-leased-connector-when-the-companion-go.patch
         0017-mangoapp-a-drm-lease-client-gamescope-sends-mangoapp.patch
-        0018-wlserver-touches-passed-to-a-lease-companion-still-c.patch)
+        0018-wlserver-touches-passed-to-a-lease-companion-still-c.patch
+        0019-DRM-offer-an-EDID-less-internal-panel-s-native-modes-.patch
+        0020-steamcompmgr-run-a-frame-capped-game-at-the-lowest-re.patch)
 sha256sums=('SKIP'
             'SKIP'
             'a34b30f8c58881f29a632ae1b4c8d7fbd7ba8c1ae6509d2b85afe362cad6de93'
@@ -90,7 +96,9 @@ sha256sums=('SKIP'
             'e7f22ac329a9c8a4421c8547f251fcef334b9ed66072c41a61ed9c4304b521f0'
             '47a9ed3b64ffcfca17dd2ad82c71d2658483de460c7a6e42452793206e7234f1'
             'a7bfd70b27c550b88752d5bd8246a6bcb678f45d6e1cfeba8f3b45ada4ee0bd7'
-            '2e2b46c5bcd2534cb1baaf7e7a81b6bc60ea5d97c63c14eed8f6bed90e05b335')
+            '2e2b46c5bcd2534cb1baaf7e7a81b6bc60ea5d97c63c14eed8f6bed90e05b335'
+            'e945d6e3a54820f103108533529d1dfd360fdae45674595bb5c450ed28d946ec'
+            '0dc6b3bd79d32fea9d52aa6ad7a783c0bcde38deed9688c8001b449c0e1aee93')
 
 prepare() {
   cd gamescope
