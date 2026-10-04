@@ -1,7 +1,7 @@
 # Kernel patch stack
 
 Applied in directory order, then file order, with `patch -p1 --fuzz=0` by
-`scripts/build-kernel.sh`. Base: kernel.org 7.2.7 (pinned in `../kernel.conf`).
+`scripts/build-kernel.sh`. Base: kernel.org 7.2.9 (pinned in `../kernel.conf`).
 
 | Dir | Source | Notes |
 |---|---|---|
