@@ -598,8 +598,11 @@ def _locations() -> list[dict]:
         if os.path.ismount(m) and os.access(m, os.W_OK):
             out.append({"path": os.path.join(m, "Games", "Heroic"), "label": os.path.basename(m)})
     for o in out:
+        d = o["path"]
+        while not os.path.exists(d) and os.path.dirname(d) != d:  # Games/Heroic may not be there yet
+            d = os.path.dirname(d)
         try:
-            st = os.statvfs(os.path.dirname(o["path"]) if not os.path.exists(o["path"]) else o["path"])
+            st = os.statvfs(d)
             o["free"] = st.f_bavail * st.f_frsize
         except OSError:
             o["free"] = 0
