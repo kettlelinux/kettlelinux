@@ -4,7 +4,7 @@
 pkgbase=kettle-ucm-ayn
 pkgname=(kettle-ucm-odin2portal kettle-ucm-thor)
 pkgver=1.0.0
-pkgrel=3
+pkgrel=4
 pkgdesc='ALSA UCM profiles for AYN SM8550 handhelds'
 arch=(any)
 license=(BSD-3-Clause)
@@ -26,6 +26,9 @@ build() {
   # and the same with a trailing "-".
   ln -sf ../../AYN/Odin2/AYN-Odin2.conf ucm/ucm2/conf.d/sm8550/ayn-AYNOdin2.conf
   ln -sf ../../AYN/Thor/AYN-Thor.conf ucm/ucm2/conf.d/sm8550/ayn-AYNThor.conf
+  # Kettle's U-Boot (u-boot-kettle) names the Portal itself: "ayn-AYNOdin2Portal"
+  ln -sf ../../AYN/Odin2/AYN-Odin2.conf ucm/ucm2/conf.d/sm8550/ayn-AYNOdin2Portal.conf
+  ln -sf ../../AYN/Odin2/AYN-Odin2.conf ucm/ucm2/conf.d/sm8550/ayn-AYNOdin2Portal-.conf
 }
 
 # $1: the profile's directory under ucm2/AYN, $2...: its names in conf.d/sm8550
@@ -40,7 +43,7 @@ _package() {
 
 package_kettle-ucm-odin2portal() {
   pkgdesc='ALSA UCM profile for the AYN Odin 2 Portal'
-  _package Odin2 AYN-Odin2 ayn-AYNOdin2- ayn-AYNOdin2
+  _package Odin2 AYN-Odin2 ayn-AYNOdin2- ayn-AYNOdin2 ayn-AYNOdin2Portal- ayn-AYNOdin2Portal
 }
 
 package_kettle-ucm-thor() {

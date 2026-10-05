@@ -129,6 +129,9 @@ inputplumber
 # atomupd (Steam's Check for updates). Valve's code, built by us for arm64 (packages/steamos-efi,
 # packages/steamos-customizations-kettle); see docs/UPDATES.md
 steamos-customizations-kettle
+# Kettle's own U-Boot (mainline) for the loader partition; scripts/build-image.sh appends the
+# device's devicetree and puts u-boot-kettle.img on the KETTLE partition (packages/u-boot-kettle)
+u-boot-kettle
 # Game Mode power button: short press = Steam's sleep, long press = Steam's power menu
 # (its hwdb already tags the SM8550's pmic_pwrkey; Game Mode only, see its kettle.conf drop-in)
 steamos-powerbuttond
