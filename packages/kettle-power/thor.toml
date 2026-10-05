@@ -1,8 +1,8 @@
 # kettle-powerd's description of the AYN Thor (QCS8550). Same SoC, fan and battery charger as
 # the Odin 2 Portal, so this starts as a copy of odin2portal.toml: the frequency tables and
-# sysfs names are the SoC's and the shared dtsi's; the power figures (tdp_*, charge limit) are
-# the Portal's and still need measuring on a Thor, which also powers a second screen. Caps
-# between frequency steps round down.
+# sysfs names are the SoC's and the shared dtsi's; the TDP figures (tdp_*) are the Portal's and
+# still need measuring on a Thor, which also powers a second screen (the charge current is the
+# Thor's own). Caps between frequency steps round down.
 
 [cpu]
 # cpufreq policies, smallest cluster first. cpu0 can't be taken offline.
@@ -36,11 +36,23 @@ charger_efficiency = 0.9
 # Steam's TDP slider: whole-device draw in watts (screen included); max means no limit
 tdp_min = 4
 tdp_max = 18
-# Off until tested: the Portal's charger firmware doesn't answer qcom_battmgr's charge limit
-# request (BATTMGR_CHG_CTRL_LIMIT_EN times out), and the Thor's may be the same. The kernel
-# clamps the end threshold to 55..100.
-charge_limit = false
+# As on the Portal (odin2portal.toml): the charger firmware takes a charge current
+# (constant_charge_current, kernel patch 40-kettle/1190; 0 gives 0 mA into the battery with the
+# charger powering the system, seen on a Thor), and kettle-powerd holds Steam's charge limit
+# with it, charging again 5% below. Steam's setting comes through
+# remotes.d/kettle-power-charge.toml (device/thor).
+charge_limit = "current"
 charge_limit_min = 55
+# The firmware's own charge current, uA (BATT_CHG_CTRL_LIM at boot on a Thor; it takes up to
+# 9 A): what charging returns to when kettle-powerd stops
+charge_current = 4680000
+# The Power plugin's charge speeds, the first the default. These cap what goes into the
+# battery; a weaker charger gives it less than the cap.
+charge_speed = [
+  { name = "Fast", ua = 4680000 },
+  { name = "Balanced", ua = 3000000 },
+  { name = "Slow", ua = 1500000 },
+]
 
 # Steam's performance profiles (Quick Access > Performance). Caps in kHz / MHz; a cluster
 # left out runs up to its highest frequency.

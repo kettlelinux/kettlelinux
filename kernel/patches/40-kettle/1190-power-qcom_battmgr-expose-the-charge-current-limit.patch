@@ -1,0 +1,131 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] power: supply: qcom_battmgr: expose the charge current limit
+
+The SM8550 charger firmware (seen on the AYN Odin 2 Portal) never answers
+BATTMGR_CHG_CTRL_LIMIT_EN, so charge_control_end_threshold does nothing
+there. It does take BATT_CHG_CTRL_LIM, the fast-charge current Android's
+thermal levels set, through BATTMGR_BAT_PROPERTY_SET: the firmware ramps
+to the new value within a couple of seconds, and at 0 the battery sits
+idle while the charger keeps powering the system.
+
+Expose it on SM8550 as constant_charge_current (read/write, uA) with
+BATT_CHG_CTRL_LIM_MAX as constant_charge_current_max, and take the
+firmware's reply to a property set instead of logging it as an unknown
+message. Userspace can then slow charging down, or hold a charge limit by
+setting 0 at the limit.
+---
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -260,6 +260,8 @@
+ 	unsigned int charge_count;
+ 	unsigned int charge_ctrl_start;
+ 	unsigned int charge_ctrl_end;
++	unsigned int charge_current;
++	unsigned int charge_current_max;
+ 	char model_number[BATTMGR_STRING_LEN];
+ 	char serial_number[BATTMGR_STRING_LEN];
+ 	char oem_info[BATTMGR_STRING_LEN];
+@@ -451,6 +453,8 @@
+ 	[POWER_SUPPLY_PROP_POWER_NOW] = BATT_POWER_NOW,
+ 	[POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD] = BATT_CHG_CTRL_START_THR,
+ 	[POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD] = BATT_CHG_CTRL_END_THR,
++	[POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT] = BATT_CHG_CTRL_LIM,
++	[POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX] = BATT_CHG_CTRL_LIM_MAX,
+ };
+ 
+ static int qcom_battmgr_bat_sm8350_update(struct qcom_battmgr *battmgr,
+@@ -640,6 +644,12 @@
+ 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
+ 		val->intval = battmgr->info.charge_ctrl_end;
+ 		break;
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
++		val->intval = battmgr->info.charge_current;
++		break;
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
++		val->intval = battmgr->info.charge_current_max;
++		break;
+ 	case POWER_SUPPLY_PROP_MANUFACTURE_YEAR:
+ 		val->intval = battmgr->info.year;
+ 		break;
+@@ -763,12 +773,35 @@
+ 	return 0;
+ }
+ 
++/*
++ * The fast-charge current the firmware may charge at, in uA (BATT_CHG_CTRL_LIM, what
++ * Android's thermal levels set). 0 stops charging while the charger keeps powering the
++ * system, which is how userspace holds a charge limit when the firmware has none
++ * (BATTMGR_CHG_CTRL_LIMIT_EN goes unanswered on SM8550). The firmware ramps to the new
++ * value over a second or two.
++ */
++static int qcom_battmgr_set_charge_current(struct qcom_battmgr *battmgr, int ua)
++{
++	int ret;
++
++	if (ua < 0)
++		return -EINVAL;
++
++	mutex_lock(&battmgr->lock);
++	ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_SET,
++					    BATT_CHG_CTRL_LIM, ua);
++	mutex_unlock(&battmgr->lock);
++
++	return ret;
++}
++
+ static int qcom_battmgr_bat_is_writeable(struct power_supply *psy,
+ 					 enum power_supply_property psp)
+ {
+ 	switch (psp) {
+ 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD:
+ 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
+ 		return 1;
+ 	default:
+ 		return 0;
+@@ -791,6 +824,8 @@
+ 		return qcom_battmgr_set_charge_start_threshold(battmgr, pval->intval);
+ 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
+ 		return qcom_battmgr_set_charge_end_threshold(battmgr, pval->intval);
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
++		return qcom_battmgr_set_charge_current(battmgr, pval->intval);
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -926,6 +961,8 @@
+ 	POWER_SUPPLY_PROP_POWER_NOW,
+ 	POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD,
+ 	POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
+ };
+ 
+ static const struct power_supply_desc sm8550_bat_psy_desc = {
+@@ -1482,6 +1519,12 @@
+ 		case BATT_CHG_CTRL_END_THR:
+ 			battmgr->info.charge_ctrl_end = le32_to_cpu(resp->intval.value);
+ 			break;
++		case BATT_CHG_CTRL_LIM:
++			battmgr->info.charge_current = le32_to_cpu(resp->intval.value);
++			break;
++		case BATT_CHG_CTRL_LIM_MAX:
++			battmgr->info.charge_current_max = le32_to_cpu(resp->intval.value);
++			break;
+ 		default:
+ 			dev_warn(battmgr->dev, "unknown property %#x\n", property);
+ 			break;
+@@ -1563,6 +1606,14 @@
+ 			break;
+ 		}
+ 		break;
++	case BATTMGR_BAT_PROPERTY_SET:
++		/* property, a value to ignore, result */
++		if (payload_len != sizeof(resp->intval)) {
++			battmgr->error = -ENODATA;
++			break;
++		}
++		battmgr->error = le32_to_cpu(resp->intval.result);
++		break;
+ 	case BATTMGR_REQUEST_NOTIFICATION:
+ 	case BATTMGR_CHG_CTRL_LIMIT_EN:
+ 		battmgr->error = 0;
