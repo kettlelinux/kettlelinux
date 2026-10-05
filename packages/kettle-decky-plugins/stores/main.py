@@ -23,7 +23,7 @@
 #   job        the one running (same fields)
 #   install_dir  where new games go (default ~/Games/Heroic, Heroic's default)
 #   cloud_saves  false: kettle-store-run doesn't sync saves (it reads this file; default on)
-import asyncio, base64, glob, json, os, re, shutil, subprocess, time, urllib.parse, urllib.request
+import asyncio, base64, glob, json, os, re, shlex, shutil, subprocess, time, urllib.parse, urllib.request
 
 import decky
 import cdp
@@ -462,6 +462,14 @@ def _size_info(store: str, gid: str) -> dict:
 
 # --- install jobs ------------------------------------------------------------------------------
 
+def _job_commands(job: dict, base: str) -> list[list[str]]:
+    """The job's commands, run one after the other (GOG: then the redistributables the game needs)."""
+    main = _job_command(job, base)
+    if job["store"] == "gog":
+        return [main, [WRAPPER, "gog-redist", job["id"]]]
+    return [main]
+
+
 def _job_command(job: dict, base: str) -> list[str]:
     store, gid, kind = job["store"], job["id"], job["kind"]
     if store == "epic":
@@ -500,7 +508,8 @@ def _start_job(job: dict, base: str):
            "-p", "IOSchedulingClass=best-effort", "-p", "IOSchedulingPriority=7",
            f"--setenv=LEGENDARY_CONFIG_PATH={LEGENDARY}", f"--setenv=NILE_CONFIG_PATH={NILE_ROOT}",
            f"--setenv=GOGDL_CONFIG_PATH={GOGDL}",
-           "--", "bash", "-c", f'"$@" >>"$0" 2>&1; echo "{EXIT_MARK} $?" >>"$0"', JOB_LOG, *_job_command(job, base)]
+           "--", "bash", "-c", f'{{ {" && ".join(shlex.join(c) for c in _job_commands(job, base))}; }} >>"$0" 2>&1; '
+                               f'echo "{EXIT_MARK} $?" >>"$0"', JOB_LOG]
     r = subprocess.run(cmd, env=env, capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError(f"couldn't start the download: {r.stderr.strip()}")

@@ -13,7 +13,13 @@
 # the plugin's Cloud saves setting is off. A prefix that doesn't exist yet is fine: Proton keeps
 # files already there when it creates one. Save folders are the store's (Epic's CloudSaveFolder,
 # GOG's cloud storage locations), with the Windows folders resolved in the prefix.
-# Logins, installs and GOG's sync times are Heroic's (~/.config/heroic), as in the plugin.
+# GOG games' setup: on a prefix's first start (and after the game updates), the game's install
+# script (GOG's script interpreter, ISI: registry entries and the like) and the redistributables
+# its manifest lists (DirectX, Visual C++...) are run in the prefix first, as Heroic does, through
+# the same Steam command with cmd.exe and a batch file in place of the game. .NET installers are
+# left out: Proton has wine-mono in .NET's place, and Microsoft's don't install under Wine.
+# Logins, installs, GOG's sync times and redistributables are Heroic's (~/.config/heroic), as in
+# the plugin.
 # A log of the last starts: ~/.local/state/kettle-stores/run.log (Epic's code left out).
 import json, os, re, shlex, signal, subprocess, sys, time, urllib.request
 
@@ -23,6 +29,12 @@ LEGENDARY = os.path.join(HEROIC, "legendaryConfig", "legendary")
 GOGDL = os.path.join(HEROIC, "gogdlConfig")
 GOG_AUTH = os.path.join(HEROIC, "gog_store", "auth.json")
 GOG_SYNC = os.path.join(HEROIC, "gog_store", "saveTimestamps.json")  # Heroic's: {id: {location: ts}}
+GOG_INSTALLED = os.path.join(HEROIC, "gog_store", "installed.json")
+REDIST = os.path.join(HEROIC, "tools", "redist", "gog")  # Heroic's: GOG's redistributables
+SKIP_DEPS = re.compile(r"^dotNet", re.I)
+LANGUAGES = {"en": "English", "de": "German", "fr": "French", "es": "Spanish", "it": "Italian", "pl": "Polish",
+             "ru": "Russian", "pt": "Portuguese", "ja": "Japanese", "ko": "Korean", "zh": "Chinese",
+             "nl": "Dutch", "cs": "Czech", "hu": "Hungarian", "tr": "Turkish"}
 os.environ.setdefault("LEGENDARY_CONFIG_PATH", LEGENDARY)
 os.environ.setdefault("NILE_CONFIG_PATH", os.path.join(HEROIC, "nile_config"))
 os.environ.setdefault("GOGDL_CONFIG_PATH", GOGDL)
@@ -214,6 +226,111 @@ def gog_sync(gid: str, direction: str, locations: list[dict]):
             log("gog saves", direction, gid, loc["name"], "ok")
 
 
+# --- GOG setup ----------------------------------------------------------------------------------
+
+def win(path: str) -> str:
+    """A Linux path as the prefix sees it (Z: is /)."""
+    return "Z:" + path.replace("/", "\\")
+
+
+def bat_arg(a: str) -> str:
+    a = a.replace("%", "%%")
+    return f'"{a}"' if " " in a else a
+
+
+def proton_at(cmd: list[str]) -> int | None:
+    """Where Proton is in Steam's command: cmd[i] is proton, cmd[i + 1] its verb, then the game."""
+    for i, c in enumerate(cmd[:-2]):
+        if os.path.basename(c) == "proton" and cmd[i + 1] in ("waitforexitandrun", "run"):
+            return i
+    return None
+
+
+def gog_needs(gid: str) -> tuple[dict, list[str], bool]:
+    """The game's manifest, the redistributables it needs (.NET left out) and whether it has an
+    install script."""
+    manifest = read_json(os.path.join(GOGDL, "heroic_gogdl", "manifests", gid), {})
+    if manifest.get("version") != 2:
+        return manifest, [], False
+    return (manifest, [d for d in manifest.get("dependencies") or [] if not SKIP_DEPS.match(d)],
+            bool(manifest.get("scriptInterpreter")))
+
+
+def redist_available() -> dict:
+    """The redistributables downloaded so far, by id (GOG's manifest lists them all)."""
+    depots = read_json(os.path.join(REDIST, ".gogdl-redist-manifest"), {}).get("depots") or []
+    return {d["dependencyId"]: d for d in depots
+            if (d.get("executable") or {}).get("path") and os.path.exists(os.path.join(REDIST, d["executable"]["path"]))}
+
+
+def redist_fetch(need: list[str]) -> dict:
+    have = redist_available()
+    if any(d not in have for d in need):
+        log("gog redistributables: downloading", need)
+        os.makedirs(REDIST, exist_ok=True)
+        run(["gogdl", "--auth-config-path", GOG_AUTH, "redist", "--ids", ",".join(need), "--path", REDIST], timeout=3600)
+        have = redist_available()
+    return have
+
+
+def gog_setup(gid: str, cmd: list[str]):
+    data = os.environ.get("STEAM_COMPAT_DATA_PATH")
+    i = proton_at(cmd)
+    manifest, deps, isi = gog_needs(gid)
+    if not data or i is None or (not deps and not isi):
+        return
+    marker = os.path.join(data, "kettle-gog-setup.json")
+    done = read_json(marker, {})
+    key = f"{manifest.get('buildId')}:{','.join(sorted(deps))}:{isi}"
+    if done.get(gid) == key:
+        return
+    need = (["ISI"] if isi else []) + deps
+    have = redist_fetch(need)  # the install job fetched them; a game installed elsewhere may not have
+
+    game = next((g for g in read_json(GOG_INSTALLED, {}).get("installed", []) if g.get("appName") == gid), {})
+    root = game_dir(gid)
+    code = game.get("language") or "en-US"
+    lang = LANGUAGES.get(code.split("-")[0], "English")
+    support = os.path.join(GOGDL, "heroic_gogdl", "gog-support", gid)
+    lines = ["@echo off"]
+    if isi and "ISI" in have:
+        isi_exe = win(os.path.join(REDIST, have["ISI"]["executable"]["path"]))
+        for p in manifest.get("products") or []:
+            if p.get("productId") != gid and p.get("productId") not in (game.get("installedDLCs") or []):
+                continue
+            args = ["/VERYSILENT", f"/DIR={win(root)}", f"/Language={lang}", f"/LANG={lang}",
+                    f"/ProductId={p['productId']}", "/galaxyclient", f"/buildId={game.get('buildId', '')}",
+                    f"/versionName={game.get('version', '')}", f"/lang-code={code}", f"/supportDir={win(support)}",
+                    "/nodesktopshorctut", "/nodesktopshortcut"]  # (GOG's own typo, and the right spelling)
+            lines.append(f'start "" /wait {bat_arg(isi_exe)} ' + " ".join(bat_arg(a) for a in args))
+    for d in deps:
+        if d not in have:
+            log("gog setup: no redistributable", d)
+            continue
+        exe = win(os.path.join(REDIST, have[d]["executable"]["path"]))
+        args = (have[d]["executable"].get("arguments") or "").replace("%", "%%")
+        if d == "PHYSXLEGACY":  # an .msi: hands-free as Heroic does it
+            lines.append(f'start "" /wait msiexec /i {bat_arg(exe)} {args} /qb')
+        else:
+            lines.append(f'start "" /wait {bat_arg(exe)} {args}')
+    bat = os.path.join(data, "kettle-gog-setup.bat")
+    os.makedirs(data, exist_ok=True)
+    with open(bat, "w", newline="\r\n") as f:
+        f.write("\n".join(lines) + "\n")
+    log("gog setup:", gid, need)
+    try:
+        r = subprocess.run(cmd[:i + 2] + ["C:\\windows\\system32\\cmd.exe", "/c", win(bat)], timeout=1800)
+        log("gog setup: done", r.returncode)
+    except subprocess.TimeoutExpired:
+        log("gog setup: timed out")
+    done[gid] = key  # once per build either way: a redistributable that won't install shouldn't hold up every start
+    try:
+        with open(marker, "w") as f:
+            json.dump(done, f)
+    except OSError as e:
+        log("gog setup marker:", e)
+
+
 def cloud_saves_on() -> bool:
     return read_json(PLUGIN_STATE, {}).get("cloud_saves", True) is not False
 
@@ -221,6 +338,13 @@ def cloud_saves_on() -> bool:
 # --- the game -----------------------------------------------------------------------------------
 
 def main():
+    if sys.argv[1:2] == ["gog-redist"] and len(sys.argv) == 3:
+        # the plugin's install job, after gogdl download: the redistributables the game needs
+        _m, deps, isi = gog_needs(sys.argv[2])
+        if deps or isi:
+            have = redist_fetch((["ISI"] if isi else []) + deps)
+            print("redistributables:", ", ".join(sorted(have)))
+        return
     if len(sys.argv) < 4:
         sys.exit("usage: kettle-store-run <epic|gog|amazon> <id> <command...>")
     store, gid, cmd = sys.argv[1], sys.argv[2], sys.argv[3:]
@@ -228,6 +352,8 @@ def main():
     gog_locs = gog_locations(gid) if sync and store == "gog" else []
     if sync:
         epic_sync(gid, "down") if store == "epic" else gog_sync(gid, "down", gog_locs)
+    if store == "gog":
+        gog_setup(gid, cmd)
     extra, env = {"epic": epic, "gog": gog, "amazon": amazon}.get(store, lambda _: ([], {}))(gid)
     log("start", store, gid, "args:", masked(extra), "env:", sorted(env))
     os.environ.update(env)
