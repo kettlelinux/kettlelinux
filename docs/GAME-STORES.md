@@ -86,6 +86,25 @@ store needs to it:
 
 It logs each start, with Epic's code left out, to `~/.local/state/kettle-stores/run.log`.
 
+## GOG setup
+
+Many GOG games come with an install script and a list of redistributables, which GOG Galaxy (and
+Heroic) runs in the game's Windows prefix: registry entries the game looks for, DirectX, Visual
+C++ runtimes, PhysX. The install job downloads what the game's manifest
+(`gogdlConfig/heroic_gogdl/manifests/<id>`) lists after the game itself
+(`kettle-store-run gog-redist <id>`, which runs `gogdl redist`), into Heroic's
+`tools/redist/gog`. On the game's first start in a prefix, and again after it updates,
+`kettle-store-run` runs them before the game:
+- **How:** it uses the same Steam command (the runtime, Proton, the prefix), with `cmd.exe` and a
+  batch file (`compatdata/<appid>/kettle-gog-setup.bat`) in place of the game.
+- **What runs:** GOG's script interpreter (ISI) for the game and its installed DLC, with the
+  arguments Heroic gives it, then each redistributable's silent installer from GOG's redist
+  manifest.
+- **Left out:** .NET's installers. Proton has wine-mono in .NET's place, and Microsoft's .NET
+  installers don't install under Wine.
+- **Recorded:** `compatdata/<appid>/kettle-gog-setup.json` holds the build each game was set up
+  for. A redistributable that fails doesn't hold up later starts.
+
 ## Cloud saves
 
 Epic and GOG games sync their saves with the store, unless **Cloud saves** under Downloads is
@@ -115,8 +134,8 @@ shortcut's appid is only this device's.
 
 ## Not done yet
 
-- **GOG extras:** Galaxy achievements (comet) and the redistributables some GOG games list are
-  not installed.
+- **GOG Galaxy features:** achievements and other Galaxy online features (comet) aren't
+  available.
 - **Anti-cheat:** games with anti-cheat (EAC, BattlEye) mostly won't run under FEX.
 - **Third-party launchers:** games that need another launcher (the EA app, Ubisoft Connect) are
   listed but can't be installed.
