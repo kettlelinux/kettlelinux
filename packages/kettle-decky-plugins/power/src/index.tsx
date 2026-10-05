@@ -16,6 +16,8 @@ type Info = {
   tdp: [number, number];
   charge_limit: boolean;
   charge_limit_min: number;
+  charge_speeds: { name: string; ua: number }[];
+  charge_custom: { min: number; max: number; step: number } | null;
 };
 type Steam = { tdp: number; profile: string; gpu_level: string; gpu_clock: number; fan_control: number; charge_limit: number | null };
 type Status = {
@@ -31,6 +33,9 @@ type Status = {
   tdp_limiting: boolean;
   steam: Steam;
   battery: { status: string | null; capacity: number | null };
+  charge_speed: string;
+  charge_custom_ua: number;
+  charge_held: boolean;
 };
 type FanMode = "auto" | "curve" | "fixed";
 type Settings = {
@@ -46,6 +51,8 @@ const getGame = callable<[appid: number | null], Game>("get_game");
 const setGame = callable<[appid: number | null, settings: Settings | null], Game>("set_game");
 const setActive = callable<[appid: number | null], void>("set_active");
 const setChargeLimit = callable<[limit: number], void>("set_charge_limit");
+const setChargeSpeed = callable<[name: string], void>("set_charge_speed");
+const setChargeCurrent = callable<[ua: number], void>("set_charge_current");
 
 const FAN_MODES = [
   { data: "auto", label: "Automatic (built-in curve)" },
@@ -210,28 +217,76 @@ function GameSettings({ appid, name, inf, fanControl }: { appid: number | null; 
   );
 }
 
+const CUSTOM = "Custom";
+const amps = (ua: number) => `${(ua / 1e6).toFixed(1)} A`;
+
 function Battery({ s, inf }: { s: Status; inf: Info }) {
   const limit = s.steam.charge_limit ?? -1;
-  const [value, setValue] = useState(limit < 0 ? 100 : limit);
-  useEffect(() => setValue(limit < 0 ? 100 : limit), [limit]);
+  const custom = inf.charge_custom;
+  const speed = inf.charge_speeds.find((sp) => sp.name === s.charge_speed);
+  const fastest = Math.max(...inf.charge_speeds.map((sp) => sp.ua));
+  // the slider's own value while it moves: the 1 s status poll would pull it back
+  const [ua, setUa] = useState(s.charge_custom_ua);
+  useEffect(() => setUa(s.charge_custom_ua), [s.charge_custom_ua]);
+  const [pct, setPct] = useState(limit < 0 ? 100 : limit);
+  useEffect(() => setPct(limit < 0 ? 100 : limit), [limit]);
+  const options = inf.charge_speeds.map((sp) => ({ data: sp.name, label: sp.name }));
+  if (custom) options.push({ data: CUSTOM, label: "Custom" });
+  const hint = s.charge_speed === CUSTOM ? "Set the most current that goes into the battery"
+    : !speed ? "" : speed.ua >= fastest ? "As fast as the charger allows"
+    : `At most ${amps(speed.ua)} into the battery: slower, and easier on it`;
   return (
     <PanelSection title="Battery">
-      <PanelSectionRow>
-        <SliderField
-          label="Charge limit"
-          description="Stops charging here, resumes 5% below"
-          value={value}
-          min={inf.charge_limit_min}
-          max={100}
-          step={5}
-          showValue
-          valueSuffix="%"
-          onChange={(v) => {
-            setValue(v);
-            setChargeLimit(v >= 100 ? -1 : v);
-          }}
-        />
-      </PanelSectionRow>
+      {inf.charge_limit && (
+        <PanelSectionRow>
+          <SliderField
+            label="Charge limit"
+            description={pct >= 100 ? "Charges to full" : s.charge_held
+              ? "Holding here: the charger powers the device, the battery rests"
+              : "Stops charging here, resumes 5% below"}
+            value={pct}
+            min={inf.charge_limit_min}
+            max={100}
+            step={5}
+            showValue
+            valueSuffix="%"
+            onChange={(v) => {
+              setPct(v);
+              setChargeLimit(v >= 100 ? -1 : v);
+            }}
+          />
+        </PanelSectionRow>
+      )}
+      {options.length > 0 && (
+        <PanelSectionRow>
+          <DropdownItem
+            label="Charge speed"
+            description={hint}
+            rgOptions={options}
+            selectedOption={s.charge_speed}
+            onChange={(o) => setChargeSpeed(o.data)}
+          />
+        </PanelSectionRow>
+      )}
+      {custom && s.charge_speed === CUSTOM && (
+        <PanelSectionRow>
+          <SliderField
+            label="Charge current"
+            description={`Up to ${amps(custom.max)}, the charger's own speed. A weaker charger gives less.`}
+            value={ua / 1e6}
+            min={custom.min / 1e6}
+            max={custom.max / 1e6}
+            step={custom.step / 1e6}
+            showValue
+            valueSuffix=" A"
+            onChange={(v) => {
+              const n = Math.round(v * 1e6);
+              setUa(n);
+              setChargeCurrent(n);
+            }}
+          />
+        </PanelSectionRow>
+      )}
     </PanelSection>
   );
 }
@@ -262,13 +317,13 @@ function Content() {
 
   return (
     <>
+      {(inf.charge_limit || inf.charge_speeds.length > 0) && <Battery s={s} inf={inf} />}
       <Readout s={s} />
       <PanelSection title="Fan and CPU">
         <GamePicker games={games} appid={appid} onChange={pick} />
         <GameSettings key={appid ?? "all"} appid={appid} name={appid !== null ? gameName(games, appid) : ""} inf={inf}
           fanControl={s.steam.fan_control === 1} />
       </PanelSection>
-      {inf.charge_limit && <Battery s={s} inf={inf} />}
     </>
   );
 }

@@ -48,10 +48,24 @@ charger_efficiency = 0.9
 # Steam's TDP slider: whole-device draw in watts (screen included); max means no limit
 tdp_min = 3
 tdp_max = 15
-# The PM8150B charger driver has no charge end threshold (CHARGE_CONTROL_END_THRESHOLD), so
-# there's no charge limit: BatteryChargeLimit1 isn't offered to Steam.
-charge_limit = false
+# The PM8150B has no charge end threshold. kettle-powerd holds Steam's charge limit with the
+# charger's charge_behaviour (kernel patch 21-sm8250/0115): inhibit-charge at the limit, where
+# the charger powers the system and the battery sits idle (0 mA on an RP5), and auto again 5%
+# below. A fast-charge current of 0 isn't used: the battery then still gives ~200 mA. Steam's
+# setting comes through remotes.d/kettle-power-charge.toml (device/rp5).
+charge_limit = "inhibit"
 charge_limit_min = 55
+# The fast-charge current the RP5 boots with, uA (0x6b in 50 mA steps; the kernel's cap, from
+# the battery's constant-charge-current-max-microamp): what charging returns to when
+# kettle-powerd stops
+charge_current = 5350000
+# The Power plugin's charge speeds, the first the default. These cap what goes into the
+# battery; a weaker charger gives it less than the cap.
+charge_speed = [
+  { name = "Fast", ua = 5350000 },
+  { name = "Balanced", ua = 3000000 },
+  { name = "Slow", ua = 1500000 },
+]
 
 # Steam's performance profiles (Quick Access > Performance). Caps in kHz / MHz; a cluster
 # left out runs up to its highest frequency.

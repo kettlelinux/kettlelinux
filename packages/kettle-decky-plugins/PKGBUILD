@@ -4,7 +4,7 @@
 #   upscaling  per-game gamescope FSR 1 (render resolution + Sharp filter) and SGSR 2 / Arm ASR / FSR 2.2
 #              through OptiScaler (ARM64EC build, optiscaler-arm64ec)
 #   power      per-game fan curve / fixed speed and CPU core parking and caps, a live power and
-#              temperature readout, the battery charge limit (all through kettle-powerd); and
+#              temperature readout, the charge limit and speed (all through kettle-powerd); and
 #              Steam's power sliders following what the Performance app sets (steamSync.ts)
 #   welcome    opens once on first boot: Game Mode's counterpart of the desktop's Kettle Welcome.
 #              A tour, the start-up mode, Gaming Extras (the controller-friendly Flathub apps
@@ -34,7 +34,7 @@ pkgbase=kettle-decky-plugins
 pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome kettle-decky-power
          kettle-decky-screens kettle-decky-crash kettle-decky-game-settings kettle-decky-lights)
 pkgver=1.12.0
-pkgrel=21
+pkgrel=22
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
@@ -86,7 +86,7 @@ package_kettle-decky-welcome() {
 }
 
 package_kettle-decky-power() {
-  pkgdesc='Power Decky plugin (per-game fan and CPU settings, power readout, charge limit)'
+  pkgdesc='Power Decky plugin (per-game fan and CPU settings, power readout, charge limit and speed)'
   depends=(decky-loader kettle-power python-gobject)
   _install_plugin kettle-power power
 }

@@ -11,7 +11,8 @@ object_path = "/org/kettlelinux/Power1"
 bus_name = "org.kettlelinux.Power1"
 object_path = "/org/kettlelinux/Power1"
 
-# BatteryChargeLimit1 too, on firmware that supports a charge limit (odin2portal.toml)
+# BatteryChargeLimit1 too, on devices with a charge limit: a remotes.d file in their overlay
+# (device/odin2portal, device/thor, device/rp5)
 
 [FanControl1]
 bus_name = "org.kettlelinux.Power1"

@@ -1,8 +1,9 @@
 # Power: per-game fan and CPU settings and a live readout, through kettle-powerd
 # (packages/kettle-power) on the system bus. Steam's own power controls (TDP limit,
 # performance profile, GPU clock) are kettle-powerd's too, set per game in Quick Access >
-# Performance; this plugin shows them and sets what Steam has no UI for. The frontend tells
-# kettle-powerd which game is running, so a game's settings follow it.
+# Performance; this plugin shows them and sets what Steam has no UI for, the charge speed among
+# them. The charge limit is here as well as in Steam's settings (the same setting). The frontend tells kettle-powerd which
+# game is running, so a game's settings follow it.
 import asyncio
 import json
 
@@ -58,6 +59,13 @@ class Plugin:
     async def set_charge_limit(self, limit: int):
         await asyncio.to_thread(_call, "org.freedesktop.DBus.Properties", "Set", "(ssv)",
                                 (SOM + "BatteryChargeLimit1", "MaxChargeLevel", GLib.Variant("i", int(limit))), False)
+
+    async def set_charge_speed(self, name: str):
+        await _power("SetChargeSpeed", name)
+
+    async def set_charge_current(self, ua: int):
+        """The Custom charge speed, at this current (uA)."""
+        await asyncio.to_thread(_call, BUS_NAME, "SetChargeCurrent", "(u)", (int(ua),), False)
 
     async def _main(self):
         try:
