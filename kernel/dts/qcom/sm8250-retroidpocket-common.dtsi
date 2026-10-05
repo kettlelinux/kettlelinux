@@ -32,6 +32,8 @@
 		charge-full-design-microamp-hours = <3850000>;
 		voltage-min-design-microvolt = <3600000>;
 		voltage-max-design-microvolt = <4400000>;
+		/* the PM8150B's fast-charge current as the RP5 boots (0x6b, 50 mA steps) */
+		constant-charge-current-max-microamp = <5350000>;
 	};
 
 	chosen {

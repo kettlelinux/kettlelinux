@@ -80,8 +80,25 @@ fastboot devices
 ```
 
 It should list one device followed by `fastboot`. If it lists nothing: try another USB port
-or cable. On Windows you may need the Google USB driver (Device Manager, the *Android* device,
-*Update driver*).
+or cable.
+
+**On Windows**, if it still lists nothing, Windows needs Google's USB driver (Windows Update
+sometimes installs one by itself):
+
+1. Download the [Google USB Driver](https://developer.android.com/studio/run/win-usb) and
+   extract the zip.
+2. With the RP5 in fastboot mode and plugged in, open **Device Manager**. Right-click the device
+   (usually **Android** under *Other devices*, with a yellow mark) and choose **Update driver**.
+3. Choose **Browse my computer for drivers**, then **Let me pick from a list of available
+   drivers on my computer** (don't enter a folder on that screen: Windows may not match the
+   driver to the RP5 by itself).
+4. In the list of device types, select **Show All Devices** and click **Next**. Click
+   **Have Disk**, then **Browse**, and select `android_winusb.inf` from the extracted folder.
+5. Pick **Android Bootloader Interface** and accept the warning. `fastboot devices` should now
+   list the RP5.
+
+You don't need a Qualcomm driver (QDLoader / 9008): that is for EDL mode, which these steps
+don't use. A *QUSB_BULK* device means the RP5 is in crash-dump mode, not fastboot (above).
 
 ## 4. Put Kettle's U-Boot in the loader partition (once)
 

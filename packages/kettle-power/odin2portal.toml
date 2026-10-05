@@ -33,11 +33,23 @@ charger_efficiency = 0.9
 # Steam's TDP slider: whole-device draw in watts (screen included); max means no limit
 tdp_min = 4
 tdp_max = 18
-# The Portal's charger firmware doesn't answer qcom_battmgr's charge limit request
-# (BATTMGR_CHG_CTRL_LIMIT_EN times out, the threshold stays 0), so there's no charge limit:
-# BatteryChargeLimit1 isn't offered to Steam. The kernel clamps the end threshold to 55..100.
-charge_limit = false
+# The Portal's charger firmware ignores qcom_battmgr's charge limit request
+# (BATTMGR_CHG_CTRL_LIMIT_EN times out, the threshold stays 0), but takes a charge current
+# (constant_charge_current, kernel patch 40-kettle/1190). kettle-powerd holds Steam's charge
+# limit with it: 0 at the limit, where the charger powers the system and the battery sits
+# idle, and charging again 5% below. Steam's setting comes through remotes.d/kettle-power-charge.toml.
+charge_limit = "current"
 charge_limit_min = 55
+# The firmware's own charge current, uA (BATT_CHG_CTRL_LIM at boot; the most it takes is 11.4 A):
+# what charging returns to when kettle-powerd stops
+charge_current = 8000000
+# The Power plugin's charge speeds, the first the default. These cap what goes into the
+# battery; a weaker charger gives it less than the cap.
+charge_speed = [
+  { name = "Fast", ua = 8000000 },
+  { name = "Balanced", ua = 3000000 },
+  { name = "Slow", ua = 1500000 },
+]
 
 # Steam's performance profiles (Quick Access > Performance). Caps in kHz / MHz; a cluster
 # left out runs up to its highest frequency.

@@ -56,6 +56,8 @@ own *Check for updates*.
   ([docs/NATIVE-GAMES.md](docs/NATIVE-GAMES.md))
 - **Community Proton builds**: GE-Proton and Proton-CachyOS (their ARM64 releases), installed
   and updated from Kettle Welcome.
+- **Battle.net**: Kettle Welcome adds Blizzard's launcher to Steam, set up to run with
+  Proton-CachyOS.
 - **Android games**: add an Android game to Steam and play it in Game Mode, through Lepton, the
   Android layer Valve made for the Steam Frame (APK files, F-Droid, or opt-in Google Play).
 - **Hardware video in Firefox**: H.264, HEVC, VP9 and AV1 on the SoC's video decoder, YouTube

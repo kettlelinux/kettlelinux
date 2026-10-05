@@ -6,7 +6,7 @@
 # Custom fan curves need the kernel's user_space thermal governor (kernel/config/steamos.config).
 pkgname=kettle-power
 pkgver=0.1.0
-pkgrel=9
+pkgrel=10
 pkgdesc='Kettle Linux power, clock and fan control daemon'
 arch=(any)
 license=(BSD-3-Clause)

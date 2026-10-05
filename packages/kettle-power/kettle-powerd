@@ -7,12 +7,14 @@ Steam's power controls through steamos-manager's remote interfaces (remotes.d/ke
   TdpLimit1             whole-device power budget in watts, held by lowering CPU/GPU caps
   PerformanceProfile1   CPU/GPU caps per profile (device config)
   GpuPerformanceLevel1  auto, or a fixed GPU clock
-  BatteryChargeLimit1   charge end threshold (qcom_battmgr)
+  BatteryChargeLimit1   charge limit: the charger's end threshold, or held here at the limit,
+                        by a charge current of 0 (charge_limit = "current") or the charger's
+                        inhibit-charge (charge_limit = "inhibit")
   FanControl1           0: device tree fan curve only, 1: per-game fan settings apply
 
 Steam keeps those per game itself. org.kettlelinux.Power1 adds what Steam has no UI for,
 per game (the Power plugin): fan curve or fixed speed, per-cluster CPU caps and core
-parking. Every cap source is combined here, the lowest wins, so no two writers fight over
+parking; and the charge speed (a preset, or a current of its own), for every game. Every cap source is combined here, the lowest wins, so no two writers fight over
 scaling_max_freq or devfreq max_freq.
 
   kettle-powerd            run the daemon (system bus, root)
@@ -44,6 +46,11 @@ EMA = 0.4  # weight of each new power sample
 TDP_DWELL = 2  # ticks to wait after changing a cap before judging its effect
 CPU_STEPS = 16  # CPU budget ladder: 100% down to 30% of each cluster's top frequency
 FAN_HYST = 3  # C: the fan slows down only once the temperature is this far below a point
+CHARGE_RESUME = 5  # %: a held charge limit lets charging resume this far below the limit
+CHARGE_TICKS = 5  # ticks between charge current checks (each read is a firmware round trip)
+CUSTOM = "Custom"  # charge speed set as a current (charge_custom_ua)
+CUSTOM_MIN_UA = 500_000
+CUSTOM_STEP_UA = 500_000
 
 
 def log(msg):
@@ -146,7 +153,18 @@ class Hardware:
             "user_space" in (read(f"{z}/available_policies", "") or "").split() for z in self.fan_zones)
         self.battery = f"/sys/class/power_supply/{cfg['power']['battery']}"
         self.charger = f"/sys/class/power_supply/{cfg['power']['charger']}"
+        # the charge current the charger may use, uA (kernel patches 40-kettle/1190 on the
+        # battery, 21-sm8250/0115 on the charger), and the charger's charge_behaviour
+        self.charge_current = self._supply_attr("constant_charge_current")
+        self.charge_behaviour = self._supply_attr("charge_behaviour")
         self._stat = None
+
+    def _supply_attr(self, name):
+        """The battery's or else the charger's power supply file of that name, if it has one."""
+        for psy in (self.battery, self.charger):
+            if read(f"{psy}/{name}") is not None:
+                return f"{psy}/{name}"
+        return None
 
     def _fan_zones(self):
         """Thermal zones that drive the fan (a cdevN link to the pwm-fan cooling device)."""
@@ -239,9 +257,27 @@ class Daemon:
                       "gpu_level": "auto", "gpu_clock": self.hw.gpu_auto_freqs[-1] // 1_000_000,
                       "fan_control": 1, "charge_limit": -1},
             "games": {"default": self.normalize({})},
+            "charge_speed": "",
+            "charge_custom_ua": 0,
         }
         self.load()
-        self.charge_ok = pw.get("charge_limit", True)
+        # charge_limit: true, the charger's end threshold; "current" or "inhibit", held here
+        # through a charge current of 0 or the charger's charge_behaviour; false, none
+        self.charge_mode = pw.get("charge_limit", True)
+        need = {"current": self.hw.charge_current, "inhibit": self.hw.charge_behaviour}
+        if self.charge_mode in need and not need[self.charge_mode]:
+            log(f"charge_limit = {self.charge_mode!r} but the kernel has no control for it: no charge limit")
+            self.charge_mode = False
+        self.charge_ok = bool(self.charge_mode)
+        self.speeds = {sp["name"]: sp["ua"] for sp in pw.get("charge_speed", [])} if self.hw.charge_current else {}
+        # Custom: any current from CUSTOM_MIN_UA up to the firmware's own (charge_current)
+        self.custom_max = pw.get("charge_current") if self.speeds else None
+        if self.state["charge_speed"] not in self.speeds and not (self.custom_max and self.state["charge_speed"] == CUSTOM):
+            self.state["charge_speed"] = next(iter(self.speeds), "")
+        if self.custom_max:
+            self.state["charge_custom_ua"] = self.clamp_custom(self.state["charge_custom_ua"] or self.custom_max // 2)
+        self.charge_held = False  # at the charge limit, charging stopped
+        self.charge_wait = 0
         self.active = ""  # running game's appid, from the Power plugin
         self.written = {}  # path -> value last written, so only changes are written
         self.fan_saved_cdev = None  # device tree fan level when the daemon took the fan over
@@ -281,6 +317,8 @@ class Daemon:
         except (OSError, ValueError):
             return
         self.state["steam"].update({k: v for k, v in saved.get("steam", {}).items() if k in self.state["steam"]})
+        self.state["charge_speed"] = saved.get("charge_speed", "")
+        self.state["charge_custom_ua"] = saved.get("charge_custom_ua", 0)
         for k, v in saved.get("games", {}).items():
             self.state["games"][k] = self.normalize(v)
         if self.state["steam"]["profile"] not in self.profiles:
@@ -484,11 +522,52 @@ class Daemon:
             return True
         return False
 
+    # --- charging ---
+
+    def clamp_custom(self, ua):
+        ua = round(int(ua) / CUSTOM_STEP_UA) * CUSTOM_STEP_UA
+        return max(CUSTOM_MIN_UA, min(self.custom_max, ua))
+
+    def charge_speed_ua(self):
+        if self.state["charge_speed"] == CUSTOM and self.custom_max:
+            return self.state["charge_custom_ua"]
+        return self.speeds.get(self.state["charge_speed"]) or self.cfg["power"].get("charge_current")
+
+    def charge_tick(self, now=False):
+        """Charge current from the charge speed; while held at the charge limit, a current of
+        0 or inhibit-charge (the charger keeps powering the system, the battery sits idle)."""
+        if not (self.speeds or self.charge_mode in ("current", "inhibit")):
+            return
+        if not now and self.charge_wait:
+            self.charge_wait -= 1
+            return
+        self.charge_wait = CHARGE_TICKS - 1
+        limit = self.state["steam"]["charge_limit"]
+        if self.charge_mode in ("current", "inhibit") and limit >= 0:
+            level = read_int(f"{self.hw.battery}/capacity")
+            if level is not None:
+                if level >= limit:
+                    self.charge_held = True
+                elif level <= limit - CHARGE_RESUME:
+                    self.charge_held = False
+        else:
+            self.charge_held = False
+        if self.charge_mode == "inhibit":
+            want = "inhibit-charge" if self.charge_held else "auto"
+            # the file lists every behaviour with the active one in brackets
+            if f"[{want}]" not in (read(self.hw.charge_behaviour) or ""):
+                write(self.hw.charge_behaviour, want)
+        want = 0 if self.charge_held and self.charge_mode == "current" else self.charge_speed_ua()
+        # read back rather than trust the last write: a firmware restart resets it
+        if self.hw.charge_current and want is not None and read_int(self.hw.charge_current) != want:
+            write(self.hw.charge_current, want)
+
     def tick(self):
         try:
             if self.tdp_tick():
                 self.apply_caps()
             self.fan_tick()
+            self.charge_tick()
         except Exception as e:  # keep the fan loop alive whatever a sysfs read does
             log(f"tick: {e!r}")
         return True
@@ -496,10 +575,15 @@ class Daemon:
     # --- Steam's properties ---
 
     def charge_limit(self):
+        if self.charge_mode in ("current", "inhibit"):
+            return self.state["steam"]["charge_limit"]
         v = read_int(f"{self.hw.battery}/charge_control_end_threshold")
         return -1 if not v or v >= 100 else v
 
     def apply_charge_limit(self):
+        if self.charge_mode in ("current", "inhibit"):
+            self.charge_tick(now=True)
+            return
         limit = self.state["steam"]["charge_limit"]
         write(f"{self.hw.battery}/charge_control_end_threshold", 100 if limit < 0 else limit)
 
@@ -585,6 +669,9 @@ class Daemon:
             "tdp_limiting": bool(self.tdp_cpu or self.tdp_gpu),
             "steam": {**self.state["steam"], "charge_limit": self.charge_limit() if self.charge_ok else None},
             "battery": {"status": read(f"{hw.battery}/status"), "capacity": read_int(f"{hw.battery}/capacity")},
+            "charge_speed": self.state["charge_speed"],
+            "charge_custom_ua": self.state["charge_custom_ua"],
+            "charge_held": self.charge_held,
             "active_game": self.active,
         }
 
@@ -601,6 +688,9 @@ class Daemon:
             "tdp": [pw["tdp_min"], pw["tdp_max"]],
             "charge_limit": self.charge_ok,
             "charge_limit_min": pw["charge_limit_min"],
+            "charge_speeds": [{"name": n, "ua": ua} for n, ua in self.speeds.items()],
+            # the Custom charge speed's slider, uA; null without one
+            "charge_custom": {"min": CUSTOM_MIN_UA, "max": self.custom_max, "step": CUSTOM_STEP_UA} if self.custom_max else None,
         }
 
     def method(self, name, args):
@@ -622,6 +712,21 @@ class Daemon:
             self.save()
             self.apply()
             self.fan_tick()
+            return ""
+        if name == "SetChargeSpeed":
+            if args[0] not in self.speeds and not (self.custom_max and args[0] == CUSTOM):
+                raise ValueError(f"no charge speed {args[0]!r}")
+            self.state["charge_speed"] = args[0]
+            self.save()
+            self.charge_tick(now=True)
+            return ""
+        if name == "SetChargeCurrent":
+            if not self.custom_max:
+                raise ValueError("no custom charge current on this device")
+            self.state["charge_speed"] = CUSTOM
+            self.state["charge_custom_ua"] = self.clamp_custom(args[0])
+            self.save()
+            self.charge_tick(now=True)
             return ""
         if name == "SetActiveGame":
             if args[0] != self.active:
@@ -696,6 +801,11 @@ def restore(hw, daemon=None):
         for cpu_id in c["cpus"]:
             if cpu_id != 0 and read_int(f"/sys/devices/system/cpu/cpu{cpu_id}/online") == 0:
                 write(f"/sys/devices/system/cpu/cpu{cpu_id}/online", 1)
+    # charging back on, at the firmware's own current: a stopped daemon holds no charge limit
+    if hw.charge_behaviour:
+        write(hw.charge_behaviour, "auto")
+    if hw.charge_current and "charge_current" in hw.cfg["power"]:
+        write(hw.charge_current, hw.cfg["power"]["charge_current"])
     for c in hw.clusters:
         write(f"{c['path']}/scaling_max_freq", max(c["freqs"]))
     if hw.gpu_freqs:
@@ -734,6 +844,8 @@ INTROSPECTION = f"""<node>
     <method name="GetGame"><arg name="appid" type="s"/><arg type="s" direction="out"/></method>
     <method name="SetGame"><arg name="appid" type="s"/><arg name="settings" type="s"/></method>
     <method name="SetActiveGame"><arg name="appid" type="s"/></method>
+    <method name="SetChargeSpeed"><arg name="name" type="s"/></method>
+    <method name="SetChargeCurrent"><arg name="ua" type="u"/></method>
   </interface>
 </node>"""
 

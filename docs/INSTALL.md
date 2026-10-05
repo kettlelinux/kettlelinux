@@ -71,7 +71,8 @@ card carries AYN's U-Boot to put back, from a computer:
    [SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools)
    (Windows, macOS, Linux; on Linux also your package manager, e.g. `sudo apt install fastboot`).
 2. Put the card you wrote in the computer. Copy **`u-boot-ayn.img`** from the drive called
-   **KETTLE** to the computer, next to `fastboot`.
+   **KETTLE** to the computer, next to `fastboot`, or download it from the wiki's
+   [AYN U-Boot](https://github.com/kettlelinux/kettlelinux/wiki/AYN-U-Boot) page.
 3. Put the card back in the device, start fastboot mode (step 3 above) and connect it to the
    computer by USB. `fastboot devices` should list it.
 4. Try it without writing anything: `fastboot boot u-boot-ayn.img`. The device starts U-Boot,
