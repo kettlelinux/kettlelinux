@@ -1,0 +1,6 @@
+# Steam's charge limit setting on the Thor is kettle-powerd's: it holds the limit through the
+# charge current (packages/kettle-power/thor.toml). steamos-manager merges this with
+# remotes.d/kettle-power.toml; devices without a charge limit don't get this file.
+[BatteryChargeLimit1]
+bus_name = "org.kettlelinux.Power1"
+object_path = "/org/kettlelinux/Power1"

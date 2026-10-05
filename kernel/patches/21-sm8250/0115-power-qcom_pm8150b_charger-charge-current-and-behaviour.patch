@@ -1,0 +1,173 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] power: supply: qcom_pm8150b_charger: charge current and charge behaviour
+
+Expose the PM8150B's fast-charge current (FAST_CHARGE_CURRENT_CFG, 50 mA
+steps) as constant_charge_current, capped by constant_charge_current_max:
+the battery's constant-charge-current-max-microamp, else the value the boot
+firmware left in the register. Userspace can then slow charging down.
+
+Expose CHARGING_ENABLE_CMD as charge_behaviour (auto / inhibit-charge).
+Inhibited, the charger keeps powering the system and the battery sits idle
+(seen on a Retroid Pocket 5: 0 mA), which is how userspace holds a charge
+limit. A fast-charge current of 0 doesn't do that: the battery then
+supplies about 200 mA of the load.
+---
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -290,6 +290,7 @@
+  * @usb_in_i_chan:	USB_IN current measurement channel
+  * @usb_in_v_chan:	USB_IN voltage measurement channel
+  * @chg_psy:		Charger power supply instance
++ * @fcc_max_ua:		Highest fast-charge current userspace may set
+  */
+ struct smb5_chip {
+ 	struct device *dev;
+@@ -306,6 +307,7 @@
+ 	struct iio_channel *usb_in_v_chan;
+ 
+ 	struct power_supply *chg_psy;
++	unsigned int fcc_max_ua;
+ };
+ 
+ static enum power_supply_property smb5_properties[] = {
+@@ -318,6 +320,9 @@
+ 	POWER_SUPPLY_PROP_HEALTH,
+ 	POWER_SUPPLY_PROP_ONLINE,
+ 	POWER_SUPPLY_PROP_USB_TYPE,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
++	POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR,
+ };
+ 
+ static int smb5_get_prop_usb_online(struct smb5_chip *chip, int *val)
+@@ -571,6 +576,64 @@
+ 	return 0;
+ }
+ 
++/* Fast-charge current: what goes into the battery, in CURRENT_SCALE_FACTOR steps */
++static int smb5_get_fcc(struct smb5_chip *chip, int *val)
++{
++	unsigned int raw;
++	int rc;
++
++	rc = regmap_read(chip->regmap, chip->base + FAST_CHARGE_CURRENT_CFG, &raw);
++	if (rc < 0)
++		return rc;
++	*val = (raw & FAST_CHARGE_CURRENT_SETTING_MASK) * CURRENT_SCALE_FACTOR;
++	return 0;
++}
++
++static int smb5_set_fcc(struct smb5_chip *chip, int ua)
++{
++	if (ua < 0 || ua > chip->fcc_max_ua)
++		return -EINVAL;
++	return regmap_update_bits(chip->regmap, chip->base + FAST_CHARGE_CURRENT_CFG,
++				  FAST_CHARGE_CURRENT_SETTING_MASK,
++				  ua / CURRENT_SCALE_FACTOR);
++}
++
++/*
++ * inhibit-charge stops charging while the charger keeps powering the system (the battery
++ * sits idle), which is how userspace holds a charge limit. A fast-charge current of 0
++ * doesn't do that: the battery then supplies part of the load.
++ */
++static int smb5_get_charge_behaviour(struct smb5_chip *chip, int *val)
++{
++	unsigned int cmd;
++	int rc;
++
++	rc = regmap_read(chip->regmap, chip->base + CHARGING_ENABLE_CMD, &cmd);
++	if (rc < 0)
++		return rc;
++	*val = cmd & CHARGING_ENABLE_CMD_BIT ? POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO
++					      : POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE;
++	return 0;
++}
++
++static int smb5_set_charge_behaviour(struct smb5_chip *chip, int behaviour)
++{
++	unsigned int cmd;
++
++	switch (behaviour) {
++	case POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO:
++		cmd = CHARGING_ENABLE_CMD_BIT;
++		break;
++	case POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE:
++		cmd = 0;
++		break;
++	default:
++		return -EINVAL;
++	}
++	return regmap_update_bits(chip->regmap, chip->base + CHARGING_ENABLE_CMD,
++				  CHARGING_ENABLE_CMD_BIT, cmd);
++}
++
+ static int smb5_get_property(struct power_supply *psy,
+ 			     enum power_supply_property psp,
+ 			     union power_supply_propval *val)
+@@ -600,6 +663,13 @@
+ 		return smb5_get_prop_health(chip, &val->intval);
+ 	case POWER_SUPPLY_PROP_USB_TYPE:
+ 		return smb5_apsd_get_charger_type(chip, &val->intval);
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
++		return smb5_get_fcc(chip, &val->intval);
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
++		val->intval = chip->fcc_max_ua;
++		return 0;
++	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
++		return smb5_get_charge_behaviour(chip, &val->intval);
+ 	default:
+ 		dev_err(chip->dev, "invalid property: %d\n", psp);
+ 		return -EINVAL;
+@@ -615,6 +685,10 @@
+ 	switch (psp) {
+ 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+ 		return smb5_set_current_limit(chip, val->intval);
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
++		return smb5_set_fcc(chip, val->intval);
++	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
++		return smb5_set_charge_behaviour(chip, val->intval);
+ 	default:
+ 		dev_err(chip->dev, "No setter for property: %d\n", psp);
+ 		return -EINVAL;
+@@ -626,6 +700,8 @@
+ {
+ 	switch (psp) {
+ 	case POWER_SUPPLY_PROP_CURRENT_MAX:
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
++	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
+ 		return 1;
+ 	default:
+ 		return 0;
+@@ -692,6 +768,8 @@
+ 		     BIT(POWER_SUPPLY_USB_TYPE_CDP) |
+ 		     BIT(POWER_SUPPLY_USB_TYPE_DCP) |
+ 		     BIT(POWER_SUPPLY_USB_TYPE_UNKNOWN),
++	.charge_behaviours = BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO) |
++			     BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE),
+ 	.properties = smb5_properties,
+ 	.num_properties = ARRAY_SIZE(smb5_properties),
+ 	.get_property = smb5_get_property,
+@@ -878,6 +956,22 @@
+ 		return dev_err_probe(chip->dev, rc,
+ 				     "Failed to get battery info\n");
+ 
++	/*
++	 * The battery's constant-charge-current-max-microamp, else what the boot firmware
++	 * left in the register: userspace may lower the fast-charge current, never raise it
++	 * past this.
++	 */
++	if (chip->batt_info->constant_charge_current_max_ua > 0) {
++		chip->fcc_max_ua = chip->batt_info->constant_charge_current_max_ua;
++	} else {
++		int fcc;
++
++		rc = smb5_get_fcc(chip, &fcc);
++		if (rc < 0)
++			return dev_err_probe(chip->dev, rc, "Couldn't read the fast-charge current\n");
++		chip->fcc_max_ua = fcc;
++	}
++
+ 	rc = devm_delayed_work_autocancel(chip->dev, &chip->status_change_work,
+ 					  smb5_status_change_work);
+ 	if (rc)
