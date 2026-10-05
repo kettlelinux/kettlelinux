@@ -41,7 +41,7 @@ pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome kettl
          kettle-decky-screens kettle-decky-crash kettle-decky-game-settings kettle-decky-lights
          kettle-decky-stores)
 pkgver=1.12.0
-pkgrel=22
+pkgrel=23
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
