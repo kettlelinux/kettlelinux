@@ -269,7 +269,10 @@ if [ "$REINSTALL" = 0 ]; then
              "$ROOTFS_MIB $ROOT_TYPE $PARTIAL_LABEL" "$ROOTFS_MIB $ROOT_TYPE rootfs-B" \
              "$VAR_MIB $LINUX_TYPE var-A" "$VAR_MIB $LINUX_TYPE var-B"; do
       read -r mib type name <<<"$p"
-      printf 'start=%s, size=%s, type=%s, name=%s\n' $at $((mib * MIB)) $type $name
+      # the esp flagged bootable (LegacyBIOSBootable): U-Boot's standard boot (u-boot-kettle,
+      # the RP5's) only looks at flagged partitions, or at the first when none is
+      printf 'start=%s, size=%s, type=%s, name=%s%s\n' $at $((mib * MIB)) $type $name \
+        "$([ "$name" = "$ESP_LABEL" ] && echo ', attrs="LegacyBIOSBootable"')"
       at=$((at + mib * MIB))
     done
     printf 'start=%s, type=%s, name=home\n' $at $HOME_TYPE
