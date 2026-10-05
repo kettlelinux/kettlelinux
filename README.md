@@ -45,7 +45,8 @@ own *Check for updates*.
   - **Lights**: the RGB rings around the sticks (a color, the battery level, breathe or rainbow),
     and the Portal's power button light.
 - **Power control**: TDP budget, performance profiles, GPU clock and per-game fan curves from
-  Steam's Performance panel, the Power plugin, or a Desktop Mode tray applet.
+  Steam's Performance panel, the Power plugin, or a Desktop Mode tray applet, and a battery
+  charge limit and charge speed.
 - **Games outside Steam**: ARM64EC Wine with FEX, DXVK and vkd3d-proton, plus Lutris and Heroic
   built for arm64.
 - **Epic Games, GOG and Amazon Games in Game Mode**: the Game Stores plugin signs in to each store,
