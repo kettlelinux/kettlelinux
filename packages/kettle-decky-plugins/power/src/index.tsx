@@ -32,6 +32,8 @@ type Status = {
   gpu_cap_mhz: number;
   gpu_load: number | null;
   tdp_limiting: boolean;
+  // target: the frame rate it holds (Steam's limit, else the refresh rate); fps: the game's now
+  auto_tdp: { on: boolean; target: number | null; fps_limit: number; fps: number | null; limiting: boolean };
   steam: Steam;
   battery: { status: string | null; capacity: number | null };
   charge_speed: string;
@@ -43,6 +45,7 @@ type FanMode = "auto" | "curve" | "fixed";
 type Settings = {
   fan: { mode: FanMode; curve: [number, number][]; fixed: number };
   cpu: { little: number | null; mid: number | null; prime: number | null; mid_cores: number; prime_core: boolean };
+  auto_tdp: boolean;
 };
 type Game = { custom: boolean; settings: Settings };
 type Refresh = { rates: number[]; hz: number };
@@ -91,6 +94,7 @@ function Readout({ s }: { s: Status }) {
       {s.fan_rpm !== null && row("Fan", `${s.fan_rpm} RPM (${s.fan_pct}%)`)}
       {row("CPU MHz", cpu)}
       {row("GPU", `${s.gpu_mhz} MHz${s.gpu_load !== null ? `, ${Math.round(s.gpu_load * 100)}% busy` : ""}`)}
+      {s.auto_tdp.on && row("Auto TDP", autoTdpText(s.auto_tdp))}
       <PanelSectionRow>
         <div style={small}>
           From Steam's Performance panel: TDP limit {st.tdp}W, {st.profile} profile, GPU clock{" "}
@@ -99,6 +103,11 @@ function Readout({ s }: { s: Status }) {
       </PanelSectionRow>
     </PanelSection>
   );
+}
+
+function autoTdpText(a: Status["auto_tdp"]) {
+  if (a.target === null || a.fps === null) return "Waiting for the game";
+  return `${Math.round(a.fps)} of ${a.target} fps${a.limiting ? ", clocks lowered" : ""}`;
 }
 
 // Curve points stay in order: raising a point raises the ones after it, lowering lowers the ones before
@@ -125,7 +134,7 @@ function CapSlider({ c, value, onChange }: { c: Cluster; value: number | null; o
   );
 }
 
-function GameSettings({ appid, name, inf, fanControl }: { appid: number | null; name: string; inf: Info; fanControl: boolean }) {
+function GameSettings({ appid, name, inf, fanControl, fpsLimit }: { appid: number | null; name: string; inf: Info; fanControl: boolean; fpsLimit: number }) {
   const [g, setG] = useState<Game | null>(null);
   useEffect(() => {
     setG(null);
@@ -135,8 +144,8 @@ function GameSettings({ appid, name, inf, fanControl }: { appid: number | null; 
   const s = g.settings;
   // a game without its own settings shows (and edits) the all-games ones
   const target = appid !== null && g.custom ? appid : null;
-  const update = async (patch: { fan?: Partial<Settings["fan"]>; cpu?: Partial<Settings["cpu"]> }) => {
-    const next = { fan: { ...s.fan, ...patch.fan }, cpu: { ...s.cpu, ...patch.cpu } };
+  const update = async (patch: { fan?: Partial<Settings["fan"]>; cpu?: Partial<Settings["cpu"]>; auto_tdp?: boolean }) => {
+    const next = { fan: { ...s.fan, ...patch.fan }, cpu: { ...s.cpu, ...patch.cpu }, auto_tdp: patch.auto_tdp ?? s.auto_tdp };
     setG({ ...g, settings: next });
     setG(await setGame(target, next));
   };
@@ -157,6 +166,17 @@ function GameSettings({ appid, name, inf, fanControl }: { appid: number | null; 
       )}
       <PanelSectionRow>
         <div style={small}>Editing: {target === null ? "all games" : `${name} only`}</div>
+      </PanelSectionRow>
+
+      <PanelSectionRow>
+        <ToggleField
+          label="Auto TDP"
+          description={fpsLimit
+            ? `Holds Steam's frame rate limit (${fpsLimit} fps) on the lowest CPU and GPU clocks that keep it`
+            : "Set a frame rate limit in Steam's Performance panel: Auto TDP holds it on the lowest clocks that keep it"}
+          checked={s.auto_tdp}
+          onChange={(auto_tdp) => update({ auto_tdp })}
+        />
       </PanelSectionRow>
 
       {inf.fan && (
@@ -214,7 +234,7 @@ function GameSettings({ appid, name, inf, fanControl }: { appid: number | null; 
       <PanelSectionRow>
         <ButtonItem
           layout="below"
-          onClick={async () => setG(await setGame(target, target === null ? { fan: { mode: "auto", curve: inf.default_curve, fixed: 50 }, cpu: { little: null, mid: null, prime: null, mid_cores: midCount, prime_core: true } } : null))}
+          onClick={async () => setG(await setGame(target, target === null ? { fan: { mode: "auto", curve: inf.default_curve, fixed: 50 }, cpu: { little: null, mid: null, prime: null, mid_cores: midCount, prime_core: true }, auto_tdp: false } : null))}
         >
           {target === null ? "Reset all-games settings" : `Reset ${name} to all-games settings`}
         </ButtonItem>
@@ -375,10 +395,10 @@ function Content() {
       {(inf.charge_limit || inf.charge_speeds.length > 0 || inf.sleep_fan) && <Battery s={s} inf={inf} />}
       {refresh && refresh.rates.length >= 2 && <Screen r={refresh} onChange={setRefreshState} />}
       <Readout s={s} />
-      <PanelSection title="Fan and CPU">
+      <PanelSection title="Fan, CPU and Auto TDP">
         <GamePicker games={games} appid={appid} onChange={pick} />
         <GameSettings key={appid ?? "all"} appid={appid} name={appid !== null ? gameName(games, appid) : ""} inf={inf}
-          fanControl={s.steam.fan_control === 1} />
+          fanControl={s.steam.fan_control === 1} fpsLimit={s.auto_tdp.fps_limit} />
       </PanelSection>
     </>
   );

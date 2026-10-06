@@ -7,7 +7,9 @@
 #              temperature readout, the charge limit and speed (all through kettle-powerd); and
 #              Steam's power sliders following what the Performance app sets (steamSync.ts); and
 #              the screen's refresh rate, 60 or 120 Hz, held in games and the Steam UI alike
-#              (gamescope 0023) on a device that lists its rates (/usr/lib/kettle/refresh-rates)
+#              (gamescope 0023) on a device that lists its rates (/usr/lib/kettle/refresh-rates);
+#              and per-game Auto TDP (kettle-powerd), held at Steam's frame rate limit, which it
+#              watches on gamescope's root window with xprop
 #   welcome    opens once on first boot: Game Mode's counterpart of the desktop's Kettle Welcome.
 #              A tour, the start-up mode, Gaming Extras (the controller-friendly Flathub apps
 #              through kettle-welcome's welcome-flatpak, added to Steam as shortcuts; GE-Proton /
@@ -43,7 +45,7 @@ pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome kettl
          kettle-decky-screens kettle-decky-crash kettle-decky-game-settings kettle-decky-lights
          kettle-decky-stores)
 pkgver=1.12.0
-pkgrel=27
+pkgrel=28
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
@@ -95,8 +97,8 @@ package_kettle-decky-welcome() {
 }
 
 package_kettle-decky-power() {
-  pkgdesc='Power Decky plugin (per-game fan and CPU settings, power readout, charge limit and speed, refresh rate)'
-  depends=(decky-loader kettle-power python-gobject)
+  pkgdesc='Power Decky plugin (per-game fan and CPU settings and Auto TDP, power readout, charge limit and speed, refresh rate)'
+  depends=(decky-loader kettle-power python-gobject xorg-xprop coreutils)
   _install_plugin kettle-power power
 }
 

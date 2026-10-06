@@ -8,6 +8,8 @@
 # refresh-rates): gamescope holds it (refresh_hz, gamescope 0023), set live through gamescopectl,
 # and gamescope-session starts at it from ~/.config/kettle/refresh-rate.conf. Auto (0) holds none:
 # Steam's frame limit picks the rate, up to auto_refresh_max_hz when there's no limit (0024).
+# Auto TDP holds a game at Steam's frame rate limit, which Steam sets on gamescope's Xwayland
+# root window (GAMESCOPE_FPS_LIMIT): the plugin watches it with xprop and passes it on.
 import asyncio
 import json
 import os
@@ -22,6 +24,7 @@ BUS_NAME = "org.kettlelinux.Power1"
 OBJ_PATH = "/org/kettlelinux/Power1"
 SOM = "com.steampowered.SteamOSManager1."
 _bus = None
+_active = ""  # the running game's appid as last told to kettle-powerd, sent again with the frame rate limit
 
 
 def _call(iface: str, method: str, sig: str | None, args: tuple, out: bool):
@@ -83,23 +86,76 @@ def _refresh() -> dict:
     return {"rates": rates, "hz": hz}
 
 
+def _session_env() -> dict:
+    """Game Mode's gamescope displays, from the user manager's environment (gamescope-onready):
+    the plugin runs as that user, without its session's env."""
+    uid = os.getuid()
+    env = dict(os.environ, XDG_RUNTIME_DIR=f"/run/user/{uid}",
+               DBUS_SESSION_BUS_ADDRESS=f"unix:path=/run/user/{uid}/bus")
+    r = subprocess.run(["systemctl", "--user", "show-environment"], env=env, capture_output=True, text=True)
+    for k in ("GAMESCOPE_WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY"):
+        m = re.search(rf"^{k}=(.+)$", r.stdout, re.M)
+        if m:
+            env[k] = m.group(1)
+    return env
+
+
 def _apply_refresh(hz: int):
     os.makedirs(os.path.dirname(RATE_CONF), exist_ok=True)
     with open(RATE_CONF + ".new", "w") as f:
         f.write(f"# Quick Access > Power's refresh rate, read by gamescope-session\nexport gamescope_refresh_hz={hz}\n")
     os.replace(RATE_CONF + ".new", RATE_CONF)
-    # live, on Game Mode's gamescope: its display is in the user manager's environment
-    # (gamescope-onready); the plugin runs as that user, without its session's env
-    uid = os.getuid()
-    env = dict(os.environ, XDG_RUNTIME_DIR=f"/run/user/{uid}",
-               DBUS_SESSION_BUS_ADDRESS=f"unix:path=/run/user/{uid}/bus")
-    r = subprocess.run(["systemctl", "--user", "show-environment"], env=env, capture_output=True, text=True)
-    m = re.search(r"^GAMESCOPE_WAYLAND_DISPLAY=(.+)$", r.stdout, re.M)
-    if not m:
+    # live, on Game Mode's gamescope
+    env = _session_env()
+    if "GAMESCOPE_WAYLAND_DISPLAY" not in env:
         return
-    env["GAMESCOPE_WAYLAND_DISPLAY"] = m.group(1)
     subprocess.run(["gamescopectl", "refresh_hz", str(hz)], env=env, check=False, timeout=5,
                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+
+FPS_LIMIT = re.compile(rb"GAMESCOPE_FPS_LIMIT\(CARDINAL\) = (\d+)")
+FPS_LIMIT_RESEND = 30  # s: sent again this often (with the running game), for a kettle-powerd that restarted
+
+
+async def _watch_fps_limit():
+    """Steam's frame rate limit (0: none) to kettle-powerd, for Auto TDP. xprop -spy prints the
+    property at start and on every change; it ends with gamescope, and starts again."""
+    sent = None
+    while True:
+        env = await asyncio.to_thread(_session_env)
+        proc = None
+        try:
+            if "DISPLAY" in env:
+                # line buffered: xprop's own output to a pipe waits for a full buffer
+                proc = await asyncio.create_subprocess_exec(
+                    "stdbuf", "-oL", "xprop", "-display", env["DISPLAY"], "-root", "-spy", "GAMESCOPE_FPS_LIMIT",
+                    env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+                limit = 0
+                while True:
+                    try:
+                        line = await asyncio.wait_for(proc.stdout.readline(), FPS_LIMIT_RESEND)
+                    except asyncio.TimeoutError:
+                        line = None
+                    if line == b"":
+                        break
+                    if line is not None:
+                        m = FPS_LIMIT.search(line)
+                        limit = int(m.group(1)) if m else 0  # "not found": Steam set none
+                    if line is None:
+                        await _power("SetActiveGame", _active)
+                    if line is None or limit != sent:
+                        await asyncio.to_thread(_call, BUS_NAME, "SetFpsLimit", "(u)", (limit,), False)
+                        if limit != sent:
+                            decky.logger.info("power: Steam's frame rate limit %s", limit or "off")
+                        sent = limit
+        except (OSError, GLib.Error) as e:
+            decky.logger.warning("power: frame rate limit: %s", e)
+            sent = None
+        finally:
+            if proc and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+        await asyncio.sleep(5)
 
 
 class Plugin:
@@ -121,7 +177,9 @@ class Plugin:
         return await self.get_game(appid)
 
     async def set_active(self, appid: int | None):
-        await _power("SetActiveGame", str(appid) if appid else "")
+        global _active
+        _active = str(appid) if appid else ""
+        await _power("SetActiveGame", _active)
 
     async def set_charge_limit(self, limit: int):
         await asyncio.to_thread(_call, "org.freedesktop.DBus.Properties", "Set", "(ssv)",
@@ -153,6 +211,8 @@ class Plugin:
             decky.logger.info("power: kettle-powerd up, profiles %s, fan control %s", info["profiles"], info["fan"])
         except GLib.Error as e:
             decky.logger.error("power: kettle-powerd unreachable: %s", e.message)
+        self._fps_limit = asyncio.create_task(_watch_fps_limit())
 
     async def _unload(self):
-        pass
+        if getattr(self, "_fps_limit", None):
+            self._fps_limit.cancel()
