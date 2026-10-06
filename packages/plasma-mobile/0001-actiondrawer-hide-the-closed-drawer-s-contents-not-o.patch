@@ -1,0 +1,37 @@
+From bbeeb8d71be2c6da01bf6165650740aae2062b99 Mon Sep 17 00:00:00 2001
+From: gennro <kettlelinux@kettlelinux.org>
+Date: Mon, 5 Oct 2026 20:29:12 -0500
+Subject: [PATCH] actiondrawer: hide the closed drawer's contents, not only
+ make them transparent
+
+ActionDrawerWindow is a full-screen overlay layer surface that stays
+shown, and the closed drawer's contents are only set to opacity 0. Qt
+Quick still renders a new frame whenever an item under them changes, so
+the window kept committing full-screen frames (about 7 a second on the
+AYN Thor's bottom screen) with nothing to show. Each one made the
+compositor redraw the whole screen: on the Thor, where the shell runs
+nested in KWin inside gamescope, that kept the GPU awake about 70% of
+the time at idle. Hiding the contents while the drawer is closed
+(visible follows the opacity) leaves the window still: the GPU is awake
+16% of the time there, the rest being the app shown on that screen.
+---
+ components/mobileshell/qml/actiondrawer/ActionDrawer.qml | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/components/mobileshell/qml/actiondrawer/ActionDrawer.qml b/components/mobileshell/qml/actiondrawer/ActionDrawer.qml
+index d805b75..bd42823 100644
+--- a/components/mobileshell/qml/actiondrawer/ActionDrawer.qml
++++ b/components/mobileshell/qml/actiondrawer/ActionDrawer.qml
+@@ -326,6 +326,9 @@ Item {
+             anchors.fill: parent
+ 
+             opacity: root.opened || swipeArea.moving || drawerAnimation.running ||  root.offset > 0 || root.intendedToBeVisible ? 1 : 0
++            // hidden too while closed: in its own always-shown window, an invisible item
++            // that changes still makes the window draw a new frame
++            visible: opacity > 0
+ 
+             actionDrawer: root
+             quickSettingsModel: root.quickSettingsModel
+-- 
+2.55.0
+
