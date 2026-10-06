@@ -61,6 +61,19 @@ void GameStats::setHistory(int seconds)
     Q_EMIT changed();
 }
 
+void GameStats::setActive(bool active)
+{
+    if (active == m_timer.isActive())
+        return;
+    if (active) {
+        m_timer.start();
+        poll();
+    } else {
+        m_timer.stop();
+    }
+    Q_EMIT activeChanged();
+}
+
 void GameStats::setInterval(int ms)
 {
     if (ms == m_timer.interval())

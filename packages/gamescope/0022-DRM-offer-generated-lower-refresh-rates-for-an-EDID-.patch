@@ -1,0 +1,89 @@
+From 2a78f7e5a1db3a3b54bf059c6f11020b98789fd6 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Tue, 6 Oct 2026 06:38:39 -0500
+Subject: [PATCH] DRM: offer generated lower refresh rates for an EDID-less
+ panel
+
+GAMESCOPE_GENERATED_REFRESH_RATES (a comma-separated list of Hz) adds
+rates below an EDID-less internal panel's preferred one to its dynamic
+refresh rates, made with generate_fixed_mode: the preferred mode's
+timings at a lower pixel clock. The AYN Thor's bottom panel (Chipsea
+CH13726A, DSI video mode) lists only 60 Hz, but runs cleanly at 30 Hz
+that way (a longer vertical front porch at the same clock draws black
+lines on it instead), which saves about 0.1 W. With the rate offered,
+ui_refresh_hz picks it.
+---
+ src/Backends/DRMBackend.cpp | 42 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 023542e2..902fec32 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -524,6 +524,7 @@ namespace gamescope
+ 	private:
+ 		void ParseEDID();
+ 		void AddNativeModeRefreshRates();
++		void AddGeneratedRefreshRates();
+ 
+ 
+ 		CDRMBackend *m_pBackend = nullptr;
+@@ -2874,6 +2875,44 @@ namespace gamescope
+ 		std::sort( m_Mutable.ValidDynamicRefreshRates.begin(), m_Mutable.ValidDynamicRefreshRates.end() );
+ 	}
+ 
++	void CDRMConnector::AddGeneratedRefreshRates()
++	{
++		// GAMESCOPE_GENERATED_REFRESH_RATES=30,40: rates the panel driver doesn't list but the
++		// panel takes, made from its preferred mode with the same timings and a lower pixel clock
++		// (generate_fixed_mode). Only lower rates: the link can't run faster than it was made for.
++		const char *pszRates = getenv( "GAMESCOPE_GENERATED_REFRESH_RATES" );
++		const drmModeModeInfo *pPreferredMode = find_mode( m_pConnector.get(), 0, 0, 0 );
++		if ( !pszRates || !pPreferredMode )
++			return;
++
++		bool bAdded = false;
++		for ( const char *p = pszRates; *p; )
++		{
++			char *pEnd = nullptr;
++			long nRate = strtol( p, &pEnd, 10 );
++			if ( pEnd == p )
++				break;
++			if ( nRate > 0 && uint32_t( nRate ) < pPreferredMode->vrefresh &&
++			     !Algorithm::Contains( m_Mutable.ValidDynamicRefreshRates, uint32_t( nRate ) ) )
++			{
++				m_Mutable.ValidDynamicRefreshRates.push_back( uint32_t( nRate ) );
++				bAdded = true;
++			}
++			p = *pEnd ? pEnd + 1 : pEnd;
++		}
++		if ( !bAdded )
++			return;
++
++		std::sort( m_Mutable.ValidDynamicRefreshRates.begin(), m_Mutable.ValidDynamicRefreshRates.end() );
++		m_Mutable.fnDynamicModeGenerator = []( const drmModeModeInfo *pBaseMode, int nRefreshHz ) -> drmModeModeInfo
++		{
++			drmModeModeInfo mode = {};
++			generate_fixed_mode( &mode, pBaseMode, nRefreshHz );
++			return mode;
++		};
++		drm_log.infof( "Connector %s: generated refresh rates %s", m_Mutable.szName, pszRates );
++	}
++
+ 	void CDRMConnector::ParseEDID()
+ 	{
+ 		uint64_t ulBlobId = GetProperties().EDID ? GetProperties().EDID->GetCurrentValue() : 0;
+@@ -2884,7 +2923,10 @@ namespace gamescope
+ 			m_Mutable.ValidDynamicRefreshRates.clear();
+ 			m_Mutable.fnDynamicModeGenerator = nullptr;
+ 			if ( GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL )
++			{
+ 				AddNativeModeRefreshRates();
++				AddGeneratedRefreshRates();
++			}
+ 			return;
+ 		}
+ 
+-- 
+2.55.0
+

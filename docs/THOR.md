@@ -88,6 +88,15 @@ shell (`usr/lib/kettle/bottom-screen`, `bottom-shell`). The same mechanism as Ba
   `kettle-bottom-brightness.service` applies it, and dims the bottom screen with the top one when
   Steam dims it for idleness (the top backlight falling with no input for a few seconds);
   touches on the bottom screen count as input for Steam's dimming (gamescope 0018).
+- Its refresh rate: 60 Hz, or 30 Hz from Quick Access > Screens (`"refresh_hz"` in the same
+  file), switched live with `gamescopectl refresh_hz` (gamescope 0023, a fixed rate) on the
+  bottom gamescope (`bottom-shell` names it in `$XDG_RUNTIME_DIR/kettle-bottom-gamescope`).
+  The panel's driver lists 60 Hz only, as AYN's Android does; gamescope 0022
+  (`GAMESCOPE_GENERATED_REFRESH_RATES=30`, set by `bottom-screen`) makes 30 Hz from the same
+  timings at half the pixel clock. A longer vertical blank at the same clock instead draws
+  black lines on this panel. `ui_refresh_hz` can't do it: gamescope takes the shell's KWin
+  window for an open game, and that setting is for no game. Measured with a still image:
+  60 Hz 1.55 W, 50 Hz 1.51 W, 40 Hz 1.47 W, 30 Hz 1.45 W.
 - `GAMESCOPE_BOTTOM_SCREEN=0` in `~/.config/kettle/gamescope.conf` leaves the bottom screen off
   too. So does any failure to lease it: the bottom gamescope then exits.
 - Plasma Mobile is built at deckard's Plasma version (6.2.5), which needed networkmanager-qt
@@ -103,7 +112,9 @@ shell (`usr/lib/kettle/bottom-screen`, `bottom-shell`). The same mechanism as Ba
   shown, and while closed its contents were only transparent: they kept it drawing about 7
   full-screen frames a second, which KWin and the bottom gamescope composited each time, keeping
   the GPU awake ~70% of the time. `packages/plasma-mobile` 0001 hides them while the drawer is
-  closed (GPU awake 16%, the rest being the Performance app's readings).
+  closed (GPU awake 16%, the rest being the Performance app's readings). 0002 stops the volume
+  OSD's audio applet while the OSD is hidden: its volume meters recorded from the speaker and
+  the microphone all the time, which kept both PCMs and the audio DSP running (~0.15 W).
 
 ## The Performance app on the bottom screen
 `kettle-performance` (built with the Power applet, `packages/kettle-power-applet/app`) is always
@@ -120,6 +131,10 @@ applet's controls in a window.
   `$XDG_RUNTIME_DIR/kettle-fps`, next to the frame rate the Frame Generation plugin reads);
   mangoapp runs all through Game Mode, so the overlay needn't be on. The game is the process
   mangoapp reports, named by its Steam app manifest.
+- While Steam has dimmed the screens for idleness, the readings stop (and so do the app's
+  redraws, which the bottom screen's KWin and gamescope composite each time: about 0.07 W):
+  `bottom-brightness` keeps `$XDG_RUNTIME_DIR/kettle-bottom-dimmed` while the dim lasts, and the
+  app reads again as soon as it's gone.
 - **Settings**: the bottom screen's brightness (the Screens setting,
   `~/.config/kettle/bottom-screen.json`); Steam's performance profile, TDP limit and GPU clock;
   fan and CPU settings for the running game or all games, as the Power plugin has them; the

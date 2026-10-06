@@ -73,19 +73,25 @@ Kirigami.ApplicationWindow {
         property int interval: 1000
     }
 
+    // While Steam has dimmed the screens for idleness, nobody is reading these: they stop, and
+    // with them this window's redraws, each of which the bottom screen's KWin and gamescope
+    // composite again (about 0.07 W on the Thor). They read at once when the screens come back.
     PowerBackend {
         id: powerBackend
         mode: window.gameMode ? PowerBackend.GameMode : PowerBackend.Desktop
         interval: prefs.interval
+        active: !bottomScreenSetting.dimmed
     }
     SystemStats {
         id: systemStats
         interval: prefs.interval
+        active: !bottomScreenSetting.dimmed
     }
     GameStats {
         id: gameStats
         // mangoapp writes about once a second: read at twice that to show it soon after
         interval: 500
+        active: !bottomScreenSetting.dimmed
     }
     BottomScreen {
         id: bottomScreenSetting

@@ -62,6 +62,19 @@ SystemStats::SystemStats(QObject *parent)
     poll();
 }
 
+void SystemStats::setActive(bool active)
+{
+    if (active == m_timer.isActive())
+        return;
+    if (active) {
+        m_timer.start();
+        poll();
+    } else {
+        m_timer.stop();
+    }
+    Q_EMIT activeChanged();
+}
+
 void SystemStats::setInterval(int ms)
 {
     if (ms == m_timer.interval())

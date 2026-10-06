@@ -35,6 +35,8 @@ class GameStats : public QObject
     Q_PROPERTY(int history READ history WRITE setHistory NOTIFY historyChanged)
     // how often the file is read, ms
     Q_PROPERTY(int interval READ interval WRITE setInterval NOTIFY intervalChanged)
+    // false: no reading (and no redrawing) until it is true again, when it reads at once
+    Q_PROPERTY(bool active READ active WRITE setActive NOTIFY activeChanged)
 
 public:
     explicit GameStats(QObject *parent = nullptr);
@@ -53,6 +55,8 @@ public:
     void setHistory(int seconds);
     int interval() const { return m_timer.interval(); }
     void setInterval(int ms);
+    bool active() const { return m_timer.isActive(); }
+    void setActive(bool active);
 
     // a Steam game's name, from its app manifest; "" if it isn't installed
     Q_INVOKABLE QString nameOf(const QString &appid) const;
@@ -61,6 +65,7 @@ Q_SIGNALS:
     void changed();
     void historyChanged();
     void intervalChanged();
+    void activeChanged();
 
 private:
     void poll();
