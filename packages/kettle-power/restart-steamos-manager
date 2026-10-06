@@ -1,0 +1,17 @@
+#!/bin/sh
+# kettle-powerd's ExecStartPost: restart every logged-in user's steamos-manager once
+# kettle-powerd owns its bus name again.
+#
+# steamos-manager (26.4.1) deadlocks when a remote interface's service restarts. On the
+# owner change it takes the RemoteInterface1 write lock and then waits for the object
+# server's root write lock (to remove and re-add the relayed interfaces). Meanwhile a
+# Properties Get/Set/GetAll holds the root read lock and waits for RemoteInterface1. After
+# that it answers nothing, and Steam's TDP slider, performance profile, GPU clock and
+# charge limit all stop reaching kettle-powerd until steamos-manager restarts. Steam follows
+# a restarted steamos-manager. At boot no user session is up yet, so this does nothing.
+for user in $(loginctl list-users --no-legend | awk '{print $2}'); do
+  if systemctl --user -M "$user@" is-active -q steamos-manager.service 2>/dev/null; then
+    systemctl --user -M "$user@" restart --no-block steamos-manager.service
+  fi
+done
+exit 0
