@@ -18,6 +18,7 @@ type Info = {
   charge_limit_min: number;
   charge_speeds: { name: string; ua: number }[];
   charge_custom: { min: number; max: number; step: number } | null;
+  sleep_fan: boolean;
 };
 type Steam = { tdp: number; profile: string; gpu_level: string; gpu_clock: number; fan_control: number; charge_limit: number | null };
 type Status = {
@@ -36,6 +37,7 @@ type Status = {
   charge_speed: string;
   charge_custom_ua: number;
   charge_held: boolean;
+  sleep_fan: number;
 };
 type FanMode = "auto" | "curve" | "fixed";
 type Settings = {
@@ -53,6 +55,7 @@ const setActive = callable<[appid: number | null], void>("set_active");
 const setChargeLimit = callable<[limit: number], void>("set_charge_limit");
 const setChargeSpeed = callable<[name: string], void>("set_charge_speed");
 const setChargeCurrent = callable<[ua: number], void>("set_charge_current");
+const setSleepFan = callable<[pct: number], void>("set_sleep_fan");
 
 const FAN_MODES = [
   { data: "auto", label: "Automatic (built-in curve)" },
@@ -218,6 +221,7 @@ function GameSettings({ appid, name, inf, fanControl }: { appid: number | null; 
 }
 
 const CUSTOM = "Custom";
+const SLEEP_FAN_ON = 30; // the speed when it's switched on, percent
 const amps = (ua: number) => `${(ua / 1e6).toFixed(1)} A`;
 
 function Battery({ s, inf }: { s: Status; inf: Info }) {
@@ -230,6 +234,12 @@ function Battery({ s, inf }: { s: Status; inf: Info }) {
   useEffect(() => setUa(s.charge_custom_ua), [s.charge_custom_ua]);
   const [pct, setPct] = useState(limit < 0 ? 100 : limit);
   useEffect(() => setPct(limit < 0 ? 100 : limit), [limit]);
+  const [fan, setFan] = useState(s.sleep_fan);
+  useEffect(() => setFan(s.sleep_fan), [s.sleep_fan]);
+  const sleepFan = (v: number) => {
+    setFan(v);
+    setSleepFan(v);
+  };
   const options = inf.charge_speeds.map((sp) => ({ data: sp.name, label: sp.name }));
   if (custom) options.push({ data: CUSTOM, label: "Custom" });
   const hint = s.charge_speed === CUSTOM ? "Set the most current that goes into the battery"
@@ -287,6 +297,22 @@ function Battery({ s, inf }: { s: Status; inf: Info }) {
           />
         </PanelSectionRow>
       )}
+      {inf.sleep_fan && (
+        <PanelSectionRow>
+          <ToggleField
+            label="Fan while charging asleep"
+            description="Keeps the fan running while the device sleeps on its charger, to carry the charging heat away"
+            checked={fan > 0}
+            onChange={(on) => sleepFan(on ? SLEEP_FAN_ON : 0)}
+          />
+        </PanelSectionRow>
+      )}
+      {inf.sleep_fan && fan > 0 && (
+        <PanelSectionRow>
+          <SliderField label="Fan speed asleep" value={fan} min={10} max={100} step={5} showValue valueSuffix="%"
+            onChange={sleepFan} />
+        </PanelSectionRow>
+      )}
     </PanelSection>
   );
 }
@@ -317,7 +343,7 @@ function Content() {
 
   return (
     <>
-      {(inf.charge_limit || inf.charge_speeds.length > 0) && <Battery s={s} inf={inf} />}
+      {(inf.charge_limit || inf.charge_speeds.length > 0 || inf.sleep_fan) && <Battery s={s} inf={inf} />}
       <Readout s={s} />
       <PanelSection title="Fan and CPU">
         <GamePicker games={games} appid={appid} onChange={pick} />

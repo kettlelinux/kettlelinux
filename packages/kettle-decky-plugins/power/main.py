@@ -67,6 +67,10 @@ class Plugin:
         """The Custom charge speed, at this current (uA)."""
         await asyncio.to_thread(_call, BUS_NAME, "SetChargeCurrent", "(u)", (int(ua),), False)
 
+    async def set_sleep_fan(self, pct: int):
+        """The fan's speed while charging asleep, percent; 0 stops it as usual."""
+        await asyncio.to_thread(_call, BUS_NAME, "SetSleepFan", "(u)", (int(pct),), False)
+
     async def _main(self):
         try:
             info = await self.info()

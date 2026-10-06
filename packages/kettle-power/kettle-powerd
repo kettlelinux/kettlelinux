@@ -14,7 +14,8 @@ Steam's power controls through steamos-manager's remote interfaces (remotes.d/ke
 
 Steam keeps those per game itself. org.kettlelinux.Power1 adds what Steam has no UI for,
 per game (the Power plugin): fan curve or fixed speed, per-cluster CPU caps and core
-parking; and the charge speed (a preset, or a current of its own), for every game. Every cap source is combined here, the lowest wins, so no two writers fight over
+parking; and the charge speed (a preset, or a current of its own) and the fan while charging
+asleep (pwm-fan's pwm1_sleep_charging, kernel 40-kettle/1300), for every game. Every cap source is combined here, the lowest wins, so no two writers fight over
 scaling_max_freq or devfreq max_freq.
 
   kettle-powerd            run the daemon (system bus, root)
@@ -151,6 +152,9 @@ class Hardware:
         # custom fan settings need the user_space governor to keep step_wise off the fan
         self.fan_custom_ok = bool(self.hwmon and self.fan_zones) and all(
             "user_space" in (read(f"{z}/available_policies", "") or "").split() for z in self.fan_zones)
+        # the fan's PWM kept through s2idle while a charger is plugged in (0: stopped, as always)
+        p = f"{self.hwmon}/pwm1_sleep_charging" if self.hwmon else None
+        self.sleep_fan = p if p and os.path.exists(ROOT + p) else None
         self.battery = f"/sys/class/power_supply/{cfg['power']['battery']}"
         self.charger = f"/sys/class/power_supply/{cfg['power']['charger']}"
         # the charge current the charger may use, uA (kernel patches 40-kettle/1190 on the
@@ -259,6 +263,7 @@ class Daemon:
             "games": {"default": self.normalize({})},
             "charge_speed": "",
             "charge_custom_ua": 0,
+            "sleep_fan": 0,  # fan percent while charging asleep, 0: off
         }
         self.load()
         # charge_limit: true, the charger's end threshold; "current" or "inhibit", held here
@@ -319,6 +324,7 @@ class Daemon:
         self.state["steam"].update({k: v for k, v in saved.get("steam", {}).items() if k in self.state["steam"]})
         self.state["charge_speed"] = saved.get("charge_speed", "")
         self.state["charge_custom_ua"] = saved.get("charge_custom_ua", 0)
+        self.state["sleep_fan"] = clamp_pct(saved.get("sleep_fan", 0))
         for k, v in saved.get("games", {}).items():
             self.state["games"][k] = self.normalize(v)
         if self.state["steam"]["profile"] not in self.profiles:
@@ -450,6 +456,10 @@ class Daemon:
         write(f"{self.hw.fan_cdev}/cur_state", level)
         self.fan_saved_cdev = None
         self.fan_pct = None
+
+    def apply_sleep_fan(self):
+        if self.hw.sleep_fan:
+            write(self.hw.sleep_fan, round(self.state["sleep_fan"] * 255 / 100))
 
     def fan_tick(self):
         fan = self.fan_setting()
@@ -672,6 +682,7 @@ class Daemon:
             "charge_speed": self.state["charge_speed"],
             "charge_custom_ua": self.state["charge_custom_ua"],
             "charge_held": self.charge_held,
+            "sleep_fan": self.state["sleep_fan"],
             "active_game": self.active,
         }
 
@@ -684,6 +695,7 @@ class Daemon:
             "default_curve": self.cfg["fan"]["default_curve"],
             "full_speed_temp": self.cfg["fan"]["full_speed_temp"],
             "fan": self.hw.fan_custom_ok,
+            "sleep_fan": bool(self.hw.sleep_fan),
             "profiles": list(self.profiles),
             "tdp": [pw["tdp_min"], pw["tdp_max"]],
             "charge_limit": self.charge_ok,
@@ -728,6 +740,13 @@ class Daemon:
             self.save()
             self.charge_tick(now=True)
             return ""
+        if name == "SetSleepFan":
+            if not self.hw.sleep_fan:
+                raise ValueError("no fan in sleep on this device")
+            self.state["sleep_fan"] = clamp_pct(args[0])
+            self.save()
+            self.apply_sleep_fan()
+            return ""
         if name == "SetActiveGame":
             if args[0] != self.active:
                 self.active = args[0]
@@ -762,6 +781,7 @@ class Daemon:
 
     def run(self):
         self.apply()
+        self.apply_sleep_fan()
         if self.charge_ok and self.state["steam"]["charge_limit"] >= 0:
             self.apply_charge_limit()
         self.tick()
@@ -778,6 +798,13 @@ class Daemon:
         GLib.timeout_add(TICK_MS, self.tick)
         loop.run()
         restore(self.hw, self)
+
+
+def clamp_pct(v):
+    try:
+        return max(0, min(100, int(v)))
+    except (TypeError, ValueError):
+        return 0
 
 
 def kernel_fan_level(temp, max_state):
@@ -801,6 +828,8 @@ def restore(hw, daemon=None):
         for cpu_id in c["cpus"]:
             if cpu_id != 0 and read_int(f"/sys/devices/system/cpu/cpu{cpu_id}/online") == 0:
                 write(f"/sys/devices/system/cpu/cpu{cpu_id}/online", 1)
+    if hw.sleep_fan:
+        write(hw.sleep_fan, 0)
     # charging back on, at the firmware's own current: a stopped daemon holds no charge limit
     if hw.charge_behaviour:
         write(hw.charge_behaviour, "auto")
@@ -846,6 +875,7 @@ INTROSPECTION = f"""<node>
     <method name="SetActiveGame"><arg name="appid" type="s"/></method>
     <method name="SetChargeSpeed"><arg name="name" type="s"/></method>
     <method name="SetChargeCurrent"><arg name="ua" type="u"/></method>
+    <method name="SetSleepFan"><arg name="pct" type="u"/></method>
   </interface>
 </node>"""
 
