@@ -320,20 +320,37 @@ function Battery({ s, inf }: { s: Status; inf: Info }) {
   );
 }
 
-// The panel's two refresh rates (Portal, Thor's top screen), held whatever the game or Steam asks for
+// The panel's refresh rates, held whatever the game or Steam asks for: a toggle for two (Thor's top
+// screen), a list for more (the Portal's six)
 function Screen({ r, onChange }: { r: Refresh; onChange: (r: Refresh) => void }) {
-  const [lo, hi] = r.rates;
+  const pick = async (hz: number) => {
+    onChange({ ...r, hz });
+    onChange(await setRefresh(hz));
+  };
+  if (r.rates.length === 2) {
+    const [lo, hi] = r.rates;
+    return (
+      <PanelSection title="Screen">
+        <PanelSectionRow>
+          <ToggleField
+            label={`${hi} Hz`}
+            description={`Off: ${lo} Hz, which uses less power. Holds in games and the Steam UI alike`}
+            checked={r.hz === hi}
+            onChange={(on) => pick(on ? hi : lo)}
+          />
+        </PanelSectionRow>
+      </PanelSection>
+    );
+  }
   return (
     <PanelSection title="Screen">
       <PanelSectionRow>
-        <ToggleField
-          label={`${hi} Hz`}
-          description={`Off: ${lo} Hz, which uses less power. Holds in games and the Steam UI alike`}
-          checked={r.hz === hi}
-          onChange={async (on) => {
-            onChange({ ...r, hz: on ? hi : lo });
-            onChange(await setRefresh(on ? hi : lo));
-          }}
+        <DropdownItem
+          label="Refresh rate"
+          description="Holds in games and the Steam UI alike. Lower rates use less power"
+          rgOptions={r.rates.map((hz) => ({ data: hz, label: `${hz} Hz` }))}
+          selectedOption={r.hz}
+          onChange={(o) => pick(o.data)}
         />
       </PanelSectionRow>
     </PanelSection>
@@ -369,7 +386,7 @@ function Content() {
   return (
     <>
       {(inf.charge_limit || inf.charge_speeds.length > 0 || inf.sleep_fan) && <Battery s={s} inf={inf} />}
-      {refresh && refresh.rates.length === 2 && <Screen r={refresh} onChange={setRefreshState} />}
+      {refresh && refresh.rates.length >= 2 && <Screen r={refresh} onChange={setRefreshState} />}
       <Readout s={s} />
       <PanelSection title="Fan and CPU">
         <GamePicker games={games} appid={appid} onChange={pick} />

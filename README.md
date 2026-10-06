@@ -46,7 +46,8 @@ own *Check for updates*.
     and the Portal's power button light.
 - **Power control**: TDP budget, performance profiles, GPU clock and per-game fan curves from
   Steam's Performance panel, the Power plugin, or a Desktop Mode tray applet, a battery
-  charge limit and charge speed, and a fixed 60 or 120 Hz refresh rate on 120 Hz screens.
+  charge limit and charge speed, and a fixed refresh rate: 60 or 120 Hz on the Thor, and 50, 60,
+  100, 120, 145 or 165 Hz on the Portal.
 - **Games outside Steam**: ARM64EC Wine with FEX, DXVK and vkd3d-proton, plus Lutris and Heroic
   built for arm64.
 - **Epic Games, GOG and Amazon Games in Game Mode**: the Game Stores plugin signs in to each store,
