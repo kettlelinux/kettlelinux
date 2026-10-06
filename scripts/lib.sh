@@ -47,12 +47,19 @@ chroot_mount() {
   mount -t proc proc "$r/proc"
   mount --rbind /sys "$r/sys"
   mount -t tmpfs tmpfs "$r/run"
-  mount -t tmpfs tmpfs "$r/tmp"
+  # /tmp on disk, not tmpfs: the build machine's RAM is shared with its own small tmpfs /tmp,
+  # and rauc convert unpacks the whole rootfs.img (~17 GB) into the tools chroot's /tmp.
+  local t; t="$(chroot_tmp "$r")"
+  rm -rf "$t"; install -d -m 1777 "$t"
+  mount --bind "$t" "$r/tmp"
 }
+
+chroot_tmp() { printf '%s\n' "$ROOT/build/tmp/$(basename "$1")"; }
 
 chroot_umount() {
   local r="$1" m
   for m in dev/pts dev sys proc run tmp; do umount -l "$r/$m" 2>/dev/null || true; done
+  rm -rf "$(chroot_tmp "$r")"
 }
 
 # Where builds get Valve's packages: KETTLE_MIRROR (a URL with one directory per repo), else
