@@ -98,6 +98,12 @@ shell (`usr/lib/kettle/bottom-screen`, `bottom-shell`). The same mechanism as Ba
   deckard's other Plasma apps left at 6.0.4 are built at 6.2.5 as well: plasma-nm (the shell's
   Wi-Fi settings), kinfocenter and plasma-systemmonitor (neither started with deckard's 6.2.5
   libraries, on the desktop too).
+- Power: the bottom screen costs about 0.7 W at idle (2.06 W with it on, 1.32 W off, Steam UI
+  idle on battery). Plasma Mobile's pull-down drawer is a full-screen overlay window that stays
+  shown, and while closed its contents were only transparent: they kept it drawing about 7
+  full-screen frames a second, which KWin and the bottom gamescope composited each time, keeping
+  the GPU awake ~70% of the time. `packages/plasma-mobile` 0001 hides them while the drawer is
+  closed (GPU awake 16%, the rest being the Performance app's readings).
 
 ## The Performance app on the bottom screen
 `kettle-performance` (built with the Power applet, `packages/kettle-power-applet/app`) is always
