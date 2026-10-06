@@ -6,7 +6,8 @@
 # game is running, so a game's settings follow it.
 # The screen's refresh rate too, on a device whose panel has more than one (/usr/lib/kettle/
 # refresh-rates): gamescope holds it (refresh_hz, gamescope 0023), set live through gamescopectl,
-# and gamescope-session starts at it from ~/.config/kettle/refresh-rate.conf.
+# and gamescope-session starts at it from ~/.config/kettle/refresh-rate.conf. Auto (0) holds none:
+# Steam's frame limit picks the rate, up to auto_refresh_max_hz when there's no limit (0024).
 import asyncio
 import json
 import os
@@ -45,6 +46,8 @@ RATES_FILE = "/usr/lib/kettle/refresh-rates"
 RATE_CONF = os.path.join(decky.DECKY_USER_HOME, ".config", "kettle", "refresh-rate.conf")
 # the rate gamescope-session starts at until one is picked (gamescope_refresh_hz)
 GAMESCOPE_CONF = "/usr/lib/kettle/gamescope.conf"
+# refresh_hz 0: no rate held, Steam's frame limit picks one (Quick Access > Power's Auto)
+AUTO = 0
 
 
 def _rates() -> list[int]:
@@ -73,7 +76,7 @@ def _refresh() -> dict:
     try:
         with open(RATE_CONF) as f:
             m = re.search(r"gamescope_refresh_hz=(\d+)", f.read())
-        if m and int(m.group(1)) in rates:
+        if m and (int(m.group(1)) in rates or int(m.group(1)) == AUTO):
             hz = int(m.group(1))
     except OSError:
         pass
@@ -139,9 +142,9 @@ class Plugin:
         return _refresh()
 
     async def set_refresh(self, hz: int) -> dict:
-        if int(hz) in _rates():
+        if int(hz) in _rates() or int(hz) == AUTO:
             await asyncio.to_thread(_apply_refresh, int(hz))
-            decky.logger.info("power: screen at %d Hz", int(hz))
+            decky.logger.info("power: screen at %s", f"{int(hz)} Hz" if int(hz) else "auto")
         return _refresh()
 
     async def _main(self):

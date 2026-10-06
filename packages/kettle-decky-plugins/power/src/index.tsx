@@ -320,35 +320,22 @@ function Battery({ s, inf }: { s: Status; inf: Info }) {
   );
 }
 
-// The panel's refresh rates, held whatever the game or Steam asks for: a toggle for two (Thor's top
-// screen), a list for more (the Portal's six)
+// The panel's refresh rate: Auto (0, Steam's frame limit picks it) or one held whatever the game
+// or Steam asks for
 function Screen({ r, onChange }: { r: Refresh; onChange: (r: Refresh) => void }) {
   const pick = async (hz: number) => {
     onChange({ ...r, hz });
     onChange(await setRefresh(hz));
   };
-  if (r.rates.length === 2) {
-    const [lo, hi] = r.rates;
-    return (
-      <PanelSection title="Screen">
-        <PanelSectionRow>
-          <ToggleField
-            label={`${hi} Hz`}
-            description={`Off: ${lo} Hz, which uses less power. Holds in games and the Steam UI alike`}
-            checked={r.hz === hi}
-            onChange={(on) => pick(on ? hi : lo)}
-          />
-        </PanelSectionRow>
-      </PanelSection>
-    );
-  }
   return (
     <PanelSection title="Screen">
       <PanelSectionRow>
         <DropdownItem
           label="Refresh rate"
-          description="Holds in games and the Steam UI alike. Lower rates use less power"
-          rgOptions={r.rates.map((hz) => ({ data: hz, label: `${hz} Hz` }))}
+          description={r.hz === 0
+            ? "Steam's frame limit picks it: each limit runs at a rate it divides evenly"
+            : "Holds in games and the Steam UI alike. Lower rates use less power"}
+          rgOptions={[{ data: 0, label: "Auto" }, ...r.rates.map((hz) => ({ data: hz, label: `${hz} Hz` }))]}
           selectedOption={r.hz}
           onChange={(o) => pick(o.data)}
         />
