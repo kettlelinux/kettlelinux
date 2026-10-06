@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Tue, 6 Oct 2026 18:30:00 -0500
+Subject: [PATCH] steamcompmgr: add auto_refresh_max_hz, a ceiling while
+ nothing asks for a rate
+
+With no frame limit, or no game focused, the display runs at its
+highest refresh rate. On the AYN Odin 2 Portal that is now 165 Hz, above
+the 120 Hz AYN sells its panel at, but the higher rates are still useful
+for frame limits: a 55 fps limit runs at 165 Hz, 145 fps at 145 Hz.
+
+Add an auto_refresh_max_hz ConVar (also settable as
+gamescope_auto_refresh_max_hz in the environment or with gamescopectl):
+while nothing asks for a rate, the display runs at the highest valid
+rate at or below it. A frame limit still picks any valid rate, and
+refresh_hz still holds one. The default, 0, keeps the highest.
+---
+ src/steamcompmgr.cpp | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index c4537d7e..3ecadc69 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -296,6 +296,7 @@ update_runtime_info();
+ 
+ gamescope::ConVar<bool> cv_adaptive_sync( "adaptive_sync", false, "Whether or not adaptive sync is enabled if available." );
+ gamescope::ConVar<int> cv_ui_refresh_hz( "ui_refresh_hz", 0, "Refresh rate (Hz) to run the display at while no game is open, if the display supports it. 0 uses its highest." );
++gamescope::ConVar<int> cv_auto_refresh_max_hz( "auto_refresh_max_hz", 0, "Highest refresh rate (Hz) the display runs at when nothing asks for one (no frame limit, or no game focused): the highest valid rate at or below it. A frame limit can still pick a higher rate. 0 allows the display's highest." );
+ gamescope::ConVar<bool> cv_adaptive_sync_ignore_overlay( "adaptive_sync_ignore_overlay", false, "Whether or not to ignore overlay planes for pushing commits with adaptive sync." );
+ gamescope::ConVar<int> cv_adaptive_sync_overlay_cycles( "adaptive_sync_overlay_cycles", 1, "Number of vblank cycles to ignore overlay repaints before forcing a commit with adaptive sync." );
+ 
+@@ -3316,7 +3317,19 @@ paint_all( global_focus_t *pFocus, bool async )
+ 
+ 		int nDynamicRefreshHz = g_nDynamicRefreshRate[GetBackend()->GetScreenType()];
+ 
++		// with nothing asking for a rate: the highest one, or the highest at or below auto_refresh_max_hz
+ 		int nTargetRefreshHz = int( rates[ rates.size() - 1 ] );
++		if ( cv_auto_refresh_max_hz > 0 )
++		{
++			for ( auto rate = rates.rbegin(); rate != rates.rend(); rate++ )
++			{
++				if ( int( *rate ) <= cv_auto_refresh_max_hz )
++				{
++					nTargetRefreshHz = int( *rate );
++					break;
++				}
++			}
++		}
+ 		if ( nDynamicRefreshHz && steamcompmgr_window_should_refresh_switch( pFocus->focusWindow ) )
+ 			nTargetRefreshHz = nDynamicRefreshHz;
+ 		else if ( cv_ui_refresh_hz > 0 && !steamcompmgr_user_has_any_game_open() &&
+-- 
+2.56.0
+
