@@ -37,12 +37,17 @@
 #   highest: a 30 or 60 fps cap on the Portal runs the panel at 60 Hz instead of 120.
 # 0021 (ours) adds ui_refresh_hz (env gamescope_ui_refresh_hz): the refresh rate while no game is
 #   open, for a lower-power Steam UI; 0 (default) keeps the display's highest.
+# 0022 (ours) adds GAMESCOPE_GENERATED_REFRESH_RATES: lower rates an EDID-less panel doesn't list,
+#   made at a lower pixel clock; the Thor's bottom screen offers 30 Hz with it (Quick Access >
+#   Screens).
+# 0023 (ours) adds refresh_hz (env gamescope_refresh_hz): a fixed refresh rate whatever Steam asks
+#   for, which Quick Access > Power sets (60 or 120 Hz on the Portal and the Thor's top screen).
 #
 # To follow a newer deckard gamescope, move _commit to the one its `gamescopectl version`
 # names and drop whichever of 0001-0008 it already contains.
 pkgname=gamescope
 pkgver=3.16.28
-pkgrel=2.11
+pkgrel=2.13
 _commit=e383171ff1c0f7b5b37f05f2bb67f7c5282b087f
 pkgdesc='gaming shell based on Xwayland, powered by Vulkan and DRM (deckard + Kettle Linux, SGSR 1)'
 arch=(aarch64)
@@ -78,7 +83,9 @@ source=("git+https://github.com/ValveSoftware/gamescope.git#commit=$_commit"
         0018-wlserver-touches-passed-to-a-lease-companion-still-c.patch
         0019-DRM-offer-an-EDID-less-internal-panel-s-native-modes-.patch
         0020-steamcompmgr-run-a-frame-capped-game-at-the-lowest-re.patch
-        0021-steamcompmgr-add-ui_refresh_hz-the-refresh-rate-while-n.patch)
+        0021-steamcompmgr-add-ui_refresh_hz-the-refresh-rate-while-n.patch
+        0022-DRM-offer-generated-lower-refresh-rates-for-an-EDID-.patch
+        0023-steamcompmgr-add-refresh_hz-a-fixed-refresh-rate.patch)
 sha256sums=('SKIP'
             'SKIP'
             'a34b30f8c58881f29a632ae1b4c8d7fbd7ba8c1ae6509d2b85afe362cad6de93'
@@ -102,7 +109,9 @@ sha256sums=('SKIP'
             '2e2b46c5bcd2534cb1baaf7e7a81b6bc60ea5d97c63c14eed8f6bed90e05b335'
             'e945d6e3a54820f103108533529d1dfd360fdae45674595bb5c450ed28d946ec'
             '0dc6b3bd79d32fea9d52aa6ad7a783c0bcde38deed9688c8001b449c0e1aee93'
-            '6a606555838276f200b7e6a03d6197c17e84dd86f2a5d4620410d76746143b27')
+            '6a606555838276f200b7e6a03d6197c17e84dd86f2a5d4620410d76746143b27'
+            'bb4982c7401d41e1b5a9410402ca7b154e451a9fa1da05ac48ba8b8cf4610582'
+            '6a6d9dd0c7af1d16f9354f80104df909aa43e06281953f06f40b8ded9f71ea4f')
 
 prepare() {
   cd gamescope

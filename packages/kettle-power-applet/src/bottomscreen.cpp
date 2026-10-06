@@ -20,6 +20,7 @@ constexpr int minPercent = 2;
 BottomScreen::BottomScreen(QObject *parent)
     : QObject(parent)
     , m_path(QDir::homePath() + QStringLiteral("/.config/kettle/bottom-screen.json"))
+    , m_dimmedPath(qEnvironmentVariable("XDG_RUNTIME_DIR") + QStringLiteral("/kettle-bottom-dimmed"))
     , m_available(qEnvironmentVariable("KETTLE_BOTTOM_SHELL") == QLatin1String("1")
                   && QFile::exists(QStringLiteral("/sys/class/backlight/bottom-panel")))
 {
@@ -29,6 +30,19 @@ BottomScreen::BottomScreen(QObject *parent)
     m_timer.setInterval(2000);
     connect(&m_timer, &QTimer::timeout, this, &BottomScreen::load);
     m_timer.start();
+    // the flag comes and goes, so watch its directory (which changes rarely) for it
+    m_watcher.addPath(QFileInfo(m_dimmedPath).absolutePath());
+    connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, &BottomScreen::readDimmed);
+    readDimmed();
+}
+
+void BottomScreen::readDimmed()
+{
+    const bool dimmed = QFile::exists(m_dimmedPath);
+    if (dimmed != m_dimmed) {
+        m_dimmed = dimmed;
+        Q_EMIT dimmedChanged();
+    }
 }
 
 void BottomScreen::load()

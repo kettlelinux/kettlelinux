@@ -1,0 +1,35 @@
+From 8697021bb1fcc5b31bd2e8be2ef98e22398937b0 Mon Sep 17 00:00:00 2001
+From: gennro <kettlelinux@kettlelinux.org>
+Date: Tue, 6 Oct 2026 06:54:10 -0500
+Subject: [PATCH] volumeosd: keep the audio applet's volume meters off while
+ the OSD is hidden
+
+The volume OSD window is created hidden and kept, with the audio applet
+in it. Each device's VolumeMonitor records only while its slider is
+visible, but items in a hidden window still count as visible, so the
+shell kept a peak-meter capture stream on the speaker's monitor and the
+microphone the whole time. On the AYN Thor that held the speaker and mic
+PCMs open and the audio DSP awake (~200 IPCC and ~850 RPMh interrupts a
+second, DDR kept clocked up): about 0.15 W at idle. Hide the applet
+while the window is.
+---
+ components/mobileshell/qml/volumeosd/VolumeOSD.qml | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/components/mobileshell/qml/volumeosd/VolumeOSD.qml b/components/mobileshell/qml/volumeosd/VolumeOSD.qml
+index c4294f1..97bfe80 100644
+--- a/components/mobileshell/qml/volumeosd/VolumeOSD.qml
++++ b/components/mobileshell/qml/volumeosd/VolumeOSD.qml
+@@ -160,6 +160,9 @@ Window {
+ 
+                 AudioApplet {
+                     id: applet
++                    // only while shown: its volume meters record from every sink and source,
++                    // which keeps them (and the audio DSP) running
++                    visible: window.visible
+                     Layout.topMargin: Kirigami.Units.gridUnit + Kirigami.Units.smallSpacing * 3
+                     Layout.alignment: Qt.AlignHCenter
+                     Layout.preferredWidth: cards.width
+-- 
+2.55.0
+

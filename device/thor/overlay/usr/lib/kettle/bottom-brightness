@@ -13,6 +13,10 @@
 # bottom is measured against. Nothing is written while the bottom screen is off (its DSI link is
 # down then: a write times out). 61-kettle-thor-backlight.rules makes bottom-panel writable for
 # the video group.
+#
+# While dimmed, $XDG_RUNTIME_DIR/kettle-bottom-dimmed exists: the Performance app on the bottom
+# screen stops reading and redrawing its readings then (nobody is looking), and starts again as
+# soon as it's gone.
 import glob
 import json
 import os
@@ -29,6 +33,8 @@ MIN_PERCENT = 2           # the panel's lowest visible level; 0 would look off
 DIM_BELOW = 0.6           # the top at under this share of its level ...
 IDLE_SECONDS = 4          # ... with no input for this long, is Steam dimming it
 UNDIM_ABOVE = 0.9         # the top back at this share of its level: dimming is over
+DIMMED_FLAG = os.path.join(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"),
+                           "kettle-bottom-dimmed")
 
 last_input = time.monotonic()
 
@@ -82,7 +88,20 @@ def percent():
     return min(100, max(MIN_PERCENT, p))
 
 
+def set_dimmed_flag(dimmed):
+    try:
+        if dimmed:
+            open(DIMMED_FLAG, "w").close()
+        else:
+            os.unlink(DIMMED_FLAG)
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        print(f"bottom-brightness: {DIMMED_FLAG}: {e}", file=sys.stderr, flush=True)
+
+
 def main():
+    set_dimmed_flag(False)    # a stale one, from a run that ended while dimmed
     threading.Thread(target=watch_input, daemon=True).start()
     bottom_max = read(BOTTOM + "max_brightness")
     connector = bottom_connector()
@@ -98,8 +117,10 @@ def main():
             if dimmed:
                 if idle < IDLE_SECONDS or top >= UNDIM_ABOVE * top_level:
                     dimmed = False
+                    set_dimmed_flag(False)
             elif top < DIM_BELOW * top_level and idle >= IDLE_SECONDS:
                 dimmed = True
+                set_dimmed_flag(True)
             if not dimmed:
                 top_level = top
             share = top / top_level if dimmed and top_level else 1.0

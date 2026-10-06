@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #pragma once
 
+#include <QFileSystemWatcher>
 #include <QObject>
 #include <QTimer>
 #include <qqmlregistration.h>
@@ -17,22 +18,31 @@ class BottomScreen : public QObject
     // device whose bottom panel's backlight is bottom-panel
     Q_PROPERTY(bool available READ available CONSTANT)
     Q_PROPERTY(int brightness READ brightness WRITE setBrightness NOTIFY brightnessChanged)
+    // Steam has dimmed the screens for idleness: bottom-brightness keeps
+    // $XDG_RUNTIME_DIR/kettle-bottom-dimmed while it lasts
+    Q_PROPERTY(bool dimmed READ dimmed NOTIFY dimmedChanged)
 
 public:
     explicit BottomScreen(QObject *parent = nullptr);
 
     bool available() const { return m_available; }
     int brightness() const { return m_brightness; }
+    bool dimmed() const { return m_dimmed; }
     void setBrightness(int percent);
 
 Q_SIGNALS:
     void brightnessChanged();
+    void dimmedChanged();
 
 private:
     void load();
+    void readDimmed();
 
     QTimer m_timer;
+    QFileSystemWatcher m_watcher;
     QString m_path;
+    QString m_dimmedPath;
     bool m_available = false;
     int m_brightness = 70;
+    bool m_dimmed = false;
 };

@@ -4,8 +4,14 @@
 # Performance; this plugin shows them and sets what Steam has no UI for, the charge speed among
 # them. The charge limit is here as well as in Steam's settings (the same setting). The frontend tells kettle-powerd which
 # game is running, so a game's settings follow it.
+# The screen's refresh rate too, on a device whose panel has more than one (/usr/lib/kettle/
+# refresh-rates): gamescope holds it (refresh_hz, gamescope 0023), set live through gamescopectl,
+# and gamescope-session starts at it from ~/.config/kettle/refresh-rate.conf.
 import asyncio
 import json
+import os
+import re
+import subprocess
 
 import decky
 import steamlib
@@ -33,6 +39,50 @@ async def _power(method: str, *args: str, out: bool = False):
 
 def _key(appid) -> str:
     return str(appid) if appid else "default"
+
+
+RATES_FILE = "/usr/lib/kettle/refresh-rates"
+RATE_CONF = os.path.join(decky.DECKY_USER_HOME, ".config", "kettle", "refresh-rate.conf")
+
+
+def _rates() -> list[int]:
+    try:
+        with open(RATES_FILE) as f:
+            return sorted(int(r) for r in f.read().split())
+    except (OSError, ValueError):
+        return []
+
+
+def _refresh() -> dict:
+    rates = _rates()
+    hz = rates[-1] if rates else 0
+    try:
+        with open(RATE_CONF) as f:
+            m = re.search(r"gamescope_refresh_hz=(\d+)", f.read())
+        if m and int(m.group(1)) in rates:
+            hz = int(m.group(1))
+    except OSError:
+        pass
+    return {"rates": rates, "hz": hz}
+
+
+def _apply_refresh(hz: int):
+    os.makedirs(os.path.dirname(RATE_CONF), exist_ok=True)
+    with open(RATE_CONF + ".new", "w") as f:
+        f.write(f"# Quick Access > Power's refresh rate, read by gamescope-session\nexport gamescope_refresh_hz={hz}\n")
+    os.replace(RATE_CONF + ".new", RATE_CONF)
+    # live, on Game Mode's gamescope: its display is in the user manager's environment
+    # (gamescope-onready); the plugin runs as that user, without its session's env
+    uid = os.getuid()
+    env = dict(os.environ, XDG_RUNTIME_DIR=f"/run/user/{uid}",
+               DBUS_SESSION_BUS_ADDRESS=f"unix:path=/run/user/{uid}/bus")
+    r = subprocess.run(["systemctl", "--user", "show-environment"], env=env, capture_output=True, text=True)
+    m = re.search(r"^GAMESCOPE_WAYLAND_DISPLAY=(.+)$", r.stdout, re.M)
+    if not m:
+        return
+    env["GAMESCOPE_WAYLAND_DISPLAY"] = m.group(1)
+    subprocess.run(["gamescopectl", "refresh_hz", str(hz)], env=env, check=False, timeout=5,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 
 class Plugin:
@@ -70,6 +120,15 @@ class Plugin:
     async def set_sleep_fan(self, pct: int):
         """The fan's speed while charging asleep, percent; 0 stops it as usual."""
         await asyncio.to_thread(_call, BUS_NAME, "SetSleepFan", "(u)", (int(pct),), False)
+
+    async def get_refresh(self) -> dict:
+        return _refresh()
+
+    async def set_refresh(self, hz: int) -> dict:
+        if int(hz) in _rates():
+            await asyncio.to_thread(_apply_refresh, int(hz))
+            decky.logger.info("power: screen at %d Hz", int(hz))
+        return _refresh()
 
     async def _main(self):
         try:

@@ -45,6 +45,7 @@ type Settings = {
   cpu: { little: number | null; mid: number | null; prime: number | null; mid_cores: number; prime_core: boolean };
 };
 type Game = { custom: boolean; settings: Settings };
+type Refresh = { rates: number[]; hz: number };
 
 const info = callable<[], Info>("info");
 const status = callable<[], Status>("status");
@@ -56,6 +57,8 @@ const setChargeLimit = callable<[limit: number], void>("set_charge_limit");
 const setChargeSpeed = callable<[name: string], void>("set_charge_speed");
 const setChargeCurrent = callable<[ua: number], void>("set_charge_current");
 const setSleepFan = callable<[pct: number], void>("set_sleep_fan");
+const getRefresh = callable<[], Refresh>("get_refresh");
+const setRefresh = callable<[hz: number], Refresh>("set_refresh");
 
 const FAN_MODES = [
   { data: "auto", label: "Automatic (built-in curve)" },
@@ -317,13 +320,35 @@ function Battery({ s, inf }: { s: Status; inf: Info }) {
   );
 }
 
+// The panel's two refresh rates (Portal, Thor's top screen), held whatever the game or Steam asks for
+function Screen({ r, onChange }: { r: Refresh; onChange: (r: Refresh) => void }) {
+  const [lo, hi] = r.rates;
+  return (
+    <PanelSection title="Screen">
+      <PanelSectionRow>
+        <ToggleField
+          label={`${hi} Hz`}
+          description={`Off: ${lo} Hz, which uses less power. Holds in games and the Steam UI alike`}
+          checked={r.hz === hi}
+          onChange={async (on) => {
+            onChange({ ...r, hz: on ? hi : lo });
+            onChange(await setRefresh(on ? hi : lo));
+          }}
+        />
+      </PanelSectionRow>
+    </PanelSection>
+  );
+}
+
 function Content() {
   const [inf, setInf] = useState<Info | null>(null);
   const [s, setS] = useState<Status | null>(null);
   const [error, setError] = useState(false);
   const [games, setGames] = useState<InstalledGame[] | null>(null);
+  const [refresh, setRefreshState] = useState<Refresh | null>(null);
   const [appid, pick] = useSelectedGame(games);
   useEffect(() => {
+    getRefresh().then(setRefreshState);
     info().then(setInf).catch(() => setError(true));
     installedGames().then(setGames);
     const poll = () => status().then(setS).catch(() => setError(true));
@@ -344,6 +369,7 @@ function Content() {
   return (
     <>
       {(inf.charge_limit || inf.charge_speeds.length > 0 || inf.sleep_fan) && <Battery s={s} inf={inf} />}
+      {refresh && refresh.rates.length === 2 && <Screen r={refresh} onChange={setRefreshState} />}
       <Readout s={s} />
       <PanelSection title="Fan and CPU">
         <GamePicker games={games} appid={appid} onChange={pick} />

@@ -126,6 +126,19 @@ QString PowerBackend::editKey() const
     return !m_activeGame.isEmpty() && m_custom ? m_activeGame : allGames;
 }
 
+void PowerBackend::setActive(bool active)
+{
+    if (active == m_timer.isActive())
+        return;
+    if (active) {
+        m_timer.start();
+        tick();
+    } else {
+        m_timer.stop();
+    }
+    Q_EMIT activeChanged();
+}
+
 void PowerBackend::setInterval(int ms)
 {
     if (ms == m_timer.interval())

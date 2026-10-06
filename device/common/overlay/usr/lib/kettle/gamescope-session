@@ -40,7 +40,9 @@ export QT_IM_MODULE=xim GTK_IM_MODULE=xim QT_QPA_PLATFORMTHEME=kde
 #                          (kettle-bottom-screen.service) while Game Mode runs
 #   GAMESCOPE_LEASE_TOUCH  that screen's touchscreen, whose input goes to it, never to Steam
 #   GAMESCOPE_BOTTOM_SCREEN=0  leave the second screen off in Game Mode
-for f in /usr/lib/kettle/gamescope.conf /etc/kettle/gamescope.conf "$HOME/.config/kettle/gamescope.conf"; do
+# and last the refresh rate picked in Quick Access > Power (gamescope_refresh_hz, which it writes)
+for f in /usr/lib/kettle/gamescope.conf /etc/kettle/gamescope.conf "$HOME/.config/kettle/gamescope.conf" \
+    "$HOME/.config/kettle/refresh-rate.conf"; do
   [ -r "$f" ] && . "$f"
 done
 [ "${GAMESCOPE_BOTTOM_SCREEN:-1}" = 0 ] && GAMESCOPE_LEASE_OUTPUT=

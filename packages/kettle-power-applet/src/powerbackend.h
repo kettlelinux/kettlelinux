@@ -45,6 +45,8 @@ class PowerBackend : public QObject
     Q_PROPERTY(QString activeGame READ activeGame NOTIFY activeGameChanged)
     // how often status is read, in ms
     Q_PROPERTY(int interval READ interval WRITE setInterval NOTIFY intervalChanged)
+    // false: no reading (and no redrawing) until it is true again, when it reads at once
+    Q_PROPERTY(bool active READ active WRITE setActive NOTIFY activeChanged)
 
 public:
     enum Mode { Desktop, GameMode };
@@ -63,6 +65,8 @@ public:
     bool customSettings() const { return m_custom; }
     int interval() const { return m_timer.interval(); }
     void setInterval(int ms);
+    bool active() const { return m_timer.isActive(); }
+    void setActive(bool active);
 
     // one of Steam's values, by its GetStatus name: profile, tdp, gpu_level, gpu_clock,
     // fan_control, charge_limit
@@ -85,6 +89,7 @@ Q_SIGNALS:
     void statusChanged();
     void settingsChanged();
     void intervalChanged();
+    void activeChanged();
 
 private:
     // done(ok, the string a Get* method returns)

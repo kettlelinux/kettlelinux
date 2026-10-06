@@ -33,6 +33,8 @@ class SystemStats : public QObject
     Q_PROPERTY(QVariant batteryEnergyFull READ batteryEnergyFull NOTIFY changed)
     // how often it's read, ms
     Q_PROPERTY(int interval READ interval WRITE setInterval NOTIFY intervalChanged)
+    // false: no reading (and no redrawing) until it is true again, when it reads at once
+    Q_PROPERTY(bool active READ active WRITE setActive NOTIFY activeChanged)
 
 public:
     explicit SystemStats(QObject *parent = nullptr);
@@ -50,10 +52,13 @@ public:
     QVariant batteryEnergyFull() const { return m_batteryEnergyFull; }
     int interval() const { return m_timer.interval(); }
     void setInterval(int ms);
+    bool active() const { return m_timer.isActive(); }
+    void setActive(bool active);
 
 Q_SIGNALS:
     void changed();
     void intervalChanged();
+    void activeChanged();
 
 private:
     void poll();

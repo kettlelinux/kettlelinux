@@ -1,7 +1,7 @@
 # Screens: the AYN Thor's bottom screen from Game Mode's Quick Access, which is on the top screen
 # (so it can be turned back on from there). Its setting, ~/.config/kettle/bottom-screen.json,
-# is read by bottom-screen (off: the screen stays dark) and bottom-brightness (its brightness,
-# which Steam's own slider leaves alone: that one sets the top screen's).
+# is read by bottom-screen (off: the screen stays dark; its refresh rate) and bottom-brightness
+# (its brightness, which Steam's own slider leaves alone: that one sets the top screen's).
 import asyncio
 import json
 import os
@@ -11,7 +11,8 @@ import decky
 
 STATE = os.path.join(decky.DECKY_USER_HOME, ".config", "kettle", "bottom-screen.json")
 UNIT = "kettle-bottom-screen.service"
-DEFAULT = {"enabled": True, "brightness": 70}
+DEFAULT = {"enabled": True, "brightness": 70, "refresh_hz": 60}
+REFRESH_RATES = (60, 30)  # 30: bottom-screen offers it (gamescope 0022)
 
 
 def _load() -> dict:
@@ -31,12 +32,32 @@ def _save(s: dict):
     os.replace(STATE + ".new", STATE)
 
 
-def _systemctl(*args: str):
-    # the Game Mode user's own manager (the plugin runs as that user, without its session's env)
+def _user_env() -> dict:
+    # the Game Mode user's session (the plugin runs as that user, without its session's env)
     uid = os.getuid()
-    env = dict(os.environ, XDG_RUNTIME_DIR=f"/run/user/{uid}",
-               DBUS_SESSION_BUS_ADDRESS=f"unix:path=/run/user/{uid}/bus")
-    subprocess.run(["systemctl", "--user", *args], env=env, check=False,
+    return dict(os.environ, XDG_RUNTIME_DIR=f"/run/user/{uid}",
+                DBUS_SESSION_BUS_ADDRESS=f"unix:path=/run/user/{uid}/bus")
+
+
+def _systemctl(*args: str):
+    subprocess.run(["systemctl", "--user", *args], env=_user_env(), check=False,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+
+def _apply_refresh(hz: int):
+    # live, on the bottom screen's gamescope (bottom-shell names it); a screen that's off or
+    # starting picks the setting up from the file instead
+    env = _user_env()
+    try:
+        with open(os.path.join(env["XDG_RUNTIME_DIR"], "kettle-bottom-gamescope")) as f:
+            display = f.read().strip()
+    except OSError:
+        return
+    if not display:
+        return
+    env["GAMESCOPE_WAYLAND_DISPLAY"] = display
+    # a fixed rate (gamescope 0023), which switches at once
+    subprocess.run(["gamescopectl", "refresh_hz", str(hz)], env=env, check=False, timeout=5,
                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 
@@ -57,6 +78,14 @@ class Plugin:
         s = _load()
         s["brightness"] = max(2, min(100, int(percent)))
         _save(s)
+
+    async def set_refresh(self, hz: int) -> dict:
+        s = _load()
+        s["refresh_hz"] = int(hz) if int(hz) in REFRESH_RATES else 60
+        _save(s)
+        await asyncio.to_thread(_apply_refresh, s["refresh_hz"])
+        decky.logger.info("screens: bottom screen at %d Hz", s["refresh_hz"])
+        return s
 
     async def _main(self):
         pass

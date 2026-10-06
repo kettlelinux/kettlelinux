@@ -16,6 +16,17 @@ grep -qE '"enabled": *false' "$HOME/.config/kettle/bottom-screen.json" 2>/dev/nu
 [ -n "${GAMESCOPE_LEASE_OUTPUT:-}" ] || exit 3
 sock="$XDG_RUNTIME_DIR/gamescope-lease.sock"
 
+# The panel only lists 60 Hz, but runs at 30 with the same timings at half the pixel clock
+# (gamescope 0022; a longer vertical blank at the same clock draws black lines on it instead).
+# Quick Access > Screens picks the rate ("refresh_hz", 60 by default), live through gamescopectl;
+# this is the one the screen starts at. It's a fixed rate (refresh_hz, 0023): ui_refresh_hz
+# would never apply here, as gamescope takes the shell's KWin window for a game that's open. It
+# also replaces Game Mode's refresh_hz from gamescope.conf above, which is the top screen's.
+export GAMESCOPE_GENERATED_REFRESH_RATES=30
+refresh=$(sed -n 's/.*"refresh_hz": *\([0-9]*\).*/\1/p' "$HOME/.config/kettle/bottom-screen.json" 2>/dev/null)
+export gamescope_refresh_hz=${refresh:-60}
+unset gamescope_ui_refresh_hz
+
 # Game Mode's gamescope makes the socket before it reports ready, which this unit starts after;
 # allow for a slow start anyway
 for _ in $(seq 50); do
