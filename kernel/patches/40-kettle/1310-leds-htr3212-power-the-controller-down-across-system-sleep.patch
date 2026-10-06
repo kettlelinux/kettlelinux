@@ -1,0 +1,71 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] leds: htr3212: power the controller down across system sleep
+
+The driver enables its supply at probe and holds it until remove, so the
+stick LED controllers stay powered through suspend and keep the shared
+AYN MCU rail (vdd_mcu_3v3) on with them. Shut the chip down, drop SDB and
+release the supply at suspend; at resume power it back up and redo the
+register setup. The LED core (LED_CORE_SUSPENDRESUME) turns each LED off
+before this runs and restores its brightness after.
+
+Taken from the ROCKNIX SM8750 HTR3212 driver as Armada carries it.
+---
+--- a/drivers/leds/leds-htr3212.c
++++ b/drivers/leds/leds-htr3212.c
+@@ -273,6 +273,48 @@
+ 	return 0;
+ }
+ 
++static int htr3212_suspend(struct device *dev)
++{
++	struct htr3212_priv *priv = dev_get_drvdata(dev);
++	int ret;
++
++	ret = htr3212_write(priv, HTR3212_SHUTDOWN, 0x00);
++	if (ret)
++		dev_err(dev, "Failed to shut down device on suspend (%pe)\n",
++			ERR_PTR(ret));
++
++	gpiod_set_value_cansleep(priv->sdb, 0);
++	regulator_disable(priv->vdd);
++
++	return 0;
++}
++
++static int htr3212_resume(struct device *dev)
++{
++	struct htr3212_priv *priv = dev_get_drvdata(dev);
++	int ret;
++
++	ret = regulator_enable(priv->vdd);
++	if (ret < 0) {
++		dev_err(dev, "Failed to enable regulator on resume (%pe)\n",
++			ERR_PTR(ret));
++		return ret;
++	}
++
++	gpiod_set_value_cansleep(priv->sdb, 1);
++	usleep_range(10000, 11000);
++
++	ret = htr3212_init_regs(priv);
++	if (ret)
++		dev_err(dev, "Failed to reinitialize registers on resume (%pe)\n",
++			ERR_PTR(ret));
++
++	return ret;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(htr3212_pm_ops, htr3212_suspend,
++				htr3212_resume);
++
+ static void htr3212_remove(struct i2c_client *client)
+ {
+ 	struct htr3212_priv *priv = i2c_get_clientdata(client);
+@@ -306,6 +348,7 @@
+ 	.driver = {
+ 		.name	= "htr3212",
+ 		.of_match_table = of_htr3212_match,
++		.pm	= pm_sleep_ptr(&htr3212_pm_ops),
+ 	},
+ 	.probe		= htr3212_probe,
+ 	.remove		= htr3212_remove,

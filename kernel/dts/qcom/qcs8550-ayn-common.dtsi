@@ -467,7 +467,7 @@
 		startup-delay-us = <10000>;
 
 		gpio = <&tlmm 99 GPIO_ACTIVE_HIGH>;
-		regulator-always-on;
+		/* not always-on: rsinput and the stick LEDs drop it in suspend */
 		regulator-boot-on;
 		enable-active-high;
 	};
@@ -1716,7 +1716,7 @@
 		gamepad-pid = <0x3001>;
 		gamepad-rev = <0x0001>;
 
-		vdd-supply = <&vreg_bob2>;
+		vdd-supply = <&vdd_mcu_3v3>;
 		enable-gpios = <&tlmm 12 GPIO_ACTIVE_HIGH>;
 		pinctrl-0 = <&mcu_en_active>;
 		pinctrl-names = "default";

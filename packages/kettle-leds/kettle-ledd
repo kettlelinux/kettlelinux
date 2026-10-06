@@ -29,7 +29,8 @@ queued (the stick LEDs are on I2C), led_set_brightness() queues the new one with
 led_cdev->brightness, and the next multi_intensity write applies that stale value again.
 
 While the device sleeps (a logind delay lock) the sticks go dark: their chips (HTR3212 on the
-Portal and the Thor) stay powered through suspend and their driver leaves them as they were. The
+Portal and the Thor) are shut down and unpowered in suspend (kernel 40-kettle/1310), and the LED
+core restores what they showed at resume. The
 power light ("sleep": true) stays on, very dim, in the color it had going to sleep: orange while
 charging, green when full or held at the charge limit, the battery's color on battery. It isn't
 changed until the device wakes: nothing is woken to follow a plug or unplug.
