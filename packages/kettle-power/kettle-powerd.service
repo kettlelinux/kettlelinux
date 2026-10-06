@@ -7,6 +7,8 @@ Before=display-manager.service
 Type=dbus
 BusName=org.kettlelinux.Power1
 ExecStart=/usr/lib/kettle-power/kettle-powerd
+# steamos-manager deadlocks when kettle-powerd restarts under it: restart it too
+ExecStartPost=/usr/lib/kettle-power/restart-steamos-manager
 # However it stopped: the fan back to the kernel's curve, no caps, every CPU online
 ExecStopPost=/usr/lib/kettle-power/kettle-powerd --restore
 Restart=on-failure

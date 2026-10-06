@@ -6,7 +6,7 @@
 # Custom fan curves need the kernel's user_space thermal governor (kernel/config/steamos.config).
 pkgname=kettle-power
 pkgver=0.1.0
-pkgrel=11
+pkgrel=12
 pkgdesc='Kettle Linux power, clock and fan control daemon'
 arch=(any)
 license=(BSD-3-Clause)
@@ -14,7 +14,7 @@ depends=(python python-gobject steamos-manager)
 
 package() {
   cd "$startdir"
-  install -Dm755 kettle-powerd -t "$pkgdir/usr/lib/kettle-power"
+  install -Dm755 kettle-powerd restart-steamos-manager -t "$pkgdir/usr/lib/kettle-power"
   # one description per device, picked by the device tree's compatible ("ayn,thor" -> thor.toml)
   install -Dm644 odin2portal.toml thor.toml rp5.toml -t "$pkgdir/usr/share/kettle-power"
   install -Dm644 kettle-powerd.service -t "$pkgdir/usr/lib/systemd/system"
