@@ -8,7 +8,7 @@
 set -eu
 IFS=: read -r user _ uid gid _ home _ < <(getent passwd 1000)
 hb="$home/homebrew"
-install -d -o "$uid" -g "$gid" "$hb" "$hb"/{plugins,settings,data,logs,services}
+install -d -o "$uid" -g "$gid" "$hb" "$hb"/{plugins,plugins-aside,settings,data,logs,services}
 
 install -d -o "$uid" -g "$gid" "$home/.local" "$home/.local/share" "$home/.local/share/Steam"
 f="$home/.local/share/Steam/.cef-enable-remote-debugging"
@@ -18,9 +18,14 @@ for p in /usr/share/decky/plugins/*/; do
   [ -f "$p/plugin.json" ] || continue
   p="${p%/}"; l="$hb/plugins/${p##*/}"
   [ -L "$l" ] && [ "$(readlink "$l")" = "$p" ] && continue
-  # a store copy of the same plugin: keep it aside rather than delete it
-  [ -e "$l" ] || [ -L "$l" ] && mv -T "$l" "$l.user-$(date +%s)"
+  # a store copy of the same plugin: keep it aside rather than delete it, outside plugins/ so
+  # Decky doesn't load it next to the shipped one
+  [ -e "$l" ] || [ -L "$l" ] && mv -T "$l" "$hb/plugins-aside/${p##*/}.user-$(date +%s)"
   ln -s "$p" "$l"
+done
+# copies the previous version of this script kept aside inside plugins/
+for l in "$hb"/plugins/*.user-*; do
+  [ -e "$l" ] || [ -L "$l" ] && mv -T "$l" "$hb/plugins-aside/${l##*/}"
 done
 # links to plugins whose package was removed
 for l in "$hb"/plugins/*; do
