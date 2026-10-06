@@ -43,6 +43,8 @@ def _key(appid) -> str:
 
 RATES_FILE = "/usr/lib/kettle/refresh-rates"
 RATE_CONF = os.path.join(decky.DECKY_USER_HOME, ".config", "kettle", "refresh-rate.conf")
+# the rate gamescope-session starts at until one is picked (gamescope_refresh_hz)
+GAMESCOPE_CONF = "/usr/lib/kettle/gamescope.conf"
 
 
 def _rates() -> list[int]:
@@ -53,9 +55,21 @@ def _rates() -> list[int]:
         return []
 
 
+def _default_rate(rates: list[int]) -> int:
+    # the device's own, not the highest: the Portal lists 165 Hz, but starts at 120
+    try:
+        with open(GAMESCOPE_CONF) as f:
+            m = re.search(r"^export gamescope_refresh_hz=(\d+)", f.read(), re.M)
+        if m and int(m.group(1)) in rates:
+            return int(m.group(1))
+    except OSError:
+        pass
+    return rates[-1] if rates else 0
+
+
 def _refresh() -> dict:
     rates = _rates()
-    hz = rates[-1] if rates else 0
+    hz = _default_rate(rates)
     try:
         with open(RATE_CONF) as f:
             m = re.search(r"gamescope_refresh_hz=(\d+)", f.read())
