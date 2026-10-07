@@ -1,9 +1,9 @@
-// What the Game Stores pages share: text styles, error toasts, polling the backend, signing in
-// and opening a game's page.
+// What the Game Stores pages share: text styles, error toasts, polling the backend, signing in,
+// opening a game's page and a download's progress.
 import { useEffect, useState } from "react";
-import { Navigation } from "@decky/ui";
+import { Navigation, ProgressBarWithInfo } from "@decky/ui";
 import { toaster } from "@decky/api";
-import { NAMES, Store, loginStart } from "./api";
+import { Job, NAMES, Source, Store, loginStart } from "./api";
 
 export const ROUTE = "/kettle-stores";
 export const GAME_ROUTE = "/kettle-stores-game"; // apart from ROUTE: the sidebar's route isn't exact
@@ -45,7 +45,8 @@ export async function signIn(store: Store) {
   toaster.toast({ title: `Sign in to ${NAMES[store]}`, body: "Steam's browser returns here once you're signed in." });
 }
 
-export function openGame(store: Store, id: string) {
+// (Flathub's apps too: the game route shows their page, flathub.tsx)
+export function openGame(store: Source, id: string) {
   Navigation.CloseSideMenus();
   Navigation.Navigate(`${GAME_ROUTE}/${store}/${encodeURIComponent(id)}`);
 }
@@ -53,4 +54,17 @@ export function openGame(store: Store, id: string) {
 export function openStores(tab: string = "downloads") {
   Navigation.CloseSideMenus();
   Navigation.Navigate(`${ROUTE}/${tab}`);
+}
+
+export function JobProgress({ job }: { job: Job }) {
+  const pct = job.percent ?? 0;
+  const detail = [job.speed ? `${job.speed.toFixed(1)} MiB/s` : "", job.eta ? `${job.eta} left` : ""].filter(Boolean).join(" · ");
+  return (
+    <ProgressBarWithInfo
+      nProgress={pct}
+      sOperationText={`${job.kind === "update" ? "Updating" : "Installing"} ${job.title}`}
+      description={detail || "Starting…"}
+      indeterminate={pct === 0}
+    />
+  );
 }

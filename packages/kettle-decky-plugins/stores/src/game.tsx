@@ -1,10 +1,11 @@
-// A store game's page: its size, and installing, playing, updating and uninstalling it.
+// A store game's page: its size, and installing, playing, updating and uninstalling it (a Flathub
+// app's: flathub.tsx).
 import { ButtonItem, ConfirmModal, Field, Focusable, Navigation, showModal, useParams } from "@decky/ui";
 import { useEffect, useState } from "react";
 import { Details, Game, GameInfo, NAMES, Store, cancel, details, gameInfo, install, library, size, status, uninstall } from "./api";
-import { JobProgress } from "./library";
+import { FlathubPage } from "./flathub";
 import { addShortcut, inLibrary, play, removeShortcut } from "./shortcuts";
-import { act, dim, small, usePoll } from "./ui";
+import { JobProgress, act, dim, small, usePoll } from "./ui";
 
 const date = (d: string) => {
   const t = Date.parse(d);
@@ -42,6 +43,11 @@ function About({ d, dlc }: { d: Details; dlc: string[] }) {
 }
 
 export function GamePage() {
+  const { store, id } = useParams<{ store: Store | "flathub"; id: string }>();
+  return store === "flathub" ? <FlathubPage id={decodeURIComponent(id)} /> : <StoreGamePage />;
+}
+
+function StoreGamePage() {
   const { store, id: raw } = useParams<{ store: Store; id: string }>();
   const id = decodeURIComponent(raw);
   const [game, setGame] = useState<Game | null | undefined>(undefined);

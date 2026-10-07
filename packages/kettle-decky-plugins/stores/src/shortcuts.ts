@@ -1,7 +1,8 @@
 // A store game in the Steam library: a shortcut to its .exe, started with Proton through
 // kettle-store-run (its launch options, from the backend), with the store's artwork. Added
-// while Steam runs, so no restart is needed.
-import { Store, artwork, rememberShortcut, shortcutInfo } from "./api";
+// while Steam runs, so no restart is needed. A Flathub app's shortcut runs `flatpak run <id>`
+// natively, with the app's icon.
+import { Source, artwork, rememberShortcut, shortcutInfo } from "./api";
 
 // The Proton a new shortcut gets: the community builds with ARM64 releases first (installed per
 // user from Gaming Extras), then Valve's ARM64 Protons
@@ -30,16 +31,19 @@ async function proton(appid: number): Promise<string | null> {
 }
 
 // Adds the installed game to Steam (or brings an existing shortcut up to date); returns its appid
-export async function addShortcut(store: Store, id: string, appid: number | null = null): Promise<number> {
+export async function addShortcut(store: Source, id: string, appid: number | null = null): Promise<number> {
   const info = await shortcutInfo(store, id);
   const isNew = !inLibrary(appid);
   const sid = isNew ? await SteamClient.Apps.AddShortcut(info.title, info.exe, info.dir, "") : appid!;
   if (!sid) throw new Error("Steam didn't add the shortcut");
   SteamClient.Apps.SetShortcutName(sid, info.title);
   SteamClient.Apps.SetShortcutExe(sid, `"${info.exe}"`);
-  SteamClient.Apps.SetShortcutStartDir(sid, `"${info.dir}"`);
-  SteamClient.Apps.SetAppLaunchOptions(sid, info.launch);
-  const tool = await proton(sid);
+  if (info.dir) SteamClient.Apps.SetShortcutStartDir(sid, `"${info.dir}"`);
+  // the flatpak arguments as the shortcut's own, as the Welcome plugin's Gaming Extras sets them
+  if (info.native) SteamClient.Apps.SetShortcutLaunchOptions(sid, info.launch);
+  else SteamClient.Apps.SetAppLaunchOptions(sid, info.launch);
+  if (info.icon) SteamClient.Apps.SetShortcutIcon(sid, info.icon);
+  const tool = info.native ? null : await proton(sid);
   if (tool) SteamClient.Apps.SpecifyCompatTool(sid, tool);
   await rememberShortcut(store, id, sid);
   if (isNew) {

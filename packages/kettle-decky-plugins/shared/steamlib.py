@@ -59,7 +59,7 @@ def _binary_vdf(data: bytes) -> dict:
 
 def shortcuts() -> list[dict]:
     """The non-Steam shortcuts of the accounts on this device: appid (as Steam's UI has it,
-    unsigned), name, exe and start dir (without Steam's quotes)."""
+    unsigned), name, exe and start dir (without Steam's quotes), and launch options."""
     out = {}
     for path in glob.glob(os.path.join(STEAM, "userdata", "*", "config", "shortcuts.vdf")):
         try:
@@ -76,7 +76,7 @@ def shortcuts() -> list[dict]:
                 continue
             appid = e["appid"] & 0xFFFFFFFF
             out[appid] = {"appid": appid, "name": e["appname"], "exe": str(e.get("exe", "")).strip('"'),
-                          "dir": str(e.get("startdir", "")).strip('"')}
+                          "dir": str(e.get("startdir", "")).strip('"'), "launch": str(e.get("launchoptions", ""))}
     return list(out.values())
 
 

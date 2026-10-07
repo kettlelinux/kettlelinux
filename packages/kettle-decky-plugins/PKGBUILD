@@ -39,7 +39,10 @@
 #              desktop Heroic shares the sign-ins and installs: signing in in Steam's own browser,
 #              the libraries, installs and updates (a user unit, kettle-stores-job), and each game
 #              added to Steam as a Proton shortcut started through kettle-store-run (/usr/bin),
-#              which adds the store's launch arguments (Epic's login) to the command
+#              which adds the store's launch arguments (Epic's login) to the command; and Flathub:
+#              the apps it builds for ARM64 (its search API), installed per user through the same
+#              job queue (flatpak --user, as the welcome plugin's Gaming Extras) and added to Steam
+#              as native `flatpak run` shortcuts
 #   gyro       the motion sensors for Steam Input's gyro (kettle-motiond, packages/kettle-motion): on
 #              while a game runs (it reports games starting and stopping), always or off, with a
 #              live meter (installed where kettle-motion is: device/{odin2portal,thor}/packages.txt)
@@ -132,8 +135,8 @@ package_kettle-decky-lights() {
 }
 
 package_kettle-decky-stores() {
-  pkgdesc='Game Stores Decky plugin (Epic Games, GOG and Amazon Games in Game Mode)'
-  depends=(decky-loader heroic-games-launcher python)  # legendary, gogdl, nile
+  pkgdesc='Game Stores Decky plugin (Epic Games, GOG, Amazon Games and Flathub in Game Mode)'
+  depends=(decky-loader heroic-games-launcher python flatpak)  # legendary, gogdl, nile
   _install_plugin kettle-stores stores
   install -Dm755 src-tree/stores/kettle-store-run -t "$pkgdir/usr/bin"
 }

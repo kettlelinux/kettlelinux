@@ -16,6 +16,12 @@
 # adds what the store needs to the command line (Epic's login arguments, the game's own) when it
 # starts.
 #
+# Flathub: the apps Flathub builds for ARM64 (its search API, filtered to aarch64), browsed by
+# category or searched, installed for the user (flatpak --user, the installation the Welcome
+# plugin's Gaming Extras uses) through the same job queue, and added to Steam as native shortcuts
+# (`flatpak run <id>`, no Proton). Its jobs, shortcuts and pending entries use the store name
+# "flathub"; it has no sign-in.
+#
 # State (stores.json in the plugin's settings dir):
 #   shortcuts  "<store>:<id>" -> the Steam shortcut's appid
 #   pending    installs finished while the frontend wasn't listening: it adds their shortcuts
@@ -23,10 +29,11 @@
 #   job        the one running (same fields)
 #   install_dir  where new games go (default ~/Games/Heroic, Heroic's default)
 #   cloud_saves  false: kettle-store-run doesn't sync saves (it reads this file; default on)
-import asyncio, base64, glob, json, os, re, shlex, shutil, subprocess, time, urllib.parse, urllib.request
+import asyncio, base64, glob, html, json, os, re, shlex, shutil, subprocess, time, urllib.parse, urllib.request
 
 import decky
 import cdp
+import steamlib
 
 HOME = decky.DECKY_USER_HOME
 HEROIC = os.path.join(HOME, ".config", "heroic")
@@ -61,6 +68,16 @@ GOG_LOGIN = ("https://auth.gog.com/auth?client_id=46899977096215655&redirect_uri
 GOG_REDIRECT = "https://embed.gog.com/on_login_success"
 AMAZON_CODE = "openid.oa2.authorization_code="
 LOGIN_TIMEOUT = 600
+
+FLATHUB_API = "https://flathub.org/api/v2"
+FLATHUB_REPO = "https://dl.flathub.org/repo/flathub.flatpakrepo"
+FLATHUB_ICON = "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/{}.png"
+FLATHUB_PAGE = 48
+# Flathub's browse categories: search filters (all: the whole of Flathub)
+FLATHUB_CATEGORIES = {"games": [("main_categories", "game")], "emulators": [("sub_categories", "Emulator")], "all": []}
+APP_ID = re.compile(r"^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$")
+FLATPAK = "/usr/bin/flatpak"
+FLATPAK_ICONS = os.path.join(HOME, ".local", "share", "flatpak", "exports", "share", "icons", "hicolor")
 
 
 # --- files and commands ------------------------------------------------------------------------
@@ -313,6 +330,8 @@ def _fetch_library(store: str) -> list[dict]:
 
 def _installed(store: str) -> dict:
     """id -> {"path", "version"} of the store's installed games."""
+    if store == "flathub":
+        return {k: {"path": "", "version": v["version"]} for k, v in _flatpak_list().items()}
     if store == "epic":
         return {k: {"path": v.get("install_path"), "version": v.get("version", "")} for k, v in _epic_installed().items()
                 if not v.get("is_dlc")}
@@ -323,7 +342,13 @@ def _installed(store: str) -> dict:
 
 
 def _shortcut_info(store: str, gid: str) -> dict:
-    """What the Steam shortcut starts: the game's .exe and the folder it starts in."""
+    """What the Steam shortcut starts: the game's .exe and the folder it starts in (Flathub: flatpak
+    itself, started natively with the app's icon)."""
+    if store == "flathub":
+        app = _flatpak_list().get(gid)
+        if not app:
+            raise RuntimeError("not installed")
+        return {"title": app["title"], "exe": FLATPAK, "dir": "", "native": True, "icon": _flatpak_icon(gid)}
     if store == "epic":
         g = _epic_installed().get(gid)
         if not g:
@@ -399,6 +424,9 @@ def _details(store: str, gid: str) -> dict:
 def _art_urls(store: str, gid: str) -> dict:
     """Steam artwork for the shortcut, by SetCustomArtworkForApp's asset type:
     0 grid (portrait), 1 hero, 2 logo, 3 wide grid."""
+    if store == "flathub":  # AppStream has no cover art: the first screenshot
+        shot = next(iter(_screenshots(_flathub_appstream(gid), 1920)), "")
+        return {1: shot, 3: shot}
     if store == "epic":
         lib = _read_json(os.path.join(LEGENDARY, "metadata", f"{gid}.json"), {}).get("metadata") or {}
         tall, wide = _epic_image(lib, "DieselGameBoxTall"), _epic_image(lib, "DieselGameBox")
@@ -460,11 +488,157 @@ def _size_info(store: str, gid: str) -> dict:
         return {"download": 0, "disk": 0}
 
 
+# --- Flathub -----------------------------------------------------------------------------------
+
+def _app_id(app: str) -> str:
+    if not APP_ID.match(app or ""):
+        raise ValueError(f"not a Flatpak app ID: {app!r}")
+    return app
+
+
+def _post_json(url: str, body: dict):
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
+                                 headers={"User-Agent": "Kettle-Game-Stores", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read(16 << 20))
+
+
+def _flathub_search(category: str, query: str, page: int) -> dict:
+    """A page of Flathub's apps with an ARM64 build, most installed first (a thread; network)."""
+    filters = [("arches", "aarch64"), ("type", "desktop-application")] + FLATHUB_CATEGORIES[category]
+    d = _post_json(f"{FLATHUB_API}/search", {"query": query.strip(), "page": page, "hits_per_page": FLATHUB_PAGE,
+                                             "filters": [{"filterType": k, "value": v} for k, v in filters]})
+    apps = [{"id": h["app_id"], "title": h.get("name") or h["app_id"], "summary": h.get("summary") or "",
+             "icon": h.get("icon") or "", "developer": h.get("developer_name") or "",
+             "verified": bool(h.get("verification_verified"))} for h in d.get("hits", []) if h.get("app_id")]
+    return {"apps": apps, "pages": d.get("totalPages", 1), "total": d.get("totalHits", len(apps))}
+
+
+def _flatpak_list() -> dict:
+    """id -> {"title", "version", "origin", "installation"} of the installed Flatpak apps (both
+    installations: one Discover installed for all users can't be removed from here)."""
+    r = _run(FLATPAK, "list", "--app", "--columns=application,name,version,origin,installation", quiet=True)
+    out = {}
+    for line in r.stdout.splitlines():
+        f = line.split("\t")
+        if len(f) == 5 and (f[0] not in out or f[4] == "user"):  # in both: the user's counts
+            out[f[0]] = {"title": f[1] or f[0], "version": f[2], "origin": f[3], "installation": f[4]}
+    return out
+
+
+_updates = {"at": 0.0, "apps": set()}
+
+
+def _flatpak_updates() -> set:
+    """The user's Flatpak apps with an update out (network: kept 10 minutes)."""
+    if time.time() - _updates["at"] > 600:
+        r = _run(FLATPAK, "remote-ls", "--user", "--updates", "--app", "--columns=application", timeout=120, quiet=True)
+        if r.returncode == 0:
+            _updates.update(at=time.time(), apps=set(r.stdout.split()))
+    return _updates["apps"]
+
+
+def _flathub_installed() -> list[dict]:
+    """The installed Flatpak apps, as the Flathub tab lists them."""
+    return sorted(({"id": k, "title": v["title"], "summary": f"{v['version']} · {v['origin']}".strip(" ·"),
+                    "icon": FLATHUB_ICON.format(k) if v["origin"] == "flathub" else "", "developer": "",
+                    "verified": False} for k, v in _flatpak_list().items()), key=lambda a: a["title"].lower())
+
+
+def _flathub_appstream(app: str) -> dict:
+    try:
+        return _get_json(f"{FLATHUB_API}/appstream/{app}") or {}
+    except Exception:
+        return {}
+
+
+def _plain(markup: str) -> str:
+    """AppStream's description markup (<p>, <ul><li>, <em>, <code>) as plain text."""
+    s = re.sub(r"\s+", " ", markup or "")  # the source's own line breaks mean nothing
+    s = re.sub(r"\s*<li>\s*", "\n• ", s)
+    s = re.sub(r"\s*</(?:p|ul|ol)>\s*", "\n\n", s)
+    s = re.sub(r"<[^>]+>", "", s)
+    s = "\n".join(l.strip() for l in s.splitlines())
+    return re.sub(r"\n{3,}", "\n\n", html.unescape(s)).strip()
+
+
+def _screenshots(a: dict, width: int = 752) -> list[str]:
+    """The app's screenshots, in the size nearest width each."""
+    out = []
+    for sh in a.get("screenshots") or []:
+        sizes = [x for x in sh.get("sizes") or [] if x.get("src")]
+        if sizes:
+            out.append(min(sizes, key=lambda x: abs(int(x.get("width") or 0) - width))["src"])
+    return out
+
+
+def _flathub_app(app: str) -> dict:
+    """What the app's page shows: Flathub's AppStream data and sizes, and the app installed here."""
+    a = _flathub_appstream(app)
+    try:
+        summary = _get_json(f"{FLATHUB_API}/summary/{app}") or {}
+    except Exception:
+        summary = {}
+    installed = _flatpak_list().get(app)
+    if not a and not installed:
+        raise RuntimeError("Flathub doesn't know this app")
+    release = next(iter(a.get("releases") or []), {})
+    urls = a.get("urls") or {}
+    return {"id": app, "title": a.get("name") or (installed or {}).get("title") or app,
+            "summary": a.get("summary") or "", "description": _plain(a.get("description") or ""),
+            "icon": a.get("icon") or (FLATHUB_ICON.format(app) if a else ""),
+            "developer": a.get("developer_name") or "", "license": a.get("project_license") or "",
+            "free": a.get("is_free_license") is not False, "homepage": urls.get("homepage") or "",
+            "verified": bool((a.get("metadata") or {}).get("flathub::verification::verified")),
+            "version": release.get("version") or "", "screenshots": _screenshots(a)[:4],
+            "arm64": "aarch64" in (summary.get("arches") or ["aarch64"]),
+            # Flathub's sizes are its x86_64 build's: near enough for ARM64's
+            "download": summary.get("download_size") or 0, "disk": summary.get("installed_size") or 0,
+            "installed": installed, "update": bool(installed) and app in _flatpak_updates()}
+
+
+def _flatpak_icon(app: str) -> str:
+    """A PNG icon for the app's Steam shortcut: its largest exported one, unless Flathub's (saved)
+    is bigger (some apps export only a 48px PNG next to their SVG)."""
+    best = (0, "")
+    try:
+        sizes = os.listdir(FLATPAK_ICONS)
+    except OSError:
+        sizes = []
+    for d in sizes:
+        path = os.path.join(FLATPAK_ICONS, d, "apps", app + ".png")
+        px = int(d.split("x")[0]) if re.fullmatch(r"\d+x\d+", d) else 0
+        if px > best[0] and os.path.isfile(path):
+            best = (px, path)
+    if best[0] >= 128:
+        return best[1]
+    path = os.path.join(SETTINGS, "icons", app + ".png")
+    try:
+        data = _get(FLATHUB_ICON.format(app))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+        return path
+    except Exception:
+        return best[1]
+
+
+def _flathub_shortcut(app: str) -> int | None:
+    """A Steam shortcut someone already made for the app (the Welcome plugin's Gaming Extras)."""
+    for s in steamlib.shortcuts():
+        args = s.get("launch", "").split()
+        if os.path.basename(s["exe"]) == "flatpak" and "run" in args and app in args:
+            return s["appid"]
+    return None
+
+
 # --- install jobs ------------------------------------------------------------------------------
 
 def _job_commands(job: dict, base: str) -> list[list[str]]:
     """The job's commands, run one after the other (GOG: then the redistributables the game needs)."""
     main = _job_command(job, base)
+    if job["store"] == "flathub" and job["kind"] == "install":
+        return [[FLATPAK, "remote-add", "--user", "--if-not-exists", "flathub", FLATHUB_REPO], main]
     if job["store"] == "gog":
         return [main, [WRAPPER, "gog-redist", job["id"]]]
     return [main]
@@ -472,6 +646,13 @@ def _job_commands(job: dict, base: str) -> list[list[str]]:
 
 def _job_command(job: dict, base: str) -> list[str]:
     store, gid, kind = job["store"], job["id"], job["kind"]
+    if store == "flathub":
+        # in English, and not --noninteractive (that prints no progress): _flatpak_progress reads
+        # its lines; -y answers its questions, and one it can't reads the job's empty stdin and fails
+        flatpak = ["env", "LC_ALL=C.UTF-8", FLATPAK]
+        if kind == "update":
+            return flatpak + ["update", "--user", "-y", gid]
+        return flatpak + ["install", "--user", "-y", "flathub", gid]
     if store == "epic":
         # the DLC the player owns comes with the game (and its updates)
         return ["legendary", "-y", "update" if kind == "update" else "install", gid, "--base-path", base, "--skip-sdl",
@@ -493,7 +674,8 @@ def _gog_manifest(gid: str) -> str:
 
 
 def _start_job(job: dict, base: str):
-    os.makedirs(base, exist_ok=True)
+    if job["store"] != "flathub":  # flatpak keeps its own
+        os.makedirs(base, exist_ok=True)
     if job["store"] == "gog" and job["kind"] == "install" and job["id"] not in _installed("gog"):
         # a manifest left from a game deleted by hand makes gogdl think it's installed ("Nothing to do")
         try:
@@ -539,6 +721,20 @@ def _progress(log: str) -> dict:
             "speed": float(speed[-1]) if speed else 0.0}
 
 
+def _flatpak_progress(log: str) -> dict:
+    """flatpak's progress, which it prints a line at a time when not on a terminal: "Installing
+    2/3… ▌ 45%  1.2 MB/s  00:12" (no "2/3" for a single step, "0 bytes/s" at the start; GLib puts
+    a no-break space before the unit); the steps count as equal parts."""
+    m = re.findall(r"^(?:Installing|Updating)(?: (\d+)/(\d+))?….*?(\d+)%(?:\s+([\d.]+)\s(bytes|[kMG]B)/s)?(?:\s+([\d:]+))?",
+                   log, re.M)
+    if not m:
+        return {"percent": 0.0, "eta": "", "speed": 0.0}
+    i, n, pct, speed, unit, eta = m[-1]
+    i, n = int(i or 1), int(n or 1)
+    mib = float(speed) * {"bytes": 1, "kB": 1e3, "MB": 1e6, "GB": 1e9}[unit] / 2**20 if speed else 0.0
+    return {"percent": round((i - 1 + int(pct) / 100) / n * 100, 1), "eta": eta, "speed": mib}
+
+
 def _job_exit(log: str) -> int | None:
     m = re.findall(rf"{EXIT_MARK} (\d+)", log)
     return int(m[-1]) if m else None
@@ -579,7 +775,16 @@ def _gog_record(gid: str, base: str, kind: str):
 
 
 def _uninstall(store: str, gid: str):
-    if store == "epic":
+    if store == "flathub":
+        app = _flatpak_list().get(gid)
+        if app and app["installation"] != "user":
+            raise RuntimeError("it's installed for all users: remove it in Discover on the desktop")
+        r = _run(FLATPAK, "uninstall", "--user", "--noninteractive", "-y", gid, timeout=600)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip().removeprefix("error: ") or "flatpak couldn't uninstall the app")
+        # the runtimes nothing uses any more (the app's data stays in ~/.var/app)
+        _run(FLATPAK, "uninstall", "--user", "--unused", "--noninteractive", "-y", timeout=600)
+    elif store == "epic":
         r = _run("legendary", "-y", "uninstall", gid, timeout=600)
         if r.returncode != 0:
             raise RuntimeError("legendary couldn't uninstall the game")
@@ -639,7 +844,8 @@ class Plugin:
         s = self._state()
         job = s.get("job")
         if job:
-            job = dict(job, **_progress(_log_tail()))
+            log = _log_tail()
+            job = dict(job, **(_flatpak_progress(log) if job["store"] == "flathub" else _progress(log)))
         return {"users": _users(), "job": job, "queue": s.get("queue", []), "login": self.login,
                 "cloud_saves": s.get("cloud_saves", True) is not False}
 
@@ -714,6 +920,30 @@ class Plugin:
             self.details_cache[key] = await asyncio.to_thread(_details, store, gid)
         return self.details_cache[key]
 
+    # Flathub
+
+    async def flathub_browse(self, category: str, query: str, page: int) -> dict:
+        """A page of Flathub's ARM64 apps ({"apps", "pages", "total"}) in a category ("games",
+        "emulators", "all") or matching query; "installed": the Flatpak apps installed here."""
+        if category == "installed":
+            apps = await asyncio.to_thread(_flathub_installed)
+            q = query.strip().lower()
+            apps = [a for a in apps if not q or q in a["title"].lower() or q in a["id"].lower()]
+            return {"apps": apps, "pages": 1, "total": len(apps)}
+        if category not in FLATHUB_CATEGORIES:
+            raise ValueError(f"no such category: {category!r}")
+        return await asyncio.to_thread(_flathub_search, category, query, max(1, int(page)))
+
+    async def flathub_app(self, app: str) -> dict:
+        """The app's page: Flathub's details, its install here, and its Steam shortcut (ours, or
+        one the Welcome plugin's Gaming Extras made)."""
+        info = await asyncio.to_thread(_flathub_app, _app_id(app))
+        s = self._state()
+        info["appid"] = s["shortcuts"].get(f"flathub:{app}") or await asyncio.to_thread(_flathub_shortcut, app)
+        info["busy"] = next((j["kind"] for j in s.get("queue", []) + ([s["job"]] if s.get("job") else [])
+                             if j["store"] == "flathub" and j["id"] == app), None)
+        return info
+
     async def locations(self) -> dict:
         return {"locations": await asyncio.to_thread(_locations),
                 "current": self._state().get("install_dir") or DEFAULT_DIR}
@@ -734,6 +964,8 @@ class Plugin:
 
     async def install(self, store: str, gid: str, title: str, kind: str):
         """Queues an install or update ("install"|"update"); the main loop starts it."""
+        if store == "flathub":
+            _app_id(gid)
         async with self.lock:
             s = self._state()
             if any(j["store"] == store and j["id"] == gid for j in s["queue"] + ([s["job"]] if s.get("job") else [])):
@@ -759,10 +991,12 @@ class Plugin:
 
     async def uninstall(self, store: str, gid: str) -> int | None:
         """Removes the game; returns its Steam shortcut's appid for the frontend to remove."""
-        await asyncio.to_thread(_uninstall, store, gid)
+        await asyncio.to_thread(_uninstall, store, _app_id(gid) if store == "flathub" else gid)
         async with self.lock:
             s = self._state()
             appid = s["shortcuts"].pop(f"{store}:{gid}", None)
+            if store == "flathub" and not appid:
+                appid = await asyncio.to_thread(_flathub_shortcut, gid)
             s["pending"] = [k for k in s["pending"] if k != f"{store}:{gid}"]
             self._save(s)
         return appid
@@ -770,8 +1004,8 @@ class Plugin:
     # Steam shortcuts (added by the frontend)
 
     async def shortcut_info(self, store: str, gid: str) -> dict:
-        info = await asyncio.to_thread(_shortcut_info, store, gid)
-        info["launch"] = f"{WRAPPER} {store} {gid} %command%"
+        info = await asyncio.to_thread(_shortcut_info, store, _app_id(gid) if store == "flathub" else gid)
+        info["launch"] = f"run {gid}" if store == "flathub" else f"{WRAPPER} {store} {gid} %command%"
         return info
 
     async def artwork(self, store: str, gid: str) -> dict:
