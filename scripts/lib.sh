@@ -54,7 +54,10 @@ chroot_mount() {
   mount --bind "$t" "$r/tmp"
 }
 
-chroot_tmp() { printf '%s\n' "$ROOT/build/tmp/$(basename "$1")"; }
+# One per build run: builds run at the same time can use chroots of the same name, and each
+# mount starts by clearing its /tmp. ($$ won't do: each build is PID 1 in its own namespace.)
+KETTLE_TMP_RUN="${KETTLE_TMP_RUN:-$(date +%s%N)}"
+chroot_tmp() { printf '%s\n' "$ROOT/build/tmp/$(basename "$1").$KETTLE_TMP_RUN"; }
 
 chroot_umount() {
   local r="$1" m
