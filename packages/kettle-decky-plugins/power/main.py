@@ -8,6 +8,8 @@
 # refresh-rates): gamescope holds it (refresh_hz, gamescope 0023), set live through gamescopectl,
 # and gamescope-session starts at it from ~/.config/kettle/refresh-rate.conf. Auto (0) holds none:
 # Steam's frame limit picks the rate, up to auto_refresh_max_hz when there's no limit (0024).
+# A game can have its own rate (or Auto), held while it runs (refresh-rates.json in the plugin's
+# settings), told by the frontend's set_active.
 # Auto TDP holds a game at Steam's frame rate limit, which Steam sets on gamescope's Xwayland
 # root window (GAMESCOPE_FPS_LIMIT): the plugin watches it with xprop and passes it on.
 import asyncio
@@ -51,6 +53,8 @@ RATE_CONF = os.path.join(decky.DECKY_USER_HOME, ".config", "kettle", "refresh-ra
 GAMESCOPE_CONF = "/usr/lib/kettle/gamescope.conf"
 # refresh_hz 0: no rate held, Steam's frame limit picks one (Quick Access > Power's Auto)
 AUTO = 0
+# games with their own refresh rate, {appid: Hz or AUTO}; the others follow the all-games one
+GAME_RATES = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "refresh-rates.json")
 
 
 def _rates() -> list[int]:
@@ -100,12 +104,39 @@ def _session_env() -> dict:
     return env
 
 
+def _game_rates() -> dict:
+    try:
+        with open(GAME_RATES) as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    ok = set(_rates()) | {AUTO}
+    return {str(k): int(v) for k, v in saved.items() if isinstance(v, int) and v in ok}
+
+
+def _save_game_rates(rates: dict):
+    os.makedirs(os.path.dirname(GAME_RATES), exist_ok=True)
+    with open(GAME_RATES + ".new", "w") as f:
+        json.dump(rates, f, indent=1, sort_keys=True)
+    os.replace(GAME_RATES + ".new", GAME_RATES)
+
+
+def _effective_rate() -> int:
+    """The running game's own rate, else the all-games one."""
+    return _game_rates().get(_active, _refresh()["hz"])
+
+
 def _apply_refresh(hz: int):
+    """The all-games rate: what gamescope-session starts at, and live unless the running game has its own."""
     os.makedirs(os.path.dirname(RATE_CONF), exist_ok=True)
     with open(RATE_CONF + ".new", "w") as f:
         f.write(f"# Quick Access > Power's refresh rate, read by gamescope-session\nexport gamescope_refresh_hz={hz}\n")
     os.replace(RATE_CONF + ".new", RATE_CONF)
-    # live, on Game Mode's gamescope
+    _hold_refresh(_effective_rate())
+
+
+def _hold_refresh(hz: int):
+    """Live, on Game Mode's gamescope (the same rate again changes nothing)."""
     env = _session_env()
     if "GAMESCOPE_WAYLAND_DISPLAY" not in env:
         return
@@ -180,6 +211,25 @@ class Plugin:
         global _active
         _active = str(appid) if appid else ""
         await _power("SetActiveGame", _active)
+        # a game with its own refresh rate gets it while it runs, the all-games one after
+        if _rates():
+            await asyncio.to_thread(_hold_refresh, _effective_rate())
+
+    async def get_game_refresh(self, appid: int) -> dict:
+        """hz: the game's own rate (AUTO for Auto), None when it follows the all-games one."""
+        return {"hz": _game_rates().get(str(appid))}
+
+    async def set_game_refresh(self, appid: int, hz: int | None) -> dict:
+        rates = _game_rates()
+        if hz is None:
+            rates.pop(str(appid), None)
+        elif int(hz) in _rates() or int(hz) == AUTO:
+            rates[str(appid)] = int(hz)
+        await asyncio.to_thread(_save_game_rates, rates)
+        if str(appid) == _active:
+            await asyncio.to_thread(_hold_refresh, _effective_rate())
+        decky.logger.info("power: game %s refresh %s", appid, "all games'" if hz is None else hz)
+        return await self.get_game_refresh(appid)
 
     async def set_charge_limit(self, limit: int):
         await asyncio.to_thread(_call, "org.freedesktop.DBus.Properties", "Set", "(ssv)",

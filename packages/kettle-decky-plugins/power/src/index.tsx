@@ -62,6 +62,9 @@ const setChargeCurrent = callable<[ua: number], void>("set_charge_current");
 const setSleepFan = callable<[pct: number], void>("set_sleep_fan");
 const getRefresh = callable<[], Refresh>("get_refresh");
 const setRefresh = callable<[hz: number], Refresh>("set_refresh");
+// a game's own rate: 0 Auto, null when it follows the all-games one
+const getGameRefresh = callable<[appid: number], { hz: number | null }>("get_game_refresh");
+const setGameRefresh = callable<[appid: number, hz: number | null], { hz: number | null }>("set_game_refresh");
 
 const FAN_MODES = [
   { data: "auto", label: "Automatic (built-in curve)" },
@@ -352,15 +355,45 @@ function Screen({ r, onChange }: { r: Refresh; onChange: (r: Refresh) => void })
       <PanelSectionRow>
         <DropdownItem
           label="Refresh rate"
-          description={r.hz === 0
+          description={(r.hz === 0
             ? "Steam's frame limit picks it: each limit runs at a rate it divides evenly"
-            : "Holds in games and the Steam UI alike. Lower rates use less power"}
+            : "Holds in games and the Steam UI alike. Lower rates use less power") +
+            ". A game can have its own, set with the games below"}
           rgOptions={[{ data: 0, label: "Auto" }, ...r.rates.map((hz) => ({ data: hz, label: `${hz} Hz` }))]}
           selectedOption={r.hz}
           onChange={(o) => pick(o.data)}
         />
       </PanelSectionRow>
     </PanelSection>
+  );
+}
+
+// A game's own refresh rate, held while it runs; the others follow Screen's all-games one
+function GameRefresh({ appid, name, r }: { appid: number; name: string; r: Refresh }) {
+  const [hz, setHz] = useState<number | null | undefined>(undefined);
+  useEffect(() => {
+    getGameRefresh(appid).then((g) => setHz(g.hz));
+  }, []);
+  if (hz === undefined) return null;
+  const all = r.hz === 0 ? "Auto" : `${r.hz} Hz`;
+  return (
+    <PanelSectionRow>
+      <DropdownItem
+        label="Refresh rate"
+        description={hz === null ? "Follows the all-games rate under Screen" : `Used while ${name} runs`}
+        rgOptions={[
+          { data: -1, label: `All games' (${all})` },
+          { data: 0, label: "Auto" },
+          ...r.rates.map((v) => ({ data: v, label: `${v} Hz` })),
+        ]}
+        selectedOption={hz ?? -1}
+        onChange={async (o) => {
+          const v = o.data === -1 ? null : o.data;
+          setHz(v);
+          setHz((await setGameRefresh(appid, v)).hz);
+        }}
+      />
+    </PanelSectionRow>
   );
 }
 
@@ -395,10 +428,13 @@ function Content() {
       {(inf.charge_limit || inf.charge_speeds.length > 0 || inf.sleep_fan) && <Battery s={s} inf={inf} />}
       {refresh && refresh.rates.length >= 2 && <Screen r={refresh} onChange={setRefreshState} />}
       <Readout s={s} />
-      <PanelSection title="Fan, CPU and Auto TDP">
+      <PanelSection title="Fan, CPU, Auto TDP and refresh rate">
         <GamePicker games={games} appid={appid} onChange={pick} />
         <GameSettings key={appid ?? "all"} appid={appid} name={appid !== null ? gameName(games, appid) : ""} inf={inf}
           fanControl={s.steam.fan_control === 1} fpsLimit={s.auto_tdp.fps_limit} />
+        {appid !== null && refresh && refresh.rates.length >= 2 && (
+          <GameRefresh key={appid} appid={appid} name={gameName(games, appid)} r={refresh} />
+        )}
       </PanelSection>
     </>
   );
