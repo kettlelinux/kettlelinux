@@ -1,0 +1,3 @@
+# The ADSP's FastRPC device starts the motion sensors chain (kettle-motiond pulls in hexagonrpcd
+# and the first copy of the sensor files)
+SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp", TAG+="systemd", ENV{SYSTEMD_WANTS}+="kettle-motiond.service"

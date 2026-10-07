@@ -1,0 +1,11 @@
+[Unit]
+Description=Copy the ADSP sensor files from the Android partitions
+Documentation=file:///usr/lib/kettle-motion/kettle-motion-setup
+ConditionPathExists=!/var/lib/kettle-motion/qcom
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/kettle-motion/kettle-motion-setup
+StateDirectory=kettle-motion
+RuntimeDirectory=kettle-motion

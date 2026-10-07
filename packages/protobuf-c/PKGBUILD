@@ -1,0 +1,28 @@
+# protobuf-c rebuilt against the protobuf in Valve's deckard hotfix repo. That repo moves protobuf
+# (25.3-5) and abseil-cpp to 20250814, but Arch's protobuf-c 1.5.0-2 was built against the older
+# abseil, so its protoc-gen-c can't load, and builds that generate C from .proto files (libssc)
+# fail. Same release as Arch's; the [kettle] repo comes first, so this replaces it.
+pkgname=protobuf-c
+pkgver=1.5.0
+pkgrel=3
+pkgdesc='Protocol Buffers implementation in C'
+arch=(aarch64)
+url='https://github.com/protobuf-c/protobuf-c'
+license=(BSD-2-Clause)
+depends=(protobuf)
+provides=(libprotobuf-c.so)
+options=(!lto)  # https://github.com/protobuf-c/protobuf-c/issues/488
+source=("$url/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
+sha256sums=('7b404c63361ed35b3667aec75cc37b54298d56dd2bcf369de3373212cc06fd98')
+
+build() {
+  cd "$pkgname-$pkgver"
+  ./configure --prefix=/usr --disable-static
+  make
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  make DESTDIR="$pkgdir" install
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -1,0 +1,31 @@
+# kettle-motiond: the motion sensors (gyro, accelerometer) of Kettle's SM8550 handhelds as an
+# evdev motion-sensor device, which InputPlumber reads into the virtual Steam Deck controller
+# (packages/inputplumber 0001), for Steam Input's gyro controls. Reads the ADSP's Qualcomm
+# Sensor Core through libssc, after hexagonrpcd has started it with the sensor files that
+# kettle-motion-setup copies from the device's own Android partitions. The ADSP's FastRPC device
+# starts it all (70-kettle-motion.rules). It streams only while a game runs (the Gyro Decky
+# plugin reports games and sets the mode: games, always, off; org.kettlelinux.Motion1).
+# Sources live next to this PKGBUILD.
+pkgname=kettle-motion
+pkgver=0.1.0
+pkgrel=3
+pkgdesc='Kettle Linux motion sensors for Steam Input'
+arch=(aarch64)
+license=(GPL-3.0-or-later)
+depends=(glib2 libssc hexagonrpc python util-linux)
+
+build() {
+  cd "$startdir"
+  gcc $CFLAGS $LDFLAGS -Wall -Wextra -Wno-unused-parameter -o "$srcdir/kettle-motiond" kettle-motiond.c \
+    $(pkg-config --cflags --libs libssc gio-unix-2.0) -lm
+}
+
+package() {
+  install -Dm755 "$srcdir/kettle-motiond" "$startdir/kettle-motion-setup" -t "$pkgdir/usr/lib/kettle-motion"
+  install -Dm644 "$startdir"/{kettle-motion-setup,kettle-hexagonrpcd,kettle-motiond}.service \
+    -t "$pkgdir/usr/lib/systemd/system"
+  install -Dm644 "$startdir/70-kettle-motion.rules" -t "$pkgdir/usr/lib/udev/rules.d"
+  install -Dm644 "$startdir/org.kettlelinux.Motion1.conf" -t "$pkgdir/usr/share/dbus-1/system.d"
+  install -Dm644 "$startdir/devices.conf" -t "$pkgdir/usr/share/kettle-motion"
+  install -Dm644 "$startdir/COPYING" -t "$pkgdir/usr/share/licenses/$pkgname"
+}

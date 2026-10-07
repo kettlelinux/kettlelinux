@@ -6,3 +6,6 @@ kettle-firmware-odin2portal
 kettle-ucm-odin2portal
 # AYN's U-Boot for the loader partition, put on the KETTLE partition too (docs/INSTALL.md)
 u-boot-ayn
+# gyro and accelerometer for Steam Input: the ADSP's Sensor Core (hexagonrpc, libssc) as the Deck
+# controller's motion (packages/kettle-motion, packages/inputplumber 0001)
+kettle-motion

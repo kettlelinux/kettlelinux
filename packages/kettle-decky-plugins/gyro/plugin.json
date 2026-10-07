@@ -1,0 +1,11 @@
+{
+  "name": "Gyro",
+  "author": "Kettle Linux",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["gyro", "motion", "controller"],
+    "description": "The motion sensors for Steam Input's gyro controls: on while a game runs, always, or off.",
+    "image": ""
+  }
+}

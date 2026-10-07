@@ -1,0 +1,19 @@
+[Unit]
+Description=Motion sensors for Steam Input
+Requires=kettle-hexagonrpcd.service
+After=kettle-hexagonrpcd.service
+
+[Service]
+Type=dbus
+BusName=org.kettlelinux.Motion1
+ExecStart=/usr/lib/kettle-motion/kettle-motiond
+Restart=on-failure
+RestartSec=3
+StateDirectory=kettle-motion
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+DevicePolicy=closed
+DeviceAllow=/dev/uinput rw
+RestrictAddressFamilies=AF_UNIX AF_QIPCRTR
