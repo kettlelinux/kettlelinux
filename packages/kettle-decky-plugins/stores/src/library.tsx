@@ -1,20 +1,20 @@
-// The Game Stores page: a tab per store with its games (search, installed only), the downloads
-// with where games go, and the store accounts.
+// The Game Stores page: a tab per store with its games (search, installed only), Flathub's ARM64
+// apps (flathub.tsx), the downloads with where games go, and the store accounts.
 import {
   ButtonItem,
   DialogButton,
   DropdownItem,
   Field,
   Focusable,
-  ProgressBarWithInfo,
   SidebarNavigation,
   TextField,
   ToggleField,
 } from "@decky/ui";
 import { ReactNode, useEffect, useMemo, useState } from "react";
-import { FaBoxOpen, FaCompactDisc, FaDownload, FaStore, FaUserCircle } from "react-icons/fa";
-import { Game, Job, NAMES, STORES, Store, cancel, library, locations, logout, setCloudSaves, setLocation, size, status } from "./api";
-import { ROUTE, act, dim, openGame, signIn, small, usePoll } from "./ui";
+import { FaBoxOpen, FaCompactDisc, FaCubes, FaDownload, FaStore, FaUserCircle } from "react-icons/fa";
+import { Game, NAMES, STORES, Store, cancel, library, locations, logout, setCloudSaves, setLocation, size, status } from "./api";
+import { FlathubTab } from "./flathub";
+import { JobProgress, ROUTE, act, dim, openGame, signIn, small, usePoll } from "./ui";
 
 const CSS = `
 .kettle-stores-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; padding: 4px 0 24px; }
@@ -108,19 +108,6 @@ function StoreTab({ store }: { store: Store }) {
   );
 }
 
-export function JobProgress({ job }: { job: Job }) {
-  const pct = job.percent ?? 0;
-  const detail = [job.speed ? `${job.speed.toFixed(1)} MiB/s` : "", job.eta ? `${job.eta} left` : ""].filter(Boolean).join(" · ");
-  return (
-    <ProgressBarWithInfo
-      nProgress={pct}
-      sOperationText={`${job.kind === "update" ? "Updating" : "Installing"} ${job.title}`}
-      description={detail || "Starting…"}
-      indeterminate={pct === 0}
-    />
-  );
-}
-
 function DownloadsTab() {
   const [s] = usePoll(status, 1000);
   const [loc, refreshLoc] = usePoll(locations, 10000);
@@ -157,7 +144,7 @@ function DownloadsTab() {
           <h3 style={{ margin: "24px 0 4px" }}>Where games go</h3>
           <DropdownItem
             label="New installs"
-            description="Games already installed stay where they are."
+            description="Games already installed stay where they are. Flathub apps always go to internal storage."
             rgOptions={loc.locations.map((l) => ({ data: l.path, label: `${l.label} (${size(l.free)} free)` }))}
             selectedOption={loc.current}
             onChange={(o) => act(() => setLocation(o.data).then(refreshLoc), "Changing the location failed")}
@@ -200,6 +187,7 @@ export function Page() {
   const pages = useMemo(
     () => [
       ...STORES.map((st) => ({ title: NAMES[st], route: `${ROUTE}/${st}`, icon: ICONS[st], content: <StoreTab store={st} /> })),
+      { title: NAMES.flathub, route: `${ROUTE}/flathub`, icon: <FaCubes />, content: <FlathubTab /> },
       { title: "Downloads", route: `${ROUTE}/downloads`, icon: <FaDownload />, content: <DownloadsTab /> },
       { title: "Accounts", route: `${ROUTE}/accounts`, icon: <FaUserCircle />, content: <AccountsTab /> },
     ],

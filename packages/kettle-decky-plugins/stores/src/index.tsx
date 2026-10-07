@@ -1,15 +1,16 @@
-// Game Stores: Epic Games, GOG and Amazon Games in Game Mode (main.py). The Quick Access panel
-// shows the accounts and the running download and opens the Game Stores page (library.tsx);
-// each game has its own page (game.tsx). The listeners here run while Game Mode does: leaving
-// Steam's browser after a sign-in, and adding a finished install to Steam (shortcuts.ts).
+// Game Stores: Epic Games, GOG and Amazon Games in Game Mode, and Flathub's ARM64 apps (main.py).
+// The Quick Access panel shows the accounts and the running download and opens the Game Stores
+// page (library.tsx); each game has its own page (game.tsx). The listeners here run while Game
+// Mode does: leaving Steam's browser after a sign-in, and adding a finished install to Steam
+// (shortcuts.ts).
 import { ButtonItem, Navigation, PanelSection, PanelSectionRow, staticClasses } from "@decky/ui";
 import { addEventListener, definePlugin, removeEventListener, routerHook, toaster } from "@decky/api";
 import { FaStore } from "react-icons/fa";
-import { Job, NAMES, STORES, Store, pending, status } from "./api";
+import { Job, NAMES, STORES, Source, Store, pending, status } from "./api";
 import { GamePage } from "./game";
-import { JobProgress, Page } from "./library";
+import { Page } from "./library";
 import { addShortcut } from "./shortcuts";
-import { GAME_ROUTE, ROUTE, act, openGame, openStores, signIn, usePoll } from "./ui";
+import { GAME_ROUTE, JobProgress, ROUTE, act, openGame, openStores, signIn, usePoll } from "./ui";
 
 function Content() {
   const [s] = usePoll(status, 2000);
@@ -19,6 +20,11 @@ function Content() {
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={() => openStores(STORES.find((st) => s?.users[st]) ?? "accounts")}>
             Open Game Stores
+          </ButtonItem>
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={() => openStores("flathub")}>
+            Browse Flathub
           </ButtonItem>
         </PanelSectionRow>
         {s?.job && (
@@ -54,7 +60,7 @@ function Content() {
 }
 
 // Adds a finished install to Steam, and says so
-async function added(store: Store, id: string, title: string) {
+async function added(store: Source, id: string, title: string) {
   await addShortcut(store, id);
   toaster.toast({
     title: `${title} is installed`,

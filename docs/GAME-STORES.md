@@ -2,7 +2,8 @@
 
 The Game Stores plugin puts Epic Games, GOG and Amazon Games into Game Mode. A player signs in to
 a store, browses their games, installs one, and plays it from the Steam library like any other
-game, without going to the desktop. It's in Quick Access > Game Stores.
+game, without going to the desktop. It also browses and installs the Flathub apps that have an ARM64
+build (see [Flathub](#flathub)). It's in Quick Access > Game Stores.
 
 It uses the store tools Heroic uses, built for ARM64 in `packages/heroic-games-launcher`:
 [legendary](https://github.com/legendary-gl/legendary) (Epic),
@@ -131,6 +132,31 @@ shortcut, next to Steam's: `shared/steamlib.py` reads the shortcuts from Steam's
 engine detection and OptiScaler). They add their options around the wrapper in the launch
 options. The game database is left out for shortcuts: it knows games by Steam appid, and a
 shortcut's appid is only this device's.
+
+## Flathub
+
+The Flathub tab lists the apps Flathub builds for ARM64, most installed first: its games, its
+emulators, all of Flathub, or the Flatpak apps already installed. Search narrows any of them.
+The list comes from Flathub's search API (`flathub.org/api/v2/search`) filtered to
+`arches=aarch64` and desktop apps, so apps that only have an x86_64 build (Steam, Heroic, Lutris,
+Sober …) never show up. An app's page shows Flathub's description, screenshots, license and
+sizes. The sizes are Flathub's for its x86_64 build, which is close to the ARM64 one.
+
+Installing:
+- **Where:** `flatpak install --user` from the user's `flathub` remote, added if it's missing.
+  This is the same installation the Welcome plugin's Gaming Extras uses, so an app installed
+  there shows as installed here, and the other way round.
+- **How:** through the same queue as the stores' games, in `kettle-stores-job`. The plugin reads
+  flatpak's progress from its output (in English: the job runs it with `LC_ALL=C.UTF-8`).
+  Flatpak decides where apps go, so the Downloads location doesn't apply to them.
+- **Steam:** a finished install becomes a shortcut to `/usr/bin/flatpak` with the launch options
+  `run <id>`. It starts natively (no Proton), with the app's icon and its first screenshot as
+  artwork. A shortcut Gaming Extras already made for the app (found in `shortcuts.vdf` by its
+  `run <id>`) counts, so there's no second one.
+- **Updates:** `flatpak remote-ls --user --updates`, checked at most every 10 minutes, shows
+  Update on an app's page.
+- **Uninstalling:** this removes the app and the runtimes nothing else uses. Its data in
+  `~/.var/app` stays. An app installed for all users (from Discover) can only be removed there.
 
 ## Not done yet
 
