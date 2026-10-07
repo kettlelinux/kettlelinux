@@ -5,14 +5,14 @@
 # for the Deck target (the Thor's with its AYN key as Quick Access too).
 # Runs with Game Mode only (kettle-inputplumber.service, device overlay): the desktop's own
 # controller (kettle-desktop-controller) needs the raw pad.
-# 0001 reads evdev motion sensors; the Portal's config takes kettle-motiond's (packages/kettle-motion)
+# 0001 reads evdev motion sensors; the Portal's and Thor's configs take kettle-motiond's (packages/kettle-motion)
 # as the Deck controller's gyro and accelerometer.
 #
 # Built with upstream Rust (build time only): InputPlumber's crates need a newer compiler than
 # the snapshot's 1.78.
 pkgname=inputplumber
 pkgver=0.81.0
-pkgrel=7
+pkgrel=8
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Input router and remapper daemon (Steam Deck controller emulation for AYN handhelds)'
@@ -34,7 +34,7 @@ noextract=("rust-$_rust-aarch64-unknown-linux-gnu.tar.xz")
 sha256sums=('804ff31b6b67efe266f21cc752282b1defe14b34916261d0600da1b6094a21a7'
             '0b514a8cc1cbcd939bff0f151661fe58b6ea5c7a7f645a5098c69e32e8c1e0a2'
             'e130eb2a293e1f7a9dc90e61a060aa7d36b63e58642d4cadc9b3b1cf881c984b'
-            'ad506a8243e42f39e79dd0e2e0a2fb54a8a60cad18a162c44598862578e41fe4'
+            '64558755be19f505d3a072e3e5e4e62ce9a8ab0be19d9d8d4ee239dd0b6439bb'
             'c17970bf78ddab689d8b93acebd78fdf6fa03befde4377b04bd5f9b3e3b78e89'
             '2cb3955e5d30d85589ddce8cd260851e60367b18e8b44c0b09e9250cf5518ee8'
             '769f8dfdb945985a3417ab2cbb988d43ef76bec81b6989251821a0200fbac69c'
