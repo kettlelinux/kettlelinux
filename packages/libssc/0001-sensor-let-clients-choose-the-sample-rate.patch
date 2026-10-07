@@ -1,0 +1,123 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Tue, 6 Oct 2026 19:56:50 -0500
+Subject: [PATCH] sensor: let clients choose the sample rate
+
+Only the first advertised sample rate was kept, which on the AYN Odin 2
+Portal's ICM-426xx is about 12.5 Hz: too slow for gyro aiming. Keep the
+first rate as the default, log every advertised rate, and make the
+sample-rate property writable (it was declared as a read-only string
+while its getter sets a float) so a client can ask for another rate before
+opening the sensor. ssccli gains --rate.
+---
+ src/libssc-cli.c    | 10 ++++++++++
+ src/libssc-sensor.c | 25 +++++++++++++++++--------
+ 2 files changed, 27 insertions(+), 8 deletions(-)
+
+diff --git a/src/libssc-cli.c b/src/libssc-cli.c
+index 5560862..d0ede51 100644
+--- a/src/libssc-cli.c
++++ b/src/libssc-cli.c
+@@ -165,11 +165,13 @@ int main(int argc, char *argv[])
+ 	gboolean debug = FALSE;
+ 	gchar *sensor_str = "";
+ 	gint64 timeout = DEFAULT_ENABLE_SECONDS;
++	gdouble rate = 0.0;
+ 	const GOptionEntry options[] = {
+ 		{ "version", 0, 0, G_OPTION_ARG_NONE, &print_version, "Print version information and exit.", NULL },
+ 		{ "debug", 'v', 0, G_OPTION_ARG_NONE, &debug, "Enable debug logs.", NULL },
+ 		{ "sensor", 0, 0, G_OPTION_ARG_STRING, &sensor_str, "Enable a sensor. Supported sensors: 'proximity', 'light', 'accelerometer', 'magnetometer', 'compass'", NULL },
+ 		{ "timeout", 0, 0, G_OPTION_ARG_INT64, &timeout, "Number of seconds before this will timeout [default 10]", NULL },
++		{ "rate", 0, 0, G_OPTION_ARG_DOUBLE, &rate, "Sample rate in Hz for streaming sensors [default: the sensor's first advertised rate]", NULL },
+ 		{ NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
+ 	};
+ 
+@@ -239,6 +241,8 @@ int main(int argc, char *argv[])
+ 			  	  "measurement",
+ 			  	  G_CALLBACK (accelerometer_measurement),
+ 			  	  NULL);
++		if (rate > 0.0)
++			g_object_set (accelerometer, SSC_SENSOR_SAMPLE_RATE, (gfloat) rate, NULL);
+ 		if (!ssc_sensor_accelerometer_open_sync (accelerometer, NULL, &err)) {
+ 			g_printf ("Unable to open accelerometer sensor: %s\n", err ? err->message : "UNKNOWN");
+ 			return OPEN_FAIL_EXIT_CODE;
+@@ -254,6 +258,8 @@ int main(int argc, char *argv[])
+ 			  	  "measurement",
+ 			  	  G_CALLBACK (magnetometer_measurement),
+ 			  	  NULL);
++		if (rate > 0.0)
++			g_object_set (magnetometer, SSC_SENSOR_SAMPLE_RATE, (gfloat) rate, NULL);
+ 		if (!ssc_sensor_magnetometer_open_sync (magnetometer, NULL, &err)) {
+ 			g_printf ("Unable to open magnetometer sensor: %s\n", err ? err->message : "UNKNOWN");
+ 			return OPEN_FAIL_EXIT_CODE;
+@@ -269,6 +275,8 @@ int main(int argc, char *argv[])
+ 			  	  "measurement",
+ 			  	  G_CALLBACK (compass_measurement),
+ 			  	  NULL);
++		if (rate > 0.0)
++			g_object_set (compass, SSC_SENSOR_SAMPLE_RATE, (gfloat) rate, NULL);
+ 		if (!ssc_sensor_compass_open_sync (compass, NULL, &err)) {
+ 			g_printf ("Unable to open compass sensor: %s\n", err ? err->message : "UNKNOWN");
+ 			return OPEN_FAIL_EXIT_CODE;
+@@ -284,6 +292,8 @@ int main(int argc, char *argv[])
+ 			  	  "measurement",
+ 			  	  G_CALLBACK (gyroscope_measurement),
+ 			  	  NULL);
++		if (rate > 0.0)
++			g_object_set (gyroscope, SSC_SENSOR_SAMPLE_RATE, (gfloat) rate, NULL);
+ 		if (!ssc_sensor_gyroscope_open_sync (gyroscope, NULL, &err)) {
+ 			g_printf ("Unable to open gyroscope sensor: %s\n", err ? err->message : "UNKNOWN");
+ 			return OPEN_FAIL_EXIT_CODE;
+diff --git a/src/libssc-sensor.c b/src/libssc-sensor.c
+index 2cf686f..59d587b 100644
+--- a/src/libssc-sensor.c
++++ b/src/libssc-sensor.c
+@@ -384,12 +384,16 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 						priv->available = attr_msg->attr[i]->value_array->v[0]->b;
+ 					break;
+ 				case SSC_ATTRIBUTE_SAMPLE_RATE:
+-					/* Only a single sample rate is supported for now. */
++					/*
++					 * The first advertised rate is the default; a client may
++					 * ask for another one through the sample-rate property.
++					 */
+ 					for (gsize j = 0; j < attr_msg->attr[i]->value_array->n_v; j++) {
+ 						if (attr_msg->attr[i]->value_array->v[j]->has_f
+ 						 && attr_msg->attr[i]->value_array->v[j]->f > 0) {
+-							priv->sample_rate = attr_msg->attr[i]->value_array->v[j]->f;
+-							break;
++							g_debug ("  advertised sample-rate: %f Hz", attr_msg->attr[i]->value_array->v[j]->f);
++							if (priv->sample_rate <= 0.0)
++								priv->sample_rate = attr_msg->attr[i]->value_array->v[j]->f;
+ 						}
+ 					}
+ 					break;
+@@ -731,6 +735,9 @@ sensor_set_property (GObject *object, guint prop_id, const GValue *value, GParam
+ 		case PROP_CLIENT:
+ 			priv->client = g_value_dup_object (value);
+ 			break;
++		case PROP_SAMPLE_RATE:
++			priv->sample_rate = g_value_get_float (value);
++			break;
+ 		default:
+ 			G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+ 			break;
+@@ -874,11 +881,13 @@ ssc_sensor_class_init (SSCSensorClass *klass)
+ 	g_object_class_install_property (object_class, PROP_AVAILABLE, properties[PROP_AVAILABLE]);
+ 
+ 	properties[PROP_SAMPLE_RATE] =
+-		g_param_spec_string (SSC_SENSOR_SAMPLE_RATE,
+-				     "Sample rate",
+-				     "The sample rate in Hz supported by the sensor.",
+-				     NULL,
+-				     G_PARAM_READABLE);
++		g_param_spec_float (SSC_SENSOR_SAMPLE_RATE,
++				    "Sample rate",
++				    "The sample rate in Hz the sensor streams at; set it before opening the sensor.",
++				    0.0,
++				    G_MAXFLOAT,
++				    0.0,
++				    G_PARAM_READWRITE);
+ 	g_object_class_install_property (object_class, PROP_SAMPLE_RATE, properties[PROP_SAMPLE_RATE]);
+ 
+ 	properties[PROP_MOUNT_MATRIX] =

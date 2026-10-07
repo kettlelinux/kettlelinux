@@ -3,7 +3,7 @@
 # 50-ayn_odin2.yaml (Xbox Elite target), which then finds the pad already in use.
 # rsinput1 (upstream): the button below the right stick is Quick Access, and North/West are
 # swapped back to the Xbox/Deck layout the kernel driver reports by position, and the back
-# buttons (BTN_Z/BTN_C) are the left/right paddles.
+# buttons (BTN_Z/BTN_C) are the left/right paddles. Motion comes from kettle-motiond.
 version: 1
 kind: CompositeDevice
 name: AYN Odin 2 Portal (Kettle)
@@ -33,6 +33,12 @@ source_devices:
     capability_map_id: rsinput1
     evdev:
       name: gpio-keys-paddles
+      handler: event*
+
+  # the gyro and accelerometer, from kettle-motiond (packages/kettle-motion; read by our 0001)
+  - group: imu
+    evdev:
+      name: Kettle Motion Sensors
       handler: event*
 
 target_devices:

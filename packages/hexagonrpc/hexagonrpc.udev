@@ -1,0 +1,2 @@
+# hexagonrpcd runs as fastrpc
+SUBSYSTEM=="misc", KERNEL=="fastrpc-*", GROUP="fastrpc", MODE="0660"

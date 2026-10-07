@@ -1,0 +1,21 @@
+# Serves the ADSP's sensors process (sensorspd) the files it reads at start-up. Once started, the
+# sensors keep running without it.
+[Unit]
+Description=FastRPC file server for the ADSP sensors process
+# SM8250-era devices run their sensors on the SLPI (fastrpc-sdsp) instead
+ConditionPathExists=!/dev/fastrpc-sdsp
+Wants=kettle-motion-setup.service
+After=kettle-motion-setup.service
+Requires=kettle-motion-setup.service
+
+[Service]
+ExecCondition=/usr/bin/test -d /var/lib/kettle-motion/qcom
+ExecStart=/usr/bin/hexagonrpcd -f /dev/fastrpc-adsp -d adsp -s -R /var/lib/kettle-motion/qcom
+User=fastrpc
+Group=fastrpc
+Restart=on-failure
+RestartSec=3
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes

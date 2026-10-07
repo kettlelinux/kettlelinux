@@ -1,0 +1,315 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Tue, 6 Oct 2026 20:07:30 -0500
+Subject: [PATCH] source: add an evdev motion sensor source
+
+Reads evdev motion sensors (INPUT_PROP_ACCELEROMETER, ID_INPUT_ACCELEROMETER):
+ABS_X/Y/Z acceleration and ABS_RX/RY/RZ angular velocity in the kernel's
+motion sensor frame, scaled by each axis resolution, into Accelerometer and
+Gyroscope events in Steam Deck units and axis order, the inverse of the
+kernel's hid-steam mapping. For sensors without a kernel driver that a
+userspace daemon exposes through uinput (Kettle Linux: kettle-motiond, for
+the Qualcomm Sensor Core motion sensors on AYN handhelds), so its virtual
+device, "Kettle Motion Sensors", joins the virtual device whitelist.
+---
+ src/input/manager.rs          |   1 +
+ src/input/source/evdev.rs     |  33 ++++++++
+ src/input/source/evdev/imu.rs | 144 ++++++++++++++++++++++++++++++++++
+ 3 files changed, 178 insertions(+)
+ create mode 100644 src/input/source/evdev/imu.rs
+
+diff --git a/src/input/manager.rs b/src/input/manager.rs
+index 1696f67..5c76367 100644
+--- a/src/input/manager.rs
++++ b/src/input/manager.rs
+@@ -58,6 +58,7 @@ const VIRT_DEVICE_WHITELIST: &[&str] = &[
+     "Sunshine gamepad (virtual) motion sensors",
+     "Sunshine Nintendo (virtual) pad",
+     "MSI WMI hotkeys",
++    "Kettle Motion Sensors",
+ ];
+ 
+ #[derive(Error, Debug)]
+diff --git a/src/input/source/evdev.rs b/src/input/source/evdev.rs
+index 2db1cad..0098d3c 100644
+--- a/src/input/source/evdev.rs
++++ b/src/input/source/evdev.rs
+@@ -1,11 +1,13 @@
+ pub mod blocked;
+ pub mod gamepad;
++pub mod imu;
+ pub mod keyboard;
+ pub mod touchscreen;
+ 
+ use std::{collections::HashMap, error::Error, time::Duration};
+ 
+ use evdev::{Device, EventType};
++use imu::ImuEventDevice;
+ use keyboard::KeyboardEventDevice;
+ use touchscreen::TouchscreenEventDevice;
+ 
+@@ -30,6 +32,7 @@ use super::{OutputError, SourceDeviceCompatible, SourceDriver, SourceDriverOptio
+ enum DriverType {
+     Blocked,
+     Gamepad,
++    Imu,
+     Touchscreen,
+     Keyboard,
+ }
+@@ -39,6 +42,7 @@ enum DriverType {
+ pub enum EventDevice {
+     Blocked(SourceDriver<BlockedEventDevice>),
+     Gamepad(SourceDriver<GamepadEventDevice>),
++    Imu(SourceDriver<ImuEventDevice>),
+     Touchscreen(SourceDriver<TouchscreenEventDevice>),
+     Keyboard(SourceDriver<KeyboardEventDevice>),
+ }
+@@ -48,6 +52,7 @@ impl SourceDeviceCompatible for EventDevice {
+         match self {
+             EventDevice::Blocked(source_driver) => source_driver.info_ref(),
+             EventDevice::Gamepad(source_driver) => source_driver.info_ref(),
++            EventDevice::Imu(source_driver) => source_driver.info_ref(),
+             EventDevice::Touchscreen(source_driver) => source_driver.info_ref(),
+             EventDevice::Keyboard(source_driver) => source_driver.info_ref(),
+         }
+@@ -57,6 +62,7 @@ impl SourceDeviceCompatible for EventDevice {
+         match self {
+             EventDevice::Blocked(source_driver) => source_driver.get_id(),
+             EventDevice::Gamepad(source_driver) => source_driver.get_id(),
++            EventDevice::Imu(source_driver) => source_driver.get_id(),
+             EventDevice::Touchscreen(source_driver) => source_driver.get_id(),
+             EventDevice::Keyboard(source_driver) => source_driver.get_id(),
+         }
+@@ -66,6 +72,7 @@ impl SourceDeviceCompatible for EventDevice {
+         match self {
+             EventDevice::Blocked(source_driver) => source_driver.client(),
+             EventDevice::Gamepad(source_driver) => source_driver.client(),
++            EventDevice::Imu(source_driver) => source_driver.client(),
+             EventDevice::Touchscreen(source_driver) => source_driver.client(),
+             EventDevice::Keyboard(source_driver) => source_driver.client(),
+         }
+@@ -75,6 +82,7 @@ impl SourceDeviceCompatible for EventDevice {
+         match self {
+             EventDevice::Blocked(source_driver) => source_driver.run().await,
+             EventDevice::Gamepad(source_driver) => source_driver.run().await,
++            EventDevice::Imu(source_driver) => source_driver.run().await,
+             EventDevice::Touchscreen(source_driver) => source_driver.run().await,
+             EventDevice::Keyboard(source_driver) => source_driver.run().await,
+         }
+@@ -84,6 +92,7 @@ impl SourceDeviceCompatible for EventDevice {
+         match self {
+             EventDevice::Blocked(source_driver) => source_driver.get_capabilities(),
+             EventDevice::Gamepad(source_driver) => source_driver.get_capabilities(),
++            EventDevice::Imu(source_driver) => source_driver.get_capabilities(),
+             EventDevice::Touchscreen(source_driver) => source_driver.get_capabilities(),
+             EventDevice::Keyboard(source_driver) => source_driver.get_capabilities(),
+         }
+@@ -93,6 +102,7 @@ impl SourceDeviceCompatible for EventDevice {
+         match self {
+             EventDevice::Blocked(source_driver) => source_driver.get_output_capabilities(),
+             EventDevice::Gamepad(source_driver) => source_driver.get_output_capabilities(),
++            EventDevice::Imu(source_driver) => source_driver.get_output_capabilities(),
+             EventDevice::Touchscreen(source_driver) => source_driver.get_output_capabilities(),
+             EventDevice::Keyboard(source_driver) => source_driver.get_output_capabilities(),
+         }
+@@ -102,6 +112,7 @@ impl SourceDeviceCompatible for EventDevice {
+         match self {
+             EventDevice::Blocked(source_driver) => source_driver.get_device_path(),
+             EventDevice::Gamepad(source_driver) => source_driver.get_device_path(),
++            EventDevice::Imu(source_driver) => source_driver.get_device_path(),
+             EventDevice::Touchscreen(source_driver) => source_driver.get_device_path(),
+             EventDevice::Keyboard(source_driver) => source_driver.get_device_path(),
+         }
+@@ -149,6 +160,12 @@ impl EventDevice {
+                     SourceDriver::new(composite_device, device, device_info.into(), conf);
+                 Ok(Self::Gamepad(source_device))
+             }
++            DriverType::Imu => {
++                let device = ImuEventDevice::new(device_info.clone())?;
++                let source_device =
++                    SourceDriver::new(composite_device, device, device_info.into(), conf);
++                Ok(Self::Imu(source_device))
++            }
+             DriverType::Touchscreen => {
+                 let touch_config = conf
+                     .as_ref()
+@@ -179,6 +196,9 @@ impl EventDevice {
+         }
+ 
+         let properties = device.get_properties();
++        if properties.contains_key("ID_INPUT_ACCELEROMETER") || is_accelerometer(device) {
++            return DriverType::Imu;
++        }
+         if properties.contains_key("ID_INPUT_TOUCHSCREEN") {
+             return DriverType::Touchscreen;
+         }
+@@ -196,6 +216,19 @@ impl EventDevice {
+     }
+ }
+ 
++/// Whether the device has INPUT_PROP_ACCELEROMETER, from sysfs: devices found at start-up
++/// don't carry udev's ID_INPUT_* properties yet
++fn is_accelerometer(device: &UdevDevice) -> bool {
++    const INPUT_PROP_ACCELEROMETER: u32 = 0x06;
++    let path = format!("/sys/class/input/{}/device/properties", device.sysname());
++    // a bitmap in hex words, the lowest bits last
++    std::fs::read_to_string(path)
++        .ok()
++        .and_then(|bits| bits.split_whitespace().last().map(str::to_owned))
++        .and_then(|word| u64::from_str_radix(&word, 16).ok())
++        .is_some_and(|word| word & (1 << INPUT_PROP_ACCELEROMETER) != 0)
++}
++
+ /// Returns the DBus object path for evdev devices
+ pub fn get_dbus_path(handler: String) -> String {
+     format!("{}/{}", BUS_SOURCES_PREFIX, handler.clone())
+diff --git a/src/input/source/evdev/imu.rs b/src/input/source/evdev/imu.rs
+new file mode 100644
+index 0000000..e81e41e
+--- /dev/null
++++ b/src/input/source/evdev/imu.rs
+@@ -0,0 +1,144 @@
++use std::os::fd::AsFd;
++use std::{error::Error, fmt::Debug};
++
++use evdev::{AbsoluteAxisCode, Device, EventSummary};
++use nix::fcntl::{FcntlArg, OFlag};
++
++use crate::{
++    input::{
++        capability::{Capability, Source},
++        event::{native::NativeEvent, value::InputValue},
++        source::{InputError, SourceInputDevice, SourceOutputDevice},
++    },
++    udev::device::UdevDevice,
++};
++
++// Steam Deck UHID LSB, as the kernel's hid-steam driver reads them back
++// (STEAM_DECK_ACCEL_RES_PER_G, STEAM_DECK_GYRO_RES_PER_DPS).
++const DECK_ACCEL_LSB_PER_G: f64 = 16384.0;
++const DECK_GYRO_LSB_PER_DPS: f64 = 16.0;
++
++/// Source device implementation for evdev motion sensors (INPUT_PROP_ACCELEROMETER):
++/// ABS_X/Y/Z accelerometer and ABS_RX/RY/RZ gyroscope in the kernel's motion
++/// sensor frame (X right, Y toward the top edge, Z out of the screen), each
++/// scaled by its axis resolution (units per g, units per degree/s).
++pub struct ImuEventDevice {
++    device: Device,
++    accel_res: [f64; 3],
++    gyro_res: [f64; 3],
++    accel: [i32; 3],
++    gyro: [i32; 3],
++}
++
++impl ImuEventDevice {
++    /// Create a new [ImuEventDevice] source device from the given udev info
++    pub fn new(device_info: UdevDevice) -> Result<Self, Box<dyn Error + Send + Sync>> {
++        let path = device_info.devnode();
++        log::debug!("Opening device at: {}", path);
++        let mut device = Device::open(path.clone())?;
++        device.grab()?;
++
++        let fd = device.as_fd();
++        nix::fcntl::fcntl(fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK))?;
++
++        let mut accel_res = [DECK_ACCEL_LSB_PER_G; 3];
++        let mut gyro_res = [DECK_GYRO_LSB_PER_DPS; 3];
++        for (axis, info) in device.get_absinfo()? {
++            let res = if info.resolution() > 0 {
++                info.resolution() as f64
++            } else {
++                continue;
++            };
++            match axis {
++                AbsoluteAxisCode::ABS_X => accel_res[0] = res,
++                AbsoluteAxisCode::ABS_Y => accel_res[1] = res,
++                AbsoluteAxisCode::ABS_Z => accel_res[2] = res,
++                AbsoluteAxisCode::ABS_RX => gyro_res[0] = res,
++                AbsoluteAxisCode::ABS_RY => gyro_res[1] = res,
++                AbsoluteAxisCode::ABS_RZ => gyro_res[2] = res,
++                _ => (),
++            }
++        }
++        log::info!("Reading motion sensors from {path}");
++
++        Ok(Self {
++            device,
++            accel_res,
++            gyro_res,
++            accel: [0; 3],
++            gyro: [0; 3],
++        })
++    }
++
++    /// The kernel frame in Steam Deck order: hid-steam reports Deck X as X,
++    /// Deck Z as Y and -(Deck Y) as Z, so Deck (X, Y, Z) = (X, -Z, Y).
++    fn deck_vector(values: &[i32; 3], res: &[f64; 3], lsb: f64) -> InputValue {
++        let v = |i: usize| values[i] as f64 / res[i] * lsb;
++        InputValue::Vector3 {
++            x: Some(v(0)),
++            y: Some(-v(2)),
++            z: Some(v(1)),
++        }
++    }
++}
++
++impl SourceInputDevice for ImuEventDevice {
++    /// Poll the given input device for input events
++    fn poll(&mut self) -> Result<Vec<NativeEvent>, InputError> {
++        let events = match self.device.fetch_events() {
++            Ok(events) => events.collect::<Vec<_>>(),
++            Err(err) => match err.kind() {
++                std::io::ErrorKind::WouldBlock => return Ok(vec![]),
++                _ => return Err(format!("Failed to fetch events: {:?}", err).into()),
++            },
++        };
++
++        // Only the latest state matters: the target reports it at its own rate
++        let mut accel_changed = false;
++        let mut gyro_changed = false;
++        for event in events {
++            if let EventSummary::AbsoluteAxis(_, axis, value) = event.destructure() {
++                match axis {
++                    AbsoluteAxisCode::ABS_X => (self.accel[0], accel_changed) = (value, true),
++                    AbsoluteAxisCode::ABS_Y => (self.accel[1], accel_changed) = (value, true),
++                    AbsoluteAxisCode::ABS_Z => (self.accel[2], accel_changed) = (value, true),
++                    AbsoluteAxisCode::ABS_RX => (self.gyro[0], gyro_changed) = (value, true),
++                    AbsoluteAxisCode::ABS_RY => (self.gyro[1], gyro_changed) = (value, true),
++                    AbsoluteAxisCode::ABS_RZ => (self.gyro[2], gyro_changed) = (value, true),
++                    _ => (),
++                }
++            }
++        }
++
++        let mut native_events = vec![];
++        if accel_changed {
++            native_events.push(NativeEvent::new(
++                Capability::Accelerometer(Source::Center),
++                Self::deck_vector(&self.accel, &self.accel_res, DECK_ACCEL_LSB_PER_G),
++            ));
++        }
++        if gyro_changed {
++            native_events.push(NativeEvent::new(
++                Capability::Gyroscope(Source::Center),
++                Self::deck_vector(&self.gyro, &self.gyro_res, DECK_GYRO_LSB_PER_DPS),
++            ));
++        }
++        Ok(native_events)
++    }
++
++    /// Returns the possible input events this device is capable of emitting
++    fn get_capabilities(&self) -> Result<Vec<Capability>, InputError> {
++        Ok(vec![
++            Capability::Accelerometer(Source::Center),
++            Capability::Gyroscope(Source::Center),
++        ])
++    }
++}
++
++impl SourceOutputDevice for ImuEventDevice {}
++
++impl Debug for ImuEventDevice {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_struct("ImuEventDevice").finish()
++    }
++}

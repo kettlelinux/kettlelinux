@@ -1,0 +1,36 @@
+# hexagonrpcd: serves files to the Qualcomm DSPs over FastRPC. On the SM8550 handhelds the motion
+# sensors (gyro, accelerometer) hang off the ADSP's sensor island; the ADSP only starts its
+# sensors process (sensorspd) once something answers its file requests for the sensor registry
+# and config, which Android keeps on the device's own vendor and persist partitions.
+pkgname=hexagonrpc
+pkgver=0.5.0
+pkgrel=2
+pkgdesc='FastRPC server for Qualcomm DSPs (starts the ADSP sensors process)'
+arch=(aarch64)
+url='https://github.com/linux-msm/hexagonrpc'
+license=(GPL-3.0-or-later)
+depends=(glibc)
+makedepends=(meson)
+source=("$pkgname-$pkgver.tar.gz::https://github.com/linux-msm/hexagonrpc/archive/refs/tags/v$pkgver.tar.gz"
+        0001-hexagonrpcd-serve-the-sensors-registry-version-file.patch
+        hexagonrpc.sysusers
+        hexagonrpc.udev)
+sha256sums=('2173985932ab68d8ac593f9954357123bdbbbe9ba5f1b17a098d9cbcec22c5d5'
+            SKIP
+            SKIP
+            SKIP)
+
+prepare() {
+  patch -d "$pkgname-$pkgver" -Np1 -i ../0001-hexagonrpcd-serve-the-sensors-registry-version-file.patch
+}
+
+build() {
+  arch-meson "$pkgname-$pkgver" build
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+  install -Dm644 hexagonrpc.sysusers "$pkgdir/usr/lib/sysusers.d/hexagonrpc.conf"
+  install -Dm644 hexagonrpc.udev "$pkgdir/usr/lib/udev/rules.d/70-hexagonrpc.rules"
+}
