@@ -34,5 +34,11 @@ source_devices:
       name: gpio-keys-ayn
       handler: event*
 
+  # the gyro and accelerometer, from kettle-motiond (packages/kettle-motion; read by our 0001)
+  - group: imu
+    evdev:
+      name: Kettle Motion Sensors
+      handler: event*
+
 target_devices:
   - deck

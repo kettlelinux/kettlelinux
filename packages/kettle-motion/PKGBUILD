@@ -8,7 +8,7 @@
 # Sources live next to this PKGBUILD.
 pkgname=kettle-motion
 pkgver=0.1.0
-pkgrel=3
+pkgrel=4
 pkgdesc='Kettle Linux motion sensors for Steam Input'
 arch=(aarch64)
 license=(GPL-3.0-or-later)
