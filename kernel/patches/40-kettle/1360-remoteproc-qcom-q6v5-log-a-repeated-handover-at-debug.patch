@@ -1,0 +1,19 @@
+From: Kettle Linux <kettlelinux@kettlelinux.org>
+Subject: [PATCH] remoteproc: qcom_q6v5: log a repeated handover at debug level
+
+Once the handover has happened the proxy votes are released, so a later
+handover interrupt changes nothing. The SM8550 ADSP raises it every ~180 ms
+while its Sensor Core streams (the motion sensors, through hexagonrpcd and
+libssc), and each one logged an error. Log it at debug level.
+---
+--- a/drivers/remoteproc/qcom_q6v5.c
++++ b/drivers/remoteproc/qcom_q6v5.c
+@@ -165,7 +165,7 @@
+ 	struct qcom_q6v5 *q6v5 = data;
+ 
+ 	if (q6v5->handover_issued) {
+-		dev_err(q6v5->dev, "Handover signaled, but it already happened\n");
++		dev_dbg(q6v5->dev, "Handover signaled, but it already happened\n");
+ 		return IRQ_HANDLED;
+ 	}
+ 
