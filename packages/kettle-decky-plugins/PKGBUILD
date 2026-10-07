@@ -6,8 +6,9 @@
 #   power      per-game fan curve / fixed speed and CPU core parking and caps, a live power and
 #              temperature readout, the charge limit and speed (all through kettle-powerd); and
 #              Steam's power sliders following what the Performance app sets (steamSync.ts); and
-#              the screen's refresh rate, 60 or 120 Hz, held in games and the Steam UI alike
-#              (gamescope 0023) on a device that lists its rates (/usr/lib/kettle/refresh-rates);
+#              the screen's refresh rate on a device that lists its rates (/usr/lib/kettle/
+#              refresh-rates): Auto (Steam's frame limit picks it) or one held in games and the
+#              Steam UI alike (gamescope 0023), and per game, held while the game runs;
 #              and per-game Auto TDP (kettle-powerd), held at Steam's frame rate limit, which it
 #              watches on gamescope's root window with xprop
 #   welcome    opens once on first boot: Game Mode's counterpart of the desktop's Kettle Welcome.
@@ -45,7 +46,7 @@ pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome kettl
          kettle-decky-screens kettle-decky-crash kettle-decky-game-settings kettle-decky-lights
          kettle-decky-stores)
 pkgver=1.12.0
-pkgrel=28
+pkgrel=29
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
