@@ -6,6 +6,8 @@ qt_add_qml_module(kettle-performance
         Main.qml
         StatsPage.qml
         SettingsPage.qml
+        TrackpadPage.qml
+        KeyboardPage.qml
         Tile.qml
         FrameGraph.qml
         SliderRow.qml

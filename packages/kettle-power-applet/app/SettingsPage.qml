@@ -17,8 +17,11 @@ QQC2.ScrollView {
     required property bool gameMode
     // how often the readings update, ms
     required property int interval
+    // the Trackpad tab's pointer speed (Game Mode)
+    required property real trackpadSpeed
 
     signal intervalPicked(int ms)
+    signal trackpadSpeedPicked(real speed)
 
     readonly property var info: power.info
     readonly property var status: power.status
@@ -86,6 +89,16 @@ QQC2.ScrollView {
             value: page.bottomScreen.brightness
             valueText: Math.round(live) + "%"
             onPicked: v => page.bottomScreen.brightness = v
+        }
+        SliderRow {
+            visible: page.gameMode
+            text: "Trackpad speed"
+            from: 1
+            to: 15
+            stepSize: 0.5
+            value: page.trackpadSpeed
+            valueText: live.toFixed(1) + "×"
+            onPicked: v => page.trackpadSpeedPicked(v)
         }
 
         Kirigami.PlaceholderMessage {

@@ -15,14 +15,18 @@ qt_policy(SET QTP0001 NEW)
 qt_standard_project_setup(REQUIRES 6.7)
 
 # the applet's and the Performance app's backend: kettle-powerd on the system bus, and the
-# readings it doesn't give (the game's frame rate, temperatures, memory), and the bottom screen
+# readings it doesn't give (the game's frame rate, temperatures, memory), the bottom screen,
+# and the Trackpad and Keyboard tabs' mouse and keyboard (uinput)
 include(ECMQmlModule)
 ecm_add_qml_module(kettlepowerplugin URI org.kettle.private.power GENERATE_PLUGIN_SOURCE)
 target_sources(kettlepowerplugin PRIVATE
     src/powerbackend.cpp src/powerbackend.h
     src/gamestats.cpp src/gamestats.h
     src/systemstats.cpp src/systemstats.h
-    src/bottomscreen.cpp src/bottomscreen.h)
+    src/bottomscreen.cpp src/bottomscreen.h
+    src/trackpad.cpp src/trackpad.h
+    src/keyboard.cpp src/keyboard.h
+    src/uinputdevice.cpp src/uinputdevice.h)
 target_include_directories(kettlepowerplugin PRIVATE src)
 target_link_libraries(kettlepowerplugin PRIVATE Qt6::Core Qt6::DBus Qt6::Qml KF6::ConfigCore)
 ecm_finalize_qml_module(kettlepowerplugin DESTINATION ${KDE_INSTALL_QMLDIR})
