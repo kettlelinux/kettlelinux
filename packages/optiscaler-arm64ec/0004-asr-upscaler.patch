@@ -1,4 +1,4 @@
-From 02e7748ab28e58139f76b49905b9f33ff5b121ac Mon Sep 17 00:00:00 2001
+From a4389b45d16b8d2e0ab2ee6230c921461e5d3376 Mon Sep 17 00:00:00 2001
 From: Kettle <kettle@localhost>
 Date: Fri, 25 Sep 2026 16:33:13 -0500
 Subject: [PATCH 4/5] asr: add the Arm ASR upscaler (asr, asr_12)
@@ -29,7 +29,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  OptiScaler/Config.h                           |   3 +
  OptiScaler/OptiTypes.cpp                      |  45 ++
  OptiScaler/OptiTypes.h                        |  16 +
- OptiScaler/menu/menu_common.cpp               |   6 +-
+ OptiScaler/menu/menu_common.cpp               |  14 +-
  OptiScaler/upscalers/FeatureProvider_Dx11.cpp |   5 +
  OptiScaler/upscalers/FeatureProvider_Dx12.cpp |   5 +
  OptiScaler/upscalers/IFeature_Dx12.cpp        |   2 +-
@@ -37,9 +37,9 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  OptiScaler/upscalers/asr/ASRFeature.h         |  51 ++
  .../upscalers/asr/ASRFeature_Dx11on12.cpp     |  11 +
  .../upscalers/asr/ASRFeature_Dx11on12.h       |  12 +
- OptiScaler/upscalers/asr/ASRFeature_Dx12.cpp  | 701 ++++++++++++++++++
- OptiScaler/upscalers/asr/ASRFeature_Dx12.h    | 101 +++
- 15 files changed, 1101 insertions(+), 5 deletions(-)
+ OptiScaler/upscalers/asr/ASRFeature_Dx12.cpp  | 723 ++++++++++++++++++
+ OptiScaler/upscalers/asr/ASRFeature_Dx12.h    | 106 +++
+ 15 files changed, 1134 insertions(+), 7 deletions(-)
  create mode 100644 OptiScaler/upscalers/asr/ASRFeature.cpp
  create mode 100644 OptiScaler/upscalers/asr/ASRFeature.h
  create mode 100644 OptiScaler/upscalers/asr/ASRFeature_Dx11on12.cpp
@@ -48,7 +48,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  create mode 100644 OptiScaler/upscalers/asr/ASRFeature_Dx12.h
 
 diff --git a/OptiScaler.ini b/OptiScaler.ini
-index c254a1a..3f5a74b 100644
+index c254a1a5..3f5a74b1 100644
 --- a/OptiScaler.ini
 +++ b/OptiScaler.ini
 @@ -2,11 +2,11 @@
@@ -83,7 +83,7 @@ index c254a1a..3f5a74b 100644
  [FSR]
  ; -------------------------------------------------------
 diff --git a/OptiScaler/Config.cpp b/OptiScaler/Config.cpp
-index 11e960c..6951abd 100644
+index 11e960c5..6951abd4 100644
 --- a/OptiScaler/Config.cpp
 +++ b/OptiScaler/Config.cpp
 @@ -254,6 +254,11 @@ bool Config::Reload(std::filesystem::path iniPath)
@@ -112,7 +112,7 @@ index 11e960c..6951abd 100644
      {
          ini.SetValue("FSR", "VerticalFov", GetFloatValue(Instance()->FsrVerticalFov.value_for_config()).c_str());
 diff --git a/OptiScaler/Config.h b/OptiScaler/Config.h
-index 8eee1a8..cc94264 100644
+index 8eee1a8a..cc94264c 100644
 --- a/OptiScaler/Config.h
 +++ b/OptiScaler/Config.h
 @@ -462,6 +462,9 @@ class Config
@@ -126,7 +126,7 @@ index 8eee1a8..cc94264 100644
      CustomOptional<float> FsrVerticalFov { 60.0f };
      CustomOptional<float> FsrHorizontalFov { 0.0f }; // off by default
 diff --git a/OptiScaler/OptiTypes.cpp b/OptiScaler/OptiTypes.cpp
-index 292b5dd..bfc1e50 100644
+index 292b5ddd..bfc1e50d 100644
 --- a/OptiScaler/OptiTypes.cpp
 +++ b/OptiScaler/OptiTypes.cpp
 @@ -52,6 +52,15 @@ std::string UpscalerDisplayName(Upscaler upscaler, API api)
@@ -207,7 +207,7 @@ index 292b5dd..bfc1e50 100644
 +    return (it != mapping.end()) ? it->second : AsrQuality::Balanced;
 +}
 diff --git a/OptiScaler/OptiTypes.h b/OptiScaler/OptiTypes.h
-index 391b0ea..1cd905a 100644
+index 391b0eae..1cd905ad 100644
 --- a/OptiScaler/OptiTypes.h
 +++ b/OptiScaler/OptiTypes.h
 @@ -67,6 +67,9 @@ enum class Upscaler
@@ -245,7 +245,7 @@ index 391b0ea..1cd905a 100644
 +std::string AsrQualityToCode(AsrQuality quality);
 +AsrQuality CodeToAsrQuality(const std::string& code);
 diff --git a/OptiScaler/menu/menu_common.cpp b/OptiScaler/menu/menu_common.cpp
-index 02b63ff..fb241e5 100644
+index 02b63ffe..8b5078f1 100644
 --- a/OptiScaler/menu/menu_common.cpp
 +++ b/OptiScaler/menu/menu_common.cpp
 @@ -499,13 +499,15 @@ void MenuCommon::AddDx11Backends(Upscaler upscaler)
@@ -266,8 +266,31 @@ index 02b63ff..fb241e5 100644
  }
  
  void MenuCommon::AddVulkanBackends(Upscaler upscaler)
+@@ -4951,7 +4953,8 @@ void MenuCommon::RenderFsrCommonSettings(RenderMenuContext& ctx)
+     {
+         // FSR Common -----------------
+         if (currentFeature != nullptr && !currentFeature->IsFrozen() &&
+-            (state.activeFgOutput == FGOutput::FSRFG || IsFsr(currentBackend)))
++            (state.activeFgOutput == FGOutput::FSRFG || IsFsr(currentBackend) || currentBackend == Upscaler::ASR ||
++             currentBackend == Upscaler::ASR_on12)) // ASR reads the FSR camera settings too
+         {
+             SeparatorWithHelpMarker("FSR Common Settings", "Affects both FSR-FG & Upscalers");
+ 
+@@ -5396,8 +5399,11 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
+         {
+             // xess or dlss version >= 2.5.1
+             constexpr feature_version requiredDlssVersion = { 2, 5, 1 };
++            // (and SGSR2 and ASR, which have no sharpening of their own: IFeature_Dx12 always runs RCAS for them)
+             rcasEnabled = (currentBackend == Upscaler::XeSS ||
+-                           (currentBackend == Upscaler::DLSS && currentFeature->Version() >= requiredDlssVersion));
++                           (currentBackend == Upscaler::DLSS && currentFeature->Version() >= requiredDlssVersion) ||
++                           currentBackend == Upscaler::SGSR2 || currentBackend == Upscaler::SGSR2_on12 ||
++                           currentBackend == Upscaler::ASR || currentBackend == Upscaler::ASR_on12);
+ 
+             ImGui::Spacing();
+             ImGui::Spacing();
 diff --git a/OptiScaler/upscalers/FeatureProvider_Dx11.cpp b/OptiScaler/upscalers/FeatureProvider_Dx11.cpp
-index a5444a3..1ebe5a0 100644
+index a5444a30..1ebe5a04 100644
 --- a/OptiScaler/upscalers/FeatureProvider_Dx11.cpp
 +++ b/OptiScaler/upscalers/FeatureProvider_Dx11.cpp
 @@ -1,5 +1,6 @@
@@ -289,7 +312,7 @@ index a5444a3..1ebe5a0 100644
          *feature = std::make_unique<XeSSFeatureDx11on12>(handleId, parameters);
          break;
 diff --git a/OptiScaler/upscalers/FeatureProvider_Dx12.cpp b/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
-index b66cfc3..d07fb74 100644
+index b66cfc3d..d07fb740 100644
 --- a/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
 +++ b/OptiScaler/upscalers/FeatureProvider_Dx12.cpp
 @@ -13,6 +13,7 @@
@@ -312,7 +335,7 @@ index b66cfc3..d07fb74 100644
          *feature = std::make_unique<FFXFeatureDx12>(handleId, parameters);
          break;
 diff --git a/OptiScaler/upscalers/IFeature_Dx12.cpp b/OptiScaler/upscalers/IFeature_Dx12.cpp
-index b25117e..adc56ad 100644
+index b25117e4..adc56ad1 100644
 --- a/OptiScaler/upscalers/IFeature_Dx12.cpp
 +++ b/OptiScaler/upscalers/IFeature_Dx12.cpp
 @@ -65,7 +65,7 @@ bool IFeature_Dx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_NGX
@@ -326,7 +349,7 @@ index b25117e..adc56ad 100644
          useRcas = Config::Instance()->RcasEnabled.value_or_default();
 diff --git a/OptiScaler/upscalers/asr/ASRFeature.cpp b/OptiScaler/upscalers/asr/ASRFeature.cpp
 new file mode 100644
-index 0000000..2e401ed
+index 00000000..2e401ed9
 --- /dev/null
 +++ b/OptiScaler/upscalers/asr/ASRFeature.cpp
 @@ -0,0 +1,123 @@
@@ -455,7 +478,7 @@ index 0000000..2e401ed
 +}
 diff --git a/OptiScaler/upscalers/asr/ASRFeature.h b/OptiScaler/upscalers/asr/ASRFeature.h
 new file mode 100644
-index 0000000..b49cff4
+index 00000000..b49cff42
 --- /dev/null
 +++ b/OptiScaler/upscalers/asr/ASRFeature.h
 @@ -0,0 +1,51 @@
@@ -512,7 +535,7 @@ index 0000000..b49cff4
 +};
 diff --git a/OptiScaler/upscalers/asr/ASRFeature_Dx11on12.cpp b/OptiScaler/upscalers/asr/ASRFeature_Dx11on12.cpp
 new file mode 100644
-index 0000000..3d8bed3
+index 00000000..3d8bed34
 --- /dev/null
 +++ b/OptiScaler/upscalers/asr/ASRFeature_Dx11on12.cpp
 @@ -0,0 +1,11 @@
@@ -529,7 +552,7 @@ index 0000000..3d8bed3
 +}
 diff --git a/OptiScaler/upscalers/asr/ASRFeature_Dx11on12.h b/OptiScaler/upscalers/asr/ASRFeature_Dx11on12.h
 new file mode 100644
-index 0000000..a403c9a
+index 00000000..a403c9ad
 --- /dev/null
 +++ b/OptiScaler/upscalers/asr/ASRFeature_Dx11on12.h
 @@ -0,0 +1,12 @@
@@ -547,10 +570,10 @@ index 0000000..a403c9a
 +};
 diff --git a/OptiScaler/upscalers/asr/ASRFeature_Dx12.cpp b/OptiScaler/upscalers/asr/ASRFeature_Dx12.cpp
 new file mode 100644
-index 0000000..6f5cccb
+index 00000000..c97af57c
 --- /dev/null
 +++ b/OptiScaler/upscalers/asr/ASRFeature_Dx12.cpp
-@@ -0,0 +1,701 @@
+@@ -0,0 +1,723 @@
 +#include "pch.h"
 +#include "ASRFeature_Dx12.h"
 +#include "ffxm_dx12.h"
@@ -695,6 +718,9 @@ index 0000000..6f5cccb
 +    if (err != FFXM_OK)
 +    {
 +        LOG_ERROR("Arm ASR: ffxmFsr2ContextCreate: {}", ErrorName(err));
++        // ASR returns on the first error without releasing what it made: the
++        // backend's heaps, constant ring, textures and pipelines so far.
++        desc.backendInterface.fpDestroyBackendContext(&desc.backendInterface, 0);
 +        return nullptr;
 +    }
 +
@@ -953,6 +979,17 @@ index 0000000..6f5cccb
 +    if (paramDepth == nullptr && _frameCount == 0)
 +        LOG_WARN("Arm ASR: no depth buffer supplied; expect ghosting on disocclusion");
 +
++    // Without the game's exposure texture, switch to ASR's auto exposure rather
++    // than run at exposure 1: the feature is rebuilt with it, as the FSR2
++    // backends do. Before any context or barrier work, which this frame skips.
++    if (!AutoExposure() && GetParam<ID3D12Resource>(InParameters, NVSDK_NGX_Parameter_ExposureTexture) == nullptr)
++    {
++        LOG_INFO("Arm ASR: no exposure texture and AutoExposure off; enabling auto exposure");
++        State::Instance().autoExposure = true;
++        State::Instance().changeBackend[Handle()->Id] = true;
++        return true;
++    }
++
 +    // ---------------------------------------------------------------- context
 +    unsigned int renderWidth = 0, renderHeight = 0;
 +    GetRenderResolution(InParameters, &renderWidth, &renderHeight);
@@ -987,16 +1024,27 @@ index 0000000..6f5cccb
 +        _pendingFrames = 0;
 +    }
 +
-+    if (recreate)
++    // A size and preset that failed to build once aren't tried again every frame.
++    if (recreate && !(renderWidth == _failedWidth && renderHeight == _failedHeight && quality == _failedQuality))
 +    {
-+        auto fresh = CreateContext(renderWidth, renderHeight, quality);
-+        if (!fresh)
-+            return false;
-+
-+        if (_context)
-+            _retired.push_back({ std::move(_context), RetireFrames });
-+        _context = std::move(fresh);
++        if (auto fresh = CreateContext(renderWidth, renderHeight, quality))
++        {
++            if (_context)
++                _retired.push_back({ std::move(_context), RetireFrames });
++            _context = std::move(fresh);
++            _failedWidth = _failedHeight = 0;
++        }
++        else
++        {
++            _failedWidth = renderWidth;
++            _failedHeight = renderHeight;
++            _failedQuality = quality;
++        }
 +    }
++
++    // Without a new one, the current context still serves any size that fits it.
++    if (!_context || renderWidth > _context->renderWidth || renderHeight > _context->renderHeight)
++        return false;
 +
 +    if (!_loggedInputs)
 +    {
@@ -1038,18 +1086,15 @@ index 0000000..6f5cccb
 +    if (paramDepth)
 +        params.depth = ffxmGetResourceDX12(paramDepth, FFXM_RESOURCE_STATE_COMPUTE_READ, L"ASR_Depth");
 +
-+    // Exposure: a missing texture is fine, ASR then assumes exposure 1.
++    // Exposure (the texture is there: checked above)
 +    ID3D12Resource* paramExp = nullptr;
 +    if (!AutoExposure())
 +    {
 +        paramExp = GetParam<ID3D12Resource>(InParameters, NVSDK_NGX_Parameter_ExposureTexture);
-+        if (paramExp)
-+        {
-+            if (cfg.ExposureResourceBarrier.has_value())
-+                ResourceBarrier(InCommandList, paramExp, (D3D12_RESOURCE_STATES) cfg.ExposureResourceBarrier.value(),
-+                                readState);
-+            params.exposure = ffxmGetResourceDX12(paramExp, FFXM_RESOURCE_STATE_COMPUTE_READ, L"ASR_Exposure");
-+        }
++        if (cfg.ExposureResourceBarrier.has_value())
++            ResourceBarrier(InCommandList, paramExp, (D3D12_RESOURCE_STATES) cfg.ExposureResourceBarrier.value(),
++                            readState);
++        params.exposure = ffxmGetResourceDX12(paramExp, FFXM_RESOURCE_STATE_COMPUTE_READ, L"ASR_Exposure");
 +    }
 +
 +    // Reactive / transparency masks, following the FSR2 backends' rules.
@@ -1254,10 +1299,10 @@ index 0000000..6f5cccb
 +}
 diff --git a/OptiScaler/upscalers/asr/ASRFeature_Dx12.h b/OptiScaler/upscalers/asr/ASRFeature_Dx12.h
 new file mode 100644
-index 0000000..0c94679
+index 00000000..ee77f230
 --- /dev/null
 +++ b/OptiScaler/upscalers/asr/ASRFeature_Dx12.h
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,106 @@
 +#pragma once
 +
 +#include "ASRFeature.h"
@@ -1307,6 +1352,11 @@ index 0000000..0c94679
 +    uint32_t _pendingWidth = 0;
 +    uint32_t _pendingHeight = 0;
 +    uint32_t _pendingFrames = 0;
++
++    // The last size and preset a context failed to build for.
++    uint32_t _failedWidth = 0;
++    uint32_t _failedHeight = 0;
++    arm::FfxmFsr2ShaderQualityMode _failedQuality {};
 +
 +    std::unique_ptr<Context> _context;
 +    std::vector<Retired> _retired;
@@ -1360,5 +1410,5 @@ index 0000000..0c94679
 +    ~ASRFeatureDx12() override;
 +};
 -- 
-2.55.0
+2.56.0
 

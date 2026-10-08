@@ -1,4 +1,4 @@
-From c0b607872f049836b75cf8eeba4d2c2f9903db7f Mon Sep 17 00:00:00 2001
+From d3c348c97edbbdb7ea1ff7cb2ee35144a538d1cd Mon Sep 17 00:00:00 2001
 From: Kettle <kettle@localhost>
 Date: Fri, 25 Sep 2026 16:33:13 -0500
 Subject: [PATCH 3/5] asr: add a D3D12 backend for Arm ASR, with DXIL built
@@ -28,12 +28,12 @@ preset, static and panning, low- and display-resolution motion vectors.
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
 ---
  LICENSES/MIT-Arm-ASR.txt               |   20 +
- OptiScaler/upscalers/asr/ffxm_dx12.cpp | 1586 ++++++++++++++++++++++++
+ OptiScaler/upscalers/asr/ffxm_dx12.cpp | 1588 ++++++++++++++++++++++++
  OptiScaler/upscalers/asr/ffxm_dx12.h   |   64 +
  arm64ec/README.md                      |   30 +
  arm64ec/build.sh                       |   46 +-
  arm64ec/gen_asr_shaders.py             |  316 +++++
- 6 files changed, 2061 insertions(+), 1 deletion(-)
+ 6 files changed, 2063 insertions(+), 1 deletion(-)
  create mode 100644 LICENSES/MIT-Arm-ASR.txt
  create mode 100644 OptiScaler/upscalers/asr/ffxm_dx12.cpp
  create mode 100644 OptiScaler/upscalers/asr/ffxm_dx12.h
@@ -41,7 +41,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
 
 diff --git a/LICENSES/MIT-Arm-ASR.txt b/LICENSES/MIT-Arm-ASR.txt
 new file mode 100644
-index 0000000..637c17a
+index 00000000..637c17ac
 --- /dev/null
 +++ b/LICENSES/MIT-Arm-ASR.txt
 @@ -0,0 +1,20 @@
@@ -67,10 +67,10 @@ index 0000000..637c17a
 +SOFTWARE.
 diff --git a/OptiScaler/upscalers/asr/ffxm_dx12.cpp b/OptiScaler/upscalers/asr/ffxm_dx12.cpp
 new file mode 100644
-index 0000000..40a2117
+index 00000000..c87fc18a
 --- /dev/null
 +++ b/OptiScaler/upscalers/asr/ffxm_dx12.cpp
-@@ -0,0 +1,1586 @@
+@@ -0,0 +1,1588 @@
 +// D3D12 backend for Arm Accuracy Super Resolution's ffxm interface.
 +//
 +// Copyright (c) 2023 Advanced Micro Devices, Inc.
@@ -295,18 +295,17 @@ index 0000000..40a2117
 +    }
 +}
 +
-+// Typed, non-sRGB view format for whatever a game handed over. Depth formats
-+// resolve to their readable colour aliases.
++// Typed view format for whatever a game handed over: typeless formats get their
++// non-sRGB typed alias, depth formats their readable colour alias. Typed formats,
++// sRGB included, stay as they are (as in FSR2's DX12 backend): D3D12 only allows
++// a view in another format of a typeless resource.
 +DXGI_FORMAT ViewFormat(DXGI_FORMAT f)
 +{
 +    switch (f)
 +    {
-+    case DXGI_FORMAT_R8G8B8A8_TYPELESS:
-+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: return DXGI_FORMAT_R8G8B8A8_UNORM;
-+    case DXGI_FORMAT_B8G8R8A8_TYPELESS:
-+    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: return DXGI_FORMAT_B8G8R8A8_UNORM;
-+    case DXGI_FORMAT_B8G8R8X8_TYPELESS:
-+    case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB: return DXGI_FORMAT_B8G8R8X8_UNORM;
++    case DXGI_FORMAT_R8G8B8A8_TYPELESS: return DXGI_FORMAT_R8G8B8A8_UNORM;
++    case DXGI_FORMAT_B8G8R8A8_TYPELESS: return DXGI_FORMAT_B8G8R8A8_UNORM;
++    case DXGI_FORMAT_B8G8R8X8_TYPELESS: return DXGI_FORMAT_B8G8R8X8_UNORM;
 +    case DXGI_FORMAT_R16G16B16A16_TYPELESS: return DXGI_FORMAT_R16G16B16A16_FLOAT;
 +    case DXGI_FORMAT_R32G32B32A32_TYPELESS: return DXGI_FORMAT_R32G32B32A32_FLOAT;
 +    case DXGI_FORMAT_R32G32B32_TYPELESS: return DXGI_FORMAT_R32G32B32_FLOAT;
@@ -442,7 +441,10 @@ index 0000000..40a2117
 +    }
 +}
 +
-+void AddBarrier(Backend* b, ID3D12GraphicsCommandList* cl, uint32_t index, D3D12_RESOURCE_STATES newState)
++// exact: transition to newState itself, even where a read state already covers it
++// (handing a resource back in the state it arrived in).
++void AddBarrier(Backend* b, ID3D12GraphicsCommandList* cl, uint32_t index, D3D12_RESOURCE_STATES newState,
++                bool exact = false)
 +{
 +    if (index == 0 || index >= kMaxResources)
 +        return;
@@ -468,7 +470,7 @@ index 0000000..40a2117
 +    }
 +
 +    // A read state already covering the request needs no transition.
-+    if ((newState & ~kShaderRead) == 0 && (r.state & kShaderRead) != 0 && (r.state & newState) == newState)
++    if (!exact && (newState & ~kShaderRead) == 0 && (r.state & kShaderRead) != 0 && (r.state & newState) == newState)
 +        return;
 +
 +    D3D12_RESOURCE_BARRIER& tb = b->barriers[b->barrierCount++];
@@ -915,7 +917,7 @@ index 0000000..40a2117
 +    {
 +        Resource& r = b->resources[i];
 +        if (r.res != nullptr && r.state != r.initialState)
-+            AddBarrier(b, cl, i, r.initialState);
++            AddBarrier(b, cl, i, r.initialState, true);
 +    }
 +    FlushBarriers(b, cl);
 +
@@ -1341,7 +1343,7 @@ index 0000000..40a2117
 +    {
 +        for (uint32_t e = 0; e < p->blob->srvs[i].count; e++, slot++)
 +        {
-+            const int32_t idx = srvs[i + e].internalIndex;
++            const int32_t idx = srvs[i].internalIndex; // one entry per binding, as for the UAVs
 +            const Resource* r = (idx > 0 && idx < (int32_t) kMaxResources) ? &b->resources[idx] : nullptr;
 +            const uint32_t src = (r && r->res && r->srvCpu >= 0) ? (uint32_t) r->srvCpu : 0;
 +            auto dst = gpuCpu;
@@ -1659,7 +1661,7 @@ index 0000000..40a2117
 +} // namespace arm
 diff --git a/OptiScaler/upscalers/asr/ffxm_dx12.h b/OptiScaler/upscalers/asr/ffxm_dx12.h
 new file mode 100644
-index 0000000..ba580d9
+index 00000000..ba580d91
 --- /dev/null
 +++ b/OptiScaler/upscalers/asr/ffxm_dx12.h
 @@ -0,0 +1,64 @@
@@ -1728,7 +1730,7 @@ index 0000000..ba580d9
 +
 +} // namespace arm
 diff --git a/arm64ec/README.md b/arm64ec/README.md
-index 6e54ee9..4609b0d 100644
+index 6e54ee95..4609b0d1 100644
 --- a/arm64ec/README.md
 +++ b/arm64ec/README.md
 @@ -66,6 +66,36 @@ particular the motion-vector sign/scale convention (`motionVectorScale` in the
@@ -1769,7 +1771,7 @@ index 6e54ee9..4609b0d 100644
  
  ```
 diff --git a/arm64ec/build.sh b/arm64ec/build.sh
-index 518b0f2..559d179 100755
+index 518b0f22..559d179e 100755
 --- a/arm64ec/build.sh
 +++ b/arm64ec/build.sh
 @@ -32,6 +32,37 @@ fi
@@ -1848,7 +1850,7 @@ index 518b0f2..559d179 100755
    -static-libgcc -static-libstdc++ -Wl,--error-limit=0
 diff --git a/arm64ec/gen_asr_shaders.py b/arm64ec/gen_asr_shaders.py
 new file mode 100644
-index 0000000..2e101b2
+index 00000000..2e101b20
 --- /dev/null
 +++ b/arm64ec/gen_asr_shaders.py
 @@ -0,0 +1,316 @@
@@ -2169,5 +2171,5 @@ index 0000000..2e101b2
 +if __name__ == "__main__":
 +    main()
 -- 
-2.55.0
+2.56.0
 

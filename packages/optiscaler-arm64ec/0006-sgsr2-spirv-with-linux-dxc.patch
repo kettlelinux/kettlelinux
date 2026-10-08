@@ -1,0 +1,84 @@
+From 3d55ebe48b7a71b79511e953f8ff137d6089ecbc Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Wed, 7 Oct 2026 18:53:23 -0500
+Subject: [PATCH 6/6] arm64ec: compile the SGSR2 SPIR-V with Linux dxc instead of
+ dxc.exe under wine
+
+The Vulkan SGSR2 backend embeds SPIR-V generated from SGSR2_Shaders.h, the same
+HLSL the D3D12 backend compiles at runtime. Nothing in the build regenerated it,
+so shader changes (the weight guard, display-resolution motion vectors) reached
+D3D12 and DX11 games but not Vulkan ones. gen_sgsr2_spirv.sh now runs Linux dxc
+(DXC=, else dxc on PATH), so a Linux or aarch64 build can call it every time,
+and it fails on any error instead of leaving the committed SPIR-V in place.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arm64ec/gen_sgsr2_spirv.sh | 26 +++++++++++++++++---------
+ 1 file changed, 17 insertions(+), 9 deletions(-)
+
+diff --git a/arm64ec/gen_sgsr2_spirv.sh b/arm64ec/gen_sgsr2_spirv.sh
+index 2771ab06..a8149e37 100755
+--- a/arm64ec/gen_sgsr2_spirv.sh
++++ b/arm64ec/gen_sgsr2_spirv.sh
+@@ -10,9 +10,13 @@
+ #
+ # The Vulkan binding model comes from [[vk::binding]] attributes inside the HLSL,
+ # guarded by #ifdef VK_MODE so D3DCompile (which never defines it) is unaffected.
+-# This mirrors OptiScaler's own shaders/rcas precompile step, and uses the same
+-# vendored dxc, whose output was verified to reproduce the committed RCAS SPIR-V
+-# byte for byte.
++# This mirrors OptiScaler's own shaders/rcas precompile step. It runs Linux dxc
++# (Microsoft's DirectXShaderCompiler built with SPIR-V codegen) rather than the
++# vendored dxc.exe under wine, so it works in a plain Linux or aarch64 build:
++#
++#   arm64ec/gen_sgsr2_spirv.sh [deps-dir]      (DXC=/path/to/dxc to override)
++#
++# Run it whenever SGSR2_Shaders.h changes: the Vulkan backend embeds its output.
+ set -euo pipefail
+ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ DEPS="${1:-$ROOT/arm64ec-deps}"
+@@ -20,8 +24,8 @@ SRC="$ROOT/OptiScaler/upscalers/sgsr2"
+ OUT="$SRC/precompile"
+ TOOLS="$ROOT/OptiScaler/shaders/shader_tools"
+ WORK="$DEPS/sgsr2spv"
+-export WINEPREFIX="$DEPS/winepfx"
+-export WINEDEBUG=-all
++DXC="${DXC:-dxc}"
++command -v "$DXC" >/dev/null || { echo "dxc not found (set DXC=)" >&2; exit 1; }
+ mkdir -p "$OUT" "$WORK"
+ 
+ # 1. Extract the shader text straight out of the header.
+@@ -47,8 +51,7 @@ c++ -std=c++17 -I"$SRC" -o "$WORK/dump" "$WORK/dump.cpp"
+ "$WORK/dump" "$WORK/sgsr2_convert.hlsl" "$WORK/sgsr2_upscale.hlsl"
+ 
+ # 2. HLSL -> SPIR-V. cs_6_0 rather than the cs_5_0 the D3D12 path uses at
+-#    runtime: SPIR-V generation needs a DXIL-era profile, and there is no
+-#    Wine d3dcompiler in the way here to constrain it.
++#    runtime: SPIR-V generation needs a DXIL-era profile.
+ #
+ # Convert also gets -D HAS_DEPTH=1: the D3D12 backend compiles two PSOs, with
+ # and without it, and picks per-dispatch depending on whether the game supplies
+@@ -64,13 +67,18 @@ c++ -std=c++17 -I"$SRC" -o "$WORK/dump" "$WORK/dump.cpp"
+ for pass in convert upscale; do
+     extra=()
+     [ "$pass" = "convert" ] && extra=(-D HAS_DEPTH=1)
+-    ( cd "$TOOLS" && wine dxc.exe -spirv -T cs_6_0 -E CSMain -O3 -Qstrip_debug \
+-        -D VK_MODE "${extra[@]}" -Fo "$WORK/sgsr2_${pass}.spv" "$WORK/sgsr2_${pass}.hlsl" )
++    rm -f "$WORK/sgsr2_${pass}.spv"
++    "$DXC" -spirv -T cs_6_0 -E CSMain -O3 -Qstrip_debug \
++        -D VK_MODE "${extra[@]}" -Fo "$WORK/sgsr2_${pass}.spv" "$WORK/sgsr2_${pass}.hlsl"
++    [ -s "$WORK/sgsr2_${pass}.spv" ] || { echo "dxc wrote no SPIR-V for $pass" >&2; exit 1; }
+     if command -v spirv-val >/dev/null 2>&1; then
+         spirv-val "$WORK/sgsr2_${pass}.spv"
+     fi
++    # create_header.py reports a failed write but still exits 0: check its output
++    rm -f "$OUT/SGSR2_${pass}_Vk.h"
+     python3 "$TOOLS/create_header.py" "$WORK/sgsr2_${pass}.spv" \
+         "$OUT/SGSR2_${pass}_Vk.h" "sgsr2_${pass}_spv"
++    [ -s "$OUT/SGSR2_${pass}_Vk.h" ] || { echo "no header written for $pass" >&2; exit 1; }
+ done
+ 
+ echo "SPIR-V written to $OUT"
+-- 
+2.56.0
+
