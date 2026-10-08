@@ -17,10 +17,16 @@
 #         are fetched at the display pixel and scaled by the display size, as FSR2 does
 #   0003  Arm ASR (MIT, FSR2-derived, tuned for mobile GPUs): a D3D12 backend for its ffxm
 #   0004  API, DXIL built from its HLSL; upscaler=asr / asr_12, [ASR] ShaderQuality
-#         (quality|balanced|performance; performance is broken upstream in 25.06)
+#         (quality|balanced|performance; performance is broken upstream in 25.06).
+#         Hands the game's inputs back in the state they came in, keeps typed sRGB
+#         views, frees a context that fails to build (and doesn't retry it every
+#         frame), falls back to auto exposure without an exposure texture as FSR2
+#         does; menu: RCAS shown on for SGSR2/ASR, FSR camera settings for ASR
 #   0005  FSR2 2.2.1's DX12 shader permutations generated with Linux dxc instead of AMD's
 #         FidelityFX_SC.exe under Wine
-# dxc comes from our directx-shader-compiler package (build-time only).
+#   0006  SGSR2's Vulkan SPIR-V compiled with Linux dxc instead of dxc.exe under Wine; run in
+#         build() so the Vulkan path gets the same shaders as DX12/DX11 (0001, 0002)
+# dxc comes from our directx-shader-compiler package (build-time only, with SPIR-V codegen).
 #
 # Ships OptiScaler.dll/.ini only (GPL-3.0, source: the pinned fork commit below; SGSR2
 # shaders BSD-3-Clause). Statically linked: Detours (MIT), FreeType (FTL), spdlog, simpleini,
@@ -29,7 +35,7 @@
 # runs makepkg in the aarch64 chroot.
 pkgname=optiscaler-arm64ec
 pkgver=10.0.0.20260923
-pkgrel=3
+pkgrel=4
 _commit=f80e4da339cd4624212fd0546922571fe01205c1
 _llvm_mingw=20260908
 _ffx=c6efa6bf7f2027b3ec94f28578bb5965eabb9e55   # FidelityFX-SDK: only ffx-api/include is used
@@ -59,6 +65,7 @@ source=("Sloptiscaler::git+$url.git#commit=$_commit"
         0003-asr-d3d12-backend.patch
         0004-asr-upscaler.patch
         0005-fsr2-shaders-with-linux-dxc.patch
+        0006-sgsr2-spirv-with-linux-dxc.patch
         # upscalers built in (their submodules aren't needed)
         "asr::git+https://github.com/arm/accuracy-super-resolution-generic-library.git#commit=0501f490bd9946a2e1806b5363d7ab8a9a6a5e0a"  # 25.06
         "FidelityFX-FSR2::git+https://github.com/GPUOpen-Effects/FidelityFX-FSR2.git#commit=1680d1edd5c034f88ebbbb793d8b88f8842cf804")  # v2.2.1
@@ -72,9 +79,10 @@ sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP
             'c907dd2302a292b663add18752a55ce9d544ca0fd19cf33c086ca242d5994ea6'
             'ce46e7c303821ed685c0b1cb83fc2e70a0e7ebc5ff4a9aed3134da0244e6499e'
             '01bd2313e3262a953255064b0f9d1b441b4067cd689964ad17a74a4ea75d105d'
-            'd8f00f531ee8cec47a193cd526cee7a70ed6d2e03d49d9e5b1aa2207075655cf'
-            'dffbc7e3e21c8f839a251d24f043342a8a489d796e7d187c6fdec8dd6419b559'
+            'c5cb95cbd4b0ca00181d02e86e2e5dbbb2465591a3edc00b0b70313da5fef258'
+            '09c6c676b01aa941aa6a6b61ca5c7043b115013770477fac9d3a587ed59ab781'
             '1d58a3681595c43a6e92758cd06c154fbfd893062103e2b204468fb368d428ef'
+            '1543cfa8a9c49e225bb0c48f8a4d478c43aa0177ce5624b772ba201e2999288a'
             'SKIP'
             'SKIP'
             '408b4203545e8299ed188fbb1d9ddfe0932b73ea6e8b14fe10edcf1f45771561'
@@ -118,10 +126,14 @@ prepare() {
 
 build() {
   cd Sloptiscaler
+  # the committed SGSR2 SPIR-V predates our shader patches
+  DXC=/usr/bin/dxc ./arm64ec/gen_sgsr2_spirv.sh "$srcdir/deps"
   LLVM_MINGW="$srcdir/$_llvm" DXC=/usr/bin/dxc ./arm64ec/build.sh "$srcdir/deps"
-  # build.sh quietly falls back to stubs when dxc fails; this package has to have both
+  # build.sh quietly falls back to stubs when dxc or the FSR2 library build fails;
+  # this package has to have both
   [ -f "$srcdir/deps/asrgen/asr_dx12_shaders.h" ] || { echo "Arm ASR shaders missing (dxc)" >&2; return 1; }
   [ -d "$srcdir/deps/fsr2gen/dx12" ] || { echo "FSR2 shaders missing (dxc)" >&2; return 1; }
+  [ -f "$srcdir/deps/fsr2gen/obj/libffx_fsr2_arm64ec.a" ] || { echo "FSR2 library build failed" >&2; return 1; }
 }
 
 package() {

@@ -1,16 +1,17 @@
-# Microsoft's DirectX Shader Compiler (HLSL -> DXIL), built from source for the aarch64 build
-# chroot. Build-time only: optiscaler-arm64ec compiles FidelityFX FSR2 2.2.1's and Arm ASR's
-# HLSL to DXIL with it. Not part of the image.
+# Microsoft's DirectX Shader Compiler (HLSL -> DXIL and SPIR-V), built from source for the
+# aarch64 build chroot. Build-time only: optiscaler-arm64ec compiles FidelityFX FSR2 2.2.1's
+# and Arm ASR's HLSL to DXIL with it, and OptiScaler's SGSR2 shaders to SPIR-V for its Vulkan
+# path. Not part of the image.
 #
 # Built here because Valve's deckard snapshot has no dxc, and Arch Linux ARM's needs a newer
-# glibc than the chroot (and Arch's 1.10.2605 aborts on every input). Only the dxc target and
-# the DXIL backend: SPIR-V codegen, which DXC forces on for Linux, is switched off, so the
-# SPIRV-Tools/Headers submodules aren't needed. Under qemu this takes about an hour.
+# glibc than the chroot (and Arch's 1.10.2605 aborts on every input). Only the dxc target,
+# with the DXIL backend and SPIR-V codegen (SPIRV-Headers/Tools at the commits this dxc
+# pins). Under qemu this takes well over an hour.
 pkgname=directx-shader-compiler
 pkgver=1.9.2607
-pkgrel=2
+pkgrel=3
 _commit=0d3ee6b551b8fa768fbf825300ebab81047ef6a8   # v1.9.2607
-pkgdesc='DirectX Shader Compiler (dxc), DXIL backend only; build dependency of optiscaler-arm64ec'
+pkgdesc='DirectX Shader Compiler (dxc), DXIL and SPIR-V; build dependency of optiscaler-arm64ec'
 arch=(aarch64)
 url='https://github.com/microsoft/DirectXShaderCompiler'
 license=(LicenseRef-NCSA Apache-2.0)
@@ -21,19 +22,23 @@ makedepends=(git cmake ninja python)
 # matches the x86-64 build's output).
 options=(!buildflags !lto !debug)
 source=("DirectXShaderCompiler::git+$url.git#commit=$_commit"
-        "DirectX-Headers::git+https://github.com/microsoft/DirectX-Headers.git#commit=980971e835876dc0cde415e8f9bc646e64667bf7")
-sha256sums=('SKIP' 'SKIP')
+        "DirectX-Headers::git+https://github.com/microsoft/DirectX-Headers.git#commit=980971e835876dc0cde415e8f9bc646e64667bf7"
+        "SPIRV-Headers::git+https://github.com/KhronosGroup/SPIRV-Headers.git#commit=29981f65241605e08b0ede4cfeb999fe3b723c6a"
+        "SPIRV-Tools::git+https://github.com/KhronosGroup/SPIRV-Tools.git#commit=b707790a898e44038547df54580022fc1cf89c3d")
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP')
+_submodules=(DirectX-Headers SPIRV-Headers SPIRV-Tools)
 
 prepare() {
   cd DirectXShaderCompiler
-  git submodule init external/DirectX-Headers
-  git config submodule.external/DirectX-Headers.url "$srcdir/DirectX-Headers"
-  git -c protocol.file.allow=always submodule update external/DirectX-Headers
-  sed -i '/^# Enable SPIR-V CodeGen for Linux by default./,/^endif()/d' CMakeLists.txt
+  git submodule init "${_submodules[@]/#/external/}"
+  for s in "${_submodules[@]}"; do
+    git config "submodule.external/$s.url" "$srcdir/$s"
+  done
+  git -c protocol.file.allow=always submodule update "${_submodules[@]/#/external/}"
 }
 
 build() {
-  # Not the repo's PredefinedParams.cmake: it overrides these and turns SPIR-V back on
+  # Not the repo's PredefinedParams.cmake: it overrides these
   cmake -S DirectXShaderCompiler -B build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr \
@@ -44,7 +49,7 @@ build() {
     -DLLVM_TARGETS_TO_BUILD=None -DLIBCLANG_BUILD_STATIC=ON \
     -DCLANG_BUILD_EXAMPLES=OFF -DCLANG_CL=OFF -DCLANG_ENABLE_ARCMT=OFF \
     -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DLLVM_ENABLE_TERMINFO=OFF \
-    -DHLSL_INCLUDE_TESTS=OFF -DENABLE_SPIRV_CODEGEN=OFF -DSPIRV_BUILD_TESTS=OFF \
+    -DHLSL_INCLUDE_TESTS=OFF -DENABLE_SPIRV_CODEGEN=ON -DSPIRV_BUILD_TESTS=OFF -DSPIRV_SKIP_TESTS=ON \
     -DLLVM_INCLUDE_TESTS=OFF -DCLANG_INCLUDE_TESTS=OFF -DLLVM_BUILD_TESTS=OFF \
     -DLLVM_ENABLE_ASSERTIONS=OFF
   cmake --build build --target dxc

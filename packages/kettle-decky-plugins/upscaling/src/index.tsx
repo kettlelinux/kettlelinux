@@ -157,17 +157,19 @@ const short = (d: string) => d.split("/steamapps/common/")[1] ?? d;
 function Sgsr({ appid, name, s }: { appid: number; name: string; s: Status }) {
   const [g, setG] = useState<Game | null>(null);
   const [dir, setDir] = useState("");
-  const [proxy, setProxy] = useState("dxgi.dll");
+  const [proxy, setProxy] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // While off, a folder and proxy the user picked survive a settings change
   const show = (g: Game) => {
     setG(g);
-    setDir(g.dir ?? g.candidates?.[0] ?? "");
-    setProxy(g.proxy ?? "dxgi.dll");
+    setDir((d) => (g.on ? g.dir ?? "" : d && g.candidates?.includes(d) ? d : g.candidates?.[0] ?? ""));
+    setProxy((p) => (g.on || !p ? g.proxy ?? "dxgi.dll" : p));
   };
+  const fail = (e: unknown) => toaster.toast({ title: "OptiScaler", body: String(e) });
   useEffect(() => {
     setG(null);
-    getGame(appid).then(show);
+    getGame(appid).then(show, fail);
   }, [appid]);
 
   if (!s.available)
@@ -182,7 +184,7 @@ function Sgsr({ appid, name, s }: { appid: number; name: string; s: Status }) {
       show(await f());
       if (msg) toaster.toast({ title: "OptiScaler", body: msg });
     } catch (e) {
-      toaster.toast({ title: "OptiScaler", body: String(e) });
+      fail(e);
     } finally {
       setBusy(false);
     }
@@ -289,7 +291,7 @@ function Sgsr({ appid, name, s }: { appid: number; name: string; s: Status }) {
       {st.sharpen && (
         <PanelSectionRow>
           <SliderField label="Sharpness" value={Math.round(st.sharpness * 100)} min={0} max={130} step={5} showValue
-            valueSuffix="%" disabled={busy} onChange={(v) => set({ sharpness: v / 100 })} />
+            valueSuffix="%" onChange={(v) => set({ sharpness: v / 100 })} />
         </PanelSectionRow>
       )}
       <PanelSectionRow>
@@ -323,8 +325,9 @@ function Content() {
   const [games, setGames] = useState<InstalledGame[] | null>(null);
   const [appid, pick] = useSelectedGame(games);
   useEffect(() => {
-    status().then(setS);
-    installedGames().then(setGames);
+    const fail = (e: unknown) => toaster.toast({ title: "Upscaling", body: String(e) });
+    status().then(setS, fail);
+    installedGames().then(setGames, fail);
   }, []);
   if (!s || !games) return null;
 

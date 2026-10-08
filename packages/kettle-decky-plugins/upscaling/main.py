@@ -106,15 +106,12 @@ def _amd_available() -> bool:
     return all(os.path.isfile(os.path.join(AMD, f)) for f in AMD_FILES)
 
 
-def _clean(s: dict, amd_ok: bool = True) -> dict:
-    """amd_ok: settings that need AMD's DLLs are allowed (they're installed, or already copied)."""
+def _clean(s: dict) -> dict:
     out = dict(DEFAULTS)
     out.update({k: s[k] for k in DEFAULTS if k in s})
     if out["ratio"] not in RATIOS or out["menu_key"] not in MENU_KEYS or out["upscaler"] not in UPSCALERS \
             or out["asr_quality"] not in ASR_QUALITY or out["framegen"] not in FRAMEGEN:
         raise ValueError("invalid OptiScaler setting")
-    if _needs_amd(out) and not amd_ok:
-        raise ValueError("FSR 3.1 and frame generation need AMD FSR 3.1: install it in the Welcome panel")
     out["sharpness"] = round(max(0.0, min(1.3, float(out["sharpness"]))), 2)
     for k in ("sharpen", "spoof", "hudfix"):
         out[k] = bool(out[k])
@@ -142,7 +139,10 @@ def _exe_dirs(root: str) -> list[str]:
             s -= 200 if _BAD.search(f.lower()) else 0
             s -= 150 if "/engine/" in low[len(root):] else 0
             s -= 10 * dirpath[len(root):].count(os.sep)
-            s += os.path.getsize(os.path.join(dirpath, f)) // (50 << 20)  # big exe: likely the game
+            try:
+                s += os.path.getsize(os.path.join(dirpath, f)) // (50 << 20)  # big exe: likely the game
+            except OSError:  # broken symlink
+                pass
             scored[dirpath] = max(scored.get(dirpath, -10**9), s)
     return [d for d, _ in sorted(scored.items(), key=lambda kv: -kv[1])]
 
@@ -163,10 +163,19 @@ def _write_json(path: str, data: dict):
     os.replace(tmp, path)
 
 
-def _find_install(appid: int) -> str | None:
-    root = steamlib.install_dir(appid)
+def _inside(root: str, d: str) -> bool:
+    root = os.path.realpath(root)
+    return os.path.commonpath([root, os.path.realpath(d)]) == root
+
+
+def _find_install(appid: int, root: str | None = None) -> str | None:
+    """The folder OptiScaler is on in (it holds the marker), or None while it's off."""
+    root = root or steamlib.install_dir(appid)
     if not root:
         return None
+    last = (_read_json(os.path.join(PARKED, f"{appid}.json")) or {}).get("dir")
+    if last and _inside(root, last) and os.path.isfile(os.path.join(last, MARKER)):
+        return last
     for dirpath, dirnames, files in os.walk(root):
         if MARKER in files:
             return dirpath
@@ -197,18 +206,30 @@ def _ini_set(path: str, values: list[tuple[str, str, str]]):
     with open(path, encoding="utf-8", errors="replace", newline="") as f:
         lines = f.read().splitlines(keepends=True)
     nl = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
+    if lines and not lines[-1].endswith(("\r", "\n")):
+        lines[-1] += nl
     todo = {(s, k): v for s, k, v in values}
     cur = None
+    ends = {}  # section -> index after its last key
     for i, line in enumerate(lines):
         s = line.strip()
         if s.startswith("[") and s.endswith("]"):
             cur = s[1:-1]
+            ends.setdefault(cur, i + 1)
         elif "=" in s and not s.startswith(";"):
             k = s.split("=", 1)[0].strip()
+            ends[cur] = i + 1
             if (cur, k) in todo:
                 lines[i] = f"{k}={todo.pop((cur, k))}{nl}"
-    for (sec, k), v in todo.items():  # keys missing from this ini version
-        lines.append(f"{nl}[{sec}]{nl}{k}={v}{nl}")
+    # keys missing from this ini version: at the end of their section, or in a new one
+    adds = {}
+    for (sec, k), v in todo.items():
+        adds.setdefault(sec, []).append(f"{k}={v}{nl}")
+    for sec in sorted((x for x in adds if x in ends), key=ends.get, reverse=True):
+        lines[ends[sec]:ends[sec]] = adds[sec]
+    for sec, keys in adds.items():
+        if sec not in ends:
+            lines += [nl, f"[{sec}]{nl}", *keys]
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8", newline="") as f:
         f.writelines(lines)
@@ -223,18 +244,20 @@ def _version() -> str | None:
         return None
 
 
-def _ini_path(appid: int) -> str:
-    """The game's OptiScaler.ini: in its folder while on, parked in the plugin's settings while off."""
-    d = _find_install(appid)
+def _ini_path(d: str | None, appid: int) -> str:
+    """The game's OptiScaler.ini: in its folder d while on, parked in the plugin's settings while off."""
     return os.path.join(d, "OptiScaler.ini") if d else os.path.join(PARKED, f"{appid}.ini")
 
 
 def _place(d: str, m: dict, name: str, src: str):
     """Copy src into game folder d as name, moving a game file of that name aside; recorded in m."""
     dst = os.path.join(d, name)
-    if os.path.lexists(dst) and name not in m["files"]:
-        os.replace(dst, dst + BAK)
-        m["backups"].append(name)
+    if name not in m["files"]:
+        if os.path.lexists(dst + BAK):  # left by an interrupted run: that one is the original
+            m["backups"].append(name)
+        elif os.path.lexists(dst):
+            os.replace(dst, dst + BAK)
+            m["backups"].append(name)
     shutil.copyfile(src, dst)
     if name not in m["files"]:
         m["files"].append(name)
@@ -261,12 +284,14 @@ def _sync_amd(d: str, settings: dict):
     m.setdefault("files", [])
     m.setdefault("backups", [])
     need = _needs_amd(settings)
-    for name in AMD_FILES:
-        if need and name not in m["files"]:
-            _place(d, m, name, os.path.join(AMD, name))
-        elif not need and name in m["files"]:
-            _unplace(d, m, name)
-    _write_json(path, m)
+    try:
+        for name in AMD_FILES:
+            if need and name not in m["files"] and _amd_available():
+                _place(d, m, name, os.path.join(AMD, name))
+            elif not need and name in m["files"]:
+                _unplace(d, m, name)
+    finally:
+        _write_json(path, m)
 
 
 def _has_amd_copies(d: str | None) -> bool:
@@ -292,9 +317,9 @@ class Plugin:
         root = steamlib.install_dir(appid)
         if not root:
             return {"found": False}
-        ini = _ini_path(appid)
+        d = _find_install(appid, root)
+        ini = _ini_path(d, appid)
         settings = _from_ini(ini) if os.path.isfile(ini) else dict(DEFAULTS)
-        d = _find_install(appid)
         if d:
             m = _read_json(os.path.join(d, MARKER)) or {}
             return {"found": True, "on": True, "dir": d, "proxy": m.get("proxy", "dxgi.dll"),
@@ -302,15 +327,14 @@ class Plugin:
         # off: offer the folder and proxy used last time first
         last = _read_json(os.path.join(PARKED, f"{appid}.json")) or {}
         cands = _exe_dirs(root)[:6]
-        if last.get("dir") in cands:
-            cands.remove(last["dir"])
-            cands.insert(0, last["dir"])
+        if last.get("dir") and os.path.isdir(last["dir"]) and _inside(root, last["dir"]):
+            cands = [last["dir"]] + [c for c in cands if c != last["dir"]][:5]
         return {"found": True, "on": False, "candidates": cands, "proxy": last.get("proxy", "dxgi.dll"),
                 "settings": settings}
 
     async def enable(self, appid: int, exe_dir: str, proxy: str) -> dict:
         root = steamlib.install_dir(appid)
-        if not root or os.path.commonpath([os.path.realpath(root), os.path.realpath(exe_dir)]) != os.path.realpath(root):
+        if not root or not os.path.isdir(exe_dir) or not _inside(root, exe_dir):
             raise ValueError("folder is not inside the game's install directory")
         if proxy not in PROXIES:
             raise ValueError(f"unsupported proxy {proxy}")
@@ -324,21 +348,23 @@ class Plugin:
         if _needs_amd(settings) and not _amd_available():
             raise ValueError("this game is set to use AMD FSR 3.1, which isn't installed: install it in "
                              "the Welcome panel, or pick another upscaler first")
-        copied, backups = [], []
-        for src, name in [(os.path.join(OPTI, "OptiScaler.dll"), proxy), (parked, "OptiScaler.ini")]:
-            dst = os.path.join(exe_dir, name)
-            if os.path.lexists(dst):
-                os.replace(dst, dst + BAK)
-                backups.append(name)
-            shutil.copyfile(src, dst)
-            copied.append(name)
-        os.remove(parked)
-        ini = os.path.join(exe_dir, "OptiScaler.ini")
-        _ini_set(ini, _to_ini(_from_ini(ini)))  # BASE may be newer than the parked ini
-        _write_json(os.path.join(exe_dir, MARKER), {"appid": appid, "version": _version(), "proxy": proxy,
-                                                    "files": copied, "backups": backups})
-        _sync_amd(exe_dir, settings)
+        # the marker is kept current, so a failure part-way is undone by disable
+        m = {"appid": appid, "version": _version(), "proxy": proxy, "files": [], "backups": []}
         _write_json(os.path.join(PARKED, f"{appid}.json"), {"dir": exe_dir, "proxy": proxy})
+        try:
+            try:
+                _place(exe_dir, m, proxy, os.path.join(OPTI, "OptiScaler.dll"))
+                _place(exe_dir, m, "OptiScaler.ini", parked)
+            finally:
+                _write_json(os.path.join(exe_dir, MARKER), m)
+            os.remove(parked)
+            ini = os.path.join(exe_dir, "OptiScaler.ini")
+            _ini_set(ini, _to_ini(_from_ini(ini)))  # BASE may be newer than the parked ini
+            _sync_amd(exe_dir, settings)
+        except Exception:
+            decky.logger.exception("OptiScaler on for %s failed, undoing", appid)
+            await self.disable(appid)
+            raise
         decky.logger.info("OptiScaler on for %s in %s as %s", appid, exe_dir, proxy)
         return await self.get_game(appid)
 
@@ -365,11 +391,15 @@ class Plugin:
         return await self.get_game(appid)
 
     async def configure(self, appid: int, settings: dict) -> dict:
-        ini = _ini_path(appid)
+        d = _find_install(appid)
+        ini = _ini_path(d, appid)
         if not os.path.isfile(ini):
             _stock_ini(ini, DEFAULTS)
-        d = _find_install(appid)
-        new = _clean({**_from_ini(ini), **settings}, amd_ok=_amd_available() or _has_amd_copies(d))
+        old = _from_ini(ini)
+        new = _clean({**old, **settings})
+        # a game already set to use AMD's DLLs keeps its choice while the other settings change
+        if _needs_amd(new) and not _needs_amd(old) and not (_amd_available() or _has_amd_copies(d)):
+            raise ValueError("FSR 3.1 and frame generation need AMD FSR 3.1: install it in the Welcome panel")
         _ini_set(ini, _to_ini(new))
         if d:
             _sync_amd(d, new)
@@ -377,8 +407,8 @@ class Plugin:
 
     async def reset(self, appid: int) -> dict:
         """Stock OptiScaler.ini plus our defaults."""
-        _stock_ini(_ini_path(appid), DEFAULTS)
         d = _find_install(appid)
+        _stock_ini(_ini_path(d, appid), DEFAULTS)
         if d:
             _sync_amd(d, DEFAULTS)
         return await self.get_game(appid)
