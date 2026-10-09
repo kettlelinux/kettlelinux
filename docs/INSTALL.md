@@ -47,20 +47,29 @@ You don't need to unpack the `.img.xz` first: these tools read it as it is.
   xzcat kettle-*.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
   ```
 
-## 3. Start U-Boot instead of Android (once)
+## 3. Choose how the device starts Kettle (once)
 
-1. Turn the device off. Hold **Power + Volume Down** until the fastboot screen appears.
-2. With the volume keys, select the option that sets the default boot to **Loader** (instead
-   of Android), and press **Power** to choose it.
+Turn the device off and hold **Power + Volume Down** until the fastboot screen appears. With
+the volume keys, look for the option that sets the **default boot**:
 
-From then on the device starts U-Boot, which starts Kettle from the SD card. This only changes
-which bootloader starts by default: Android, its apps and its data are not touched, and Kettle
-updates never change it. To go back, choose Android as the default the same way.
+- **It offers Loader:** your device has U-Boot. Set the default boot to **Loader** (instead of
+  Android) and press **Power** to choose it. From then on the device starts U-Boot, which starts
+  Kettle from the SD card. This only changes which bootloader starts by default: Android, its
+  apps and its data are not touched, and Kettle updates never change it. To go back, choose
+  Android as the default the same way. If the menu answers **Unlocked bootloader required**,
+  the device's bootloader is locked, and the Loader mode only works on an unlocked one
+  (docs/BOOT.md). Unlocking erases Android's data.
+- **There is no Loader choice** (only Android, or Android and UEFI): your firmware can't start
+  U-Boot. Install the **ROCKNIX ABL** instead, from Android, by following ROCKNIX's guide for
+  your device ([rocknix.org](https://rocknix.org/), your device's page, *Install the ROCKNIX
+  ABL*). Use its backup script first: ROCKNIX's `restore_backup_abl.sh` puts the stock
+  bootloader back later. Then go on with step 4.
 
-**If you have the ROCKNIX ABL** (installed for ROCKNIX, Batocera, Knulli, ...), skip this step:
-Kettle's card works with it as it is. With U-Boot, though, a failed update falls back to the
-version that worked (below); ROCKNIX's `restore_backup_abl.sh` puts the stock bootloader back,
-and with it the Loader option.
+**If you already have the ROCKNIX ABL** (installed for ROCKNIX, Batocera, Knulli, ...), skip
+this step: Kettle's card works with it as it is.
+
+Both ways start Kettle the same way (through steamcl), so with either one a failed update falls
+back to the version that worked.
 
 ### If U-Boot doesn't start
 
@@ -93,8 +102,7 @@ card carries AYN's U-Boot to put back, from a computer:
    - **U-Boot:** it starts Kettle from the card by itself.
    - **ROCKNIX ABL:** hold **Vol−** while powering on to open its menu, and set
      **Device model:** Odin 2 Portal (or your Thor), **Boot source:** SD, **Boot mode:** Linux.
-     On the Thor, Kettle has so far been started through U-Boot; whether the ROCKNIX ABL's
-     menu offers a Thor hasn't been checked yet.
+     It doesn't start anything until the device model is set.
 2. The first start takes a little longer than later ones: Kettle sets itself up on the
    rest of the card (the space for games and your files, and a second system slot for updates).
 3. Kettle starts in **Game Mode**, Steam's handheld interface. Connect to Wi-Fi and sign in to
@@ -109,9 +117,13 @@ card carries AYN's U-Boot to put back, from a computer:
 
 Kettle updates like SteamOS: in Game Mode, *Settings*, *System*, *Check for updates*. An update
 installs into the second system slot while you keep playing and takes effect on the next start.
-Your games, settings and files are kept. With U-Boot, if an update fails to start, the device
-goes back to the version that worked. The ROCKNIX ABL always starts the newest version, so
-there it doesn't go back by itself.
+Your games, settings and files are kept. If an update fails to start, the device goes back to
+the version that worked, with U-Boot and with the ROCKNIX ABL alike.
+
+With the ROCKNIX ABL, Kettle images carry a newer ROCKNIX ABL from time to time. To install it,
+open a terminal on the desktop and run `sudo kettle-abl-update` (with the charger connected, or
+the battery above 30%). It only ever updates a ROCKNIX ABL that is already installed: it never
+touches the stock bootloader, and never goes back to an older ROCKNIX ABL.
 
 You only need to write a new image to the card to start over from scratch.
 

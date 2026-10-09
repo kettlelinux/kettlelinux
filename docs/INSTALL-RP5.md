@@ -183,8 +183,8 @@ Afterwards, with Kettle's U-Boot from step 4:
 If you already replaced the RP5's bootloader with ROCKNIX's (for ROCKNIX, Batocera, Knulli and
 others), the card starts as it is: in its menu (hold **Volume Down** while powering on), set
 **Device model** to your RP5 (the Visionox model on a newer RP5), **Boot source** to SD and
-**Boot mode** to Linux. You can skip steps 3 to 5. With that bootloader Kettle always starts
-the newest update, so it doesn't go back by itself if one fails to start.
+**Boot mode** to Linux. You can skip steps 3 to 5. It starts Kettle the same way U-Boot does
+(through steamcl), so a failed update falls back to the version that worked here too.
 
 ## Starting Android
 

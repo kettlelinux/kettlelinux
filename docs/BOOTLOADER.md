@@ -61,7 +61,10 @@ From fastboot mode (docs/INSTALL.md):
 fastboot boot u-boot-kettle.img
 ```
 
-That starts it once from RAM, and the next boot is the installed loader again. To install it:
+That starts it once from RAM, and the next boot is the installed loader again. `fastboot flash
+loader` writes only the active slot's loader (`loader_a` on a factory device). After a slot
+switch (an Android update, `fastboot set_active`), ABL starts `loader_b`, which still holds the
+vendor's U-Boot (docs/BOOT.md). To install it:
 `fastboot flash loader u-boot-kettle.img`. To go back: flash `u-boot-ayn.img` /
 `u-boot-rp5.img` the same way.
 
@@ -98,6 +101,32 @@ What to check:
   `\EFI\BOOT\BOOTAA64.EFI` from the SD card straight from Qualcomm's UEFI. That is steamcl in
   Kettle's image, so it may boot with no U-Boot at all (the kernel may need to reset the display
   controller). This is unconfirmed on the Portal and Thor.
+- **ROCKNIX ABL for firmware without Loader (decided 2026-10-09).** Devices whose fastboot menu
+  has no Loader choice use the ROCKNIX ABL, installed from Android with ROCKNIX's scripts.
+  ROCKNIX's developers confirmed that it starts steamcl: v1.2 tries `\EFI\BOOT\BOOTAA64.EFI`
+  first, then `\KERNEL`. Kettle doesn't install it, but `packages/rocknix-abl` ships the
+  current release and `kettle-abl-update`, which updates an installed one. The updater works
+  like Armada's `armada-abl-update`:
+  - It recognises releases by the hash of the partition's first bytes (`releases.tsv`;
+    1.1–1.1.8 from Armada's catalogue).
+  - It refuses a stock ABL and never installs an older release than the one there.
+  - Before writing, it needs the charger or 30% battery.
+  - It writes one slot at a time, reads it back, and puts the old contents back if the read-back
+    doesn't match.
+  - 1.1.9's files were deleted upstream, so a test-signed (`qtestsign`) ABL that isn't listed
+    needs `--force`.
+  - It isn't run automatically yet.
+  - **The RP5 doesn't show its abl partitions to Linux (checked 2026-10-09 on the user's RP5).**
+    Its boot chain is on UFS LUN 4 (`sde`), where the primary GPT header has a bad CRC. The
+    partition entries are intact and the same as the backup GPT's, and the backup header is
+    valid. The protective MBR's size is also off by one, so the kernel gives up on the whole
+    LUN: there is no `abl_a`/`abl_b`/`loader_*` in `/dev/disk/by-partlabel`, and
+    `kettle-abl-update` says so and does nothing. Booting with the kernel's `gpt` option would
+    make it use the backup GPT. That is untested, and it is not yet known whether every RP5
+    has this.
+  - The licence is open: the ROCKNIX ABL is binary-only, from a private fork of Qualcomm's
+    BSD-licensed LinuxLoader, and its repo states no licence. Get ROCKNIX's OK to redistribute
+    it before shipping.
 - **A Kettle ABL.** These devices run test-signed ABLs (the ROCKNIX ABL is signed with qtestsign
   test keys), so secure boot isn't enforced. Qualcomm's `abl2esp` (BSD, boots
   `\EFI\BOOT\BOOTAA64.EFI`) would be the base. It means flashing both `abl` slots, and recovery
