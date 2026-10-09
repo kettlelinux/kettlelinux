@@ -22,9 +22,9 @@
 # rules that start InputPlumber at boot (Kettle runs it with Game Mode only), Valve's signing
 # certificate (images trust Kettle's, installed by the image build).
 pkgname=steamos-customizations-kettle
-_srctag=jupiter-20260914.1
+_srctag=jupiter-20260916.1
 pkgver=${_srctag#jupiter-}
-pkgrel=11
+pkgrel=1
 pkgdesc='SteamOS atomic A/B system (Valve steamos-customizations) for Kettle Linux'
 arch=(aarch64)
 url='https://gitlab.steamos.cloud/holo/steamos-customizations'
@@ -34,7 +34,7 @@ depends=(e2fsprogs gptfdisk rsync util-linux mkinitcpio btrfs-progs dosfstools e
 makedepends=(git systemd)
 backup=(etc/mkinitcpio.conf.d/20-kettle.conf)
 _update_url=https://updates.kettle.invalid  # no update server yet: the image build sets the real one
-source=("https://steamdeck-packages.steamos.cloud/archlinux-mirror/sources/jupiter-main/steamos-customizations-jupiter-20260914.1-2.src.tar.gz"
+source=("https://steamdeck-packages.steamos.cloud/archlinux-mirror/sources/jupiter-main/steamos-customizations-jupiter-20260916.1-1.src.tar.gz"
         0001-Support-arm64-aarch64-as-well-as-x86_64.patch
         0002-rauc-configurable-compatible-string-no-verity-slots.patch
         0003-holo-grub-mkearlyconfig-take-the-filesystem-UUIDs-fr.patch
@@ -54,7 +54,7 @@ source=("https://steamdeck-packages.steamos.cloud/archlinux-mirror/sources/jupit
         kettle-atomupd.tmpfiles
         kettle-reset.hook
         kettle-reset.install)
-sha256sums=('1df4fcaf6af7713b8b885031eeeae0489d9cd6cd71593f93c589f89775547489'
+sha256sums=('5cec58098008822caf86aee0991421568df04a603cd0c1b9c80fe930749daaee'
             'eab06145a1129c8ef66d1c351e8e20594384d93822ec3c9908ec9601436985f1'
             'cdf3f3bef537b5c482dffb2368932138bcd6b67adf40eb67397f1a8a1e57201a'
             '5fd11ebcff8826e764ac7cc52e8b2dbcdd8601a149de59c98c7ce5b39dc4dc8d'
@@ -148,7 +148,7 @@ package() {
   ln -s ../home.mount usr/lib/systemd/system/local-fs.target.wants/
   install -Dm644 "$srcdir/home-after-repart.conf" usr/lib/systemd/system/home.mount.d/kettle-repart.conf
   install -Dm644 "$srcdir/kettle-atomupd.tmpfiles" usr/lib/tmpfiles.d/kettle-atomupd.conf
-  # Valve's steamos-atomupd-client (release-0.4 hotfixes) is built for Python 3.12; the image's
+  # Valve's steamos-atomupd-client (release-0.4 and 0.5 hotfixes) is built for Python 3.12; the image's
   # Python is 3.11 (the pinned snapshot's). Its code runs on 3.11 as is (checked by compiling
   # and importing it there), so it is made visible to 3.11.
   install -d usr/lib/python3.11/site-packages

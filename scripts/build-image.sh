@@ -101,7 +101,7 @@ mkdir -p "$RFS" "$STAGE" "$PKG_CACHE"
 chroot_mount "$RFS"
 
 mapfile -t PKGS < <(sed -e 's/#.*//' -e '/^\s*$/d' "$ROOT/image/packages.txt" "$DEVICE/packages.txt")
-log "installing ${#PKGS[@]} packages for the $MODEL (kettle + deckard mash-20240428.1 + release-0.4 hotfixes)"
+log "installing ${#PKGS[@]} packages for the $MODEL (kettle + deckard mash-20240428.1 + release-0.5 hotfixes)"
 pacman_root "$RFS" --logfile "$WORK/pacman.log" -Sy --needed "${PKGS[@]}"
 install -m 0644 "$ROOT/image/pacman.conf" "$RFS/etc/pacman.conf"
 # The host's pacman 7 records %INSTALLED_DB%, which the image's pacman 6.1 warns about

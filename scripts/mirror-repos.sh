@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Freeze Valve's deckard repos (the [repo]/Server pairs in image/pacman.conf) into a local
 # mirror, cache/mirror/<repo>/, so builds keep working when Valve prunes a snapshot. The
-# hotfix repo (release/0.4.x) isn't a snapshot at all: Valve updates it in place, so the
+# hotfix repo (release/0.5.x) isn't a snapshot at all: Valve updates it in place, so the
 # mirror is also what pins it. Once a mirror exists the build scripts install from it
 # (lib.sh build_pacman_conf); KETTLE_MIRROR=<url> points them at a hosted copy instead.
 #
