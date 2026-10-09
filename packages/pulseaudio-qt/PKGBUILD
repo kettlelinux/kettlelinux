@@ -1,8 +1,12 @@
 # Qt bindings for libpulse, which plasma-pa 6.2 (packages/plasma-pa) is built on; deckard's
 # plasma-pa 6.0.4 predates them. Arch's PKGBUILD (the version Arch had with Plasma 6.2),
-# without the API docs.
+# without the API docs. 1.8.1 (needs Qt 6.7, ECM 6.0) is the last release deckard can build:
+# 1.9.0 needs ECM 6.27 (deckard has 6.20). Two fixes from 1.9.0 on top: 0001 makes reconnects retry
+# again, 0002 stops a device that is not the default from being reported as default (KDE bug
+# 500968). 1.7.0 changed the private d-pointers without a SOVERSION bump: plasma-pa is rebuilt
+# against it.
 pkgname=pulseaudio-qt
-pkgver=1.6.1
+pkgver=1.8.1
 pkgrel=1
 pkgdesc='Qt bindings for libpulse'
 arch=(aarch64)
@@ -10,15 +14,25 @@ url='https://community.kde.org/Frameworks'
 license=(LGPL-2.1-only LGPL-3.0-only)
 depends=(gcc-libs glibc libpulse qt6-base)
 makedepends=(cmake ninja extra-cmake-modules qt6-tools)
-source=(https://download.kde.org/stable/$pkgname/$pkgname-$pkgver.tar.xz)
-sha256sums=('f21bf30f2ff3e670d2046f966069dc23f5e653ff56bacdb8920c1374264cbc1e')
+source=(https://download.kde.org/stable/$pkgname/$pkgname-$pkgver.tar.xz
+        0001-context-reset-before-reconnectDaemon.patch
+        0002-server-do-not-return-incorrect-default-devices.patch)
+sha256sums=('79619c55b94808aa7d307fb234ad39a1096d088f21f806be0e788be79a76b3c9'
+            '7764f1dcc13d7cebf42d03909178ec821802f805e8040bf8207758a6e0e7c98a'
+            '7a497991f36196e8179b5908d2b2180f37ab57a3be8937f7a383c12dc3dd4f78')
+
+prepare() {
+  local p
+  for p in 0*.patch; do
+    patch -d $pkgname-$pkgver -p1 --fuzz=0 <"$p"
+  done
+}
 
 build() {
   cmake -B build -S $pkgname-$pkgver -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr \
-    -DBUILD_TESTING=OFF \
-    -DQT_MAJOR_VERSION=6
+    -DBUILD_TESTING=OFF
   cmake --build build
 }
 
