@@ -1,0 +1,149 @@
+#!/bin/bash
+# kettle-abl-update: keeps an installed ROCKNIX ABL up to date with the one in this image.
+#
+# Kettle starts either through U-Boot (fastboot mode's default boot set to Loader) or, on devices
+# whose stock bootloader has no Loader choice, through the ROCKNIX ABL, which the user installs
+# from Android (docs/INSTALL.md). This never installs the ROCKNIX ABL and never touches a stock
+# bootloader: it only replaces a ROCKNIX ABL it recognises, in both abl slots, with the release
+# in /usr/share/kettle/rocknix-abl, and never with an older one.
+#
+# Recognised: a release listed in releases.tsv (the SHA-256 of the partition's first <size>
+# bytes). An ABL signed with qtestsign's test keys (as ROCKNIX's are; stock ones are signed by
+# Qualcomm/the vendor) but not listed, such as 1.1.9, whose files were deleted, is updated only
+# with --force.
+#
+# Usage: kettle-abl-update [--check] [--yes] [--force]
+#   --check  only say what is installed and what would be done
+#   --yes    don't ask before writing
+#   --force  also update a test-signed ABL that isn't a known ROCKNIX release
+set -euo pipefail
+
+SHARE=/usr/share/kettle/rocknix-abl
+CATALOG=$SHARE/releases.tsv
+MIN_BATTERY=30                     # % needed without the charger
+CHECK=0 YES=0 FORCE=0
+
+for a in "$@"; do
+  case "$a" in
+    --check) CHECK=1 ;;
+    --yes) YES=1 ;;
+    --force) FORCE=1 ;;
+    *) echo "usage: kettle-abl-update [--check] [--yes] [--force]" >&2; exit 2 ;;
+  esac
+done
+
+say() { echo "kettle-abl-update: $*"; }
+die() { echo "kettle-abl-update: $*" >&2; exit 1; }
+# nothing to do: not an error
+done_() { say "$*"; exit 0; }
+
+[ "$(id -u)" = 0 ] || die "run it as root (sudo kettle-abl-update)"
+
+# Hold off shutdown, sleep and the power key while an abl slot is being written
+if [ -z "${KETTLE_ABL_INHIBITED:-}" ] && [ "$CHECK" = 0 ] && command -v systemd-inhibit >/dev/null; then
+  KETTLE_ABL_INHIBITED=1 exec systemd-inhibit --who=kettle-abl-update --why="Updating the bootloader" \
+    --what=sleep:shutdown:idle:handle-power-key:handle-suspend-key "$0" "$@"
+fi
+exec 9>/run/kettle-abl-update.lock
+flock -n 9 || die "already running"
+
+# The device's SoC (device.conf ABL_SOC): which of ROCKNIX's builds it takes
+ABL_SOC=""
+. /usr/lib/kettle/device.conf
+[ -n "$ABL_SOC" ] || done_ "no ROCKNIX ABL build for this device"
+payload=$SHARE/abl_signed-$ABL_SOC.elf
+[ -f "$payload" ] || die "missing $payload"
+compat=$(tr '\0' '\n' </sys/firmware/devicetree/base/compatible)
+grep -qix "qcom,${ABL_SOC,,}" <<<"$compat" ||
+  die "this device isn't an $ABL_SOC (devicetree compatible), refusing"
+
+size=$(stat -c %s "$payload")
+# read back with direct I/O (not the page cache), in whole 4 KiB blocks
+[ $((size % 4096)) = 0 ] || die "$payload isn't a whole number of 4 KiB blocks"
+want=$(sha256sum "$payload" | cut -d' ' -f1)
+NEW=$(awk -F'\t' -v s="$ABL_SOC" -v z="$size" -v h="$want" '$2 == s && $3 == z && $4 == h { print $1 }' "$CATALOG")
+[ -n "$NEW" ] || die "$payload isn't a release listed in $CATALOG"
+
+# Both slots: different partitions of the same disk, each big enough
+slot_dev() { readlink -f "/dev/disk/by-partlabel/abl_$1" 2>/dev/null || true; }
+A=$(slot_dev a) B=$(slot_dev b)
+[ -b "$A" ] && [ -b "$B" ] || done_ "no abl_a/abl_b partitions"
+[ "$A" != "$B" ] || die "abl_a and abl_b are the same device"
+[ "$(lsblk -no PKNAME "$A")" = "$(lsblk -no PKNAME "$B")" ] || die "abl_a and abl_b are on different disks"
+for d in "$A" "$B"; do
+  [ "$(blockdev --getsize64 "$d")" -ge "$size" ] || die "$d is smaller than the ABL"
+done
+
+# What a slot holds: a ROCKNIX release's version, "test-signed" or "other" (stock or unknown)
+identify() {
+  local dev=$1 z h v
+  for z in $(awk -F'\t' -v s="$ABL_SOC" '$2 == s { print $3 }' "$CATALOG" | sort -u); do
+    h=$(head -c "$z" "$dev" | sha256sum | cut -d' ' -f1)
+    v=$(awk -F'\t' -v s="$ABL_SOC" -v z="$z" -v h="$h" '$2 == s && $3 == z && $4 == h { print $1 }' "$CATALOG")
+    [ -n "$v" ] && { echo "$v"; return; }
+  done
+  # grep -c reads to the end: with -q it would stop early, and pipefail would fail on head's SIGPIPE
+  if head -c "$size" "$dev" | grep -ac 'qtestsign Root CA' >/dev/null; then echo test-signed; else echo other; fi
+}
+newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }   # $1 > $2
+
+declare -A HAS
+todo=()
+for s in a b; do
+  dev=$(slot_dev $s); HAS[$s]=$(identify "$dev")
+  say "abl_$s: $(case ${HAS[$s]} in
+    other) echo "not a ROCKNIX ABL (the stock bootloader, or unknown)" ;;
+    test-signed) echo "a test-signed ABL that isn't a known ROCKNIX release (1.1.9?)" ;;
+    *) echo "ROCKNIX ABL ${HAS[$s]}" ;; esac)"
+done
+say "this image has ROCKNIX ABL $NEW ($ABL_SOC)"
+
+for s in a b; do
+  case ${HAS[$s]} in
+    # (an Android update rewrites one slot's ABL with the stock one: then only one slot is)
+    other) done_ "abl_$s isn't a ROCKNIX ABL: Kettle doesn't replace a stock bootloader (docs/INSTALL.md)" ;;
+    test-signed) [ "$FORCE" = 1 ] || done_ "not updating an ABL it can't identify; sudo kettle-abl-update --force updates it" ;;
+    "$NEW") ;;
+    *) newer "${HAS[$s]}" "$NEW" && done_ "abl_$s is newer than this image's: left as it is" ;;
+  esac
+done
+for s in a b; do [ "${HAS[$s]}" = "$NEW" ] || todo+=("abl_$s"); done
+[ ${#todo[@]} -gt 0 ] || done_ "up to date"
+[ "$CHECK" = 0 ] || done_ "would update ${todo[*]} to $NEW"
+
+# Power loss while writing could leave the bootloader unbootable
+ac=0 bat=""
+for p in /sys/class/power_supply/*; do
+  case "$(cat "$p/type" 2>/dev/null)" in
+    Battery) bat=$(cat "$p/capacity" 2>/dev/null || true); [[ "$bat" =~ ^[0-9]+$ ]] || bat="" ;;
+    *) [ "$(cat "$p/online" 2>/dev/null)" = 1 ] && ac=1 ;;
+  esac
+done
+if [ "$ac" = 0 ] && [ -n "$bat" ] && [ "$bat" -lt "$MIN_BATTERY" ]; then
+  done_ "battery at ${bat}%: not updating until the charger is connected (or above ${MIN_BATTERY}%)"
+fi
+
+if [ "$YES" = 0 ]; then
+  read -r -p "Update the ROCKNIX ABL in ${todo[*]} to $NEW? Don't power off while it runs. [y/N] " r || r=""
+  [[ "$r" =~ ^[yY] ]] || done_ "nothing changed"
+fi
+
+# One slot at a time, each read back from the device; a slot that doesn't verify gets its old
+# contents back (verified too) and the other slot is left alone
+on_disk() { dd if="$1" bs=4096 count=$((size / 4096)) iflag=direct status=none | sha256sum | cut -d' ' -f1; }
+put() { dd if="$1" of="$2" bs=4096 conv=fsync,notrunc status=none && blockdev --flushbufs "$2"; }
+W=$(mktemp -d /run/kettle-abl.XXXXXX); trap 'rm -rf "$W"' EXIT
+written=()
+for p in "${todo[@]}"; do
+  s=${p#abl_} dev=$(slot_dev ${p#abl_})
+  head -c "$size" "$dev" >"$W/old-$s"
+  old=$(sha256sum "$W/old-$s" | cut -d' ' -f1)
+  say "writing ROCKNIX ABL $NEW to abl_$s ($dev)"
+  if put "$payload" "$dev" && [ "$(on_disk "$dev")" = "$want" ]; then written+=("$p"); continue; fi
+  if put "$W/old-$s" "$dev" && [ "$(on_disk "$dev")" = "$old" ]; then
+    die "abl_$s didn't read back as written: its old contents were put back$(
+      [ ${#written[@]} -gt 0 ] && echo " (${written[*]} already has $NEW, which is fine to boot)")"
+  fi
+  die "abl_$s didn't read back as written, and putting its old contents back failed too. Don't turn the device off: keep it running and ask for help (docs/BOOTLOADER.md)"
+done
+say "ROCKNIX ABL $NEW installed in ${todo[*]}"

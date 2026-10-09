@@ -1,0 +1,38 @@
+# The ROCKNIX ABL (github.com/ROCKNIX/abl), for devices whose stock bootloader can't start U-Boot
+# (no Loader choice in fastboot mode): users install it from Android with ROCKNIX's scripts
+# (docs/INSTALL.md), and it starts Kettle's steamcl (\EFI\BOOT\BOOTAA64.EFI, so A/B fallback
+# works), else \KERNEL. This package only keeps an installed one up to date:
+# `sudo kettle-abl-update` replaces a recognised, older ROCKNIX ABL in abl_a/abl_b with this
+# release and never touches a stock one.
+#
+# ROCKNIX publishes only signed binaries, built from its private LinuxLoader fork (Qualcomm's
+# BSD-3-Clause LinuxLoader). The repo states no licence; its README lists the distributions it
+# supports. ROCKNIX deletes older releases' files, so the tarball is kept in cache/src
+# (scripts/build-packages.sh) and pinned by hash. releases.tsv identifies installed releases.
+pkgname=rocknix-abl
+pkgver=1.2
+pkgrel=1
+pkgdesc='ROCKNIX ABL builds, and kettle-abl-update to keep an installed one up to date'
+arch=(any)
+url='https://github.com/ROCKNIX/abl'
+license=(LicenseRef-ROCKNIX-ABL)
+depends=(util-linux coreutils)
+options=(!strip)
+source=("rocknix-abl-v$pkgver.tar.gz::https://github.com/ROCKNIX/abl/releases/download/v$pkgver/rocknix-abl-v$pkgver.tar.gz"
+        releases.tsv
+        kettle-abl-update)
+sha256sums=('64034fb076ea0bb858beaa2f29dbef635e97d29f3e3d32c13bce61bd4af4cff7'
+            '3d72c8ac7ef9076135f7ad84b48c29a6b6380acf95481b06f6016d2592c6ebde'
+            'a1c0b6cbd0bb0cdf0166176c165bf5f1ebaa91db6486e6536ed2a18ed9b62ad7')
+
+package() {
+  local d="$pkgdir/usr/share/kettle/rocknix-abl" f
+  install -d "$d"
+  for f in "$srcdir"/rocknix-abl-v$pkgver/abl_signed-*.elf; do
+    # the tarball's own checksum files must agree
+    (cd "${f%/*}" && sha256sum -c --quiet "${f##*/}.sha256")
+    install -m644 "$f" "$d/"
+  done
+  install -m644 releases.tsv "$d/"
+  install -Dm755 kettle-abl-update "$pkgdir/usr/bin/kettle-abl-update"
+}
