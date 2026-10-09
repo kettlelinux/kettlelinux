@@ -6,9 +6,9 @@
 # Plugins shipped with the image live in /usr/share/decky/plugins; decky-loader-start
 # links them into ~/homebrew/plugins.
 pkgname=decky-loader
-pkgver=3.2.9
-pkgrel=2
-_commit=f75dc1df134daf53b1ec02c351b12313c1696a7e
+pkgver=3.2.10
+pkgrel=1
+_commit=75563316f9119ee7e36be7f43885be65e877fad0  # v3.2.10
 pkgdesc='Plugin loader for the Steam Deck UI (Kettle Linux build)'
 arch=(aarch64)
 url='https://github.com/SteamDeckHomebrew/decky-loader'
