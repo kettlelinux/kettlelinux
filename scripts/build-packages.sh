@@ -30,7 +30,9 @@ if [ "$new" = 1 ]; then
   sed -i 's/^OPTIONS=(\(.*\)debug/OPTIONS=(\1!debug/' "$CHROOT/etc/makepkg.conf"
 fi
 cp /etc/resolv.conf "$CHROOT/etc/resolv.conf"
-pacman_root "$CHROOT" -Sy >/dev/null
+# -u too: when the repos move (a new Valve hotfix line), a chroot left on the old versions can't
+# install a dependency whose new version breaks an installed package's exact pin (gcc/gcc-libs)
+pacman_root "$CHROOT" -Syu >/dev/null
 
 names=("$@")
 [ ${#names[@]} -gt 0 ] || mapfile -t names < <(find "$ROOT/packages" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)

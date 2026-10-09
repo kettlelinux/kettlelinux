@@ -14,6 +14,7 @@
 #   --all  every package that changed in the repos, not only the ones our builds use
 # Exits 0 when nothing we use changed, 1 when something did (or a newer release line exists).
 set -euo pipefail
+export LC_ALL=C   # sort and join must collate the same way, whatever the locale
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MIRROR="$ROOT/cache/mirror"
@@ -25,10 +26,12 @@ case "${1:-}" in --all) all=1 ;; "") ;; *) echo "usage: $0 [--all]" >&2; exit 2 
 TMP="$(mktemp -d "$ROOT/build/check-valve.XXXXXX" 2>/dev/null || mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-# name version, one per package in a repo database
+# name version sha256, one per package in a repo database (the checksum catches a package Valve
+# rebuilt without changing its version, which a new hotfix line does: 0.5 rebuilt grub, ibus, ...)
 db_versions() {
   local d="$TMP/x$RANDOM"; mkdir -p "$d"; tar -xf "$1" -C "$d"
-  awk '/^%NAME%/ { getline; n = $0 } /^%VERSION%/ { getline; print n, $0 }' "$d"/*/desc | sort
+  awk '/^%NAME%/ { getline; n = $0 } /^%VERSION%/ { getline; v = $0 }
+       /^%SHA256SUM%/ { getline; print n, v, $0 }' "$d"/*/desc | sort
 }
 
 declare -A OURS IGN
@@ -51,7 +54,10 @@ while read -r repo url; do
     | sed -E 's/-[^-]+-[^-]+-[^-]+\.pkg\.tar\..*$//' | sort -u >"$TMP/used"
   out="$(join -a1 "$TMP/mine" "$TMP/theirs" | awk -v all=$all '
       FILENAME == ARGV[1] { used[$1] = 1; next }
-      ($3 != $2) && (all || ($1 in used)) { print $1, $2, ($3 == "" ? "(removed)" : $3) }' \
+      !(all || ($1 in used)) { next }
+      $4 == "" { print $1, $2, "(removed)"; next }
+      $4 != $2 { print $1, $2, $4; next }
+      $5 != $3 { print $1, $2, $4 "(rebuilt)" }' \
       "$TMP/used" - | sort)"
   new="$(join -v2 "$TMP/mine" "$TMP/theirs" | awk -v all=$all 'all { print $1, "(new)", $2 }')"
   out="$(printf '%s\n%s\n' "$out" "$new" | sed '/^$/d')"
