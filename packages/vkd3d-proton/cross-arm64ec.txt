@@ -9,9 +9,6 @@ widl = 'arm64ec-w64-mingw32-widl'
 [properties]
 needs_exe_wrapper = true
 
-[built-in options]
-cpp_args = ['-include', 'new', '-include', 'exception']
-
 [host_machine]
 system = 'windows'
 cpu_family = 'aarch64'

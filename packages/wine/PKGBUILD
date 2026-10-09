@@ -22,7 +22,7 @@
 # the i686 and x86_64 targets configure wants). Not stripped: makepkg's strip doesn't know PE.
 pkgname=wine
 pkgver=11.16
-pkgrel=2
+pkgrel=3
 _tag=hangover-$pkgver
 _llvm_mingw=20260908
 pkgdesc='A compatibility layer for running Windows programs (ARM64EC, with FEX for x86)'
