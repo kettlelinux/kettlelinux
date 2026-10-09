@@ -1,0 +1,56 @@
+From 9fd1449dda371d319f1b1b0ed8c285f3b7be8d33 Mon Sep 17 00:00:00 2001
+From: Devin Lin <espidev@gmail.com>
+Date: Sun, 5 Apr 2026 17:11:46 -0400
+Subject: [PATCH] inputlisteneritem: Always disable predictive text
+
+BUG: 516511
+
+The vast majority of text fields (most text-input-v2, all text-input-v3)
+don't actually have predictive text enabled. The ones that do experience
+havoc when dealing with a mouse selecting text, and unexpected behavior
+with the Qt VirtualKeyboard hunspell plugin.
+
+From my digging, this is my hypothesis:
+
+The Qt VKBD hunspell plugin deletes and reinserts the current word on every
+cursor event. It seems to expect the cursor position to remain the
+same after, but in plasma-keyboard we have no way of knowing that the
+hunspell plugin intended to do that, so the state update causes the
+cursor position to move to the end of the word. I don't really know
+think we can really address this without making our own text autocompletion
+plugin.
+
+Ported to plasma-keyboard 0.1.0, which predates the auto capitalization
+setting (94acc7e).
+
+Backported from upstream commit 3020ba6fa14832663c579dad0b4df747cd1ea259
+---
+ src/inputlisteneritem.cpp | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/src/inputlisteneritem.cpp b/src/inputlisteneritem.cpp
+index 1b42fd1..a1f9d21 100644
+--- a/src/inputlisteneritem.cpp
++++ b/src/inputlisteneritem.cpp
+@@ -165,13 +165,15 @@ QVariant InputListenerItem::inputMethodQuery(Qt::InputMethodQuery query) const
+         const auto imHints = m_input.contentHint();
+         Qt::InputMethodHints qtHints;
+ 
++        // Disable Qt VirtualKeyboard's hunspell plugin
++        // It deals poorly with current external cursor position change
++        // logic, and causes problems when selecting text with a mouse.
++        qtHints |= Qt::ImhNoPredictiveText;
++
+         // if (imHints & InputPlugin::content_hint_default) { }
+         if (imHints & InputPlugin::content_hint_password) {
+             qtHints |= Qt::ImhSensitiveData;
+         }
+-        if ((imHints & InputPlugin::content_hint_auto_completion) == 0 || (imHints & InputPlugin::content_hint_auto_correction) == 0) {
+-            qtHints |= Qt::ImhNoPredictiveText;
+-        }
+         if ((imHints & InputPlugin::content_hint_auto_capitalization) == 0) {
+             qtHints |= Qt::ImhNoAutoUppercase;
+ 
+-- 
+2.56.0
+

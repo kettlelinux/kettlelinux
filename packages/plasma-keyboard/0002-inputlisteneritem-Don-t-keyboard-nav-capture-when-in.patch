@@ -1,0 +1,44 @@
+From c759ef8217c5e394d7211ad6476ea7cf90083efe Mon Sep 17 00:00:00 2001
+From: Devin Lin <espidev@gmail.com>
+Date: Sun, 8 Mar 2026 22:07:17 -0400
+Subject: [PATCH] inputlisteneritem: Don't keyboard nav capture when input
+ panel isn't shown
+
+window()->isVisible() = true even when the input panel isn't shown by
+KWin (ex. interacting on a text field with a mouse instead of touch).
+
+Use window()->isExposed() instead which will indicate whether the
+compositor is actually showing the input panel for realsies
+
+Backported from upstream commit c98bfac4c576c98cae844b3d7437859c9e5901e2
+---
+ src/inputlisteneritem.cpp | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/src/inputlisteneritem.cpp b/src/inputlisteneritem.cpp
+index cf5c686..238971f 100644
+--- a/src/inputlisteneritem.cpp
++++ b/src/inputlisteneritem.cpp
+@@ -71,7 +71,8 @@ InputListenerItem::InputListenerItem()
+         if (keyEvent->modifiers() != Qt::NoModifier) {
+             return;
+         }
+-        if (!window()->isVisible()) {
++        // The window can have isVisible() = true, but not be shown by the compositor if the input panel is suppressed
++        if (!window()->isExposed()) {
+             return;
+         }
+ 
+@@ -93,7 +94,8 @@ InputListenerItem::InputListenerItem()
+         if (keyEvent->modifiers() != Qt::NoModifier) {
+             return;
+         }
+-        if (!window()->isVisible()) {
++        // The window can have isVisible() = true, but not be shown by the compositor if the input panel is suppressed
++        if (!window()->isExposed()) {
+             return;
+         }
+ 
+-- 
+2.56.0
+

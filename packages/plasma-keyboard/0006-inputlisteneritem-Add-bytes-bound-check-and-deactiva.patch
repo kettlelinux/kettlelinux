@@ -1,0 +1,114 @@
+From 394c58fb52a39c7c85b980cf8649af5e7316add5 Mon Sep 17 00:00:00 2001
+From: Devin Lin <espidev@gmail.com>
+Date: Fri, 3 Apr 2026 21:05:10 -0400
+Subject: [PATCH] inputlisteneritem: Add bytes bound check and deactivate
+ signal handling
+
+BUG: 517087
+
+Add bytes bound check for responses to input method queries. Sometimes
+the returned cursor position from inputplugin is invalid or out of date (still needs more investigation) leading to out of bound substrings.
+
+Also implement deactivate signal handling from inputplugin to ensure the
+input plugin is reset upon deactivation.
+
+Ported to plasma-keyboard 0.1.0, which predates 4cd5f75 (anchor and
+cursor positions converted from bytes to characters): there
+ImAnchorPosition and ImCursorPosition still return the byte offsets
+without slicing the text, so only ImTextBeforeCursor, which slices it,
+gets the bound check.
+
+Backported from upstream commit 8a405a8fd7fc84b7d1e8f5aa8d3580a84da6da16
+---
+ src/inputlisteneritem.cpp | 23 ++++++++++++++++-------
+ src/inputplugin.cpp       |  2 ++
+ src/inputplugin.h         |  2 ++
+ 3 files changed, 20 insertions(+), 7 deletions(-)
+
+diff --git a/src/inputlisteneritem.cpp b/src/inputlisteneritem.cpp
+index ea4a290..1b42fd1 100644
+--- a/src/inputlisteneritem.cpp
++++ b/src/inputlisteneritem.cpp
+@@ -54,15 +54,20 @@ InputListenerItem::InputListenerItem()
+     connect(&m_input, &InputPlugin::surroundingTextChanged, this, [this] {
+         if (m_input.hasContext()) {
+             // Re-activate when text input activates, and there is context
+-            QGuiApplication::inputMethod()->setVisible(true);
+-            window()->setVisible(true);
+-        }
++            if (!window()->isVisible()) {
++                QGuiApplication::inputMethod()->setVisible(true);
++            }
+ 
+-        // Update vkbd input method only if the virtual keyboard panel is shown
+-        if (window()->isExposed()) {
+-            QGuiApplication::inputMethod()->update(Qt::ImSurroundingText);
++            // Update vkbd input method only if the virtual keyboard panel is shown
++            if (window()->isExposed()) {
++                QGuiApplication::inputMethod()->update(Qt::ImSurroundingText);
++            }
+         }
+     });
++    connect(&m_input, &InputPlugin::deactivate, this, [this] {
++        QGuiApplication::inputMethod()->setVisible(false);
++        QGuiApplication::inputMethod()->reset();
++    });
+     connect(&m_input, &InputPlugin::resetRequested, this, [] {
+         QGuiApplication::inputMethod()->reset();
+     });
+@@ -145,6 +150,9 @@ void InputListenerItem::setEngine(QVirtualKeyboardInputEngine */*engine*/) {
+ QVariant InputListenerItem::inputMethodQuery(Qt::InputMethodQuery query) const
+ {
+     if (!m_input.hasContext()) {
++        if (query == Qt::ImEnabled) {
++            return false;
++        }
+         return {};
+     }
+ 
+@@ -239,7 +247,8 @@ QVariant InputListenerItem::inputMethodQuery(Qt::InputMethodQuery query) const
+     case Qt::ImTextBeforeCursor: {
+         // cursorPos is in bytes, we need to convert QString to QByteArray for index operations
+         QByteArray surroundingText = m_input.surroundingText().toUtf8();
+-        return QString::fromUtf8(surroundingText.first(m_input.cursorPos()));
++        int cursorBytes = qBound(0, int(m_input.cursorPos()), surroundingText.size());
++        return QString::fromUtf8(surroundingText.first(cursorBytes));
+     }
+     case Qt::ImTextAfterCursor: {
+         // cursorPos is in bytes, we need to convert QString to QByteArray for index operations
+diff --git a/src/inputplugin.cpp b/src/inputplugin.cpp
+index 0d54438..bcce453 100644
+--- a/src/inputplugin.cpp
++++ b/src/inputplugin.cpp
+@@ -10,6 +10,7 @@
+ 
+ InputPlugin::InputPlugin(InputMethod *inputMethod)
+ {
++    connect(inputMethod, &InputMethod::deactivate, this, &InputPlugin::deactivate);
+     connect(inputMethod, &InputMethod::activityChanged, this, [this, inputMethod]() {
+         if (m_context) {
+             disconnect(m_context.get(), nullptr, this, nullptr);
+@@ -26,6 +27,7 @@ InputPlugin::InputPlugin(InputMethod *inputMethod)
+         connect(m_context.get(), &InputMethodContext::surroundingTextChanged, this, &InputPlugin::surroundingTextChanged);
+         connect(m_context.get(), &InputMethodContext::contentTypeChanged, this, &InputPlugin::contentTypeChanged);
+         connect(m_context.get(), &InputMethodContext::reset, this, &InputPlugin::resetRequested);
++        connect(m_context.get(), &InputMethodContext::preferredLanguageChanged, this, &InputPlugin::preferredLanguageChanged);
+         if (m_grabbing) {
+             setGrabbingInternal();
+         }
+diff --git a/src/inputplugin.h b/src/inputplugin.h
+index 90cc250..ef67082 100644
+--- a/src/inputplugin.h
++++ b/src/inputplugin.h
+@@ -88,6 +88,8 @@ Q_SIGNALS:
+     void contentTypeChanged();
+     void receivedCommit();
+     void resetRequested();
++    void deactivate();
++    void preferredLanguageChanged(const QString &language);
+ 
+     /**
+      * A key has been pressed
+-- 
+2.56.0
+

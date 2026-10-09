@@ -1,11 +1,14 @@
 # On-screen keyboard for the Plasma desktop: KDE's Qt6 Virtual Keyboard based input method,
 # started by KWin (etc/skel/.config/kwinrc). No deckard snapshot ships an on-screen keyboard.
-# v0.1.0 is the last release that builds against deckard's Qt 6.8 / KF 6.14 (later ones want
-# Qt 6.11). maliit-keyboard is no alternative: deckard's Qt5 is half-updated (qt5-base 5.15.16,
+# v0.1.0 is the last release that builds against deckard's Qt 6.8 / KF 6.14: master has needed
+# Qt 6.10 since 0987b3d (2026-01-13) and Qt 6.11 since bd1819c (2026-09-10). Later upstream fixes
+# are backported instead (0001-0007, in upstream order, each naming its upstream commit), ported
+# by hand because master has since reformatted the code and moved it into a QML module.
+# maliit-keyboard is no alternative: deckard's Qt5 is half-updated (qt5-base 5.15.16,
 # qt5-declarative/-wayland 5.15.13) and Qt aborts on the mix.
 pkgname=plasma-keyboard
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 _commit=89b2a6eaaece6762a228c48a14390d90e55db44f
 pkgdesc='Virtual keyboard for Plasma, based on Qt Virtual Keyboard'
 arch=(aarch64)
@@ -14,8 +17,29 @@ license=(GPL-2.0-only GPL-3.0-only LGPL-2.1-only LGPL-3.0-only)
 depends=(gcc-libs glibc kcmutils kconfig kcoreaddons ki18n qt6-base qt6-declarative
          qt6-virtualkeyboard qt6-wayland wayland)
 makedepends=(cmake ninja git extra-cmake-modules qt6-tools wayland-protocols)
-source=(git+https://invent.kde.org/plasma/plasma-keyboard.git#commit=$_commit)
-sha256sums=('SKIP')
+source=(git+https://invent.kde.org/plasma/plasma-keyboard.git#commit=$_commit
+        0001-panel-Announce-window-as-activated-when-it-s-configu.patch
+        0002-inputlisteneritem-Don-t-keyboard-nav-capture-when-in.patch
+        0003-fix-qwaylandinputpanelsurface-Handle-nullptrs-when-c.patch
+        0004-inputlisteneritem-Fix-wrong-hint-for-text-completion.patch
+        0005-inputlisteneritem-Don-t-let-Qt-VKBD-communicate-to-K.patch
+        0006-inputlisteneritem-Add-bytes-bound-check-and-deactiva.patch
+        0007-inputlisteneritem-Always-disable-predictive-text.patch)
+sha256sums=('SKIP'
+            '1cc462f4330f77e52b3b28de627fa0ba92504c2613490ad2647add03c282b48b'
+            '21066eee6a12f636846fc1759f4e51f0843a8fb3fa5938628ecf65f4dd636144'
+            'f425f4868f8e77e225500a94a047c4210f86b525f936ce467e27ea739b81223f'
+            '7f3f8193af92be860e108ebbea6bb528a2140ec62147b38c63df64afd171105f'
+            'cfb7e8c08b99867fbfb0f30aa0646f9005ccf23117c38d3cbe4a0f2db844db15'
+            'ec61adf1d700aa1ecb4a22eded1b5b625273a10593769ce4025ddf5e469276c1'
+            '48c4e03712d1490c8790b345ff2724e819d67536558130b30e1edfeadc84d211')
+
+prepare() {
+  local p
+  for p in 0*.patch; do
+    patch -d $pkgname -p1 --fuzz=0 <"$p"
+  done
+}
 
 build() {
   cmake -B build -S $pkgname -G Ninja \
