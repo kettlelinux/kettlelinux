@@ -1,4 +1,4 @@
-From b9e86405b8567298e9708a324d2847cca13ad943 Mon Sep 17 00:00:00 2001
+From dc7e0def0616183ed3835cb25e003f2572015939 Mon Sep 17 00:00:00 2001
 From: gennro <gennro2004@gmail.com>
 Date: Mon, 28 Sep 2026 19:24:18 -0500
 Subject: [PATCH] compat_tool: handle apps installed with split APKs in the
@@ -56,7 +56,7 @@ index a755ef1..f0f7948 100755
  local OBB_INNER_PATH="${APP_PATH}"
  
 diff --git a/compat_tool/liblepton/mounting.sh b/compat_tool/liblepton/mounting.sh
-index 42f68f6..b54547e 100755
+index e13a73a..eabbe09 100755
 --- a/compat_tool/liblepton/mounting.sh
 +++ b/compat_tool/liblepton/mounting.sh
 @@ -78,12 +78,20 @@ function setup_mounts()
@@ -68,8 +68,8 @@ index 42f68f6..b54547e 100755
 +    DISTRO_OVERLAY="${LEPTON_DIR}/rootfs_overlay"
 +    [[ -d "${DISTRO_OVERLAY}" ]] || DISTRO_OVERLAY=""
  
--    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY}; do
-+    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY} ${DISTRO_OVERLAY}; do
+-    for OVERLAY in "${LEPTON_OVERLAY}" "${GUESTOS_OVERLAY}"; do
++    for OVERLAY in "${LEPTON_OVERLAY}" "${GUESTOS_OVERLAY}" ${DISTRO_OVERLAY:+"${DISTRO_OVERLAY}"}; do
          pushd "${OVERLAY}" >/dev/null || exit
          while IFS= read -r -d '' file; do
              DST="${file#./}"
@@ -82,5 +82,5 @@ index 42f68f6..b54547e 100755
              if [[ "$(lepton_basename "${DST}")" == "XrApiLayer_VALVE_fdm_injection.json" ]] && ! vulkan_layer_enabled "${FDM_INJECTION_LAYER_NAME}" ; then
                  continue
 -- 
-2.55.0
+2.56.0
 

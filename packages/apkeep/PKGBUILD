@@ -6,7 +6,7 @@
 # Built with upstream Rust (build time only), as packages/inputplumber: the locked crates need
 # a newer compiler than the snapshot's.
 pkgname=apkeep
-pkgver=1.0.0
+pkgver=1.1.0
 pkgrel=1
 _rust=1.98.1
 _rustdate=2026-09-03

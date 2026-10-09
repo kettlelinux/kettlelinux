@@ -809,9 +809,15 @@ def cmd_play_signin(arg):
     for t in tokens[:3]:
         r = subprocess.run(["apkeep", "-e", email, "--oauth-token", t, "-o", "device=" + PLAY_DEVICE],
                            capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120)
+        # apkeep 1.1 prints the "AAS Token:" label on stderr and only the token on stdout;
+        # before, both were one stdout line. A failure is an "Error: ..." line on stdout.
         m = re.search(r"AAS Token: (\S+)", r.stdout)
         if m:
             aas = m.group(1)
+            break
+        out = r.stdout.split()
+        if r.returncode == 0 and "AAS Token:" in r.stderr and len(out) == 1:
+            aas = out[0]
             break
     if not aas:
         raise Refused("Google didn't accept the sign-in for %s. The sign-in works only once and for a "
