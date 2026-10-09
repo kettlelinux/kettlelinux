@@ -1,5 +1,5 @@
-# Plymouth boot splash, which no deckard snapshot ships. Based on Arch's PKGBUILD for the same
-# release; 24.004.60 matches the era of deckard's libraries (Arch has moved to 26.x).
+# Plymouth boot splash, which no deckard snapshot ships. Based on Arch's PKGBUILD; no new
+# dependencies or meson options since 24.004.60.
 # plymouthd starts from the initramfs (Kettle's own mkinitcpio hook, "plymouth" in HOOKS), so
 # the splash comes up as soon as the display driver is; it quits before SDDM starts Game Mode
 # (sddm.service is After=plymouth-quit.service), keeping its last frame on screen until the
@@ -7,8 +7,8 @@
 # renderer follows the panel's "panel orientation" property, so the Portal's 270 degree
 # panel shows the splash in landscape. Default theme: kettle (packages/kettle-plymouth-theme).
 pkgname=plymouth
-pkgver=24.004.60
-pkgrel=3
+pkgver=26.134.222
+pkgrel=1
 pkgdesc='Graphical boot splash screen'
 arch=(aarch64)
 url='https://www.freedesktop.org/wiki/Software/Plymouth/'
@@ -21,8 +21,8 @@ source=(https://www.freedesktop.org/software/plymouth/releases/$pkgname-$pkgver.
         0001-drm-leave-gamma-alone.patch
         plymouth.initcpio_install
         plymouth.initcpio_hook)
-sha256sums=('f3f7841358c98f5e7b06a9eedbdd5e6882fd9f38bbd14a767fb083e3b55b1c34'
-            'e1a002317c02dbebad6717454b6443a08c735d85d7b70e15777759bd0792e228'
+sha256sums=('6ee1068216c5047923fabf0f6aa583e9d77cab383077358df3fc22f2ee398bb0'
+            '04324314314c1816044f63c63463059b4e3cefd7aab4e3952d5faee7f2430ff6'
             '54cd3ebc316ccf25b0ee8d7ca6e75691d8ec79e083f0a2b6a66bcba218896910'
             '95e78c198427846702c657cb2283d6fb31d7edee571211c1af3ca5939912777e')
 

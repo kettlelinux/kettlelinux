@@ -1,6 +1,6 @@
---- a/src/plugins/renderers/drm/plugin.c	2024-01-04 15:08:14.000000000 -0600
-+++ b/src/plugins/renderers/drm/plugin.c	2026-09-25 11:48:33.658836641 -0500
-@@ -613,7 +613,11 @@
+--- a/src/plugins/renderers/drm/plugin.c
++++ b/src/plugins/renderers/drm/plugin.c
+@@ -614,7 +614,11 @@
          head->area.width = output->mode.hdisplay;
          head->area.height = output->mode.vdisplay;
  
