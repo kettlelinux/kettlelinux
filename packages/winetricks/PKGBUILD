@@ -1,7 +1,11 @@
 # winetricks: installs Windows runtime libraries (VC++ runtimes, fonts, .NET, ...) into a Wine
 # prefix. Lutris and Heroic call it; no deckard snapshot has it. zenity (in the image) is its GUI.
+# Pinned to master 44 commits after 20260125: Microsoft changed the vcrun2019/vcrun2026
+# downloads (the release's checksums fail), msvcp140_2 is replaced on Wine 11+, and it adds
+# vcrun2026, dotnet10/desktop10 and webview2. Back to a release tag once one has these.
 pkgname=winetricks
-pkgver=20260125
+pkgver=20260125.r44.gf3890f6
+_commit=f3890f670867b5ffbc3938726db45c0f7d16c8ba
 pkgrel=1
 pkgdesc='Script to install various redistributable runtime libraries in Wine'
 arch=(any)
@@ -9,9 +13,9 @@ url='https://github.com/Winetricks/winetricks'
 license=(LGPL-2.1-or-later)
 depends=(bash cabextract perl unzip 7zip wine)
 optdepends=('zenity: GUI')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/Winetricks/winetricks/archive/$pkgver.tar.gz")
-sha256sums=('2890bd9fbbade4638e58b4999a237273192df03b58516ae7b8771e09c22d2f56')
+source=("$pkgname-$_commit.tar.gz::https://github.com/Winetricks/winetricks/archive/$_commit.tar.gz")
+sha256sums=('69e82e4da8937e26ed95c48ed724afacad1bfd0069a8800f757665e9d091e261')
 
 package() {
-  make -C $pkgname-$pkgver DESTDIR="$pkgdir" install
+  make -C $pkgname-$_commit DESTDIR="$pkgdir" install
 }

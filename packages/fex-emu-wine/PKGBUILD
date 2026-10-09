@@ -10,7 +10,7 @@
 # The DLLs are built with llvm-mingw's aarch64 Linux build (build-packages.sh runs makepkg in
 # the aarch64 chroot), with only the submodules the Windows build uses.
 pkgname=fex-emu-wine
-pkgver=2609.1
+pkgver=2610
 pkgrel=1
 _llvm_mingw=20260908
 pkgdesc='FEX x86 and x86-64 emulation for ARM64EC Wine'
@@ -30,7 +30,7 @@ source=("FEX::git+https://github.com/FEX-Emu/FEX.git#tag=FEX-$pkgver"
         "unordered_dense::git+https://github.com/martinus/unordered_dense.git#commit=3234af2c03549bc85656bfd3a86993bf1cd8aef1"
         "xxhash::git+https://github.com/Cyan4973/xxHash.git#commit=e626a72bc2321cd320e953a0ccf1584cad60f363"
         "cpp-optparse::git+https://github.com/Sonicadvance1/cpp-optparse#commit=9f94388a339fcbb0bc95c17768eb786c85988f6e"
-        "Vulkan-Headers::git+https://github.com/KhronosGroup/Vulkan-Headers.git#commit=450bd2232225d6c7728a4108055ac2e37cef6475"
+        "Vulkan-Headers::git+https://github.com/KhronosGroup/Vulkan-Headers.git#commit=ee2ec5fd83dafce291024683b50dc89219333076"
         "drm-headers::git+https://github.com/FEX-Emu/drm-headers.git#commit=3e49836995c1dcb3df709440ad2f270b569c6a5f"
         "https://github.com/mstorsjo/llvm-mingw/releases/download/$_llvm_mingw/$_llvm.tar.xz"
         Config.json)

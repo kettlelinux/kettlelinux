@@ -3,13 +3,18 @@
 # d3d12/d3d12core (with DXVK's dxgi), so every Wine prefix uses them; this package itself isn't
 # in the image.
 #
-# Upstream source, only our meson cross files (llvm-mingw's aarch64 Linux build). Their
-# cpp_args force-include <new> and <exception>: LLVM 23's libc++ no longer includes them
-# transitively, and dxil-spirv/dxbc-spirv rely on it. Submodules are fetched at the commits
-# the release tag records.
+# Upstream source, only our meson cross files (llvm-mingw's aarch64 Linux build; upstream's
+# own build-arm64x.txt builds ARM64X, not what Wine loads here). Submodules (dxil-spirv and
+# its own, recursively) are fetched at the commits the pinned commit records.
+#
+# Pinned to master at the commit Proton Experimental uses (2026-09-30), 439 past v3.0.1 with
+# no 3.1 release yet: Turnip/UE5 fixes, the engine reported in applicationVersion (Valve's
+# Turnip drirc matches on it), and the Teardown ExecuteIndirect fix. Its dxil-spirv and
+# dxbc-spirv include <new>/<exception> themselves, so our cross files no longer force them.
 pkgname=vkd3d-proton
-pkgver=3.0.1
+pkgver=3.0.1.r439.g44cf7c2
 pkgrel=1
+_commit=44cf7c2042168f3b8ee37249f0a53ac091e48fd9
 _llvm_mingw=20260908
 pkgdesc='Vulkan-based Direct3D 12 for Wine (ARM64EC and i686)'
 arch=(any)
@@ -18,7 +23,7 @@ license=(LGPL-2.1-or-later MIT Apache-2.0)
 makedepends=(git meson ninja glslang)
 options=(!strip !buildflags !lto)
 _llvm="llvm-mingw-$_llvm_mingw-ucrt-ubuntu-22.04-aarch64"
-source=("vkd3d-proton::git+$url.git#tag=v$pkgver"
+source=("vkd3d-proton::git+$url.git#commit=$_commit"
         "https://github.com/mstorsjo/llvm-mingw/releases/download/$_llvm_mingw/$_llvm.tar.xz"
         cross-arm64ec.txt
         cross-i686.txt)
