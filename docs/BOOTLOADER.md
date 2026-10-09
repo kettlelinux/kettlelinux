@@ -51,11 +51,12 @@ Checked on hardware (2026-10-09, `--check` only):
 - **Thor:** both slots stock, refused correctly.
 - **RP5:** no abl partitions visible to Linux (below).
 
+**Licence.** The ROCKNIX ABL is binary-only, from a private fork of Qualcomm's BSD-licensed
+LinuxLoader, and its repo states no licence. ROCKNIX's developers agreed to Kettle
+redistributing it (2026-10-09), so it ships in the image.
+
 Open:
 
-- **Licence.** The ROCKNIX ABL is binary-only, from a private fork of Qualcomm's BSD-licensed
-  LinuxLoader, and its repo states no licence. Get ROCKNIX's OK to redistribute it before
-  shipping.
 - **The RP5 doesn't show its abl partitions to Linux** (checked on the user's RP5). Its boot
   chain is on UFS LUN 4 (`sde`), where the primary GPT header has a bad CRC.
   - The partition entries are intact and the same as the backup GPT's, and the backup header
