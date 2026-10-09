@@ -35,7 +35,10 @@ capacity_mwh() {
 
 scheduler() {
   local s; s=$(cat /sys/kernel/sched_ext/state 2>/dev/null)
-  if [ "$s" = enabled ]; then cat /sys/kernel/sched_ext/root/ops 2>/dev/null || echo scx; else echo eas; fi
+  if [ "$s" = enabled ]; then cat /sys/kernel/sched_ext/root/ops 2>/dev/null || echo scx; return; fi
+  # EAS only runs while every cpufreq policy is on schedutil
+  local g; g=$(sort -u /sys/devices/system/cpu/cpufreq/policy*/scaling_governor 2>/dev/null | paste -sd+)
+  if [ "$g" = schedutil ]; then echo eas; else echo "fair-noeas($g)"; fi
 }
 
 wifi_ps() {
