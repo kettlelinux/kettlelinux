@@ -1,0 +1,31 @@
+From 910d0c206f062bfa2ca9e7f35c597293c188dc7c Mon Sep 17 00:00:00 2001
+From: Harald Sitter <sitter@kde.org>
+Date: Tue, 31 Mar 2026 17:23:07 +0200
+Subject: [PATCH] context: reset before reconnectDaemon
+
+this avoids awkward scenarios where we don't reset the m_connectTries
+and then end up not retrying auto-connections
+
+calling reset fully resets the context state which seems the most
+reasonable considering we are doing a forceful complete reconnect
+
+Backported from upstream commit 5b14c0b59d11e0e70a39180c76b3486cdf41ab08
+---
+ src/context.cpp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/context.cpp b/src/context.cpp
+index 55d5312..57304d2 100644
+--- a/src/context.cpp
++++ b/src/context.cpp
+@@ -950,6 +950,7 @@ void Context::reconnectDaemon()
+     }
+ 
+     d->forceDisconnect();
++    d->reset();
+     return d->connectToDaemon();
+ }
+ 
+-- 
+2.56.0
+

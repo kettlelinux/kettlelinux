@@ -5,14 +5,15 @@
 # its handbook: deckard has no kdoctools.
 pkgname=plasma-pa
 pkgver=6.2.5
-pkgrel=1
+pkgrel=2
 pkgdesc='Plasma applet for audio volume management using PulseAudio'
 arch=(aarch64)
 url='https://kde.org/plasma-desktop/'
 license=(LGPL-2.0-or-later)
 depends=(gcc-libs glib2 glibc kcmutils kconfig kcoreaddons kdbusaddons kdeclarative
          kglobalaccel ki18n kirigami kitemmodels kstatusnotifieritem ksvg libcanberra libplasma
-         libpulse plasma-workspace pulse-native-provider pulseaudio-qt qt6-base qt6-declarative)
+         libpulse plasma-workspace pulse-native-provider 'pulseaudio-qt>=1.8.1' qt6-base
+         qt6-declarative)
 makedepends=(cmake ninja extra-cmake-modules qt6-tools)
 source=(https://download.kde.org/stable/plasma/$pkgver/$pkgname-$pkgver.tar.xz)
 sha256sums=('5179337a7eac4145a953b46146d4899945d9c43373ad60f76692ffc42cf19d47')

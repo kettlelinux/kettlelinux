@@ -1,0 +1,84 @@
+From 70b0b24ffc5d2141d79b7a36555c40a8a4773c0c Mon Sep 17 00:00:00 2001
+From: Harald Sitter <sitter@kde.org>
+Date: Fri, 11 Sep 2026 02:01:38 +0200
+Subject: [PATCH] server: do not return incorrect default devices
+
+somewhat clumsily when we failed to determine the default device we'd
+instead return the last device in the enumerable. this would then bubble
+up to become m_defaultSink/Source and incorrectly get presented as
+default device when in fact it was not.
+
+so far so terrible.
+
+the far more elusive problem happens when the user has a second device
+and then tries to switch to that one. now, having two devices it seems
+like a good guess that this other device is in fact the *real* default
+device and setting it default will be no-op on the PA server. as such,
+we never get a change and never re-evaluate the default devices and
+consequently end up with two devices checked in the UI: one because it
+was incorrectly labeled default by pulseaudio-qt initially, the other
+because QML marked it checked and we didn't fix it because the change
+was no-op on the backend
+
+it gets worse.
+
+Sink/Source::setDefault() has a guard against manipulating the default
+state of a device that is already default (as per our Server). since we
+marked the wrong device default we are effectively making changes to
+this device no-op on the frontend! so now the user has two entries
+selected and the states are essentially locked. one cannot change
+because it is no-oped on the frontend, the other because it is no-oped
+on the backend.
+
+BUG: 500968
+
+Backported from upstream commit 1af59b54e598bdc484aab6c5c8496db3a953b371
+---
+ src/server.cpp | 2 +-
+ src/server.h   | 6 ++++--
+ 2 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/src/server.cpp b/src/server.cpp
+index 5c6c54c..3ef3c84 100644
+--- a/src/server.cpp
++++ b/src/server.cpp
+@@ -140,7 +140,7 @@ static Type *findByName(const Vector &vector, const QString &name)
+         }
+     }
+     qCWarning(PULSEAUDIOQT) << "No object for name" << name;
+-    return out;
++    return nullptr;
+ }
+ 
+ void Server::updateDefaultDevices()
+diff --git a/src/server.h b/src/server.h
+index bec9193..62df254 100644
+--- a/src/server.h
++++ b/src/server.h
+@@ -20,9 +20,9 @@ class Context;
+ class PULSEAUDIOQT_EXPORT Server : public QObject
+ {
+     Q_OBJECT
+-    /// The default Sink (SinkInputs that aren't otherwise assigned explicitly will use this Sink)
++    /// The default Sink (SinkInputs that aren't otherwise assigned explicitly will use this Sink). May be null.
+     Q_PROPERTY(Sink *defaultSink READ defaultSink NOTIFY defaultSinkChanged)
+-    /// The default Source (SourceOutputs that aren't otherwise assigned explicitly will use this Source)
++    /// The default Source (SourceOutputs that aren't otherwise assigned explicitly will use this Source). May be null.
+     Q_PROPERTY(Source *defaultSource READ defaultSource NOTIFY defaultSourceChanged)
+     /// Whether the connected Server is PipeWire (rather than PulseAudio)
+     Q_PROPERTY(bool isPipeWire READ isPipeWire NOTIFY isPipeWireChanged)
+@@ -36,9 +36,11 @@ class PULSEAUDIOQT_EXPORT Server : public QObject
+ public:
+     ~Server() override;
+ 
++    /*! The default sink device. May be null when resolution failed or isn't done yet */
+     Sink *defaultSink() const;
+     void setDefaultSink(Sink *sink);
+ 
++    /*! The default source device. May be null when resolution failed or isn't done yet */
+     Source *defaultSource() const;
+     void setDefaultSource(Source *source);
+ 
+-- 
+2.56.0
+
