@@ -1,0 +1,36 @@
+From 44bd82ed345b4d6ac037d3ae55b2d3ec2237bd7f Mon Sep 17 00:00:00 2001
+From: Devin Lin <espidev@gmail.com>
+Date: Wed, 1 Apr 2026 22:52:14 -0400
+Subject: [PATCH] inputlisteneritem: Fix wrong hint for text completion
+
+The text completion and correction hints should affect the "no
+predictive text"  flag to Qt, not the auto capitalization flag.
+
+Ported to plasma-keyboard 0.1.0, which predates the auto capitalization
+setting (94acc7e): the auto-uppercase check keeps only the content hint.
+
+Backported from upstream commit 05cb6f14e33d4a68721bfc4ab561988ca3f567c6
+---
+ src/inputlisteneritem.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/inputlisteneritem.cpp b/src/inputlisteneritem.cpp
+index 238971f..5b96588 100644
+--- a/src/inputlisteneritem.cpp
++++ b/src/inputlisteneritem.cpp
+@@ -158,10 +158,10 @@ QVariant InputListenerItem::inputMethodQuery(Qt::InputMethodQuery query) const
+         if (imHints & InputPlugin::content_hint_password) {
+             qtHints |= Qt::ImhSensitiveData;
+         }
+-        if ((imHints & InputPlugin::content_hint_auto_completion) == 0) {
++        if ((imHints & InputPlugin::content_hint_auto_completion) == 0 || (imHints & InputPlugin::content_hint_auto_correction) == 0) {
+             qtHints |= Qt::ImhNoPredictiveText;
+         }
+-        if ((imHints & InputPlugin::content_hint_auto_correction) == 0 || (imHints & InputPlugin::content_hint_auto_capitalization) == 0) {
++        if ((imHints & InputPlugin::content_hint_auto_capitalization) == 0) {
+             qtHints |= Qt::ImhNoAutoUppercase;
+ 
+         }
+-- 
+2.56.0
+

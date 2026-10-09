@@ -1,0 +1,47 @@
+From d7bcf57d542db48ef03cec29e05c218b1e7676de Mon Sep 17 00:00:00 2001
+From: Kristen McWilliam <kristen@kde.org>
+Date: Thu, 19 Mar 2026 13:32:01 -0400
+Subject: [PATCH] fix(qwaylandinputpanelsurface): Handle nullptrs when
+ configuring
+
+This change adds checks for nullptrs in this method to prevent crashes.
+
+Resolves https://invent.kde.org/plasma/plasma-keyboard/-/issues/67
+
+Ported to plasma-keyboard 0.1.0, whose applyConfigure() predates the
+InputPanelRole switch (ac8e74f, 48a4494): the screen check guards the
+QT_WAYLAND_INPUT_PANEL_TOPLEVEL branch, the only one that uses the screen.
+
+Backported from upstream commit 97456da3de2e83852ce5db27a860d4c8b4eaa681
+---
+ src/qwaylandinputpanelsurface.cpp | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/src/qwaylandinputpanelsurface.cpp b/src/qwaylandinputpanelsurface.cpp
+index 6f968a2..80417fb 100644
+--- a/src/qwaylandinputpanelsurface.cpp
++++ b/src/qwaylandinputpanelsurface.cpp
+@@ -30,10 +30,17 @@ QWaylandInputPanelSurface::~QWaylandInputPanelSurface()
+ void QWaylandInputPanelSurface::applyConfigure()
+ {
+     static const bool preferTopLevel = qEnvironmentVariableIntValue("QT_WAYLAND_INPUT_PANEL_TOPLEVEL");
+-    if (preferTopLevel)
+-        set_toplevel(window()->waylandScreen()->output(), position_center_bottom);
+-    else
++    if (preferTopLevel) {
++        QtWaylandClient::QWaylandScreen *screen = window()->waylandScreen();
++        if (!screen) {
++            qCWarning(qLcQpaShellIntegration) << "No Wayland screen available, cannot configure input panel surface";
++            return;
++        }
++
++        set_toplevel(screen->output(), position_center_bottom);
++    } else {
+         set_overlay_panel();
++    }
+ 
+     window()->display()->handleWindowActivated(window());
+ }
+-- 
+2.56.0
+

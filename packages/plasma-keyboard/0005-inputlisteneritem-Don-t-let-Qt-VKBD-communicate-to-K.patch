@@ -1,0 +1,66 @@
+From fd38c801c910d9c3568ceafbe818c4ee88e6e474 Mon Sep 17 00:00:00 2001
+From: Devin Lin <espidev@gmail.com>
+Date: Wed, 1 Apr 2026 22:11:14 -0400
+Subject: [PATCH] inputlisteneritem: Don't let Qt VKBD communicate to KWin when
+ not visible
+
+BUG: 516511
+
+This is a workaround to prevent the possibility of events from Qt VirtualKeyboard's input engine to be communicated
+to KWin. During every text input session, we are still relaying events
+to Qt VirtualKeyboard. Qt VKBD however assumes that it's the sole owner
+of the text field and behaves in inexplicable ways when things change
+(ex. mouse text cursor selection) to implement its own text prediction.
+
+Workaround this for now by disabling communciation with KWin from Qt
+VKBD when the input panel isn't shown. This means that BUG: 516511 will
+still exist when the virtual keyboard panel is shown.
+
+Ported to plasma-keyboard 0.1.0, which predates the diacritics overlay
+controller (6896669): its call at the top of the handler is left out.
+
+Backported from upstream commit 74f81e65ff25e86d20c1e71b31ee94e3cb2e1adf
+---
+ src/inputlisteneritem.cpp | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/src/inputlisteneritem.cpp b/src/inputlisteneritem.cpp
+index 5b96588..ea4a290 100644
+--- a/src/inputlisteneritem.cpp
++++ b/src/inputlisteneritem.cpp
+@@ -52,13 +52,16 @@ InputListenerItem::InputListenerItem()
+         }
+     });
+     connect(&m_input, &InputPlugin::surroundingTextChanged, this, [this] {
+-        QGuiApplication::inputMethod()->update(Qt::ImSurroundingText);
+-
+         if (m_input.hasContext()) {
+             // Re-activate when text input activates, and there is context
+             QGuiApplication::inputMethod()->setVisible(true);
+             window()->setVisible(true);
+         }
++
++        // Update vkbd input method only if the virtual keyboard panel is shown
++        if (window()->isExposed()) {
++            QGuiApplication::inputMethod()->update(Qt::ImSurroundingText);
++        }
+     });
+     connect(&m_input, &InputPlugin::resetRequested, this, [] {
+         QGuiApplication::inputMethod()->reset();
+@@ -297,6 +300,13 @@ void InputListenerItem::keyReleaseEvent(QKeyEvent *event)
+ 
+ void InputListenerItem::inputMethodEvent(QInputMethodEvent *event)
+ {
++    // Don't forward events from Qt VKBD to KWin if the keyboard window isn't open
++    // This avoids the possibility of Qt VKBD causing text changes from receiving
++    // events (ex. cursor movement) done by its input engine (for features like text prediction).
++    if (!window()->isExposed()) {
++        return;
++    }
++
+     // Delete characters that are supposed to be replaced
+     if (event->replacementLength() > 0) {
+         m_input.deleteSurroundingText(event->replacementStart(), event->replacementLength());
+-- 
+2.56.0
+

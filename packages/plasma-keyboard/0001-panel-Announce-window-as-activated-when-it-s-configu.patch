@@ -1,0 +1,26 @@
+From 5f4860815759e2b370525644ed4b55a6b2feb946 Mon Sep 17 00:00:00 2001
+From: Aleix Pol <aleixpol@kde.org>
+Date: Sun, 23 Nov 2025 23:14:29 +0100
+Subject: [PATCH] panel: Announce window as activated when it's configured
+
+Backported from upstream commit 732945ce7e0b634716177a7f5961f4de6a8d9cd5
+---
+ src/qwaylandinputpanelsurface.cpp | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/qwaylandinputpanelsurface.cpp b/src/qwaylandinputpanelsurface.cpp
+index 4b427b0..6f968a2 100644
+--- a/src/qwaylandinputpanelsurface.cpp
++++ b/src/qwaylandinputpanelsurface.cpp
+@@ -34,6 +34,8 @@ void QWaylandInputPanelSurface::applyConfigure()
+         set_toplevel(window()->waylandScreen()->output(), position_center_bottom);
+     else
+         set_overlay_panel();
++
++    window()->display()->handleWindowActivated(window());
+ }
+ 
+ QT_END_NAMESPACE
+-- 
+2.56.0
+
