@@ -1,0 +1,154 @@
+#!/bin/bash
+# Kettle Linux: put this install back to how it started, without reinstalling.
+#
+#   kettle-reset settings     every setting back to its default (the system's, the desktop's,
+#                             Steam's, Kettle's and the Decky plugins'); games, saves, files and
+#                             what's installed stay. Done on the next boot, before anything
+#                             reads them: the initramfs clears the /etc overlay and /var/lib's
+#                             settings (kettle-reset.hook, packages/steamos-customizations-kettle),
+#                             then kettle-reset-home.service the user's (/usr/lib/kettle/reset-home).
+#                             What's reset is moved to a backup, not deleted (the newest one is kept):
+#                             /var/lib/kettle/settings-backup/ and /home/.kettle/settings-backup/.
+#   kettle-reset everything   a factory reset: this install's /var (both slots) and /home are
+#                             formatted on the next boot (SteamOS's holo-factory-reset, the same as
+#                             Steam's Settings > System > Factory Reset). The system itself isn't
+#                             touched, and Android isn't either. Refused while /home holds a backup
+#                             of the internal storage (the Kettle Installer's) unless
+#                             --erase-android-backup is given: it is erased with /home.
+#   kettle-reset status | cancel   what's asked for on the next boot; take it back
+#   kettle-reset --gui        the desktop's Reset Kettle window (zenity), as the desktop user: it
+#                             asks, then runs one of the above through pkexec (org.kettle.reset)
+#
+# settings and everything restart the device unless --no-reboot is given.
+set -euo pipefail
+
+RESET=/var/lib/kettle/reset
+FACTORY=/esp/efi/steamos/factory-reset   # holo-factory-reset-config's records
+UFS_BACKUP=/home/.kettle/ufs-backup      # kettle-backup-ufs
+
+usage() {
+  [ "${1:-0}" = 0 ] || exec >&2
+  sed -n '2,/^set -e/{/^set -e/d;s/^# \{0,1\}//;p}' "$0"
+  exit "${1:-0}"
+}
+die() { echo "kettle-reset: $*" >&2; exit 1; }
+need_root() { [ "$(id -u)" = 0 ] || die "run as root (sudo kettle-reset $1)"; }
+has_ufs_backup() { [ -n "$(ls -A "$UFS_BACKUP" 2>/dev/null)" ]; }
+factory_pending() { compgen -G "$FACTORY/*.cfg" >/dev/null; }
+
+restart() {
+  if [ "$no_reboot" = 1 ]; then
+    echo "Restart the device to reset it."
+  else
+    echo "Restarting..."
+    systemctl reboot
+  fi
+}
+
+do_settings() {
+  need_root settings
+  install -d -m 0755 "$RESET"   # readable: status is asked as the user (Welcome, Reset Kettle)
+  rm -f "$RESET/home"
+  date +%Y%m%d-%H%M%S >"$RESET/request.new"
+  mv "$RESET/request.new" "$RESET/request"
+  sync
+  echo "Settings will be reset on the next start."
+  restart
+}
+
+do_everything() {
+  need_root everything
+  if has_ufs_backup && [ "$erase_backup" != 1 ]; then
+    die "$UFS_BACKUP holds a backup of the internal storage (Android), which a factory reset
+erases. Copy it somewhere else first, or give --erase-android-backup."
+  fi
+  rm -f "$RESET/request" "$RESET/home"   # /var is formatted anyway
+  holo-factory-reset-config
+  factory_pending || die "holo-factory-reset-config recorded nothing in $FACTORY"
+  sync
+  echo "This install's data will be erased on the next start."
+  restart
+}
+
+do_status() {
+  if factory_pending; then echo "everything: a factory reset happens on the next start"
+  elif [ -e "$RESET/request" ]; then echo "settings: settings are reset on the next start"
+  elif [ -e "$RESET/home" ]; then echo "settings: the user's settings are still to be reset (next start)"
+  else echo "none"; fi
+}
+
+do_cancel() {
+  need_root cancel
+  rm -f "$RESET/request" "$FACTORY"/*.cfg
+  [ -e "$RESET/home" ] && echo "The system's settings were already reset; the user's still will be." >&2
+  echo "Nothing will be reset on the next start."
+}
+
+# ---------------------------------------------------------------- the desktop's window
+gui() {
+  local Z=(zenity --title="Reset Kettle" --width=560) what text
+  pending=$(do_status)
+  if [ "$pending" != none ]; then
+    "${Z[@]}" --question --default-cancel --ok-label="Don't reset" --cancel-label=Close \
+      --text="A reset is already set for the next start:\n\n${pending#*: }.\n\nTake it back?" 2>/dev/null || exit 0
+    pkexec /usr/bin/kettle-reset cancel >/dev/null && "${Z[@]}" --info --text="Nothing will be reset." 2>/dev/null
+    exit 0
+  fi
+  what=$("${Z[@]}" --list --radiolist --height=300 --hide-header \
+    --text="Put this device back to how Kettle Linux started, without reinstalling it." \
+    --column=" " --column=id --column=Option --column=Details --hide-column=2 --print-column=2 \
+    TRUE settings "Reset settings" "Every setting back to its default; games, saves and files stay" \
+    FALSE everything "Erase everything" "A factory reset: games, saves, files and settings are deleted" \
+    2>/dev/null) || exit 0
+  case "$what" in
+    settings)
+      text="<b>Reset all settings?</b>
+
+Back to their defaults, as on a new install:
+  • the system's: Wi-Fi networks, Bluetooth pairings, the start-up mode, the SSH server, the password (back to <i>kettle</i>)
+  • the desktop's: layout, wallpaper, screen and keyboard settings
+  • Steam's: its settings, launch options and controller layouts. Steam signs out.
+  • Kettle's: power profiles, lights, gyro and every Decky plugin's settings
+
+Games, saves, your files, apps and Steam's non-Steam games stay.
+What's reset is kept in /home/.kettle/settings-backup until the next reset.
+
+The device restarts now and resets while it starts."
+      "${Z[@]}" --question --default-cancel --text="$text" --ok-label="Reset settings" --cancel-label=Back 2>/dev/null || exec "$0" --gui
+      exec pkexec /usr/bin/kettle-reset settings ;;
+    everything)
+      local extra=() warn=""
+      if has_ufs_backup; then
+        warn="
+
+<span color='red'><b>This also erases the backup of the internal storage (Android)</b> in $UFS_BACKUP. Without it, Android can't be restored the way it was. Copy it to another computer first.</span>"
+        extra=(--erase-android-backup)
+      fi
+      text="<b>Erase everything?</b>
+
+All games, saves, screenshots, downloaded apps, your files and every setting on this install are deleted, and it starts like a new install. Kettle Linux itself stays, at the version it has now, and Android isn't touched.$warn
+
+The device restarts now and erases while it starts. This can't be undone."
+      "${Z[@]}" --question --default-cancel --text="$text" --ok-label="Erase everything" --cancel-label=Back 2>/dev/null || exec "$0" --gui
+      exec pkexec /usr/bin/kettle-reset everything "${extra[@]}" ;;
+  esac
+}
+
+no_reboot=0 erase_backup=0 cmd=
+for a in "$@"; do
+  case "$a" in
+    --no-reboot) no_reboot=1 ;;
+    --erase-android-backup) erase_backup=1 ;;
+    -h|--help) usage ;;
+    --gui|settings|everything|status|cancel) [ -z "$cmd" ] || usage 2; cmd=$a ;;
+    *) usage 2 ;;
+  esac
+done
+case "$cmd" in
+  --gui) gui ;;
+  settings) do_settings ;;
+  everything) do_everything ;;
+  status) do_status ;;
+  cancel) do_cancel ;;
+  *) usage 2 ;;
+esac

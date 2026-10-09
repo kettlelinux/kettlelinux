@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Reset Kettle
+GenericName=Reset Settings or Erase Everything
+Comment=Put every setting back to its default, or erase everything, without reinstalling
+Exec=kettle-reset --gui
+Icon=edit-reset
+Terminal=false
+Categories=System;
+Keywords=reset;factory reset;defaults;erase;wipe;settings;

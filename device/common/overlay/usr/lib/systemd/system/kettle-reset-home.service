@@ -1,0 +1,18 @@
+[Unit]
+Description=Reset the user's settings (kettle-reset settings)
+# The user's half of a settings reset, asked for on the last boot (/usr/lib/kettle/reset-home):
+# before user sessions are allowed, Steam and Decky start, so nothing has the settings open
+ConditionPathExists=/var/lib/kettle/reset/home
+RequiresMountsFor=/home /var/lib/kettle
+After=holo-create-homedir.service
+Before=systemd-user-sessions.service display-manager.service plugin_loader.service kettle-steam-unpack.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/kettle/reset-home
+# never holding logins back for good: a stuck reset fails, the system starts, and it runs again
+# on the next boot
+TimeoutStartSec=15min
+
+[Install]
+WantedBy=multi-user.target

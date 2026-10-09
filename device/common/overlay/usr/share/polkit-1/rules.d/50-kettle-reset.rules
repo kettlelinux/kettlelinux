@@ -1,0 +1,11 @@
+// Kettle Linux: resetting the device (kettle-reset) from Steam's Settings > System > Factory
+// Reset and Game Mode's Welcome, where no password prompt can be shown, and from the desktop's
+// Reset Kettle alike: as on a Steam Deck, the person holding it can reset it. Decky runs plugin
+// backends inside its own system service (plugin_loader.service), outside the user's login
+// session, so polkit sees them as neither local nor active: match that unit too.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.kettle.reset" && subject.isInGroup("wheel") &&
+        ((subject.local && subject.active) || subject.system_unit == "plugin_loader.service")) {
+        return polkit.Result.YES;
+    }
+});

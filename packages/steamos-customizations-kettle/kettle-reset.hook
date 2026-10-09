@@ -1,0 +1,61 @@
+#!/usr/bin/ash
+# Kettle Linux: the system half of a settings reset (kettle-reset settings), done here because
+# the /etc overlay's upper directory can only be swapped before it is mounted. Runs before the
+# holo hook's late hook (HOOKS order), which mounts /var and the overlay right after: this one
+# mounts the booted slot's var on its own for the moment it needs it.
+#
+# A reset asked for leaves /var/lib/kettle/reset/request, holding its time stamp. Here, the
+# overlay's upper directory (every change made to /etc) and the system settings kept in
+# /var/lib are moved into /var/lib/kettle/settings-backup/<stamp>, and the request becomes
+# /var/lib/kettle/reset/home: kettle-reset-home.service does the user's half before anyone logs
+# in. What identifies this device and its install stays: machine-id, the SSH host keys, the
+# partition definitions systemd-repart was given (repart.d). Safe to stop at any point: the
+# request is only turned into the next stage's once everything here is done.
+
+KETTLE_RESET_VAR="bluetooth NetworkManager iwd AccountsService sddm upower systemd/backlight
+                  kettle-power kettle-leds kettle-motion/settings.ini"
+KETTLE_RESET_KEEP_ETC="machine-id ssh/ssh_host_* repart.d"
+
+kettle_reset_settings() {
+    local var=$1 dir stamp backup up f
+    dir=$var/lib/kettle/reset
+    [ -f "$dir/request" ] || return 0
+    stamp=$(cat "$dir/request")
+    case $stamp in
+        ''|*[!0-9-]*) msg "kettle-reset: bad request '$stamp', ignored"; rm -f "$dir/request"; return 0 ;;
+    esac
+    msg ":: Resetting Kettle's settings (backup: /var/lib/kettle/settings-backup/$stamp)"
+    backup=$var/lib/kettle/settings-backup/$stamp
+    up=$var/lib/overlays/etc/upper
+    mkdir -p "$backup/var"
+    if [ ! -e "$backup/etc" ] && [ -d "$up" ]; then
+        mv "$up" "$backup/etc"
+    fi
+    mkdir -p "$up"
+    for f in $KETTLE_RESET_KEEP_ETC; do
+        # a glob that matched nothing stays as written, and isn't there
+        for f in "$backup/etc/"$f; do
+            [ -e "$f" ] || continue
+            f=${f#"$backup/etc/"}
+            [ -e "$up/$f" ] && continue
+            mkdir -p "$up/$(dirname "$f")"
+            cp -a "$backup/etc/$f" "$up/$f"
+        done
+    done
+    for f in $KETTLE_RESET_VAR; do
+        [ -e "$var/lib/$f" ] || continue
+        mkdir -p "$backup/var/$(dirname "$f")"
+        mv "$var/lib/$f" "$backup/var/$f"
+    done
+    sync
+    mv "$dir/request" "$dir/home"
+}
+
+run_latehook() {
+    local dev=/dev/disk/by-partsets/self/var mnt=/kettle-var
+    [ -e "$dev" ] || return 0
+    mkdir -p "$mnt"
+    mount "$dev" "$mnt" 2>/dev/null || return 0
+    kettle_reset_settings "$mnt"
+    umount "$mnt"
+}
