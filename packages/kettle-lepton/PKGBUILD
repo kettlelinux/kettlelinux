@@ -24,8 +24,8 @@
 # Built with upstream Rust (build time only), as packages/inputplumber: the apk-info-extractor's
 # locked crates need a newer compiler than the snapshot's 1.78.
 pkgname=kettle-lepton
-pkgver=3.0.3
-pkgrel=14
+pkgver=3.0.5
+pkgrel=1
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Android games in Steam through Valve Lepton (Kettle Linux compatibility tool)'
@@ -62,12 +62,12 @@ sha256sums=('SKIP'
             'a7b2864c6f3c0199c17b329f26b45dcee8ec2dfe9320585e384084408de8f8ac'
             'c77c79f100351f62537ff1c70eed1756112a2187e6104c88a95e2791d67d4538'
             '12b7c0aa5f323c02cc454e26ba5d668d6fa24118b90c1a69e2a147cc771d3984'
-            'e545d165492ec767ec1d56d15a050f935d00956b8a004e7c2f9cf166a9e791ec'
+            'fd0d3436d53ad550ebe46535eb088fba47bc181d574b81a08fd506aaa1689a16'
             '5f8c2b8abf381d7e85b08f25f34531c201bedd0b4966d8409e65111a566aa58e'
             'e4c2e8bbcac361770f1d9479aacbe9e90bb9e13c0f2c91d694e0d1e72887e0e7'
             '9254fa985690b9e4b0cd11e511868a46e09acda2db434b616f0a552cce3afc5b'
             'ffaaded8988303bb552cf862addca3f45b2a88ccbed99d937611b27fc7b8d8c4'
-            'ed921d1f585f2d6dc0d562be33e7456da40e3405be81be710f50c1ce8cf8f2c2'
+            '78081d4327dee864e32feb57073ac090d8a9786ab62662766c83beff9017e145'
             '9fa93f8589aa91fe749611460e0288876d8f4a98cdcb6d1036a243fbf09b649e'
             'f50b6be3d1797e155edebb0889c710458e4711636776616409d8e970962317c8')
 
