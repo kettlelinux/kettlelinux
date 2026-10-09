@@ -52,6 +52,11 @@ for repo in "${!UPSTREAM[@]}"; do
     log "fetching $repo database"
     mkdir -p "$MIRROR/$repo"
     curl -fsSLo "$db.part" "${UPSTREAM[$repo]}/$repo.db"
+    # the database being replaced stays, by the date it was fetched, with the packages it lists
+    # (the mirror never deletes one): copying it back over $repo.db undoes the refresh
+    if [ -f "$db" ] && ! cmp -s "$db" "$db.part"; then
+      cp -p "$db" "$db.$(tr -d ':' <"$MIRROR/$repo/FETCHED" 2>/dev/null || date -u +%Y-%m-%dT%H%MZ)"
+    fi
     mv "$db.part" "$db"
     printf '%s\n' "${UPSTREAM[$repo]}" >"$MIRROR/$repo/UPSTREAM"
     date -u +%Y-%m-%dT%H:%MZ >"$MIRROR/$repo/FETCHED"
