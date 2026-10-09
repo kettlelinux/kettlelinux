@@ -19,7 +19,7 @@ refresh_hz still holds one. The default, 0, keeps the highest.
  1 file changed, 13 insertions(+)
 
 diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
-index c4537d7e..3ecadc69 100644
+index ce1834c1..863356a0 100644
 --- a/src/steamcompmgr.cpp
 +++ b/src/steamcompmgr.cpp
 @@ -296,6 +296,7 @@ update_runtime_info();
@@ -29,8 +29,8 @@ index c4537d7e..3ecadc69 100644
 +gamescope::ConVar<int> cv_auto_refresh_max_hz( "auto_refresh_max_hz", 0, "Highest refresh rate (Hz) the display runs at when nothing asks for one (no frame limit, or no game focused): the highest valid rate at or below it. A frame limit can still pick a higher rate. 0 allows the display's highest." );
  gamescope::ConVar<bool> cv_adaptive_sync_ignore_overlay( "adaptive_sync_ignore_overlay", false, "Whether or not to ignore overlay planes for pushing commits with adaptive sync." );
  gamescope::ConVar<int> cv_adaptive_sync_overlay_cycles( "adaptive_sync_overlay_cycles", 1, "Number of vblank cycles to ignore overlay repaints before forcing a commit with adaptive sync." );
- 
-@@ -3316,7 +3317,19 @@ paint_all( global_focus_t *pFocus, bool async )
+ gamescope::ConVar<bool> cv_adaptive_sync_uncapped( "adaptive_sync_uncapped", true, "Whether or not to allow mailbox/immediate clients to run uncapped with adaptive sync by deferring paints until the display can take a new flip." );
+@@ -3481,7 +3482,19 @@ paint_all( global_focus_t *pFocus, bool async )
  
  		int nDynamicRefreshHz = g_nDynamicRefreshRate[GetBackend()->GetScreenType()];
  

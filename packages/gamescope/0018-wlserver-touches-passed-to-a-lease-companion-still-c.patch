@@ -16,10 +16,10 @@ holds the lease (its screen is on); touches on a dark screen still don't.
  1 file changed, 12 insertions(+)
 
 diff --git a/src/wlserver.cpp b/src/wlserver.cpp
-index 48da21a1..b4046e25 100644
+index c388b0aa..70b37194 100644
 --- a/src/wlserver.cpp
 +++ b/src/wlserver.cpp
-@@ -457,6 +457,10 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
+@@ -460,6 +460,10 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
  	if ( touch->bIgnoreWhileLeased )
  	{
  		drm_lease_send_touch( DrmLeaseEventType::Down, event->x, event->y, event->touch_id, event->time_msec );
@@ -30,7 +30,7 @@ index 48da21a1..b4046e25 100644
  		return;
  	}
  
-@@ -472,6 +476,10 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
+@@ -475,6 +479,10 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
  	if ( touch->bIgnoreWhileLeased )
  	{
  		drm_lease_send_touch( DrmLeaseEventType::Up, 0.0, 0.0, event->touch_id, event->time_msec );
@@ -41,7 +41,7 @@ index 48da21a1..b4046e25 100644
  		return;
  	}
  
-@@ -486,6 +494,10 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
+@@ -489,6 +497,10 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
  	if ( touch->bIgnoreWhileLeased )
  	{
  		drm_lease_send_touch( DrmLeaseEventType::Motion, event->x, event->y, event->touch_id, event->time_msec );

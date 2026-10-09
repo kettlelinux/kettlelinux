@@ -20,10 +20,10 @@ default, 0, leaves the refresh rate to Steam and ui_refresh_hz.
  1 file changed, 14 insertions(+), 1 deletion(-)
 
 diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
-index 04950f5f..17eab17b 100644
+index f3350de2..ce1834c1 100644
 --- a/src/steamcompmgr.cpp
 +++ b/src/steamcompmgr.cpp
-@@ -998,6 +998,13 @@ static gamescope::ConCommand cc_debug_force_repaint( "debug_force_repaint", "For
+@@ -1129,6 +1129,13 @@ static gamescope::ConCommand cc_debug_force_repaint( "debug_force_repaint", "For
  	hasRepaint = true;
  });
  
@@ -37,7 +37,7 @@ index 04950f5f..17eab17b 100644
  // The main loop dumps this on the steamcompmgr thread, which owns the
  // focus state and the X connections.
  static std::atomic<bool> g_bPendingFocusInfo = { false };
-@@ -3316,6 +3323,12 @@ paint_all( global_focus_t *pFocus, bool async )
+@@ -3480,6 +3487,12 @@ paint_all( global_focus_t *pFocus, bool async )
  		else if ( cv_ui_refresh_hz > 0 && !steamcompmgr_user_has_any_game_open() &&
  		          std::find( rates.begin(), rates.end(), uint32_t( cv_ui_refresh_hz ) ) != rates.end() )
  			nTargetRefreshHz = cv_ui_refresh_hz;
@@ -50,7 +50,7 @@ index 04950f5f..17eab17b 100644
  
  		uint64_t now = get_time_in_nanos();
  
-@@ -3331,7 +3344,7 @@ paint_all( global_focus_t *pFocus, bool async )
+@@ -3495,7 +3508,7 @@ paint_all( global_focus_t *pFocus, bool async )
  		{
  			g_uDynamicRefreshEqualityTime = now;
  		}

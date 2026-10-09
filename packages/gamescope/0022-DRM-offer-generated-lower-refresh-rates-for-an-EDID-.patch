@@ -17,10 +17,10 @@ ui_refresh_hz picks it.
  1 file changed, 42 insertions(+)
 
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index 023542e2..902fec32 100644
+index 9aaf6c50..a17401dc 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
-@@ -524,6 +524,7 @@ namespace gamescope
+@@ -525,6 +525,7 @@ namespace gamescope
  	private:
  		void ParseEDID();
  		void AddNativeModeRefreshRates();
@@ -28,7 +28,7 @@ index 023542e2..902fec32 100644
  
  
  		CDRMBackend *m_pBackend = nullptr;
-@@ -2874,6 +2875,44 @@ namespace gamescope
+@@ -3106,6 +3107,44 @@ namespace gamescope
  		std::sort( m_Mutable.ValidDynamicRefreshRates.begin(), m_Mutable.ValidDynamicRefreshRates.end() );
  	}
  
@@ -73,7 +73,7 @@ index 023542e2..902fec32 100644
  	void CDRMConnector::ParseEDID()
  	{
  		uint64_t ulBlobId = GetProperties().EDID ? GetProperties().EDID->GetCurrentValue() : 0;
-@@ -2884,7 +2923,10 @@ namespace gamescope
+@@ -3116,7 +3155,10 @@ namespace gamescope
  			m_Mutable.ValidDynamicRefreshRates.clear();
  			m_Mutable.fnDynamicModeGenerator = nullptr;
  			if ( GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL )

@@ -18,10 +18,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 16 insertions(+), 1 deletion(-)
 
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index fefef79e..a2857a92 100644
+index 9aaab7b3..16e5d16b 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
-@@ -1170,11 +1170,26 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
+@@ -1392,11 +1392,26 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
  	// Don't allow rollback of mode_id after connector change
  	drm->current.mode_id = drm->pending.mode_id;
  

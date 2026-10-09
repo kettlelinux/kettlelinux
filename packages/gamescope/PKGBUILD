@@ -1,18 +1,12 @@
-# Valve's deckard (Steam Frame) gamescope, rebuilt with Snapdragon Game Super Resolution 1.
-# Replaces deckard's gamescope 3.16.28-2, whose binary reports 3.16.28-76-ge383171f: the same
-# commit of Valve's public master is built here, so nothing but the patches differs.
+# Valve's deckard (Steam Frame) gamescope, rebuilt with Kettle Linux's patches.
+# Replaces deckard's gamescope 3.16.30-1, built from Valve's 3.16.30 tag (ad2763da): the same
+# commit of Valve's public repo is built here, so nothing but the patches differs.
 #
-# 0001-0008 are Valve's own upstream commits (in 3.16.29), cherry-picked onto e383171f:
-#   0004 adds the sgsr filter (value 5 = what Steam Frame's "Sharp" writes, replacing
-#        the hack that ran FSR for it): SGSR 1 upscale (Qualcomm, BSD-3-Clause, notice in
-#        src/shaders/sgsr1.h) followed by RCAS, which takes the sharpness slider. HDR input
-#        falls back to FSR, YCbCr to linear. 0001-0003 are its prerequisites.
-#   0005 reports the selected/active filter to mangoapp, 0006 adds the gamescopectl
-#        commands scaling_filter <linear|nearest|fsr|nis|pixel|sgsr> and
-#        scaling_sharpness <0-20>, 0007 runs RCAS one pixel per thread on Adreno,
-#        0008 adds per-filter GPU timings (gamescopectl log_composite_timing debug).
-#   0004's gamescope-control conflict (keyboard_layout, 8, isn't in e383171f) was resolved
-#   by keeping sgsr_filter at Valve's value 9.
+# Snapdragon Game Super Resolution 1 (the sgsr filter, value 5 = what Steam Frame's "Sharp"
+#   writes: SGSR 1 upscale (Qualcomm, BSD-3-Clause, notice in src/shaders/sgsr1.h) then RCAS),
+#   the scaling_filter/scaling_sharpness gamescopectl commands, RCAS at one pixel per thread on
+#   Adreno, composite_timing and the mangoapp filter report are Valve's own since 3.16.29; our
+#   0001-0008 cherry-picked them onto 3.16.28 and are gone.
 # 0009 (ours) adds the steam_sharp_filter convar: which filter Steam's Sharp runs
 #   (default sgsr; `gamescopectl steam_sharp_filter fsr` gives FSR 1 back).
 # 0010 (ours) reports mapped xdg-shell windows to Steam as focusable (app IDs, and windows
@@ -47,11 +41,11 @@
 #   sets 120: Auto runs uncapped at 120 Hz, but a 55 fps limit at 165 and 145 fps at 145.
 #
 # To follow a newer deckard gamescope, move _commit to the one its `gamescopectl version`
-# names and drop whichever of 0001-0008 it already contains.
+# names and drop whichever patches it already contains.
 pkgname=gamescope
-pkgver=3.16.28
-pkgrel=2.14
-_commit=e383171ff1c0f7b5b37f05f2bb67f7c5282b087f
+pkgver=3.16.30
+pkgrel=1.1
+_commit=ad2763da1c48860f649abfe842a087188dcb6e20
 pkgdesc='gaming shell based on Xwayland, powered by Vulkan and DRM (deckard + Kettle Linux, SGSR 1)'
 arch=(aarch64)
 url='https://github.com/ValveSoftware/gamescope'
@@ -66,14 +60,6 @@ install=gamescope.install
 source=("git+https://github.com/ValveSoftware/gamescope.git#commit=$_commit"
         "git+https://github.com/Joshua-Ashton/GamescopeShaders.git#tag=v0.1"
         steamos-session-shell
-        0001-steamcompmgr-snapshot-the-upscale-sharpness-per-fram.patch
-        0002-shaders-fix-the-sampleBilinear-gather-origin-for-nor.patch
-        0003-backends-gate-composition-on-the-base-layer-s-filter.patch
-        0004-render-add-Snapdragon-Game-Super-Resolution-1-upscal.patch
-        0005-mangoapp-report-the-selected-and-active-upscale-filt.patch
-        0006-steamcompmgr-add-scaling_filter-and-scaling_sharpnes.patch
-        0007-render-run-RCAS-at-one-pixel-per-thread-on-Adreno.patch
-        0008-render-add-composite_timing-GPU-timestamps-per-filte.patch
         0009-steamcompmgr-let-steam_sharp_filter-pick-what-Steam-.patch
         0010-steamcompmgr-report-mapped-xdg-shell-windows-to-Stea.patch
         0011-drm-GAMESCOPE_INTERNAL_PHYSICAL_SIZE-overrides-the-in.patch
@@ -92,34 +78,26 @@ source=("git+https://github.com/ValveSoftware/gamescope.git#commit=$_commit"
 sha256sums=('SKIP'
             'SKIP'
             'a34b30f8c58881f29a632ae1b4c8d7fbd7ba8c1ae6509d2b85afe362cad6de93'
-            '3c7f0d7a5b428f8860fa5d41f12e58fab6ac8004b523fc1de4085947a6e9d012'
-            '0af7166cd0ea317e43b6b473d84d6ae8a247dad613de51e5478fa5cbbccfa49e'
-            'cf574b37e32b5dadba64b46bbbd6c2746cf0318d585102807ba92c11ef1a831e'
-            'b58206184106ee3bf500943dfb26ab8c3d83a5986b3357a55d520c2444c3133c'
-            '3464552ef7e3c5a94d06e7e1c4bae8560b837517101d6d6f5f4df58524c94806'
-            '1032de0841a9c094eaa23ae8525e01cd40e434bcc59860d644bc2e7d393b176e'
-            '80033171760f0037bf53bb8e85981d7f98df1b096d581cf299dd7de61f1831b0'
-            'e86a0fc74acaf2aba19d0667b37e510c68de079953524e6d9c0f35c45835b814'
-            '44e2a8b91e89a6b82ec87008748a75fcc29c785a0a1a20c4ee6ec159c8ba92c6'
-            'f69f69b132bc9ddda103c794e9d7340c4732c2b8ee8a6f1a42a65793b163fb40'
-            '461a3badef10d47eb4d0e4916d3a8231438a35be731a86a27c409a0c8291e8ed'
-            'd91f120b7ea0a2ae22d0967a236d28b9fe6840761f96dfec463fdc7078ad9fa8'
-            'f6ac2c35787c39ca6c24b25ad25d2fa5f8a0a8f45ba77187aadc7cbcaf05d6d4'
-            '847d0390ddf5cf95c49b43901b10ead4ff64c6833dc528544b8f3281e710e1f6'
-            'e7f22ac329a9c8a4421c8547f251fcef334b9ed66072c41a61ed9c4304b521f0'
-            '47a9ed3b64ffcfca17dd2ad82c71d2658483de460c7a6e42452793206e7234f1'
+            'e7fa87a462fcac3bcad8fe0f7a57cd18b881dc23c75c4336db8b5d0c4d51b618'
+            'a883f259b6a0d0f20dc133f3b427ce6a85a2b4b4c4cf4fd5b2c351c51f4b5037'
+            '864467f87ad0d88527e6dbfd247a5c5b46bdbab20a8de24b3f2ec0fb985be876'
+            '56e1a273a1c8b6194706d1915ae264ed17d6deddc711e96386f50978ab1f0016'
+            'f67be5e91d4a3203aac877d0926ed64c4940da5cc379d2ac4fc916a34265c6e9'
+            'c5b7107c935881cd9aa76516e8f5e03bf93e00de45e88fa6e3ce44b28b9b4bd1'
+            'f6bcd3513d80215460b44051434adf5bce4bf1a34e8bfecaa5c1762be3a74a0c'
+            'd8a548a2bddd12206beaa75627b3b01f7b29ed676cd3de2df57c1c9682feb04c'
             'a7bfd70b27c550b88752d5bd8246a6bcb678f45d6e1cfeba8f3b45ada4ee0bd7'
-            '2e2b46c5bcd2534cb1baaf7e7a81b6bc60ea5d97c63c14eed8f6bed90e05b335'
-            'e945d6e3a54820f103108533529d1dfd360fdae45674595bb5c450ed28d946ec'
-            '6a606555838276f200b7e6a03d6197c17e84dd86f2a5d4620410d76746143b27'
-            'bb4982c7401d41e1b5a9410402ca7b154e451a9fa1da05ac48ba8b8cf4610582'
-            '6a6d9dd0c7af1d16f9354f80104df909aa43e06281953f06f40b8ded9f71ea4f'
-            'a11491bd6ee496ce52b056eb8568c5673caf38cdb773cbb4c0aa289412abea04')
+            '067108ac58982b069d78dbc0f0efb7a41185ca8633af82e76261d413a0f8bd65'
+            '968c17a5734f5f6ac86007e98864c7de69f5d06c4442af7d553ae5958555cc27'
+            '8e2e9c2039445f32430de9a6ad66d6baef3eeee5ca7d2a3a6b0b02cbc6d13221'
+            '3311f3353848d99c11c9cd83aa75d1429f952864c4361d27b33e47cbdd2fdb71'
+            '56b541730fb5d6d7f8cf033a321a5af83f228696dff52d631b28fdd0f2d83e98'
+            'ada2309bea24c4034e5c09cb252bc5f85d1af31f9fd1d483fcd65d5ef10baa34')
 
 prepare() {
   cd gamescope
   # submodules (wlroots, libliftoff, vkroots, libdisplay-info, openvr, reshade,
-  # SPIRV-Headers) at the commits e383171f pins
+  # SPIRV-Headers) at the commits ad2763da pins
   git submodule update --init --recursive
   for p in "$srcdir"/0*.patch; do
     patch -p1 --fuzz=0 <"$p"
@@ -131,7 +109,7 @@ prepare() {
 build() {
   # gamescope requires libliftoff and vkroots bundled; wlroots and libdisplay-info are
   # bundled too, as in Valve's binary. Tests need catch2, which deckard doesn't have.
-  # The version string comes out as 3.16.28-76-ge383171f+ ("+" = patched tree).
+  # The version string comes out as 3.16.30+ ("+" = patched tree).
   arch-meson gamescope build \
     --buildtype release \
     --force-fallback-for=libliftoff,vkroots,wlroots,libdisplay-info \

@@ -17,10 +17,10 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  1 file changed, 38 insertions(+), 3 deletions(-)
 
 diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
-index 858df01a..e36379e2 100644
+index 2ff296b5..651ec9d0 100644
 --- a/src/steamcompmgr.cpp
 +++ b/src/steamcompmgr.cpp
-@@ -1011,6 +1011,32 @@ static gamescope::ConCommand cc_focus_info( "focus_info", "Dump debug info about
+@@ -1142,6 +1142,32 @@ static gamescope::ConCommand cc_focus_info( "focus_info", "Dump debug info about
  static std::atomic<int32_t> g_nPendingUpscaleFilter = { -1 };
  static std::atomic<int32_t> g_nPendingUpscaleSharpness = { -1 };
  
@@ -53,7 +53,7 @@ index 858df01a..e36379e2 100644
  static gamescope::ConCommand cc_scaling_filter( "scaling_filter", "Set the scaling filter (linear, nearest, fsr, nis, pixel, sgsr)",
  []( std::span<std::string_view> args )
  {
-@@ -1028,6 +1054,7 @@ static gamescope::ConCommand cc_scaling_filter( "scaling_filter", "Set the scali
+@@ -1159,6 +1185,7 @@ static gamescope::ConCommand cc_scaling_filter( "scaling_filter", "Set the scali
  	}
  
  	g_nPendingUpscaleFilter = int32_t( *oFilter );
@@ -61,7 +61,7 @@ index 858df01a..e36379e2 100644
  });
  
  static gamescope::ConCommand cc_scaling_sharpness( "scaling_sharpness", "Set the scaling sharpness (0 to 20)",
-@@ -7104,12 +7131,20 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
+@@ -7337,12 +7364,20 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
  	{
  		uint32_t uScalingFilter = get_prop( ctx, ctx->root, ctx->atoms.gamescopeNewScalingFilter, 0 );
  

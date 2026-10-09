@@ -25,10 +25,10 @@ Based-on: https://github.com/armada-os/armada/blob/main/packages/gamescope/patch
  4 files changed, 296 insertions(+), 75 deletions(-)
 
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index b792a969..2b198f9a 100644
+index 1ed39d3d..898a353e 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
-@@ -1352,104 +1352,136 @@ gamescope_liftoff_log_handler(enum liftoff_log_priority liftoff_priority, const
+@@ -1577,104 +1577,136 @@ gamescope_liftoff_log_handler(enum liftoff_log_priority liftoff_priority, const
  	liftoff_log_scope.vlogf(priority, fmt, args);
  }
  
@@ -333,7 +333,7 @@ index f949489f..a4588285 100644
  {
      LINEAR = 0,
 diff --git a/src/wlserver.cpp b/src/wlserver.cpp
-index 1f63a362..a9edbe18 100644
+index 5aca2bc0..4921346a 100644
 --- a/src/wlserver.cpp
 +++ b/src/wlserver.cpp
 @@ -5,11 +5,14 @@
@@ -351,7 +351,7 @@ index 1f63a362..a9edbe18 100644
  
  #include <linux/input-event-codes.h>
  
-@@ -452,7 +455,10 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
+@@ -455,7 +458,10 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
  	struct wlr_touch_down_event *event = (struct wlr_touch_down_event *) data;
  
  	if ( touch->bIgnoreWhileLeased && g_nActiveLeaseClients.load() > 0 )
@@ -362,7 +362,7 @@ index 1f63a362..a9edbe18 100644
  
  	wlserver_touch_associate_connector( touch );
  	wlserver_touchdown( event->x, event->y, event->touch_id, event->time_msec, touch->connector );
-@@ -464,7 +470,10 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
+@@ -467,7 +473,10 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
  	struct wlr_touch_up_event *event = (struct wlr_touch_up_event *) data;
  
  	if ( touch->bIgnoreWhileLeased && g_nActiveLeaseClients.load() > 0 )
@@ -373,7 +373,7 @@ index 1f63a362..a9edbe18 100644
  
  	wlserver_touchup( event->touch_id, event->time_msec );
  }
-@@ -475,7 +484,10 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
+@@ -478,7 +487,10 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
  	struct wlr_touch_motion_event *event = (struct wlr_touch_motion_event *) data;
  
  	if ( touch->bIgnoreWhileLeased && g_nActiveLeaseClients.load() > 0 )
@@ -384,7 +384,7 @@ index 1f63a362..a9edbe18 100644
  
  	wlserver_touch_associate_connector( touch );
  	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec, false, touch->connector );
-@@ -1671,9 +1683,131 @@ void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle
+@@ -1714,9 +1726,131 @@ void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle
  ///////////////////////
  
  #if HAVE_SESSION
@@ -517,7 +517,7 @@ index 1f63a362..a9edbe18 100644
  }
  
  static void handle_session_active( struct wl_listener *listener, void *data )
-@@ -1777,7 +1911,7 @@ bool wlsession_init( void ) {
+@@ -1820,7 +1954,7 @@ bool wlsession_init( void ) {
  	wlserver_set_output_info( &output_info );
  
  #if HAVE_SESSION
@@ -526,7 +526,7 @@ index 1f63a362..a9edbe18 100644
  	{
  		s_bInitted = true;
  		return true;
-@@ -1810,6 +1944,9 @@ static void kms_device_handle_change( struct wl_listener *listener, void *data )
+@@ -1853,6 +1987,9 @@ static void kms_device_handle_change( struct wl_listener *listener, void *data )
  }
  
  int wlsession_open_kms( const char *device_name ) {
@@ -536,7 +536,7 @@ index 1f63a362..a9edbe18 100644
  	if ( device_name != nullptr )
  	{
  		wlserver.wlr.device = wlr_session_open_file( wlserver.wlr.session, device_name );
-@@ -1839,6 +1976,20 @@ int wlsession_open_kms( const char *device_name ) {
+@@ -1882,6 +2019,20 @@ int wlsession_open_kms( const char *device_name ) {
  
  void wlsession_close_kms()
  {
@@ -557,7 +557,7 @@ index 1f63a362..a9edbe18 100644
  	if ( wlserver.wlr.device )
  	{
  		wl_list_remove( &wlserver.wlr.device_change_listener.link );
-@@ -2074,7 +2225,7 @@ bool wlserver_init( void ) {
+@@ -2200,7 +2351,7 @@ bool wlserver_init( void ) {
  
  	wl_signal_add( &wlserver.wlr.multi_backend->events.new_input, &new_input_listener );
  

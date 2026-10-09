@@ -24,10 +24,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 25 insertions(+), 6 deletions(-)
 
 diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
-index e36379e..ee5f1b4 100644
+index 651ec9d0..5e7a0d23 100644
 --- a/src/steamcompmgr.cpp
 +++ b/src/steamcompmgr.cpp
-@@ -4164,6 +4164,18 @@ carry_override_underlay( focus_t *pFocus, steamcompmgr_win_t *pPreviousOverride,
+@@ -4352,6 +4352,18 @@ static bool win_treat_as_per_window( steamcompmgr_win_t *w, gamescope::VirtualCo
  static void
  handle_desktop_window(steamcompmgr_win_t *w);
  
@@ -46,7 +46,7 @@ index e36379e..ee5f1b4 100644
  static bool
  pick_primary_focus_and_override(
  	focus_t *out,
-@@ -4186,10 +4198,11 @@ pick_primary_focus_and_override(
+@@ -4374,10 +4386,11 @@ pick_primary_focus_and_override(
  			{
  				for ( steamcompmgr_win_t *focusable_window : vecPossibleFocusWindows )
  				{
@@ -60,7 +60,7 @@ index e36379e..ee5f1b4 100644
  					{
  						focus = focusable_window;
  						localGameFocused = true;
-@@ -4929,14 +4942,19 @@ determine_and_apply_focus( global_focus_t *pFocus )
+@@ -5160,14 +5173,19 @@ determine_and_apply_focus( global_focus_t *pFocus )
  
  	for ( steamcompmgr_win_t *focusable_window : vecPossibleFocusWindows )
  	{
@@ -83,7 +83,7 @@ index e36379e..ee5f1b4 100644
  			continue;
  
  		unsigned int unAppID = focusable_window->appID;
-@@ -4957,7 +4975,7 @@ determine_and_apply_focus( global_focus_t *pFocus )
+@@ -5188,7 +5206,7 @@ determine_and_apply_focus( global_focus_t *pFocus )
  		}
  
  		// list of [window, appid, pid] triplets
@@ -93,10 +93,10 @@ index e36379e..ee5f1b4 100644
  		focusable_windows.push_back( focusable_window->pid );
  	}
 diff --git a/src/wlserver.cpp b/src/wlserver.cpp
-index b15b0fc..6b088a5 100644
+index 3d7d123c..18f9e706 100644
 --- a/src/wlserver.cpp
 +++ b/src/wlserver.cpp
-@@ -1972,6 +1972,7 @@ wlserver_xdg_surface_info* waylandy_type_surface_new(struct wl_client *client, s
+@@ -2020,6 +2020,7 @@ wlserver_xdg_surface_info* waylandy_type_surface_new(struct wl_client *client, s
  	{
  		pid_t nPid = 0;
  		wl_client_get_credentials( client, &nPid, nullptr, nullptr );

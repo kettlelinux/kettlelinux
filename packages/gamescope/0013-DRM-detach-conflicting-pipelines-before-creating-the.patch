@@ -16,10 +16,10 @@ Based-on: https://github.com/OpenGamingCollective/gamescope/pull/20
  1 file changed, 75 insertions(+)
 
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index 01209c42..b792a969 100644
+index 68f312c3..1ed39d3d 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
-@@ -675,6 +675,75 @@ static gamescope::CDRMCRTC *find_crtc_for_connector( struct drm_t *drm, gamescop
+@@ -676,6 +676,75 @@ static gamescope::CDRMCRTC *find_crtc_for_connector( struct drm_t *drm, gamescop
  	return nullptr;
  }
  
@@ -95,7 +95,7 @@ index 01209c42..b792a969 100644
  static bool get_plane_formats( struct drm_t *drm, gamescope::CDRMPlane *pPlane, struct wlr_drm_format_set *pFormatSet )
  {
  	for ( uint32_t i = 0; i < pPlane->GetModePlane()->count_formats; i++ )
-@@ -1587,6 +1656,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+@@ -1812,6 +1881,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
  				//      — costs the main pool one primary slot.
  				const uint32_t uLeaseCrtcMask = pLeaseCRTC->GetCRTCMask();
  				uint32_t    uPlaneId    = 0;
@@ -103,7 +103,7 @@ index 01209c42..b792a969 100644
  				int         nBestScore  = -1;
  				const char *pszBestKind = nullptr;
  				for ( auto &pPlane : drm->planes )
-@@ -1606,6 +1676,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+@@ -1831,6 +1901,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
  					{
  						nBestScore  = nScore;
  						uPlaneId    = pPlane->GetObjectId();
@@ -111,7 +111,7 @@ index 01209c42..b792a969 100644
  						pszBestKind = pszKind;
  						if ( nScore == 1 )
  							break; // exclusive primary — best we can do
-@@ -1616,6 +1687,10 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+@@ -1841,6 +1912,10 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
  				{
  					drm_log.errorf( "lease-connector: no usable plane found for CRTC %u", uCRTCId );
  				}
