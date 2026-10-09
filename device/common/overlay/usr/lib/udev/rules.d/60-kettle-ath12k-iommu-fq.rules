@@ -1,0 +1,10 @@
+# Kettle Linux: the WCN7850 Wi-Fi (ath12k, PCI 17cb:1107) uses lazy IOMMU invalidation (DMA-FQ),
+# as Valve's SteamOS 0.5 does on the Steam Frame (steamos-customizations-deckard,
+# 60-ath12k-iommu-fq.rules). The kernel is built with CONFIG_IOMMU_DEFAULT_DMA_STRICT=y, so every
+# RX buffer unmap waits for an SMMU TLB sync with IRQs off (Valve measured ~32% of NET_RX time);
+# DMA-FQ batches them into one flush per 256 unmaps per CPU, or every 10 ms.
+# Trade-off: until that flush the device can still reach recently unmapped pages, so a driver
+# write-after-unmap bug corrupts memory silently instead of raising an SMMU fault.
+# Strict -> DMA-FQ can be switched live; going back needs a driver unbind or a reboot without
+# this rule. Matches only WCN7850, so devices with other Wi-Fi (the RP5's ath11k) are untouched.
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x17cb", ATTR{device}=="0x1107", ATTR{iommu_group/type}="DMA-FQ"
