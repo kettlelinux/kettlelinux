@@ -186,6 +186,22 @@ Iris decodes H.264, HEVC, VP9 and AV1, not VP8. Known limits in Firefox 152: a s
 the same session can fall back to software (bug 2071471, fixed in 159), and some videos cropped
 at the right edge show green bars (bug 2014641).
 
+## Steam Remote Play's hardware video decoding
+Valve's arm64 Steam has its own V4L2 decoder for Remote Play (`streaming_client`, H.264 and
+HEVC, as on the Steam Frame); no FFmpeg or VAAPI is involved. Three pieces make it work on iris:
+- **`60-kettle-video-codec.rules`** names the decoder `/dev/video-dec0` and the encoder
+  `/dev/video-enc0`, the names Steam uses. The client also probes `/dev/video*`; the Remote Play
+  host's V4L2 encoder opens only `/dev/video-enc0`.
+- **`STEAMLINK_V4L2_RESET_AFTER_LAST_BUF=1`** (`gamescope-session`): Steam starts the decoder
+  before the first frame, so iris reports the stream's format with an empty buffer flagged LAST.
+  With this set Steam restarts only the decoded-frame queue there; without it, it restarted the
+  whole decoder at every frame and showed a green screen.
+- **Kernel 1370**: iris flagged that buffer as an error too (LAST and ERROR).
+
+Tested on a Portal: Remote Play from a PC shows the picture, decoded on iris (the PC's
+`streaming_log.txt` says "Client video decoder set to V4L2 hardware decoding"). Steam's own
+encoding (Remote Play host, game recording) is untested.
+
 ## Still to check, by hand
 1. **The ROCKNIX ABL path**: whether its *Device model* setting offers a Thor (all AYN boards
    report the same msm-id and board-id).

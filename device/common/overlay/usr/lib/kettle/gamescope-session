@@ -28,6 +28,11 @@ export STEAM_GAMESCOPE_HAS_TEARING_SUPPORT=1 STEAM_GAMESCOPE_TEARING_SUPPORTED=1
 export STEAM_GAMESCOPE_NIS_SUPPORTED=1
 # Steam steps the volume on the volume keys itself; without it Steam only shows the OSD
 export STEAM_ENABLE_VOLUME_HANDLER=1
+# Remote Play decodes on iris (V4L2). Steam starts the decoder before the stream's first frame,
+# so iris reports the stream's format with an empty buffer flagged LAST; this has Steam restart
+# only the decoded-frame queue there. Without it Steam restarted the whole decoder at every
+# frame and showed a green screen.
+export STEAMLINK_V4L2_RESET_AFTER_LAST_BUF=1
 export vk_xwayland_wait_ready=false
 export QT_IM_MODULE=xim GTK_IM_MODULE=xim QT_QPA_PLATFORMTHEME=kde
 
