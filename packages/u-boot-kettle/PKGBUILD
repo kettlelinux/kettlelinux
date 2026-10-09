@@ -1,0 +1,43 @@
+# Kettle's own U-Boot, built from mainline (qcom_defconfig, the generic build for Qualcomm SoCs that
+# the stock bootloader chainloads) with Kettle's boot order (kettle.env): \EFI\BOOT\BOOTAA64.EFI,
+# which is steamcl, from the SD card if there is one, else from the internal storage. It replaces
+# the vendors' forks (u-boot-ayn, u-boot-retroidpocket), which stay as the fallback until this
+# one is proven on every device.
+#
+# U-Boot on Qualcomm runs on the devicetree appended to it, so the binary is the same for every
+# device: this installs it without one (/usr/share/kettle/u-boot/u-boot-kettle-nodtb.bin.gz), and
+# scripts/build-image.sh appends the device's own devicetree from the Kettle kernel (device.conf
+# DTB) and wraps it as an Android boot image, u-boot-kettle.img, for `fastboot flash loader`.
+# With that devicetree U-Boot's SMBIOS names the device itself (vendor from the compatible,
+# product from the model: "AYN Odin 2 Portal", "AYN Thor"), not the whole Odin 2 family.
+pkgname=u-boot-kettle
+pkgver=2026.07
+pkgrel=1
+pkgdesc="Kettle's U-Boot for Qualcomm handhelds' loader partition (mainline, without a devicetree)"
+arch=(aarch64)
+url='https://u-boot.org'
+license=(GPL-2.0-or-later)
+makedepends=(git bc dtc python python-setuptools python-pyelftools swig openssl gnutls util-linux xxd)
+options=(!strip)
+source=("u-boot::git+https://source.denx.de/u-boot/u-boot.git#tag=v$pkgver"
+        kettle.config
+        kettle.env)
+sha256sums=('SKIP'
+            '0c1fe3dc5a45725ce95bd1fdc239119c034975a1144a5766644e261c06b6edb4'
+            'b2b1933bcbabede0300d79df8c8d651022fe2e7444b034af44cf95d260a7029f')
+
+prepare() {
+  cp "$srcdir/kettle.config" "$srcdir/kettle.env" u-boot/board/qualcomm/
+}
+
+build() {
+  cd u-boot
+  make O=out qcom_defconfig qcom-phone.config kettle.config
+  make O=out
+}
+
+package() {
+  install -d "$pkgdir/usr/share/kettle/u-boot"
+  gzip -9n -c u-boot/out/u-boot-nodtb.bin >"$pkgdir/usr/share/kettle/u-boot/u-boot-kettle-nodtb.bin.gz"
+  install -Dm644 u-boot/Licenses/README "$pkgdir/usr/share/licenses/$pkgname/README"
+}

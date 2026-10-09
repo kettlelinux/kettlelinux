@@ -299,6 +299,17 @@ done
 install -m 0644 "$cl" "$STAGE/esp/EFI/steamos/steamcl.efi"
 install -m 0644 "$cl" "$STAGE/esp/EFI/BOOT/BOOTAA64.EFI"
 install -m 0644 "$RFS/usr/share/holo-efi/steamcl-version" "$STAGE/esp/EFI/steamos/"
+# Kettle's U-Boot (u-boot-kettle) for this device: the mainline binary with the device's own
+# devicetree appended, as an Android boot image (the vendors' recipe), into the image too
+nodtb="$RFS/usr/share/kettle/u-boot/u-boot-kettle-nodtb.bin.gz"
+if [ -f "$nodtb" ]; then
+  log "assembling u-boot-kettle.img ($DTB)"
+  cat "$nodtb" "$RFS/boot/dtbs/$DTB" >"$STAGE/u-boot-kettle-dtb"
+  python3 "$ROOT/packages/steamos-customizations-kettle/mkbootimg.py" \
+    --kernel "$STAGE/u-boot-kettle-dtb" --kernel_offset 0x8000 --pagesize 4096 \
+    --cmdline nodtbo -o "$RFS/usr/share/kettle/u-boot/u-boot-kettle.img"
+  rm "$STAGE/u-boot-kettle-dtb"
+fi
 # a U-Boot the device's stock bootloader loads (the RP5's loader partition), where a PC sees
 # it for `fastboot flash loader` (docs/<DEVICE>.md)
 for f in "$RFS"/usr/share/kettle/u-boot/*.img; do

@@ -75,16 +75,22 @@ A boot is unfinished until `holo-boot.service` runs. After 3 unfinished boots of
 shows its boot menu for 30 s and then tries the same slot again; after 6 it selects the other
 slot and boots it when the menu times out (2 minutes). This is Valve's behaviour, unchanged.
 
-**Older boot paths.** The ROCKNIX ABL (`\KERNEL`) and U-Boot's extlinux (`\extlinux\extlinux.conf`)
-can't choose between slots. Kettle keeps them on the `esp` and rewrites them to the newly
-installed slot at the end of each update (`kettle-boot-legacy`), so they get every update but
-have no automatic fallback. For fallback, boot through EFI (U-Boot EFI, or the ROCKNIX ABL's
-EFI chainload up to v1.1.8; v1.1.9 dropped it and only starts `\KERNEL`). U-Boot usually tries
-extlinux before EFI: if the Portal's U-Boot does, the SD card system boots without fallback
-until extlinux is dropped from the image. An internal install has `\KERNEL` (for the ROCKNIX
-ABL; `kettle-install-internal --boot-files` adds it to older installs) but no extlinux, so
-U-Boot always boots it through steamcl; `kettle-boot-legacy` refreshes each of the two only
-where it is already on the `esp`.
+**Bootloaders.** U-Boot (the Loader default in fastboot mode) and the ROCKNIX ABL (for
+firmware without a Loader choice) both start `\EFI\BOOT\BOOTAA64.EFI`, so both get steamcl's
+slot choice and fallback. The ROCKNIX ABL boots EFI when that file is there and only falls back
+to `\KERNEL` when it isn't (ROCKNIX's developers confirmed it starts steamcl). Its menu's
+*Device model* must be set; which devicetree it hands EFI is only known from strings in its
+binary, and doesn't matter much: GRUB loads Kettle's own. `\KERNEL`
+(for the ROCKNIX ABL) and U-Boot's extlinux (`\extlinux\extlinux.conf`) can't choose between
+slots: Kettle keeps them on the `esp` as a last resort and rewrites them to the newly installed
+slot at the end of each update (`kettle-boot-legacy`). An internal install has `\KERNEL`
+(`kettle-install-internal --boot-files` adds it to older installs) but no extlinux;
+`kettle-boot-legacy` refreshes each of the two only where it is already on the `esp`.
+
+The ROCKNIX ABL itself lives in the device's `abl_a`/`abl_b` partitions, outside the A/B
+system slots. `sudo kettle-abl-update` (packages/rocknix-abl) brings an installed ROCKNIX ABL
+up to the release in the image; it never replaces a stock bootloader or installs an older
+release. See docs/BOOTLOADER.md.
 
 ## Updating
 
