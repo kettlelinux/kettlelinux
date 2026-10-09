@@ -29,7 +29,7 @@ Based-on: https://github.com/OpenGamingCollective/gamescope/pull/13
  5 files changed, 440 insertions(+), 6 deletions(-)
 
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index a2857a92..01209c42 100644
+index 16e5d16b..68f312c3 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
 @@ -9,6 +9,8 @@
@@ -41,7 +41,7 @@ index a2857a92..01209c42 100644
  
  #include <atomic>
  #include <cassert>
-@@ -161,6 +163,16 @@ struct drm_t {
+@@ -162,6 +164,16 @@ struct drm_t {
  	std::unordered_map< std::string, int > connector_priorities;
  
  	char *device_name = nullptr;
@@ -58,7 +58,7 @@ index a2857a92..01209c42 100644
  };
  
  void drm_drop_fbid( struct drm_t *drm, uint32_t fbid );
-@@ -654,6 +666,8 @@ static gamescope::CDRMCRTC *find_crtc_for_connector( struct drm_t *drm, gamescop
+@@ -655,6 +667,8 @@ static gamescope::CDRMCRTC *find_crtc_for_connector( struct drm_t *drm, gamescop
  {
  	for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
  	{
@@ -67,7 +67,7 @@ index a2857a92..01209c42 100644
  		if ( pConnector->GetPossibleCRTCMask() & pCRTC->GetCRTCMask() )
  			return pCRTC.get();
  	}
-@@ -728,6 +742,8 @@ static gamescope::CDRMPlane *find_primary_plane(struct drm_t *drm)
+@@ -729,6 +743,8 @@ static gamescope::CDRMPlane *find_primary_plane(struct drm_t *drm)
  
  	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
  	{
@@ -76,7 +76,7 @@ index a2857a92..01209c42 100644
  		if ( pPlane->GetModePlane()->possible_crtcs & drm->pCRTC->GetCRTCMask() )
  		{
  			if ( pPlane->GetProperties().type->GetCurrentValue() == DRM_PLANE_TYPE_PRIMARY )
-@@ -745,6 +761,8 @@ static bool have_overlay_planes(struct drm_t *drm)
+@@ -758,6 +774,8 @@ static bool have_overlay_planes(struct drm_t *drm)
  
  	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
  	{
@@ -85,7 +85,7 @@ index a2857a92..01209c42 100644
  		if ( pPlane->GetModePlane()->possible_crtcs & drm->pCRTC->GetCRTCMask() )
  		{
  			if ( pPlane->GetProperties().type->GetCurrentValue() == DRM_PLANE_TYPE_OVERLAY )
-@@ -1078,6 +1096,9 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
+@@ -1296,6 +1314,9 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
  	{
  		gamescope::CDRMConnector *pConnector = &iter.second;
  
@@ -95,7 +95,7 @@ index a2857a92..01209c42 100644
  		if ( pConnector->GetModeConnector()->connection != DRM_MODE_CONNECTED )
  			continue;
  
-@@ -1262,6 +1283,106 @@ gamescope_liftoff_log_handler(enum liftoff_log_priority liftoff_priority, const
+@@ -1487,6 +1508,106 @@ gamescope_liftoff_log_handler(enum liftoff_log_priority liftoff_priority, const
  	liftoff_log_scope.vlogf(priority, fmt, args);
  }
  
@@ -202,7 +202,7 @@ index a2857a92..01209c42 100644
  bool init_drm(struct drm_t *drm, int width, int height, int refresh)
  {
  	load_pnps();
-@@ -1352,12 +1473,6 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+@@ -1577,12 +1698,6 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
  		return false;
  	}
  
@@ -215,7 +215,7 @@ index a2857a92..01209c42 100644
  	drm_log.infof("Connectors:");
  	for ( auto &iter : drm->connectors )
  	{
-@@ -1372,6 +1487,236 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+@@ -1597,6 +1712,236 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
  
  	drm->connector_priorities = parse_connector_priorities( g_sOutputName );
  
@@ -452,7 +452,7 @@ index a2857a92..01209c42 100644
  	if (!setup_best_connector(drm, true, true)) {
  		return false;
  	}
-@@ -1493,6 +1838,38 @@ void drm_sleep_screen( gamescope::GamescopeScreenType eType, bool bSleep )
+@@ -1725,6 +2070,38 @@ void drm_sleep_screen( gamescope::GamescopeScreenType eType, bool bSleep )
  
  void finish_drm(struct drm_t *drm)
  {
@@ -491,7 +491,7 @@ index a2857a92..01209c42 100644
  	// Disable all connectors, CRTCs and planes. This is necessary to leave a
  	// clean KMS state behind. Some other KMS clients might not support all of
  	// the properties we use, e.g. "rotation" and Xorg don't play well
-@@ -1504,6 +1881,9 @@ void finish_drm(struct drm_t *drm)
+@@ -1736,6 +2113,9 @@ void finish_drm(struct drm_t *drm)
  	{
  		gamescope::CDRMConnector *pConnector = &iter.second;
  
@@ -501,7 +501,7 @@ index a2857a92..01209c42 100644
  		pConnector->GetProperties().CRTC_ID->SetPendingValue( req, 0, true );
  
  		if ( pConnector->GetProperties().Colorspace )
-@@ -1523,6 +1903,9 @@ void finish_drm(struct drm_t *drm)
+@@ -1755,6 +2135,9 @@ void finish_drm(struct drm_t *drm)
  
  	for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
  	{
@@ -511,7 +511,7 @@ index a2857a92..01209c42 100644
  		pCRTC->GetProperties().ACTIVE->SetPendingValue( req, 0, true );
  		pCRTC->GetProperties().MODE_ID->SetPendingValue( req, 0, true );
  
-@@ -3071,6 +3454,8 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
+@@ -3318,6 +3701,8 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
  		for ( auto &iter : drm->connectors )
  		{
  			gamescope::CDRMConnector *pConnector = &iter.second;
@@ -520,7 +520,7 @@ index a2857a92..01209c42 100644
  			if ( pConnector->GetProperties().CRTC_ID->GetCurrentValue() == 0 )
  				continue;
  
-@@ -3091,6 +3476,8 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
+@@ -3338,6 +3723,8 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
  
  		for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
  		{
@@ -585,10 +585,10 @@ index b2a169f1..f949489f 100644
  enum class GamescopeUpscaleFilter : uint32_t
  {
 diff --git a/src/wlserver.cpp b/src/wlserver.cpp
-index b15b0fc9..1f63a362 100644
+index 18f9e706..5aca2bc0 100644
 --- a/src/wlserver.cpp
 +++ b/src/wlserver.cpp
-@@ -451,6 +451,9 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
+@@ -454,6 +454,9 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
  	struct wlserver_touch *touch = wl_container_of( listener, touch, down );
  	struct wlr_touch_down_event *event = (struct wlr_touch_down_event *) data;
  
@@ -598,7 +598,7 @@ index b15b0fc9..1f63a362 100644
  	wlserver_touch_associate_connector( touch );
  	wlserver_touchdown( event->x, event->y, event->touch_id, event->time_msec, touch->connector );
  }
-@@ -460,6 +463,9 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
+@@ -463,6 +466,9 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
  	struct wlserver_touch *touch = wl_container_of( listener, touch, up );
  	struct wlr_touch_up_event *event = (struct wlr_touch_up_event *) data;
  
@@ -608,7 +608,7 @@ index b15b0fc9..1f63a362 100644
  	wlserver_touchup( event->touch_id, event->time_msec );
  }
  
-@@ -468,6 +474,9 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
+@@ -471,6 +477,9 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
  	struct wlserver_touch *touch = wl_container_of( listener, touch, motion );
  	struct wlr_touch_motion_event *event = (struct wlr_touch_motion_event *) data;
  
@@ -618,7 +618,7 @@ index b15b0fc9..1f63a362 100644
  	wlserver_touch_associate_connector( touch );
  	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec, false, touch->connector );
  }
-@@ -544,6 +553,19 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
+@@ -572,6 +581,19 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
  
  			touch->wlr = wlr_touch_from_input_device( device );
  
@@ -639,10 +639,10 @@ index b15b0fc9..1f63a362 100644
  			wl_signal_add( &touch->wlr->events.down, &touch->down );
  			touch->up.notify = wlserver_handle_touch_up;
 diff --git a/src/wlserver.hpp b/src/wlserver.hpp
-index cf3906d4..b82f63c8 100644
+index 79a0723b..26443ed6 100644
 --- a/src/wlserver.hpp
 +++ b/src/wlserver.hpp
-@@ -245,6 +245,12 @@ struct wlserver_touch {
+@@ -246,6 +246,12 @@ struct wlserver_touch {
  	struct wl_listener destroy;
  
      gamescope::IBackendConnector* connector;

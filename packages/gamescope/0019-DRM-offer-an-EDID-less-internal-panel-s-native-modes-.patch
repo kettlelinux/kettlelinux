@@ -14,9 +14,14 @@ the frame rate, with the panel left at 120 Hz.
 
 Without an EDID, still collect the internal panel's native modes.
 ---
+ src/Backends/DRMBackend.cpp | 59 +++++++++++++++++++++----------------
+ 1 file changed, 33 insertions(+), 26 deletions(-)
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index b911af35..9aaf6c50 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
-@@ -508,6 +508,7 @@
+@@ -524,6 +524,7 @@ namespace gamescope
  
  	private:
  		void ParseEDID();
@@ -24,7 +29,7 @@ Without an EDID, still collect the internal panel's native modes.
  
  
  		CDRMBackend *m_pBackend = nullptr;
-@@ -2292,14 +2293,42 @@
+@@ -3082,14 +3083,42 @@ namespace gamescope
  		}
  	}
  
@@ -70,7 +75,7 @@ Without an EDID, still collect the internal panel's native modes.
  
  		drmModePropertyBlobRes *pBlob = drmModeGetPropertyBlob( g_DRM.fd, ulBlobId );
  		if ( !pBlob )
-@@ -2459,29 +2488,7 @@
+@@ -3253,29 +3282,7 @@ namespace gamescope
  			{
  				// Unknown display, see if there are any other refresh rates in the EDID we can get.
  				if ( GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL || cv_drm_allow_dynamic_modes_for_external_display )

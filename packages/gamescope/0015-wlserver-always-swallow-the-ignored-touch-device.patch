@@ -14,10 +14,10 @@ Based-on: https://github.com/armada-os/armada/blob/main/packages/gamescope/patch
  1 file changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/src/wlserver.cpp b/src/wlserver.cpp
-index a9edbe18..48da21a1 100644
+index 4921346a..c388b0aa 100644
 --- a/src/wlserver.cpp
 +++ b/src/wlserver.cpp
-@@ -454,7 +454,7 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
+@@ -457,7 +457,7 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
  	struct wlserver_touch *touch = wl_container_of( listener, touch, down );
  	struct wlr_touch_down_event *event = (struct wlr_touch_down_event *) data;
  
@@ -26,7 +26,7 @@ index a9edbe18..48da21a1 100644
  	{
  		drm_lease_send_touch( DrmLeaseEventType::Down, event->x, event->y, event->touch_id, event->time_msec );
  		return;
-@@ -469,7 +469,7 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
+@@ -472,7 +472,7 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
  	struct wlserver_touch *touch = wl_container_of( listener, touch, up );
  	struct wlr_touch_up_event *event = (struct wlr_touch_up_event *) data;
  
@@ -35,7 +35,7 @@ index a9edbe18..48da21a1 100644
  	{
  		drm_lease_send_touch( DrmLeaseEventType::Up, 0.0, 0.0, event->touch_id, event->time_msec );
  		return;
-@@ -483,7 +483,7 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
+@@ -486,7 +486,7 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
  	struct wlserver_touch *touch = wl_container_of( listener, touch, motion );
  	struct wlr_touch_motion_event *event = (struct wlr_touch_motion_event *) data;
  

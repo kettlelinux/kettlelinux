@@ -15,17 +15,22 @@ display's valid refresh rates, the display runs at that rate while no
 game is open. Games and the frame-cap refresh rate are unchanged. The
 default, 0, keeps the highest rate.
 ---
+ src/steamcompmgr.cpp | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index 5e7a0d23..f3350de2 100644
 --- a/src/steamcompmgr.cpp
 +++ b/src/steamcompmgr.cpp
-@@ -295,6 +295,7 @@
+@@ -295,6 +295,7 @@ static void
  update_runtime_info();
  
  gamescope::ConVar<bool> cv_adaptive_sync( "adaptive_sync", false, "Whether or not adaptive sync is enabled if available." );
 +gamescope::ConVar<int> cv_ui_refresh_hz( "ui_refresh_hz", 0, "Refresh rate (Hz) to run the display at while no game is open, if the display supports it. 0 uses its highest." );
  gamescope::ConVar<bool> cv_adaptive_sync_ignore_overlay( "adaptive_sync_ignore_overlay", false, "Whether or not to ignore overlay planes for pushing commits with adaptive sync." );
  gamescope::ConVar<int> cv_adaptive_sync_overlay_cycles( "adaptive_sync_overlay_cycles", 1, "Number of vblank cycles to ignore overlay repaints before forcing a commit with adaptive sync." );
- 
-@@ -3309,9 +3310,12 @@
+ gamescope::ConVar<bool> cv_adaptive_sync_uncapped( "adaptive_sync_uncapped", true, "Whether or not to allow mailbox/immediate clients to run uncapped with adaptive sync by deferring paints until the display can take a new flip." );
+@@ -3473,9 +3474,12 @@ paint_all( global_focus_t *pFocus, bool async )
  
  		int nDynamicRefreshHz = g_nDynamicRefreshRate[GetBackend()->GetScreenType()];
  

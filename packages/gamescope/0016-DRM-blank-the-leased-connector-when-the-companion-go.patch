@@ -20,7 +20,7 @@ Based-on: https://github.com/armada-os/armada/blob/main/packages/gamescope/patch
  1 file changed, 65 insertions(+), 12 deletions(-)
 
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index 2b198f9a..c0a511d4 100644
+index 898a353e..b911af35 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
 @@ -12,6 +12,7 @@
@@ -31,7 +31,7 @@ index 2b198f9a..c0a511d4 100644
  #include <atomic>
  #include <cassert>
  #include <cinttypes>
-@@ -170,6 +171,8 @@ struct drm_t {
+@@ -171,6 +172,8 @@ struct drm_t {
  	std::unordered_set< uint32_t > leasedPlaneIds;
  	uint32_t uLeaseId = 0;
  	int nLeaseFd = -1;
@@ -40,7 +40,7 @@ index 2b198f9a..c0a511d4 100644
  	int nLeaseSocketFd = -1;
  	std::atomic<bool> bLeaseThreadRunning = { false };
  	std::string sLeaseSocketPath;
-@@ -1356,6 +1359,43 @@ static std::mutex g_leaseClientMutex;
+@@ -1581,6 +1584,43 @@ static std::mutex g_leaseClientMutex;
  static int g_nLeaseClientFd = -1;
  static bool g_bLeaseClientWantsTouch = false;
  
@@ -84,7 +84,7 @@ index 2b198f9a..c0a511d4 100644
  static bool lease_send_fd( int nClientFd, int nLeaseFd )
  {
  	union {
-@@ -1391,7 +1431,8 @@ static void lease_disconnect_client( int &nClientFd )
+@@ -1616,7 +1656,8 @@ static void lease_disconnect_client( int &nClientFd )
  	}
  	close( nClientFd );
  	nClientFd = -1;
@@ -94,7 +94,7 @@ index 2b198f9a..c0a511d4 100644
  	drm_log.infof( "lease-connector: companion app disconnected" );
  }
  
-@@ -1748,6 +1789,14 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+@@ -1973,6 +2014,14 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
  					drm->leasedPlaneIds.insert( uPlaneId );
  					drm->uLeaseId = uLeaseId;
  					drm->nLeaseFd = nLeaseFd;
@@ -109,7 +109,7 @@ index 2b198f9a..c0a511d4 100644
  
  					drm_log.infof( "lease-connector: leased '%s' (connector=%u, crtc=%u, plane=%u) -> fd=%d, lessee=%u",
  						g_sLeaseConnectorName, uConnectorId, uCRTCId, uPlaneId, nLeaseFd, uLeaseId );
-@@ -1963,19 +2012,23 @@ void finish_drm(struct drm_t *drm)
+@@ -2195,19 +2244,23 @@ void finish_drm(struct drm_t *drm)
  	}
  
  	// Revoke any active DRM lease before cleaning up
