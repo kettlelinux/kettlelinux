@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Kettle Linux: the system half of a settings reset (kettle-reset.hook), before the holo hook
+
+build() {
+    add_runscript
+}
+
+help() {
+    echo "Kettle Linux settings reset: clears the /etc overlay and /var/lib settings when asked."
+}

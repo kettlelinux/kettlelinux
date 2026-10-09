@@ -1,0 +1,13 @@
+#!/bin/bash
+# Kettle Linux: Steam's Settings > System > Factory Reset. Without this command Steam fell back
+# to "sudo -n steamos-factory-reset-config", which can't work (no such command, and sudo asks
+# for a password). Records the factory reset (kettle-reset everything, through
+# holo-factory-reset-config) for the next start; polkit lets the active local user do it
+# without a password (org.kettle.reset, 50-kettle-reset.rules), as Game Mode can't show one.
+# kettle-reset refuses while /home holds the Kettle Installer's backup of the internal storage,
+# which the reset would erase: that is only done from the desktop's Reset Kettle, which says so.
+# The device then restarts, whether or not Steam restarts it too.
+set -uo pipefail
+pkexec /usr/bin/kettle-reset everything --no-reboot || exit 1
+setsid -f sh -c "sleep 5; systemctl reboot" >/dev/null 2>&1
+exit 0

@@ -197,6 +197,36 @@ Bundles are signed with a Kettle key; the image trusts its certificate
 the release key. Without them the build makes a development key in `cache/keys/` and images
 built with it trust only development bundles. Keep the release key off the build tree.
 
+## Resetting
+
+`kettle-reset` puts an install back to how it started without reinstalling it. Desktop: **Reset
+Kettle** (System menu). Game Mode: Welcome > Reset, and Steam's Settings > System > Factory Reset
+for erasing. Both work on the next boot, then the device restarts.
+
+- **Reset settings** (`sudo kettle-reset settings`): every setting goes back to its default, and
+  games, saves, files and installed apps stay. The initramfs (`kettle-reset` hook, before holo
+  mounts `/etc`) moves the `/etc` overlay's upper directory aside and keeps only `machine-id`, the
+  SSH host keys and `repart.d`. It also moves `/var/lib`'s Bluetooth, NetworkManager, iwd,
+  AccountsService, sddm, upower and backlight state, plus kettle-powerd's, kettle-ledd's and
+  kettle-motion's settings (not its sensor registry). Then `kettle-reset-home.service`, which runs
+  before logins are allowed, resets the user's settings (`/usr/lib/kettle/reset-home` lists them):
+  - `~/.config`'s top-level files and the desktop's and Kettle's folders
+  - Steam's client settings and sign-in, plus each account's `localconfig.vdf` and controller
+    layouts. `libraryfolders.vdf`, `shortcuts.vdf` and `grid/` stay.
+  - every Decky plugin's settings, except the records of what Kettle's plugins installed
+  It leaves alone any folder it doesn't name, because native games save into `~/.config` and
+  `~/.local/share` too. Then it copies `/etc/skel` back where files are missing. What it resets is
+  moved to `/var/lib/kettle/settings-backup/<date>` and `/home/.kettle/settings-backup/<date>`,
+  not deleted; only the newest backup is kept. The password goes back to the image's.
+- **Erase everything** (`sudo kettle-reset everything`): SteamOS's factory reset. The initramfs
+  formats this installation's `var-A`, `var-B` and `home`, found by partition UUID. The system
+  image is not touched. It is refused while `/home/.kettle/ufs-backup` holds the Kettle
+  Installer's backup of the internal storage, which it would erase. Reset Kettle explains this and
+  passes `--erase-android-backup`.
+- `kettle-reset status` / `cancel`: what the next boot will do, and taking it back.
+- Polkit lets the active local user, and Decky's plugin backends, run `kettle-reset` without a
+  password (`50-kettle-reset.rules`), since Game Mode can't show a password prompt.
+
 ## Working on a device
 
 - `sudo holo-readonly disable` makes the running root writable (for debugging; the next update
@@ -205,5 +235,3 @@ built with it trust only development bundles. Keep the release key off the build
 - `sudo steamos-select-branch beta` then `steamos-update`: follow another branch.
 - `sudo rauc install file.raucb`: install a bundle from a file (no server needed). Its chunk
   store, `file.castr/`, must be in the same directory.
-- Steam's factory reset (Settings > System) formats this installation's `var-A`, `var-B` and
-  `home` on the next boot, found by partition UUID. The system image is not touched.

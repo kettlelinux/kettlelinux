@@ -39,6 +39,11 @@
 #    the SSH server: Game Mode has no password prompt, so polkit lets the active local user do
 #    that, and only that, for sshd.service (50-kettle-ssh.rules); enabling it at every start-up
 #    stays with the desktop's Kettle Welcome.
+#
+# And it resets the device (kettle-reset, through pkexec: 50-kettle-reset.rules lets Decky's
+#    plugin backends do that, Game Mode having no password prompt): every setting back to its
+#    default, or everything erased. Erasing is refused while /home holds the Kettle Installer's
+#    backup of the internal storage; the desktop's Reset Kettle says what that means first.
 import asyncio
 import base64
 import hashlib
@@ -87,6 +92,9 @@ _ANDROID_COMMANDS = ("add", "remove", "fdroid-search", "fdroid-add")
 # the running or last kettle-android-games command: {"command", "busy", "done", "total", "result"}
 _android: dict = {"command": None, "busy": False, "done": 0, "total": 0, "result": None}
 _PROTON_TOOLS = ("ge", "cachyos")
+RESET = "/usr/bin/kettle-reset"
+UFS_BACKUP = "/home/.kettle/ufs-backup"  # the Kettle Installer's (kettle-backup-ufs)
+_RESETS = ("settings", "everything")
 _latest: tuple[float, dict[str, str]] = (0.0, {})  # when looked up, tool -> newest build
 
 
@@ -524,6 +532,27 @@ class Plugin:
         if await asyncio.to_thread(_systemctl, "start" if on else "stop") != 0:
             raise RuntimeError("systemd refused")
         decky.logger.info("SSH server %s", "started" if on else "stopped")
+
+    async def reset_status(self) -> dict:
+        """What's set to be reset on the next start ("none", "settings", "everything"), and
+        whether erasing everything would erase a backup of the internal storage."""
+        out = await asyncio.to_thread(subprocess.run, [RESET, "status"], capture_output=True, text=True, timeout=15)
+        try:
+            backup = bool(os.listdir(UFS_BACKUP))
+        except OSError:
+            backup = os.path.isdir(UFS_BACKUP)  # there, but not readable here: assume it holds one
+        return {"pending": out.stdout.split(":", 1)[0].strip() or "none", "ufs_backup": backup}
+
+    async def reset(self, what: str):
+        """Resets on the next start, and restarts the device now."""
+        if what not in _RESETS:
+            raise ValueError(f"unknown reset {what!r}")
+        r = await asyncio.to_thread(subprocess.run, ["pkexec", RESET, what, "--no-reboot"],
+                                    capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            raise RuntimeError((r.stderr or r.stdout).strip() or f"kettle-reset failed ({r.returncode})")
+        decky.logger.info("reset %s on the next start; restarting", what)
+        await asyncio.to_thread(subprocess.run, ["systemctl", "reboot"], timeout=30)
 
     async def _main(self):
         decky.logger.info("welcome: %d optional components offered", len(_manifest(log=True)))

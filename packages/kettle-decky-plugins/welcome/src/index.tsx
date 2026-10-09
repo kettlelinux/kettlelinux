@@ -1,11 +1,12 @@
 import { ButtonItem, DropdownItem, Navigation, PanelSection, PanelSectionRow, SidebarNavigation, ToggleField, staticClasses } from "@decky/ui";
 import { callable, definePlugin, routerHook, toaster } from "@decky/api";
 import { ReactNode, useEffect, useMemo, useState } from "react";
-import { FaAndroid, FaDesktop, FaDownload, FaGamepad, FaHandSparkles, FaMugHot, FaNetworkWired } from "react-icons/fa";
+import { FaAndroid, FaDesktop, FaDownload, FaGamepad, FaHandSparkles, FaMugHot, FaNetworkWired, FaUndo } from "react-icons/fa";
 import { applyGameFixes } from "./fixes";
 import { addDesktop } from "./desktop";
 import { AndroidPage } from "./android";
 import { ExtrasPage, Setup, status } from "./extras";
+import { ResetPage } from "./reset";
 import { Heading, Text, act, red, small, usePoll } from "./ui";
 
 type BootMode = "game" | "desktop";
@@ -291,6 +292,7 @@ function Page() {
         : []),
       { title: "Remote access", route: `${ROUTE}/remote`, icon: <FaNetworkWired />, content: <RemotePage /> },
       { title: "Desktop mode", route: `${ROUTE}/desktop`, icon: <FaDesktop />, content: <DesktopPage /> },
+      { title: "Reset", route: `${ROUTE}/reset`, icon: <FaUndo />, content: <ResetPage /> },
     ];
   }, [f]);
   if (!f) return null;

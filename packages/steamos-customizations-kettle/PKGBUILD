@@ -11,6 +11,8 @@
 #   kettle-boot-legacy  points the ABL's \KERNEL and U-Boot's extlinux at the newest slot
 #   mkbootimg.py        builds \KERNEL (Android boot.img v0)
 #   20-kettle.conf      initramfs hooks
+#   kettle-reset.hook   the system half of a settings reset (kettle-reset): the /etc overlay and
+#                       /var/lib settings, before holo mounts them (kettle-reset.install)
 #   kettle-readonly-root.service  grows a slot's root to the slot and sets the btrfs read-only flag
 #                                 on its first boot
 #   home-after-repart.conf        mounts /home after systemd-repart creates or grows it
@@ -22,7 +24,7 @@
 pkgname=steamos-customizations-kettle
 _srctag=jupiter-20260914.1
 pkgver=${_srctag#jupiter-}
-pkgrel=10
+pkgrel=11
 pkgdesc='SteamOS atomic A/B system (Valve steamos-customizations) for Kettle Linux'
 arch=(aarch64)
 url='https://gitlab.steamos.cloud/holo/steamos-customizations'
@@ -49,7 +51,9 @@ source=("https://steamdeck-packages.steamos.cloud/archlinux-mirror/sources/jupit
         desync-config.json
         kettle-readonly-root.service
         home-after-repart.conf
-        kettle-atomupd.tmpfiles)
+        kettle-atomupd.tmpfiles
+        kettle-reset.hook
+        kettle-reset.install)
 sha256sums=('1df4fcaf6af7713b8b885031eeeae0489d9cd6cd71593f93c589f89775547489'
             'eab06145a1129c8ef66d1c351e8e20594384d93822ec3c9908ec9601436985f1'
             'cdf3f3bef537b5c482dffb2368932138bcd6b67adf40eb67397f1a8a1e57201a'
@@ -63,11 +67,13 @@ sha256sums=('1df4fcaf6af7713b8b885031eeeae0489d9cd6cd71593f93c589f89775547489'
             '3b41dab2b4aeeaef460f5697358b89081281e24b61d68aa611c6e5fd45654ac5'
             'f245b5c76e2bf47172b531c89cc5e2a35d2c834e07845d57c47864cff6e4c395'
             'cb8c07b9dde2c1ab060433af0a6406020ec07774b208450a0210c7e848b5ae6a'
-            'ebda901acd2fe3a33034af9753aa87c22d867793251f462e7932c1a81ee9c491'
+            'c5676c03913c976637d3a61ac93aa8d9e4d0e5dc6c78858161f030f0dc571062'
             '545638e85db9e487c1d03f3bad4206e5e4272c017daf5c29c726b319f2c87627'
             'f338627672b10c5e4cf4c9944f47a019d7b1741943faa8ce5ec3e1e58b9ecfd1'
             '1e4e26e2113dcf58b4876e16826b4b09b2fb3271dfd95d309af3743b372f36aa'
-            'bd900a5b052362bfed378e6ef6fb6c5f3ee843cf69aefbbbf947954faaa4b405')
+            'bd900a5b052362bfed378e6ef6fb6c5f3ee843cf69aefbbbf947954faaa4b405'
+            '207652dfb7b015c9dd0a7e2fc4dce8be9f8c62e91767441d94d31b52ba1297bb'
+            '3becfc0de906846857b15753b52be926c6522ece8167b23988bbe19e7aaa67b2')
 
 # RAUC_COMPATIBLE and ATOMUPD_VARIANTS_LIST are the Portal's: the image build sets each device's
 # in /etc/rauc/system.conf and client.conf (device/<device>/device.conf)
@@ -132,6 +138,8 @@ package() {
   ln -s /usr/bin/kettle-boot-legacy usr/lib/rauc/post-install.d/50-kettle-boot-legacy
   install -Dm644 "$srcdir/mkbootimg.py" usr/lib/kettle/mkbootimg.py
   install -Dm644 "$srcdir/20-kettle.conf" etc/mkinitcpio.conf.d/20-kettle.conf
+  install -Dm644 "$srcdir/kettle-reset.hook" usr/lib/initcpio/hooks/kettle-reset
+  install -Dm644 "$srcdir/kettle-reset.install" usr/lib/initcpio/install/kettle-reset
   install -Dm644 "$srcdir/desync-config.json" etc/desync/config.json
   install -Dm644 "$srcdir/kettle-readonly-root.service" -t usr/lib/systemd/system
   ln -s ../kettle-readonly-root.service usr/lib/systemd/system/sysinit.target.wants/

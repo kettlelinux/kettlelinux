@@ -18,7 +18,8 @@
 #              optional components, components.json,
 #              downloaded from their upstream source), Android games from F-Droid or an APK file
 #              (kettle-lepton's kettle-android-games), and the SSH server (started and stopped
-#              only: 50-kettle-ssh.rules); also applies game fixes (welcome/src/fixes.ts): launch
+#              only: 50-kettle-ssh.rules); Reset, settings or everything (kettle-reset:
+#              50-kettle-reset.rules); also applies game fixes (welcome/src/fixes.ts): launch
 #              options a game needs to run at all; and adds the desktop in Game Mode to the
 #              library once (welcome/src/desktop.ts: its artwork, kettle-desktop-art, and the
 #              desktop's controls as its controller layout)
@@ -52,7 +53,7 @@ pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome kettl
          kettle-decky-screens kettle-decky-crash kettle-decky-game-settings kettle-decky-lights
          kettle-decky-stores kettle-decky-gyro)
 pkgver=1.12.0
-pkgrel=33
+pkgrel=34
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)

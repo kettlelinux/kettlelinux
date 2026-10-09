@@ -1,0 +1,115 @@
+#!/bin/bash
+# Kettle Linux: the user's half of a settings reset (kettle-reset settings), run by
+# kettle-reset-home.service on the boot after the initramfs did the system's half
+# (packages/steamos-customizations-kettle/kettle-reset.hook), before anyone can log in.
+#
+# Settings go back to what a new install has; games, saves, files and what's installed stay.
+# Nothing is deleted: what is reset moves to /home/.kettle/settings-backup/<stamp>/, keeping its
+# place under the home directory. Only known settings are moved: native games keep saves in
+# ~/.config and ~/.local/share too (Unity's unity3d/, others' own folders), so any folder this
+# list doesn't name is left alone.
+#   ~/.config         the files at its top (Plasma's and KDE's *rc files, kwinoutputconfig.json,
+#                     mimeapps.list, ...) and the desktop's and Kettle's folders (CONFIG_DIRS)
+#   ~/.local/share    the desktop's state (SHARE)
+#   ~/.local/state    the files at its top (window sizes and such: *staterc)
+#   Steam             the client's settings and sign-in (config/, except libraryfolders.vdf: the
+#                     SD card's library), each account's settings, launch options and controller
+#                     layouts (userdata/*/config/localconfig.vdf, userdata/*/241100, Steam
+#                     Controller Configs); the library's non-Steam games (shortcuts.vdf, grid/)
+#                     stay. Steam Cloud may bring back what it syncs once signed in again.
+#   Decky             each plugin's settings (~/homebrew/settings), except the records of what
+#                     Kettle's plugins installed or added to Steam: Game Stores (sign-ins,
+#                     installs), Upscaling (OptiScaler files it put in game folders), Welcome's
+#                     installed extras and Steam shortcuts, Game Settings' install-id
+# Then /etc/skel's defaults are copied back where they went missing, as for a new user.
+set -euo pipefail
+
+dir=/var/lib/kettle/reset
+stamp=$(cat "$dir/home")
+[[ $stamp =~ ^[0-9-]+$ ]] || { echo "bad request '$stamp', ignored" >&2; rm -f "$dir/home"; exit 0; }
+IFS=: read -r user _ _ _ _ home _ < <(getent passwd 1000)
+[ -d "$home" ] || { echo "no home directory for uid 1000: nothing to reset"; rm -f "$dir/home"; exit 0; }
+backup=/home/.kettle/settings-backup/$stamp
+echo "resetting $user's settings in $home (backup: $backup)"
+plymouth display-message --text="Resetting settings..." 2>/dev/null || :
+
+CONFIG_DIRS=(kettle kettle-framegen fex-emu MangoHud autostart systemd environment.d
+             kdedefaults kde.org KDE plasma-workspace plasmashell session menus kdeconnect
+             gtk-2.0 gtk-3.0 gtk-4.0 xsettingsd fontconfig pulse)
+SHARE=(plasma plasmashell plasma-systemmonitor kactivitymanagerd kscreen kwin kded6 kxmlgui5
+       konsole dolphin krunner systemsettings RecentDocuments recently-used.xbel user-places.xbel)
+STEAM=.local/share/Steam
+# Kettle's plugins' records, by settings folder: all of it, or the files named
+declare -A DECKY_KEEP=([kettle-stores]=. [kettle-upscaling]=.
+                       [kettle-welcome]="installed.json shortcuts.json welcome.json"
+                       [kettle-game-settings]=install-id)
+
+# reset <path under the home directory>: moved into the backup, in the same place
+reset() {
+  local p=$1
+  [ -e "$home/$p" ] || [ -L "$home/$p" ] || return 0
+  mkdir -p "$backup/home/$(dirname "$p")"
+  mv "$home/$p" "$backup/home/$p"
+}
+
+mkdir -p /home/.kettle
+install -d -m 0700 "${backup%/*}"
+install -d -m 0700 "$backup/home"
+# only the newest backup is kept: it holds Wi-Fi passwords and sign-ins
+find "${backup%/*}" -mindepth 1 -maxdepth 1 ! -name "$stamp" -exec rm -rf {} +
+find /var/lib/kettle/settings-backup -mindepth 1 -maxdepth 1 ! -name "$stamp" -exec rm -rf {} + 2>/dev/null || :
+
+cd "$home"
+shopt -s nullglob dotglob
+for f in .config/*; do [ -d "$f" ] && [ ! -L "$f" ] || reset "$f"; done
+for d in "${CONFIG_DIRS[@]}"; do reset ".config/$d"; done
+for d in "${SHARE[@]}"; do reset ".local/share/$d"; done
+for f in .local/state/*; do [ -d "$f" ] && [ ! -L "$f" ] || reset "$f"; done
+
+if [ -d "$STEAM" ]; then
+  for f in "$STEAM"/config/*; do [ "${f##*/}" = libraryfolders.vdf ] || reset "$f"; done
+  for u in "$STEAM"/userdata/*/; do
+    reset "${u}config/localconfig.vdf"
+    reset "${u}241100"
+  done
+  reset "$STEAM/steamapps/common/Steam Controller Configs"
+fi
+
+for s in homebrew/settings/*; do
+  keep=${DECKY_KEEP[${s##*/}]:-}
+  if [ "$keep" = . ]; then continue; fi
+  if [ -z "$keep" ] || [ ! -d "$s" ]; then reset "$s"; continue; fi
+  for f in "$s"/*; do [[ " $keep " == *" ${f##*/} "* ]] || reset "$f"; done
+done
+# Welcome's record of the Desktop entry it added to Steam stays; that the welcome page was seen
+# and which Steam defaults it applied don't, so both happen again
+w=homebrew/settings/kettle-welcome/welcome.json
+if [ -f "$w" ]; then
+  mkdir -p "$backup/home/${w%/*}"
+  [ -e "$backup/home/$w" ] || cp -a "$w" "$backup/home/$w"
+  python3 -I - "$w" <<'EOF'
+import json, sys
+p = sys.argv[1]
+with open(p) as f:
+    d = json.load(f)
+for k in ("seen", "defaults"):
+    d.pop(k, None)
+with open(p, "w") as f:
+    json.dump(d, f)
+EOF
+fi
+
+# a new user's defaults, where they are now missing (cp -n: nothing kept is overwritten), as
+# the user, who owns them then. setpriv, not runuser: runuser's PAM session asks logind for the
+# user's manager, which waits for systemd-user-sessions.service, which waits for this.
+as_user() { setpriv --reuid="$user" --regid="$(id -g "$user")" --init-groups -- "$@"; }
+as_user cp -rn --preserve=mode,timestamps,links /etc/skel/. "$home/"
+if [ -e /usr/lib/systemd/user/gamemoded.service ]; then  # as holo-create-homedir sets it up
+  as_user mkdir -p .config/systemd/user/default.target.wants
+  as_user ln -sfn /usr/lib/systemd/user/gamemoded.service .config/systemd/user/default.target.wants/
+fi
+chown -R root:root "$backup"; chmod -R go-rwx "$backup"
+
+sync
+rm -f "$dir/home"
+echo "settings reset done"
