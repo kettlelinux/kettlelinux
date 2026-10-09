@@ -2,8 +2,8 @@
 
 This is how the Qualcomm devices boot, from power-on up to Kettle's U-Boot. It also covers the
 UFS partition layout, the A/B slot bits, and what fastboot does. For everything after U-Boot
-(steamcl, GRUB, Kettle's own A/B slots) see [UPDATES.md](UPDATES.md). Kettle's own U-Boot is
-covered in [BOOTLOADER.md](BOOTLOADER.md).
+(steamcl, GRUB, Kettle's own A/B slots) see [UPDATES.md](UPDATES.md). Which bootloader starts Kettle
+(the vendors' U-Boot, or the ROCKNIX ABL) is in [BOOTLOADER.md](BOOTLOADER.md).
 
 Each fact below is tagged with its source:
 - **[Portal]**: read off the user's Odin 2 Portal, an internal install, on 2026-10-04.

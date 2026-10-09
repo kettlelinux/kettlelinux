@@ -12,14 +12,6 @@ device = "odin2_portal"
 variant = "Portal"
 friendly_name = "AYN Odin 2 Portal"
 
-# Kettle's U-Boot (u-boot-kettle) names the Portal itself
-[[device]]
-dmi.sys_vendor = "ayn"
-dmi.product_name = "AYN Odin 2 Portal"
-device = "odin2_portal"
-variant = "Portal"
-friendly_name = "AYN Odin 2 Portal"
-
 # Booted without SMBIOS (the ABL's \KERNEL)
 [[device]]
 dt.compatible = "ayn,odin2portal"
