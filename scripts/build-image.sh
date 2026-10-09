@@ -214,6 +214,7 @@ systemctl set-default graphical.target >/dev/null 2>&1
 # stays installed but off: on the SM8550's 3+4+1 big.LITTLE layout the kernel's energy-aware
 # scheduler measured better -- Skyrim 9.0 W at 34.9 fps vs lavd 9.6-9.9 W at 33.6-34.3 fps,
 # idle 1.71 W vs 1.80 W (lavd holds the little cluster at max clock and sends ~5x the IPIs).
+# (The default governor is now conservative, which turns EAS off too: see kernel/config/steamos.config.)
 systemctl enable steamos-manager kettle-mangoapp-tracefs kettle-steam-unpack kettle-reset-home >/dev/null 2>&1
 # kettle-powerd: CPU/GPU caps, power budget, fan and charge limit, behind Steam's own power
 # controls (steamos-manager remotes.d) and the Power plugin
