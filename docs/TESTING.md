@@ -5,7 +5,7 @@ it works with whichever loader the device runs:
 
 | Loader | Uses | Slot fallback |
 |---|---|---|
-| ROCKNIX ABL | `\KERNEL` + `\KERNEL.md5` (boot.img v0, all SM8550 DTBs; ABL picks by Device model) | no: always the newest slot |
+| ROCKNIX ABL (v1.2) | `\EFI\BOOT\BOOTAA64.EFI` (steamcl) when it is there; else `\KERNEL` + `\KERNEL.md5` (boot.img v0, all SM8550 DTBs; ABL picks by Device model) | yes through steamcl; `\KERNEL`: no, always the newest slot |
 | U-Boot (standard boot / distro_bootcmd) | `\extlinux\extlinux.conf` → `\Image` + `\dtbs\qcom\qcs8550-ayn-odin2portal.dtb` | no: always the newest slot |
 | Any UEFI (U-Boot EFI, ABL EFI chainload) | `\EFI\BOOT\BOOTAA64.EFI` = steamcl → the slot's GRUB (`efi-A`/`efi-B`) | yes ([UPDATES.md](UPDATES.md)) |
 

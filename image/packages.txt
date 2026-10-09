@@ -132,6 +132,9 @@ steamos-customizations-kettle
 # Kettle's own U-Boot (mainline) for the loader partition; scripts/build-image.sh appends the
 # device's devicetree and puts u-boot-kettle.img on the KETTLE partition (packages/u-boot-kettle)
 u-boot-kettle
+# kettle-abl-update: keeps an installed ROCKNIX ABL (devices without U-Boot) up to date
+# (packages/rocknix-abl)
+rocknix-abl
 # Game Mode power button: short press = Steam's sleep, long press = Steam's power menu
 # (its hwdb already tags the SM8550's pmic_pwrkey; Game Mode only, see its kettle.conf drop-in)
 steamos-powerbuttond
