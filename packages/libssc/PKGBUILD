@@ -3,12 +3,12 @@
 # readings (--rate picks the sample rate), for checking a device's motion sensors.
 pkgname=libssc
 pkgver=0.4.4
-pkgrel=2
+pkgrel=3
 pkgdesc='Library to expose Qualcomm Sensor Core sensors'
 arch=(aarch64)
 url='https://codeberg.org/DylanVanAssche/libssc'
 license=(GPL-3.0-or-later)
-depends=(glib2 libqmi protobuf-c)
+depends=(glib2 libqmi "protobuf-c>=1.5.2")
 makedepends=(meson protobuf gobject-introspection)  # protobuf-c: packages/protobuf-c
 source=("$pkgname-$pkgver.tar.gz::https://codeberg.org/DylanVanAssche/libssc/archive/v$pkgver.tar.gz"
         0001-sensor-let-clients-choose-the-sample-rate.patch)
