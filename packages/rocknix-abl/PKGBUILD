@@ -6,8 +6,8 @@
 # release and never touches a stock one.
 #
 # ROCKNIX publishes only signed binaries, built from its private LinuxLoader fork (Qualcomm's
-# BSD-3-Clause LinuxLoader). The repo states no licence; its README lists the distributions it
-# supports. ROCKNIX deletes older releases' files, so the tarball is kept in cache/src
+# BSD-3-Clause LinuxLoader). The repo states no licence; ROCKNIX's developers agreed to Kettle
+# redistributing it (2026-10-09). ROCKNIX deletes older releases' files, so the tarball is kept in cache/src
 # (scripts/build-packages.sh) and pinned by hash. releases.tsv identifies installed releases.
 pkgname=rocknix-abl
 pkgver=1.2
