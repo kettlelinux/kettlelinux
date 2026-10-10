@@ -22,6 +22,29 @@ own *Check for updates*.
 
 **Documentation lives in the [wiki](https://github.com/kettlelinux/kettlelinux/wiki).**
 
+## A look around Game Mode
+
+Kettle's own tools are in Steam's Quick Access menu (**…**, then the plug icon). A new device
+opens the same tour in Welcome. These are from an Odin 2 Portal.
+
+| Game Settings | | | |
+|:-:|:-:|:-:|:-:|
+| <img src="packages/kettle-decky-plugins/welcome/assets/gs-compat.jpg" width="200" alt="Compat tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/gs-perf.jpg" width="200" alt="Perf tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/gs-upscale.jpg" width="200" alt="Upscale tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/gs-framegen.jpg" width="200" alt="Frame Gen tab"> |
+| **Compat**: Proton, FEX, DXVK, vkd3d and Turnip options, known good settings | **Perf**: fan, CPU limits, refresh rate, Auto TDP | **Upscale**: FSR 1, and SGSR 2 / Arm ASR / FSR 2.2 through OptiScaler | **Frame Gen**: Kettle's own frame generation |
+
+| Device Settings | | | Quick Access |
+|:-:|:-:|:-:|:-:|
+| <img src="packages/kettle-decky-plugins/welcome/assets/ds-power.jpg" width="200" alt="Power tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/ds-lights.jpg" width="200" alt="Lights tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/ds-gyro.jpg" width="200" alt="Gyro tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/plugins.jpg" width="200" alt="Kettle's plugins in Quick Access"> |
+| **Power**: charge limit and speed, refresh rate | **Lights**: the stick and power lights | **Gyro**, and **System**: start-up mode, SSH, reset | Game Settings, Crash Reports, Game Stores, Device Settings, Welcome |
+
+<img src="packages/kettle-decky-plugins/welcome/assets/stores.jpg" width="820" alt="Game Stores, on its Flathub tab">
+
+*Game Stores: Epic Games, GOG, Amazon Games, Battle.net, Flathub's ARM64 apps and Android games.*
+
+<img src="packages/kettle-decky-plugins/welcome/assets/diag.jpg" width="820" alt="The Diagnostics window">
+
+*Diagnostics, from Device Settings: power draw, temperatures, clocks and everything about the device.*
+
 ## Features
 
 - **Mainline kernel**: Linux 7.2 with a pinned patch stack for the panels, gamepad, LEDs,
@@ -37,30 +60,42 @@ own *Check for updates*.
   controller. In Desktop Mode the gamepad works as mouse and keyboard, with an on-screen keyboard.
 - **The desktop in Game Mode**: Desktop in Steam's library opens the Plasma desktop inside Game
   Mode, without a session switch, with the desktop's controls. ([docs/NESTED-DESKTOP.md](docs/NESTED-DESKTOP.md))
-- **Game Mode plugins** (Decky Loader), all off by default and enabled per game:
-  - **Frame Generation**: Kettle's own Vulkan layer, 2×, 3× or an automatic multiplier, with automatic frame rate capping.
-  - **Upscaling**: gamescope SGSR 1, and SGSR 2, Arm ASR or FSR 2.2 through an ARM64EC build of OptiScaler.
-  - **Game Settings**: per-game profiles of FEX, DXVK, vkd3d, Turnip and Proton options, the Proton
-    version, and known good settings from the Kettle game database. ([docs/GAME-DATABASE.md](docs/GAME-DATABASE.md))
-  - **Lights**: the RGB rings around the sticks (a color, the battery level, breathe or rainbow),
-    and the Portal's power button light.
-- **Power control**: TDP budget, performance profiles, GPU clock and per-game fan curves from
-  Steam's Performance panel, the Power plugin, or a Desktop Mode tray applet, a battery
-  charge limit and charge speed, and the refresh rate: Auto, where Steam's frame limit picks a
+- **Game Mode plugins** (Decky Loader), in Quick Access:
+  - **Game Settings**: everything set per game, a tab each, all off until enabled for a game.
+    **Compat**: FEX, DXVK, vkd3d, Turnip and Proton options, the Proton version, and known good
+    settings from the Kettle game database ([docs/GAME-DATABASE.md](docs/GAME-DATABASE.md)).
+    **Perf**: fan curve, CPU core and clock limits, Auto TDP and the refresh rate, per game or
+    for all games. **Upscale**: gamescope FSR 1, and SGSR 2, Arm ASR or FSR 2.2 through an ARM64EC
+    build of OptiScaler. **Frame Gen**: Kettle's own Vulkan layer, 2×, 3× or an automatic
+    multiplier, with automatic frame rate capping. **Extras**: GE-Proton, Proton-CachyOS and AMD
+    FSR 3.1, downloaded from their projects.
+  - **Game Stores**: see below.
+  - **Device Settings**: the device's own settings, a tab each. **Power**: charge limit and speed,
+    and the refresh rate. **Lights**: the RGB rings around the sticks (a color, the battery level,
+    breathe or rainbow) and the Portal's power button light. **Gyro**: the motion sensors for
+    Steam Input. **Screens**: the Thor's bottom screen. **System**: the start-up mode, the SSH
+    server and resetting the device. And a **Diagnostics** window with everything about the device.
+  - **Crash Reports**: see below.
+  - **Welcome**: a tour of all of this, with screenshots, on first boot.
+- **Power control**: TDP budget, performance profiles and GPU clock from Steam's Performance panel,
+  per-game fan curves, CPU limits and Auto TDP from Game Settings, or a Desktop Mode tray applet; a
+  battery charge limit and charge speed from Device Settings; and the refresh rate: Auto, where Steam's frame limit picks a
   rate it divides evenly, or held at 60 or 120 Hz on the Thor and 50, 60, 100, 120, 145 or 165 Hz
   on the Portal.
 - **Games outside Steam**: ARM64EC Wine with FEX, DXVK and vkd3d-proton, plus Lutris and Heroic
   built for arm64.
-- **Epic Games, GOG and Amazon Games in Game Mode**: the Game Stores plugin signs in to each store,
-  lists your games, installs and updates them, and adds them to your Steam library to play with
-  Proton. Sign-ins and installs are shared with Heroic on the desktop. ([docs/GAME-STORES.md](docs/GAME-STORES.md))
+- **Game Stores in Game Mode**: signs in to Epic Games, GOG and Amazon Games, lists your games,
+  installs and updates them, and adds them to your Steam library to play with Proton. Sign-ins and
+  installs are shared with Heroic on the desktop. It also adds Battle.net, installs Flathub's ARM64
+  apps by category (emulators and streaming apps among them), and Android games from F-Droid or an
+  APK file. ([docs/GAME-STORES.md](docs/GAME-STORES.md))
 - **Native ARM64 games**: the Linux builds of FNA, XNA, MonoGame and .NET games (Terraria,
   Stardew Valley) run their own code on ARM64 instead of under FEX, from Game Settings.
   ([docs/NATIVE-GAMES.md](docs/NATIVE-GAMES.md))
 - **Community Proton builds**: GE-Proton and Proton-CachyOS (their ARM64 releases), installed
-  and updated from Kettle Welcome.
-- **Battle.net**: Kettle Welcome adds Blizzard's launcher to Steam, set up to run with
-  Proton-CachyOS.
+  and updated from Game Settings' Extras tab or the desktop's Kettle Welcome.
+- **Battle.net**: Game Stores (or the desktop's Kettle Welcome) adds Blizzard's launcher to Steam,
+  set up to run with Proton-CachyOS.
 - **Android games**: add an Android game to Steam and play it in Game Mode, through Lepton, the
   Android layer Valve made for the Steam Frame (APK files, F-Droid, or opt-in Google Play).
 - **Hardware video in Firefox**: H.264, HEVC, VP9 and AV1 on the SoC's video decoder, YouTube
@@ -75,9 +110,6 @@ own *Check for updates*.
 - **Desktop welcome hub**: setup shortcuts, controls help, and one-click *Gaming Extras*
   (emulators, streaming and tools) from Flathub, and GE-Proton and Proton-CachyOS for Steam from
   their ARM64 releases.
-- **Game Mode welcome**: a tour of Kettle's plugins, and from Game Mode itself: emulators and
-  streaming apps installed and added to Steam, the Proton builds, Android games from F-Droid or an
-  APK file, and the SSH server.
 - **Kettle branding**: boot splash, Steam startup movie and Plasma splash, all rendered from source art.
 
 ## Getting started

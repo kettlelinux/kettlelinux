@@ -117,6 +117,22 @@ footer {
 }
 footer p { margin: 4px 0; }
 
+/* Tour (index.html #tour): screenshots from the Welcome plugin's tour (tour/ links to its assets) */
+.lead { color: var(--muted); max-width: 680px; margin: 0 0 24px; }
+.shot { display: block; width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--border); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45); }
+.shot.wide { margin: 8px 0 12px; }
+.tour-row { display: grid; grid-template-columns: 220px 1fr; gap: 24px; align-items: center; margin-bottom: 8px; }
+.tour-row p { margin: 0; }
+.tour-head { font-size: 1.25rem; margin: 40px 0 6px; }
+.shots { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); margin: 16px 0 8px; }
+.shots figure { margin: 0; }
+.shots figcaption { font-size: 0.85rem; color: var(--muted); margin-top: 8px; line-height: 1.45; }
+.shots figcaption strong { color: var(--text); }
+@media (max-width: 640px) {
+  .tour-row { grid-template-columns: 1fr; }
+  .tour-row .shot { max-width: 260px; }
+}
+
 /* Games page (games.html) */
 .hidden { display: none !important; }
 .topbar {
