@@ -1,6 +1,8 @@
-# Kettle Linux: the names Valve's arm64 Steam gives the SoC's video codec (iris), as on the Steam
-# Frame. Remote Play's client (streaming_client) also probes /dev/video*, but the Remote Play host's
-# encoder opens /dev/video-enc0 and nothing else. Remote Play decoding was tested on the Odin 2
-# Portal; Steam's encoding is untested.
-SUBSYSTEM=="video4linux", ATTR{name}=="qcom-iris-decoder", SYMLINK+="video-dec0"
+# Kettle Linux: the name Valve's arm64 Steam gives the SoC's video encoder (iris), as on the Steam
+# Frame: the Remote Play host's encoder opens /dev/video-enc0 and nothing else. Steam's encoding is
+# untested.
+# The decoder keeps only its /dev/video* name, which Remote Play's client (streaming_client) finds
+# by itself. Not /dev/video-dec0: Chromium (Steam's UI, steamwebhelper) looks for decoders by that
+# name only, and its V4L2 decoder doesn't work with iris: on the UI's videos its GPU process spun
+# about 3.4 cores until it crashed (SIGTRAP), every few minutes, and the UI reloaded.
 SUBSYSTEM=="video4linux", ATTR{name}=="qcom-iris-encoder", SYMLINK+="video-enc0"
