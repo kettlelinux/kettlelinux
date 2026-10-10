@@ -1,0 +1,6 @@
+# The Pocket FIT Elite's own packages, added to image/packages.txt (built by us, packages/)
+
+# firmware: DSPs, audio topology, GPU, video, Wi-Fi, Bluetooth (packages/kettle-firmware-konkr)
+kettle-firmware-pocketfitelite
+# ALSA UCM profile for the "SM8750-KONKR" card (packages/kettle-ucm-konkr)
+kettle-ucm-pocketfitelite

@@ -1,0 +1,9 @@
+# Kettle Linux: the Pocket FIT Elite's headphone jack. Its speakers play over MI2S straight to
+# the AW88261 amps, so nothing keeps the WCD9395 codec's SoundWire buses running: they
+# clock-stop when idle, and in clock-stop the codec's jack detection (MBHC) can't report a plug
+# (the SoundWire wake interrupt isn't wired up on this SoC). Keep both buses and their devices
+# runtime-active so a headphone plug is seen at once, as ROCKNIX's 040-headphone-mbhc-wake does
+# (a few mW). Kernel 22-sm8750/0063 then routes the USB-C/jack switch to audio.
+ACTION=="add|bind", SUBSYSTEM=="platform", KERNEL=="6ad0000.soundwire|7630000.soundwire", \
+  ATTR{power/control}="on"
+ACTION=="add|bind", SUBSYSTEM=="soundwire", ATTR{power/control}="on"
