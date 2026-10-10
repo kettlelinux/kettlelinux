@@ -158,6 +158,18 @@ def _read_fps() -> dict | None:
         return None
 
 
+def _appid(env: dict) -> int | None:
+    """The game's appid as Steam's UI has it (the plugin's key). A non-Steam shortcut has
+    SteamAppId=0: its appid is the top half of its 64-bit game id (SteamGameId), else Proton's
+    STEAM_COMPAT_APP_ID."""
+    for name in (b"SteamAppId", b"SteamGameId", b"STEAM_COMPAT_APP_ID"):
+        v = env.get(name, b"").decode(errors="replace")
+        if v.isdigit() and int(v) > 0:
+            n = int(v)
+            return n >> 32 if n >= 1 << 32 else n
+    return None
+
+
 def _game_of(pid: int) -> tuple[int, int | None, bool] | None:
     """(appid, cap it was launched with, a frame generation layer loaded) for a game process."""
     try:
@@ -167,13 +179,13 @@ def _game_of(pid: int) -> tuple[int, int | None, bool] | None:
             fg = b"libVkLayer_kettle_framegen" in f.read()
     except OSError:
         return None
-    appid = env.get(b"SteamAppId", b"").decode()
-    if not appid.isdigit() or appid == "0":
+    appid = _appid(env)
+    if not appid:
         return None
     m = re.search(rb"maxFrameRate\s*=\s*(\d+)", env.get(b"DXVK_CONFIG", b"")) or \
         re.fullmatch(rb"(\d+)", env.get(b"VKD3D_FRAME_RATE", b""))
     cap = int(m.group(1)) if m and int(m.group(1)) > 0 else None
-    return int(appid), cap, fg
+    return appid, cap, fg
 
 
 def _finish_session():

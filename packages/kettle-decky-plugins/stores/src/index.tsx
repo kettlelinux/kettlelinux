@@ -73,9 +73,9 @@ function Content() {
   );
 }
 
-// Adds a finished install to Steam, and says so
-async function added(store: Source, id: string, title: string) {
-  await addShortcut(store, id);
+// Adds a finished install to Steam (or brings the shortcut it has already up to date), and says so
+async function added(store: Source, id: string, title: string, appid: number | null) {
+  await addShortcut(store, id, appid);
   toaster.toast({
     title: `${title} is installed`,
     body: "It's in your Steam library. Select to open its page.",
@@ -97,13 +97,13 @@ export default definePlugin(() => {
   const onJob = (job: Job, ok: boolean, error: string) => {
     if (!ok) toaster.toast({ title: "Game Stores", body: `${job.kind === "update" ? "Updating" : "Installing"} ${job.title} failed: ${error}` });
     else if (job.kind === "update") toaster.toast({ title: "Game Stores", body: `${job.title} is up to date.` });
-    else act(() => added(job.store, job.id, job.title), `Adding ${job.title} to Steam failed`);
+    else act(() => added(job.store, job.id, job.title, job.appid ?? null), `Adding ${job.title} to Steam failed`);
   };
   addEventListener("login", onLogin);
   addEventListener("job", onJob);
   // installs that finished while Game Mode wasn't running
   pending()
-    .then((list) => list.forEach((p) => act(() => addShortcut(p.store, p.id), "Adding a game to Steam failed")))
+    .then((list) => list.forEach((p) => act(() => addShortcut(p.store, p.id, p.appid ?? null), "Adding a game to Steam failed")))
     .catch(() => {});
 
   return {

@@ -118,8 +118,12 @@ def epic(gid):
             log("legendary launch timed out", extra)
             continue
         if r.returncode == 0:
-            d = json.loads(r.stdout)
-            return d.get("egl_parameters", []) + d.get("game_parameters", []) + d.get("user_parameters", []), {}
+            try:
+                d = json.loads(r.stdout)
+                return d.get("egl_parameters", []) + d.get("game_parameters", []) + d.get("user_parameters", []), {}
+            except (ValueError, AttributeError, TypeError) as e:  # not legendary's JSON: try offline, then none
+                log("legendary launch", *extra, "printed no launch JSON:", e)
+                continue
         log("legendary launch", *extra, "failed:", r.stderr.strip()[-400:])
     return [], {}
 
