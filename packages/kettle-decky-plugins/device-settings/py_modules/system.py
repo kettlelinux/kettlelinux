@@ -7,6 +7,11 @@
 # or everything erased. Erasing is refused while /home holds the Kettle Installer's backup of the
 # internal storage; the desktop's Reset Kettle says what that means first. These were the Welcome
 # window's up to 1.12.0-38.
+#
+# And the bootloader, where it's the ROCKNIX ABL (devices whose stock bootloader can't start
+# U-Boot): kettle-abl-update (package rocknix-abl) through pkexec, as org.kettle.abl-update
+# (50-kettle-abl-update.rules lets Decky's plugin backends run it), --check first, then --yes. It
+# only ever replaces a ROCKNIX ABL it recognises with the image's release, never a stock one.
 import os
 import pwd
 import re
@@ -18,6 +23,7 @@ MODES = ("game", "desktop")
 RESET = "/usr/bin/kettle-reset"
 UFS_BACKUP = "/home/.kettle/ufs-backup"  # the Kettle Installer's (kettle-backup-ufs)
 RESETS = ("settings", "everything")
+ABL_UPDATE = "/usr/bin/kettle-abl-update"  # package rocknix-abl
 
 
 def _session_env() -> dict:
@@ -74,8 +80,10 @@ def ssh_status() -> dict:
 
 
 def set_ssh(on: bool):
-    if _sshd("start" if on else "stop") != 0:
-        raise RuntimeError("systemd refused")
+    r = subprocess.run(["systemctl", "start" if on else "stop", "sshd.service"], capture_output=True, text=True,
+                       timeout=30)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip() or "systemd refused")
     decky.logger.info("SSH server %s", "started" if on else "stopped")
 
 
@@ -99,3 +107,42 @@ def reset(what: str):
         raise RuntimeError((r.stderr or r.stdout).strip() or f"kettle-reset failed ({r.returncode})")
     decky.logger.info("reset %s on the next start; restarting", what)
     subprocess.run(["systemctl", "reboot"], timeout=30)
+
+
+def _abl(*args: str, timeout: int) -> dict:
+    """kettle-abl-update --porcelain: {"slots": {"a": version | "test-signed" | "other", ...},
+    "image": version, "result": code}; raises with its message on an error."""
+    r = subprocess.run(["pkexec", ABL_UPDATE, "--porcelain", *args], capture_output=True, text=True,
+                       timeout=timeout)
+    out = {"slots": {}, "image": None, "result": None}
+    for line in r.stdout.splitlines():
+        w = line.split()
+        if len(w) == 3 and w[0] == "slot":
+            out["slots"][w[1]] = w[2]
+        elif len(w) == 2 and w[0] in ("image", "result"):
+            out[w[0]] = w[1]
+    if r.returncode != 0 or out["result"] is None:
+        msg = (r.stderr.strip().splitlines() or ["kettle-abl-update failed"])[-1]
+        raise RuntimeError(msg.removeprefix("kettle-abl-update: "))
+    return out
+
+
+def abl_status() -> dict:
+    """What the bootloader is, and what kettle-abl-update would do. installed: some abl slot holds
+    a ROCKNIX ABL (the System tab shows its section only then)."""
+    if not os.access(ABL_UPDATE, os.X_OK):
+        return {"installed": False}
+    try:
+        s = _abl("--check", timeout=60)
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as e:
+        decky.logger.warning("kettle-abl-update --check: %s", e)
+        return {"installed": False}
+    return {**s, "installed": any(v != "other" for v in s["slots"].values())}
+
+
+def abl_update() -> dict:
+    """Updates a recognised, older ROCKNIX ABL in both slots; the result as abl_status's."""
+    decky.logger.info("updating the ROCKNIX ABL")
+    s = _abl("--yes", timeout=300)
+    decky.logger.info("kettle-abl-update: %s", s["result"])
+    return {**s, "installed": True}

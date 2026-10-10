@@ -269,7 +269,7 @@ export function DevicePage({ f }: { f: Features }) {
       <Feature img={dsGyro} title="Gyro, and System">
         <p>
           The motion sensors for Steam Input's gyro controls, on while a game runs to save power. <b>System</b> holds
-          what Kettle starts up in, the SSH server for logging in from another computer, and resetting the device.
+          what Kettle starts up in, the SSH server for logging in from another computer, resetting the device, and, where the ROCKNIX ABL starts Kettle, its updates.
         </p>
       </Feature>
       <Wide img={diag} caption="Diagnostics, at the bottom of Device Settings: power use, temperatures and everything about the device." />

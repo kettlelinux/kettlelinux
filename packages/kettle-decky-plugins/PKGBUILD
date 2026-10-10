@@ -12,8 +12,9 @@
 #              always or off, with a live meter; the tab shows where kettle-motion is installed);
 #              Screens: the AYN Thor's bottom screen (on/off, its own brightness, 30/60 Hz; the tab
 #              shows where the image has /usr/lib/kettle/bottom-screen); System: the start-up mode
-#              (steamosctl), the SSH server (started and stopped only: 50-kettle-ssh.rules) and
-#              Reset, settings or everything (kettle-reset: 50-kettle-reset.rules).
+#              (steamosctl), the SSH server (started and stopped only: 50-kettle-ssh.rules),
+#              Reset, settings or everything (kettle-reset: 50-kettle-reset.rules), and a
+#              ROCKNIX ABL's updates (rocknix-abl's kettle-abl-update: 50-kettle-abl-update.rules).
 #              Also a Diagnostics window (the live power readout and everything about the device, a
 #              tab each), Steam's power sliders following what the Performance app sets
 #              (steamSync.ts), and Steam's frame rate limit, watched on gamescope's root window
@@ -64,7 +65,7 @@ pkgname=(kettle-decky-welcome kettle-decky-device-settings
          kettle-decky-crash kettle-decky-game-settings
          kettle-decky-stores)
 pkgver=1.12.0
-pkgrel=43
+pkgrel=44
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
@@ -108,7 +109,8 @@ package_kettle-decky-device-settings() {
   pkgdesc='Device Settings Decky plugin (battery, refresh rate, lights, gyro, bottom screen, start-up, SSH, reset, diagnostics)'
   depends=(decky-loader kettle-power python-gobject xorg-xprop coreutils polkit iproute2)
   optdepends=('kettle-leds: the Lights tab'
-              'kettle-motion: the Gyro tab')
+              'kettle-motion: the Gyro tab'
+              'rocknix-abl: the System tab'"'"'s Bootloader section, where the ROCKNIX ABL starts Kettle')
   # Power, Lights, Gyro and Screens are its tabs now
   replaces=(kettle-decky-power kettle-decky-lights kettle-decky-gyro kettle-decky-screens)
   conflicts=(kettle-decky-power kettle-decky-lights kettle-decky-gyro kettle-decky-screens)

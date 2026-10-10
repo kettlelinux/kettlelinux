@@ -12,30 +12,40 @@
 # Qualcomm/the vendor) but not listed, such as 1.1.9, whose files were deleted, is updated only
 # with --force.
 #
-# Usage: kettle-abl-update [--check] [--yes] [--force]
-#   --check  only say what is installed and what would be done
-#   --yes    don't ask before writing
-#   --force  also update a test-signed ABL that isn't a known ROCKNIX release
+# Usage: kettle-abl-update [--check] [--yes] [--force] [--porcelain]
+#   --check      only say what is installed and what would be done
+#   --yes        don't ask before writing
+#   --force      also update a test-signed ABL that isn't a known ROCKNIX release
+#   --porcelain  also print, for programs (Device Settings' System tab): "slot <a|b> <version |
+#                test-signed | other>", "image <version>", and last "result <code>", one of
+#                no-build, no-partitions, stock, unknown, newer, up-to-date, would-update,
+#                low-battery, cancelled, updated (errors: exit 1, the message on stderr)
+#
+# Device Settings runs it through pkexec (org.kettle.abl-update: allowed for Decky's plugin
+# backends, 50-kettle-abl-update.rules), with --check, then --yes to update.
 set -euo pipefail
 
 SHARE=/usr/share/kettle/rocknix-abl
 CATALOG=$SHARE/releases.tsv
 MIN_BATTERY=30                     # % needed without the charger
-CHECK=0 YES=0 FORCE=0
+CHECK=0 YES=0 FORCE=0 PORCELAIN=0
 
 for a in "$@"; do
   case "$a" in
     --check) CHECK=1 ;;
     --yes) YES=1 ;;
     --force) FORCE=1 ;;
-    *) echo "usage: kettle-abl-update [--check] [--yes] [--force]" >&2; exit 2 ;;
+    --porcelain) PORCELAIN=1 ;;
+    *) echo "usage: kettle-abl-update [--check] [--yes] [--force] [--porcelain]" >&2; exit 2 ;;
   esac
 done
 
 say() { echo "kettle-abl-update: $*"; }
 die() { echo "kettle-abl-update: $*" >&2; exit 1; }
-# nothing to do: not an error
-done_() { say "$*"; exit 0; }
+# for --porcelain
+machine() { [ "$PORCELAIN" = 0 ] || echo "$*"; }
+# nothing to do (not an error): done_ <result code> <message>
+done_() { say "$2"; machine "result $1"; exit 0; }
 
 [ "$(id -u)" = 0 ] || die "run it as root (sudo kettle-abl-update)"
 
@@ -50,7 +60,7 @@ flock -n 9 || die "already running"
 # The device's SoC (device.conf ABL_SOC): which of ROCKNIX's builds it takes
 ABL_SOC=""
 . /usr/lib/kettle/device.conf
-[ -n "$ABL_SOC" ] || done_ "no ROCKNIX ABL build for this device"
+[ -n "$ABL_SOC" ] || done_ no-build "no ROCKNIX ABL build for this device"
 payload=$SHARE/abl_signed-$ABL_SOC.elf
 [ -f "$payload" ] || die "missing $payload"
 compat=$(tr '\0' '\n' </sys/firmware/devicetree/base/compatible)
@@ -67,7 +77,7 @@ NEW=$(awk -F'\t' -v s="$ABL_SOC" -v z="$size" -v h="$want" '$2 == s && $3 == z &
 # Both slots: different partitions of the same disk, each big enough
 slot_dev() { readlink -f "/dev/disk/by-partlabel/abl_$1" 2>/dev/null || true; }
 A=$(slot_dev a) B=$(slot_dev b)
-[ -b "$A" ] && [ -b "$B" ] || done_ "no abl_a/abl_b partitions"
+[ -b "$A" ] && [ -b "$B" ] || done_ no-partitions "no abl_a/abl_b partitions"
 [ "$A" != "$B" ] || die "abl_a and abl_b are the same device"
 [ "$(lsblk -no PKNAME "$A")" = "$(lsblk -no PKNAME "$B")" ] || die "abl_a and abl_b are on different disks"
 for d in "$A" "$B"; do
@@ -91,25 +101,27 @@ declare -A HAS
 todo=()
 for s in a b; do
   dev=$(slot_dev $s); HAS[$s]=$(identify "$dev")
+  machine "slot $s ${HAS[$s]}"
   say "abl_$s: $(case ${HAS[$s]} in
     other) echo "not a ROCKNIX ABL (the stock bootloader, or unknown)" ;;
     test-signed) echo "a test-signed ABL that isn't a known ROCKNIX release (1.1.9?)" ;;
     *) echo "ROCKNIX ABL ${HAS[$s]}" ;; esac)"
 done
 say "this image has ROCKNIX ABL $NEW ($ABL_SOC)"
+machine "image $NEW"
 
 for s in a b; do
   case ${HAS[$s]} in
     # (an Android update rewrites one slot's ABL with the stock one: then only one slot is)
-    other) done_ "abl_$s isn't a ROCKNIX ABL: Kettle doesn't replace a stock bootloader (docs/INSTALL.md)" ;;
-    test-signed) [ "$FORCE" = 1 ] || done_ "not updating an ABL it can't identify; sudo kettle-abl-update --force updates it" ;;
+    other) done_ stock "abl_$s isn't a ROCKNIX ABL: Kettle doesn't replace a stock bootloader (docs/INSTALL.md)" ;;
+    test-signed) [ "$FORCE" = 1 ] || done_ unknown "not updating an ABL it can't identify; sudo kettle-abl-update --force updates it" ;;
     "$NEW") ;;
-    *) newer "${HAS[$s]}" "$NEW" && done_ "abl_$s is newer than this image's: left as it is" ;;
+    *) newer "${HAS[$s]}" "$NEW" && done_ newer "abl_$s is newer than this image's: left as it is" ;;
   esac
 done
 for s in a b; do [ "${HAS[$s]}" = "$NEW" ] || todo+=("abl_$s"); done
-[ ${#todo[@]} -gt 0 ] || done_ "up to date"
-[ "$CHECK" = 0 ] || done_ "would update ${todo[*]} to $NEW"
+[ ${#todo[@]} -gt 0 ] || done_ up-to-date "up to date"
+[ "$CHECK" = 0 ] || done_ would-update "would update ${todo[*]} to $NEW"
 
 # Power loss while writing could leave the bootloader unbootable
 ac=0 bat=""
@@ -120,12 +132,12 @@ for p in /sys/class/power_supply/*; do
   esac
 done
 if [ "$ac" = 0 ] && [ -n "$bat" ] && [ "$bat" -lt "$MIN_BATTERY" ]; then
-  done_ "battery at ${bat}%: not updating until the charger is connected (or above ${MIN_BATTERY}%)"
+  done_ low-battery "battery at ${bat}%: not updating until the charger is connected (or above ${MIN_BATTERY}%)"
 fi
 
 if [ "$YES" = 0 ]; then
   read -r -p "Update the ROCKNIX ABL in ${todo[*]} to $NEW? Don't power off while it runs. [y/N] " r || r=""
-  [[ "$r" =~ ^[yY] ]] || done_ "nothing changed"
+  [[ "$r" =~ ^[yY] ]] || done_ cancelled "nothing changed"
 fi
 
 # One slot at a time, each read back from the device; a slot that doesn't verify gets its old
@@ -147,3 +159,4 @@ for p in "${todo[@]}"; do
   die "abl_$s didn't read back as written, and putting its old contents back failed too. Don't turn the device off: keep it running and ask for help (docs/BOOTLOADER.md)"
 done
 say "ROCKNIX ABL $NEW installed in ${todo[*]}"
+machine "result updated"

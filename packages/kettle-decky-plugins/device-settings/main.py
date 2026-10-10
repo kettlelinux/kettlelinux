@@ -2,8 +2,8 @@
 # speed, the fan while charging asleep) and the screen's all-games refresh rate, through
 # kettle-powerd (packages/kettle-power) on the system bus (powerd.py). Lights: the stick and power
 # lights (kettle-ledd, lights.py). Gyro: the motion sensors (kettle-motiond, gyro.py). Screens:
-# the Thor's bottom screen (screens.py). System: the start-up mode, the SSH server and resetting
-# the device (system.py). And the Diagnostics window: everything about the device. This was the Power plugin up to 1.12.0-36;
+# the Thor's bottom screen (screens.py). System: the start-up mode, the SSH server, resetting the
+# device, and updating a ROCKNIX ABL bootloader (system.py). And the Diagnostics window: everything about the device. This was the Power plugin up to 1.12.0-36;
 # its refresh-rates.json stays in that plugin's settings (refresh.py). Steam's own power controls (TDP limit, performance profile, GPU
 # clock) are kettle-powerd's too, set per game in Quick Access > Performance; the per-game fan, CPU
 # and Auto TDP settings, and a game's own refresh rate, are set in Game Settings' Performance tab.
@@ -15,8 +15,10 @@
 # Auto TDP holds a game at Steam's frame rate limit, which Steam sets on gamescope's Xwayland
 # root window (GAMESCOPE_FPS_LIMIT): the plugin watches it with xprop and passes it on.
 import asyncio
+import ctypes
 import os
 import re
+import signal
 import subprocess
 
 import decky
@@ -46,6 +48,12 @@ def _apply_refresh(hz: int):
     refresh.hold(_effective_rate())
 
 
+def _die_with_parent():
+    """In the child, before exec: killed when the backend ends. Decky stops a backend by killing it
+    (on a restart too), which _watch_fps_limit's finally doesn't see, and xprop -spy runs forever."""
+    ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG
+
+
 FPS_LIMIT = re.compile(rb"GAMESCOPE_FPS_LIMIT\(CARDINAL\) = (\d+)")
 FPS_LIMIT_RESEND = 30  # s: sent again this often (with the running game), for a kettle-powerd that restarted
 
@@ -62,7 +70,8 @@ async def _watch_fps_limit():
                 # line buffered: xprop's own output to a pipe waits for a full buffer
                 proc = await asyncio.create_subprocess_exec(
                     "stdbuf", "-oL", "xprop", "-display", env["DISPLAY"], "-root", "-spy", "GAMESCOPE_FPS_LIMIT",
-                    env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+                    env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                    preexec_fn=_die_with_parent)
                 limit = 0
                 while True:
                     try:
@@ -416,6 +425,12 @@ class Plugin:
 
     async def reset(self, what: str):
         await asyncio.to_thread(system.reset, what)
+
+    async def abl_status(self) -> dict:
+        return await asyncio.to_thread(system.abl_status)
+
+    async def abl_update(self) -> dict:
+        return await asyncio.to_thread(system.abl_update)
 
     async def tabs(self) -> dict:
         """Which tabs this device has: lights and gyro only where their service answers, screens
