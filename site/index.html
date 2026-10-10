@@ -95,12 +95,12 @@
     </section>
 
     <section class="showcase flip" id="device-settings" data-tabs>
-      <div class="qam"><img class="panel-shot active" data-tab="power" src="tour/ds-power.jpg" alt="Device Settings, Power tab" width="655" height="902"><img class="panel-shot" aria-hidden="true" data-tab="lights" src="tour/ds-lights.jpg" alt="Device Settings, Lights tab" width="655" height="902" loading="lazy"><img class="panel-shot" aria-hidden="true" data-tab="gyro" src="tour/ds-gyro.jpg" alt="Device Settings, Gyro tab" width="655" height="902" loading="lazy"></div>
+      <div class="qam"><img class="panel-shot active" data-tab="power" src="tour/ds-power.jpg" alt="Device Settings, Power tab" width="655" height="902"><img class="panel-shot" aria-hidden="true" data-tab="lights" src="tour/ds-lights.jpg" alt="Device Settings, Lights tab" width="655" height="902" loading="lazy"><img class="panel-shot" aria-hidden="true" data-tab="gyro" src="tour/ds-gyro.jpg" alt="Device Settings, Gyro tab" width="655" height="902" loading="lazy"><img class="panel-shot" aria-hidden="true" data-tab="system" src="tour/ds-system.jpg" alt="Device Settings, System tab" width="655" height="902" loading="lazy"></div>
       <div class="showcase-text">
         <p class="eyebrow">Device Settings</p>
         <h2>The device, looked after</h2>
         <p class="lead">The device's own settings, a tab each. A tab for something your device doesn't have, motion sensors or a second screen, isn't shown.</p>
-        <div class="tab-buttons" role="tablist" aria-label="Device Settings tabs"><button type="button" role="tab" id="device-settings-tab-power" data-tab="power" aria-controls="device-settings-panel-power" aria-selected="true" tabindex="0">Power</button><button type="button" role="tab" id="device-settings-tab-lights" data-tab="lights" aria-controls="device-settings-panel-lights" aria-selected="false" tabindex="-1">Lights</button><button type="button" role="tab" id="device-settings-tab-gyro" data-tab="gyro" aria-controls="device-settings-panel-gyro" aria-selected="false" tabindex="-1">Gyro</button></div>
+        <div class="tab-buttons" role="tablist" aria-label="Device Settings tabs"><button type="button" role="tab" id="device-settings-tab-power" data-tab="power" aria-controls="device-settings-panel-power" aria-selected="true" tabindex="0">Power</button><button type="button" role="tab" id="device-settings-tab-lights" data-tab="lights" aria-controls="device-settings-panel-lights" aria-selected="false" tabindex="-1">Lights</button><button type="button" role="tab" id="device-settings-tab-gyro" data-tab="gyro" aria-controls="device-settings-panel-gyro" aria-selected="false" tabindex="-1">Gyro</button><button type="button" role="tab" id="device-settings-tab-system" data-tab="system" aria-controls="device-settings-panel-system" aria-selected="false" tabindex="-1">System</button></div>
         <div class="tab-panel active" data-tab="power" role="tabpanel" id="device-settings-panel-power" aria-labelledby="device-settings-tab-power">
           <h3>Power</h3>
           <p>A charge limit that keeps the battery from sitting at 100%, the charge speed, and the screen's refresh rate, from 50 to 165 Hz on the Portal.</p>
@@ -111,7 +111,11 @@
         </div>
         <div class="tab-panel" data-tab="gyro" role="tabpanel" id="device-settings-panel-gyro" aria-labelledby="device-settings-tab-gyro" hidden>
           <h3>Gyro</h3>
-          <p>Motion controls for Steam Input, on while a game runs. Two more tabs: <strong>Screens</strong>, for the Thor's bottom screen, and <strong>System</strong>, with the start-up mode, the SSH server, reset and bootloader updates.</p>
+          <p>Motion controls for Steam Input, on while a game runs, idle otherwise to save power.</p>
+        </div>
+        <div class="tab-panel" data-tab="system" role="tabpanel" id="device-settings-panel-system" aria-labelledby="device-settings-tab-system" hidden>
+          <h3>System</h3>
+          <p>Whether Kettle starts in Game Mode or the desktop, the SSH server, a reset of settings or everything, and bootloader updates. On the Thor, a <strong>Screens</strong> tab sets up the bottom screen.</p>
         </div>
       </div>
     </section>
