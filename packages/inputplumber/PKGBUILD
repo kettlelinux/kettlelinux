@@ -12,7 +12,7 @@
 # the snapshot's 1.78.
 pkgname=inputplumber
 pkgver=0.81.0
-pkgrel=8
+pkgrel=9
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Input router and remapper daemon (Steam Deck controller emulation for AYN handhelds)'
@@ -38,7 +38,7 @@ sha256sums=('804ff31b6b67efe266f21cc752282b1defe14b34916261d0600da1b6094a21a7'
             'c17970bf78ddab689d8b93acebd78fdf6fa03befde4377b04bd5f9b3e3b78e89'
             '2cb3955e5d30d85589ddce8cd260851e60367b18e8b44c0b09e9250cf5518ee8'
             '769f8dfdb945985a3417ab2cbb988d43ef76bec81b6989251821a0200fbac69c'
-            '7f0b82d2b7bd2c15f8d8146e8a3c86414f242077cd728638926da60ba97cc020')
+            '3501fe835c2168de24109b15ec307c2c05c9e30534229dd82ff3850786b415ea')
 
 prepare() {
   patch -d "InputPlumber-$pkgver" -Np1 -i ../0001-source-add-an-evdev-motion-sensor-source.patch

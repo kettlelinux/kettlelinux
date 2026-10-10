@@ -1,4 +1,4 @@
-From 3197cd239bfd1e1da70b65cfca34b8d1d2678af6 Mon Sep 17 00:00:00 2001
+From 71d924920fcbf1008a9d652783fab22c84247f06 Mon Sep 17 00:00:00 2001
 From: JPyke3 <github@pyk.ee>
 Date: Mon, 28 Sep 2026 18:27:43 -0500
 Subject: [PATCH 14/16] DRM: run a compositor from the leased output
@@ -9,7 +9,9 @@ gamescope --backend drm --drm-lease-client <socket> takes the lease fd a
 instead of opening a session: the leased connector is the only one it
 sees. It asks for the --ignore-touch-device touchscreen's input with 'I'
 and the lessor forwards that input over the same socket (DrmLeaseEvent:
-down/motion/up in the touchscreen's normalised coordinates). One
+down/motion/up in the touchscreen's normalised coordinates; motions are
+dropped while the companion's socket is full, a down or up that can't
+be sent disconnects it). One
 companion holds the lease at a time; another is told 'B' (busy). The
 lessee exits when the lessor goes away.
 
@@ -18,17 +20,17 @@ Ported from Armada's 0013 without the drm-lease-v1 protocol it sits on
 
 Based-on: https://github.com/armada-os/armada/blob/main/packages/gamescope/patches/0013-feat-drm-run-a-compositor-from-the-leased-output.patch
 ---
- src/Backends/DRMBackend.cpp | 176 +++++++++++++++++++++---------------
+ src/Backends/DRMBackend.cpp | 187 +++++++++++++++++++++---------------
  src/main.cpp                |  18 ++++
  src/main.hpp                |  20 ++++
- src/wlserver.cpp            | 157 +++++++++++++++++++++++++++++++-
- 4 files changed, 296 insertions(+), 75 deletions(-)
+ src/wlserver.cpp            | 157 +++++++++++++++++++++++++++++-
+ 4 files changed, 304 insertions(+), 78 deletions(-)
 
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index 1ed39d3d..898a353e 100644
+index 68166d0d..9a8fe7cd 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
-@@ -1577,104 +1577,136 @@ gamescope_liftoff_log_handler(enum liftoff_log_priority liftoff_priority, const
+@@ -1587,117 +1587,154 @@ gamescope_liftoff_log_handler(enum liftoff_log_priority liftoff_priority, const
  	liftoff_log_scope.vlogf(priority, fmt, args);
  }
  
@@ -111,10 +113,17 @@ index 1ed39d3d..898a353e 100644
 +		.x = static_cast<float>( x ),
 +		.y = static_cast<float>( y ),
 +	};
-+	if ( send( g_nLeaseClientFd, &event, sizeof( event ), MSG_DONTWAIT | MSG_NOSIGNAL ) != sizeof( event ) )
-+		shutdown( g_nLeaseClientFd, SHUT_RDWR );
++	ssize_t nSent = send( g_nLeaseClientFd, &event, sizeof( event ), MSG_DONTWAIT | MSG_NOSIGNAL );
++	if ( nSent == sizeof( event ) )
++		return;
++	// A busy companion can miss a motion; a lost down or up (or half an event) can't be recovered from.
++	if ( nSent < 0 && ( errno == EAGAIN || errno == EWOULDBLOCK ) && type == DrmLeaseEventType::Motion )
++		return;
++	shutdown( g_nLeaseClientFd, SHUT_RDWR );
 +}
-+
+ 
+-		// finish_drm() wakes us through this to exit
+-		pfds.push_back( { .fd = drm->nLeaseWakeFd, .events = POLLIN } );
 +// One companion at a time holds the lease: it keeps its end of the socket open
 +// for as long as it runs (closing it tells us it's gone), and may send 'I' to
 +// have the --ignore-touch-device touchscreen's input forwarded to it.
@@ -126,20 +135,22 @@ index 1ed39d3d..898a353e 100644
 -		int ret = poll( pfds.data(), pfds.size(), 1000 );
 +	while ( drm->bLeaseThreadRunning.load() )
 +	{
-+		struct pollfd pfds[2] = {
++		// finish_drm() wakes us through nLeaseWakeFd to exit
++		struct pollfd pfds[3] = {
 +			{ .fd = drm->nLeaseSocketFd, .events = POLLIN },
++			{ .fd = drm->nLeaseWakeFd, .events = POLLIN },
 +			{ .fd = nClientFd, .events = POLLIN },
 +		};
-+		int ret = poll( pfds, nClientFd >= 0 ? 2 : 1, 1000 );
- 		if ( ret <= 0 )
++		int ret = poll( pfds, nClientFd >= 0 ? 3 : 2, 1000 );
+ 		if ( ret <= 0 || !drm->bLeaseThreadRunning.load() )
  			continue;
  
 -		// Reap any disconnected companions first.
 -		for ( size_t i = clientFds.size(); i-- > 0; )
-+		if ( nClientFd >= 0 && pfds[1].revents & ( POLLHUP | POLLERR | POLLNVAL ) )
++		if ( nClientFd >= 0 && pfds[2].revents & ( POLLHUP | POLLERR | POLLNVAL ) )
 +			lease_disconnect_client( nClientFd );
 +
-+		if ( nClientFd >= 0 && pfds[1].revents & POLLIN )
++		if ( nClientFd >= 0 && pfds[2].revents & POLLIN )
  		{
 -			short revents = pfds[ i + 1 ].revents;
 -			if ( revents & ( POLLHUP | POLLERR | POLLNVAL ) )
@@ -169,14 +180,19 @@ index 1ed39d3d..898a353e 100644
 -		if ( nClientFd < 0 )
 +		int nAcceptedFd = accept4( drm->nLeaseSocketFd, nullptr, nullptr, SOCK_CLOEXEC );
 +		if ( nAcceptedFd < 0 )
-+			continue;
-+		if ( nClientFd >= 0 )
-+		{
-+			send( nAcceptedFd, "B", 1, MSG_NOSIGNAL );
-+			close( nAcceptedFd );
-+			drm_log.infof( "lease-connector: rejected companion while lease is busy" );
  			continue;
-+		}
+ 
+ 		// Only our own user's processes get the lease.
+ 		struct ucred cred = {};
+ 		socklen_t nCredLen = sizeof( cred );
+-		if ( getsockopt( nClientFd, SOL_SOCKET, SO_PEERCRED, &cred, &nCredLen ) < 0 || cred.uid != getuid() )
++		if ( getsockopt( nAcceptedFd, SOL_SOCKET, SO_PEERCRED, &cred, &nCredLen ) < 0 || cred.uid != getuid() )
+ 		{
+ 			drm_log.errorf( "lease-connector: rejected companion from uid %d", (int)cred.uid );
+-			close( nClientFd );
++			close( nAcceptedFd );
+ 			continue;
+ 		}
  
 -		// Send the DRM lease fd via SCM_RIGHTS
 -		union {
@@ -201,7 +217,14 @@ index 1ed39d3d..898a353e 100644
 -		cmsg->cmsg_type = SCM_RIGHTS;
 -		cmsg->cmsg_len = CMSG_LEN( sizeof(int) );
 -		memcpy( CMSG_DATA( cmsg ), &drm->nLeaseFd, sizeof(int) );
--
++		if ( nClientFd >= 0 )
++		{
++			send( nAcceptedFd, "B", 1, MSG_NOSIGNAL );
++			close( nAcceptedFd );
++			drm_log.infof( "lease-connector: rejected companion while lease is busy" );
++			continue;
++		}
+ 
 -		ssize_t nSent = sendmsg( nClientFd, &msg, 0 );
 -		if ( nSent < 0 )
 +		if ( !lease_send_fd( nAcceptedFd, drm->nLeaseFd ) )
@@ -566,3 +589,6 @@ index 5aca2bc0..4921346a 100644
  	{
  #if HAVE_DRM
  		wlserver.wlr.libinput_backend = wlr_libinput_backend_create( wlserver.wlr.session );
+-- 
+2.56.0
+

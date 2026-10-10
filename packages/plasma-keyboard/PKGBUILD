@@ -3,12 +3,14 @@
 # v0.1.0 is the last release that builds against deckard's Qt 6.8 / KF 6.14: master has needed
 # Qt 6.10 since 0987b3d (2026-01-13) and Qt 6.11 since bd1819c (2026-09-10). Later upstream fixes
 # are backported instead (0001-0007, in upstream order, each naming its upstream commit), ported
-# by hand because master has since reformatted the code and moved it into a QML module.
+# by hand because master has since reformatted the code and moved it into a QML module. 0008 is
+# the input method query part of 4cd5f75, which predates 0006 (cursor and anchor positions in
+# characters, the selection and the text after the cursor sliced right).
 # maliit-keyboard is no alternative: deckard's Qt5 is half-updated (qt5-base 5.15.16,
 # qt5-declarative/-wayland 5.15.13) and Qt aborts on the mix.
 pkgname=plasma-keyboard
 pkgver=0.1.0
-pkgrel=2
+pkgrel=3
 _commit=89b2a6eaaece6762a228c48a14390d90e55db44f
 pkgdesc='Virtual keyboard for Plasma, based on Qt Virtual Keyboard'
 arch=(aarch64)
@@ -24,7 +26,8 @@ source=(git+https://invent.kde.org/plasma/plasma-keyboard.git#commit=$_commit
         0004-inputlisteneritem-Fix-wrong-hint-for-text-completion.patch
         0005-inputlisteneritem-Don-t-let-Qt-VKBD-communicate-to-K.patch
         0006-inputlisteneritem-Add-bytes-bound-check-and-deactiva.patch
-        0007-inputlisteneritem-Always-disable-predictive-text.patch)
+        0007-inputlisteneritem-Always-disable-predictive-text.patch
+        0008-vkbd-Fix-various-lengths-not-being-bytes-UTF8.patch)
 sha256sums=('SKIP'
             '1cc462f4330f77e52b3b28de627fa0ba92504c2613490ad2647add03c282b48b'
             '21066eee6a12f636846fc1759f4e51f0843a8fb3fa5938628ecf65f4dd636144'
@@ -32,7 +35,8 @@ sha256sums=('SKIP'
             '7f3f8193af92be860e108ebbea6bb528a2140ec62147b38c63df64afd171105f'
             'cfb7e8c08b99867fbfb0f30aa0646f9005ccf23117c38d3cbe4a0f2db844db15'
             'ec61adf1d700aa1ecb4a22eded1b5b625273a10593769ce4025ddf5e469276c1'
-            '48c4e03712d1490c8790b345ff2724e819d67536558130b30e1edfeadc84d211')
+            '48c4e03712d1490c8790b345ff2724e819d67536558130b30e1edfeadc84d211'
+            '6ed68603f7dd0a14c4c8e7d51dffa74e257cd6a71ee43c297f5d6445f463ac3d')
 
 prepare() {
   local p
