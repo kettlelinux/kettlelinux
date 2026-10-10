@@ -1,5 +1,5 @@
 # OptiScaler built as an ARM64EC PE DLL (Sloptiscaler's arm64ec-port fork), for the Kettle
-# Upscaling plugin, which copies it into a game's folder when the user turns it on.
+# Game Settings plugin's Upscaling tab, which copies it into a game's folder when the user turns it on.
 #
 # Upstream OptiScaler is x86-64 and its Detours hooks fault on Proton ARM64's ARM64EC
 # dxgi/DXVK/winevulkan. Built as ARM64EC it runs natively inside the FEX-emulated game and

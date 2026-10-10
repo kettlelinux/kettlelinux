@@ -12,7 +12,7 @@
 
 namespace
 {
-// as the Screens plugin and bottom-brightness have them
+// as Device Settings' Screens tab and bottom-brightness have them
 constexpr int defaultPercent = 70;
 constexpr int minPercent = 2;
 }

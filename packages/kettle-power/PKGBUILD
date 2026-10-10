@@ -1,7 +1,7 @@
 # kettle-powerd: CPU/GPU caps, the whole-device power budget (Steam's TDP slider), fan curves
 # and the battery charge limit on Kettle's handhelds (the Odin 2 Portal, the Thor, the Retroid Pocket 5).
 # Serves Steam's own power controls through steamos-manager's remote interfaces (remotes.d) and
-# per-game fan/CPU settings to the Power plugin (kettle-decky-power). Sources live next to this
+# per-game fan/CPU settings to Game Settings and the battery's to Device Settings. Sources live next to this
 # PKGBUILD.
 # Custom fan curves need the kernel's user_space thermal governor (kernel/config/steamos.config).
 pkgname=kettle-power

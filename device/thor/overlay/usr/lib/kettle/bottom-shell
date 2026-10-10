@@ -10,7 +10,7 @@
 #    brightness or suspend handling); the system bus (NetworkManager, BlueZ) is shared.
 set -u
 [ -n "${DISPLAY:-}" ] || { echo "bottom-shell: no X display from gamescope" >&2; exit 1; }
-# where Quick Access > Screens finds this screen's gamescope (gamescopectl), to set its refresh rate
+# where Device Settings > Screens finds this screen's gamescope (gamescopectl), to set its refresh rate
 echo "${GAMESCOPE_WAYLAND_DISPLAY:-}" >"$XDG_RUNTIME_DIR/kettle-bottom-gamescope"
 
 export XDG_CONFIG_HOME="$HOME/.config/kettle/bottom-shell"

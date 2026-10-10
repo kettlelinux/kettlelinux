@@ -9,7 +9,7 @@
 // The game in front in Game Mode: its frame rate and frame times, from what our mangoapp build
 // writes to $XDG_RUNTIME_DIR/kettle-fps about once a second (packages/mangohud 0005), and which
 // game it is, from its process (SteamAppId, and the Frame Generation layer loaded or not), as
-// the Frame Generation plugin tells.
+// Game Settings' Frame Gen tab tells.
 class GameStats : public QObject
 {
     Q_OBJECT

@@ -1,40 +1,50 @@
 # Kettle Linux's own Decky plugins, preinstalled (decky-loader-start links them into
 # ~/homebrew/plugins):
-#   framegen   per-game frame generation (our kettle-framegen layer)
-#   upscaling  per-game gamescope FSR 1 (render resolution + Sharp filter) and SGSR 2 / Arm ASR / FSR 2.2
-#              through OptiScaler (ARM64EC build, optiscaler-arm64ec)
-#   power      per-game fan curve / fixed speed and CPU core parking and caps, a live power and
-#              temperature readout, the charge limit and speed (all through kettle-powerd); and
-#              Steam's power sliders following what the Performance app sets (steamSync.ts); and
-#              the screen's refresh rate on a device that lists its rates (/usr/lib/kettle/
-#              refresh-rates): Auto (Steam's frame limit picks it) or one held in games and the
-#              Steam UI alike (gamescope 0023), and per game, held while the game runs;
-#              and per-game Auto TDP (kettle-powerd), held at Steam's frame rate limit, which it
-#              watches on gamescope's root window with xprop
+#   device-settings  the device's own settings, a tab each: Power: the charge limit and speed
+#              and the fan while charging asleep (kettle-powerd), and the screen's all-games
+#              refresh rate on a device that lists its rates (/usr/lib/kettle/refresh-rates): Auto
+#              (Steam's frame limit picks it) or one held in games and the Steam UI alike
+#              (gamescope 0023), and a game's own (set in Game Settings) held while it runs;
+#              Lights: the RGB rings around the sticks and the power light (off, a color, the
+#              battery level, breathe or rainbow, through kettle-ledd, packages/kettle-leds, which
+#              sets them as root and keeps them dark while asleep); Gyro: the motion sensors for
+#              Steam Input's gyro (kettle-motiond, packages/kettle-motion: on while a game runs,
+#              always or off, with a live meter; the tab shows where kettle-motion is installed);
+#              Screens: the AYN Thor's bottom screen (on/off, its own brightness, 30/60 Hz; the tab
+#              shows where the image has /usr/lib/kettle/bottom-screen); System: the start-up mode
+#              (steamosctl), the SSH server (started and stopped only: 50-kettle-ssh.rules) and
+#              Reset, settings or everything (kettle-reset: 50-kettle-reset.rules).
+#              Also a Diagnostics window (the live power readout and everything about the device, a
+#              tab each), Steam's power sliders following what the Performance app sets
+#              (steamSync.ts), and Steam's frame rate limit, watched on gamescope's root window
+#              with xprop, passed to kettle-powerd for Auto TDP. It was the Power plugin up to
+#              1.12.0-36; Lights, Gyro and Screens were plugins of their own
 #   welcome    opens once on first boot: Game Mode's counterpart of the desktop's Kettle Welcome.
-#              A tour, the start-up mode, Gaming Extras (the controller-friendly Flathub apps
-#              through kettle-welcome's welcome-flatpak, added to Steam as shortcuts; GE-Proton /
-#              Proton-CachyOS through its welcome-proton; Battle.net, through its welcome-battlenet;
-#              optional components, components.json,
-#              downloaded from their upstream source), Android games from F-Droid or an APK file
-#              (kettle-lepton's kettle-android-games), and the SSH server (started and stopped
-#              only: 50-kettle-ssh.rules); Reset, settings or everything (kettle-reset:
-#              50-kettle-reset.rules); also applies game fixes (welcome/src/fixes.ts): launch
-#              options a game needs to run at all; and adds the desktop in Game Mode to the
-#              library once (welcome/src/desktop.ts: its artwork, kettle-desktop-art, and the
-#              desktop's controls as its controller layout)
+#              A tour of Kettle in Game Mode, a page per part with screenshots (welcome/assets,
+#              taken on an Odin 2 Portal) and buttons that open it; also applies game
+#              fixes (welcome/src/fixes.ts): launch options a game needs to run at all; and adds
+#              the desktop in Game Mode to the library once (welcome/src/desktop.ts: its artwork,
+#              kettle-desktop-art, and the desktop's controls as its controller layout). The
+#              start-up mode, the SSH server and Reset were its own up to 1.12.0-38 (Device
+#              Settings' System tab now); Gaming Extras' Flathub apps and Battle.net up to
+#              1.12.0-39 (Game Stores now), its Protons and optional components up to 1.12.0-40
+#              (Game Settings' Extras tab now)
 #   crash      the crash reports kettle-crashd keeps (packages/kettle-crash): a list, each report's
 #              page, and a toast when a game, Game Mode or the GPU crashes; nothing is sent anywhere
-#   game-settings  per-game compatibility profiles: FEX, DXVK, vkd3d, Turnip and Proton options
-#              (shared/game-options.json) in the launch options, the Proton version, presets,
-#              saved profiles, the welcome game fixes, the engine the game is built on
-#              (shared/gameengine.py); and the game database (server/game-db): known good
-#              settings players share once they've played with them
-#   screens    the AYN Thor's bottom screen from Game Mode: on/off, its own brightness and 30/60 Hz
-#              (installed on the Thor only: device/thor/packages.txt)
-#   lights     the RGB rings around the sticks: off, a color (both sticks or each its own), the
-#              battery level, breathe or rainbow, and their brightness (through kettle-ledd,
-#              packages/kettle-leds, which sets them as root and keeps them dark while asleep)
+#   game-settings  everything set per game, a tab each under the game picker:
+#              Compatibility: FEX, DXVK, vkd3d, Turnip and Proton options (shared/game-options.json)
+#              in the launch options, the Proton version, presets, saved profiles, the welcome
+#              game fixes, the engine the game is built on (shared/gameengine.py), and the game
+#              database (server/game-db): known good settings players share once they've played
+#              with them; Performance: fan curve / fixed speed, CPU core parking and caps and Auto
+#              TDP (kettle-powerd; "All games" in the picker sets the defaults), and the game's
+#              own refresh rate; Upscaling: gamescope FSR 1 (render resolution + Sharp filter) and
+#              SGSR 2 / Arm ASR / FSR 2.2 through OptiScaler (ARM64EC build, optiscaler-arm64ec);
+#              Frame Gen: frame generation (our kettle-framegen layer); and, for every game, Extras:
+#              GE-Proton / Proton-CachyOS through kettle-welcome's welcome-proton, and optional
+#              components (components.json: AMD FSR 3.1) downloaded from their upstream source.
+#              Frame Gen and Upscaling were plugins of their own up to 1.12.0-35; their settings
+#              stay where they were
 #   stores     Game Stores: Epic Games, GOG and Amazon Games in Game Mode, through Heroic's store
 #              tools (legendary, gogdl, nile; packages/heroic-games-launcher) and its config, so
 #              desktop Heroic shares the sign-ins and installs: signing in in Steam's own browser,
@@ -43,17 +53,18 @@
 #              which adds the store's launch arguments (Epic's login) to the command; and Flathub:
 #              the apps it builds for ARM64 (its search API), installed per user through the same
 #              job queue (flatpak --user, as the welcome plugin's Gaming Extras) and added to Steam
-#              as native `flatpak run` shortcuts
-#   gyro       the motion sensors for Steam Input's gyro (kettle-motiond, packages/kettle-motion): on
-#              while a game runs (it reports games starting and stopping), always or off, with a
-#              live meter (installed where kettle-motion is: device/{odin2portal,thor}/packages.txt)
+#              as native `flatpak run` shortcuts (RetroArch pointed at the aarch64 cores right after
+#              its install); Battle.net, added to Steam with Proton-CachyOS through kettle-welcome's
+#              welcome-battlenet; and Android games from F-Droid or an APK file
+#              (kettle-lepton's kettle-android-games, where it's installed; it was the Welcome
+#              window's up to 1.12.0-37)
 # Sources live next to this PKGBUILD; shared/ holds code both frontends use.
 pkgbase=kettle-decky-plugins
-pkgname=(kettle-decky-framegen kettle-decky-upscaling kettle-decky-welcome kettle-decky-power
-         kettle-decky-screens kettle-decky-crash kettle-decky-game-settings kettle-decky-lights
-         kettle-decky-stores kettle-decky-gyro)
+pkgname=(kettle-decky-welcome kettle-decky-device-settings
+         kettle-decky-crash kettle-decky-game-settings
+         kettle-decky-stores)
 pkgver=1.12.0
-pkgrel=34
+pkgrel=43
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
@@ -61,8 +72,8 @@ makedepends=(nodejs npm)
 
 prepare() {
   rm -rf src-tree; mkdir src-tree
-  cp -r "$startdir"/{package.json,pnpm-lock.yaml,shared,framegen,upscaling,welcome,power,screens,crash,game-settings,lights,stores,gyro} src-tree/
-  rm -rf src-tree/{framegen,upscaling,welcome,power,screens,crash,game-settings,lights,stores,gyro}/dist
+  cp -r "$startdir"/{package.json,pnpm-lock.yaml,shared,welcome,device-settings,crash,game-settings,stores} src-tree/
+  rm -rf src-tree/{welcome,device-settings,crash,game-settings,stores}/dist
 }
 
 build() {
@@ -76,6 +87,9 @@ _install_plugin() {
   local d="$pkgdir/usr/share/decky/plugins/$1"
   install -Dm644 "src-tree/$2"/{plugin.json,package.json,main.py} -t "$d"
   install -Dm644 "src-tree/$2/dist/index.js" -t "$d/dist"
+  if [ -d "src-tree/$2/dist/assets" ]; then
+    install -Dm644 "src-tree/$2"/dist/assets/* -t "$d/dist/assets"   # imported images, served by Decky
+  fi
   if [ -d "src-tree/$2/py_modules" ]; then
     install -Dm644 "src-tree/$2"/py_modules/*.py -t "$d/py_modules"   # symlinks to shared/
   fi
@@ -83,37 +97,22 @@ _install_plugin() {
   install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
 }
 
-package_kettle-decky-framegen() {
-  pkgdesc='Frame Generation Decky plugin (kettle-framegen per game)'
-  depends=(decky-loader kettle-framegen)
-  _install_plugin kettle-framegen framegen
-}
-
-package_kettle-decky-upscaling() {
-  pkgdesc='Upscaling Decky plugin (per-game gamescope FSR 1; SGSR 2, Arm ASR, FSR 2.2 via OptiScaler)'
-  depends=(decky-loader optiscaler-arm64ec)
-  _install_plugin kettle-upscaling upscaling
-}
-
 package_kettle-decky-welcome() {
-  pkgdesc='Welcome Decky plugin (first-boot tour, Gaming Extras, Android games, remote access)'
-  depends=(decky-loader kettle-welcome)  # welcome-flatpak, welcome-proton, welcome-battlenet
-  optdepends=('kettle-lepton: Android games'
-              'kettle-desktop-art: the Desktop entry'"'"'s library artwork')
-  _install_plugin kettle-welcome welcome
-  install -Dm644 src-tree/welcome/components.json -t "$pkgdir/usr/share/decky/plugins/kettle-welcome"
-}
-
-package_kettle-decky-power() {
-  pkgdesc='Power Decky plugin (per-game fan and CPU settings and Auto TDP, power readout, charge limit and speed, refresh rate)'
-  depends=(decky-loader kettle-power python-gobject xorg-xprop coreutils)
-  _install_plugin kettle-power power
-}
-
-package_kettle-decky-screens() {
-  pkgdesc='Screens Decky plugin (the AYN Thor bottom screen: on/off, brightness and refresh rate)'
+  pkgdesc='Welcome Decky plugin (first-boot tour)'
   depends=(decky-loader)
-  _install_plugin kettle-screens screens
+  optdepends=('kettle-desktop-art: the Desktop entry'"'"'s library artwork')
+  _install_plugin kettle-welcome welcome
+}
+
+package_kettle-decky-device-settings() {
+  pkgdesc='Device Settings Decky plugin (battery, refresh rate, lights, gyro, bottom screen, start-up, SSH, reset, diagnostics)'
+  depends=(decky-loader kettle-power python-gobject xorg-xprop coreutils polkit iproute2)
+  optdepends=('kettle-leds: the Lights tab'
+              'kettle-motion: the Gyro tab')
+  # Power, Lights, Gyro and Screens are its tabs now
+  replaces=(kettle-decky-power kettle-decky-lights kettle-decky-gyro kettle-decky-screens)
+  conflicts=(kettle-decky-power kettle-decky-lights kettle-decky-gyro kettle-decky-screens)
+  _install_plugin kettle-device-settings device-settings
 }
 
 package_kettle-decky-crash() {
@@ -123,27 +122,20 @@ package_kettle-decky-crash() {
 }
 
 package_kettle-decky-game-settings() {
-  pkgdesc='Game Settings Decky plugin (per-game FEX, graphics and Proton settings, game database)'
-  depends=(decky-loader)
+  pkgdesc='Game Settings Decky plugin (per game: compatibility, performance, upscaling and frame generation; Protons and AMD FSR 3.1)'
+  depends=(decky-loader kettle-power python-gobject kettle-framegen optiscaler-arm64ec kettle-welcome)  # welcome-proton
+  # Frame Generation and Upscaling are tabs of Game Settings now
+  replaces=(kettle-decky-framegen kettle-decky-upscaling)
+  conflicts=(kettle-decky-framegen kettle-decky-upscaling)
   _install_plugin kettle-game-settings game-settings
-  install -Dm644 src-tree/shared/game-options.json -t "$pkgdir/usr/share/decky/plugins/kettle-game-settings"
-}
-
-package_kettle-decky-lights() {
-  pkgdesc='Lights Decky plugin (the RGB stick lights: color, battery level, effects, brightness)'
-  depends=(decky-loader kettle-leds python-gobject)
-  _install_plugin kettle-lights lights
+  install -Dm644 src-tree/shared/game-options.json src-tree/game-settings/components.json \
+    -t "$pkgdir/usr/share/decky/plugins/kettle-game-settings"
 }
 
 package_kettle-decky-stores() {
-  pkgdesc='Game Stores Decky plugin (Epic Games, GOG, Amazon Games and Flathub in Game Mode)'
-  depends=(decky-loader heroic-games-launcher python flatpak)  # legendary, gogdl, nile
+  pkgdesc='Game Stores Decky plugin (Epic Games, GOG, Amazon Games, Battle.net, Flathub and Android games in Game Mode)'
+  depends=(decky-loader heroic-games-launcher python flatpak kettle-welcome)  # legendary, gogdl, nile; welcome-battlenet
+  optdepends=('kettle-lepton: Android games')
   _install_plugin kettle-stores stores
   install -Dm755 src-tree/stores/kettle-store-run -t "$pkgdir/usr/bin"
-}
-
-package_kettle-decky-gyro() {
-  pkgdesc='Gyro Decky plugin (the motion sensors for Steam Input: while a game runs, always or off)'
-  depends=(decky-loader kettle-motion python-gobject)
-  _install_plugin kettle-gyro gyro
 }

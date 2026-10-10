@@ -193,8 +193,8 @@ def game_info(app):
     features = []
     if os.path.exists(f"{HOME}/.config/kettle-framegen/{app}.conf"):  # only while it's on
         features.append("framegen")
-    # the Upscaling plugin's record of the folder it put OptiScaler in, with its marker there
-    # while it's on
+    # Game Settings' Upscaling tab's record of the folder it put OptiScaler in (in the settings of
+    # the Upscaling plugin it was before), with its marker there while it's on
     try:
         with open(f"{HOME}/homebrew/settings/kettle-upscaling/optiscaler/{app}.json") as f:
             exe_dir = json.load(f).get("dir") or ""

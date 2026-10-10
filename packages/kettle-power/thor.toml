@@ -46,7 +46,7 @@ charge_limit_min = 55
 # The firmware's own charge current, uA (BATT_CHG_CTRL_LIM at boot on a Thor; it takes up to
 # 9 A): what charging returns to when kettle-powerd stops
 charge_current = 4680000
-# The Power plugin's charge speeds, the first the default. These cap what goes into the
+# Device Settings' charge speeds, the first the default. These cap what goes into the
 # battery; a weaker charger gives it less than the cap.
 charge_speed = [
   { name = "Fast", ua = 4680000 },

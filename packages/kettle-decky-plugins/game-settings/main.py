@@ -16,6 +16,13 @@
 # player hasn't changed gets the best verified entry for this device type, checked when it's
 # first seen and then daily. The player's own changes always win, and an entry they reset is
 # never put back.
+#
+# Beside the compatibility profiles, the panel's other tabs set a game's other settings, each in
+# its own module: Performance (fan, CPU cores and caps, Auto TDP: kettle-powerd's per-game
+# settings, powerd.py; and the game's own refresh rate, refresh.py), Upscaling (OptiScaler,
+# upscaling.py) and Frame Gen (the kettle-framegen layer, framegen.py). "All games" in the game
+# picker edits kettle-powerd's all-games settings. The last tab, Extras, isn't per game: the
+# community Protons and the optional components (AMD FSR 3.1), extras.py.
 import asyncio
 import hashlib
 import json
@@ -28,8 +35,14 @@ import urllib.parse
 import urllib.request
 
 import decky
+import extras
+import framegen
 import gameengine
+import refresh
 import steamlib
+import upscaling
+from gi.repository import GLib
+from powerd import get_json, key, power
 
 CATALOG = os.path.join(decky.DECKY_PLUGIN_DIR, "game-options.json")
 GAMES = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "games.json")
@@ -562,9 +575,109 @@ class Plugin:
         _cache.pop(appid, None)
         return _view(appid, g)
 
+    # ---------- Performance: kettle-powerd's per-game settings, and the refresh rate ----------
+
+    async def perf_info(self) -> dict:
+        return await get_json("GetInfo")
+
+    async def perf_status(self) -> dict:
+        return await get_json("GetStatus")
+
+    async def perf_get_game(self, appid: int | None) -> dict:
+        """appid None: the all-games settings."""
+        return await get_json("GetGame", key(appid))
+
+    async def perf_set_game(self, appid: int | None, settings: dict | None) -> dict:
+        """settings None: the game goes back to the all-games settings."""
+        await power("SetGame", key(appid), json.dumps(settings))
+        return await self.perf_get_game(appid)
+
+    async def get_refresh(self) -> dict:
+        """The rates there are, the all-games one (set in Device Settings), and the games' own."""
+        return {**refresh.all_games(), "games": refresh.game_rates()}
+
+    async def set_game_refresh(self, appid: int, hz: int | None, running: bool) -> dict:
+        """hz None: the game follows the all-games rate; running: held now, the game is running."""
+        rates = refresh.game_rates()
+        if hz is None:
+            rates.pop(str(appid), None)
+        elif refresh.valid(hz):
+            rates[str(appid)] = int(hz)
+        await asyncio.to_thread(refresh.save_game_rates, rates)
+        if running:
+            await asyncio.to_thread(refresh.hold, rates.get(str(appid), refresh.all_games()["hz"]))
+        decky.logger.info("game settings: game %s refresh %s", appid, "all games'" if hz is None else hz)
+        return await self.get_refresh()
+
+    # ---------- Upscaling: OptiScaler ----------
+
+    async def up_status(self) -> dict:
+        return upscaling.status()
+
+    async def up_get_game(self, appid: int) -> dict:
+        return await asyncio.to_thread(upscaling.get_game, appid)
+
+    async def up_enable(self, appid: int, exe_dir: str, proxy: str) -> dict:
+        return await asyncio.to_thread(upscaling.enable, appid, exe_dir, proxy)
+
+    async def up_disable(self, appid: int) -> dict:
+        return await asyncio.to_thread(upscaling.disable, appid)
+
+    async def up_configure(self, appid: int, settings: dict) -> dict:
+        return await asyncio.to_thread(upscaling.configure, appid, settings)
+
+    async def up_reset(self, appid: int) -> dict:
+        return await asyncio.to_thread(upscaling.reset, appid)
+
+    # ---------- Frame Gen: the kettle-framegen layer ----------
+
+    async def fg_status(self) -> dict:
+        return framegen.status()
+
+    async def fg_get_game(self, appid: int) -> dict:
+        return framegen.get_game(appid)
+
+    async def fg_set_game(self, appid: int, settings: dict) -> dict:
+        return framegen.set_game(appid, settings)
+
+    async def fg_reset_game(self, appid: int) -> dict:
+        return framegen.reset_game(appid)
+
+    # ---------- Extras: community Protons and optional components ----------
+
+    async def extras_status(self) -> dict:
+        return await extras.status()
+
+    async def extras_install(self, cid: str):
+        await extras.install(cid)
+
+    async def extras_uninstall(self, cid: str):
+        await extras.uninstall(cid)
+
+    async def proton_status(self) -> dict:
+        return await extras.proton_status()
+
+    async def proton_latest(self) -> dict[str, str]:
+        return await extras.proton_latest()
+
+    async def proton_install(self, tool: str):
+        await extras.proton_install(tool)
+
+    async def proton_remove(self, name: str):
+        await extras.proton_remove(name)
+
     async def _main(self):
         n = sum(not _is_empty(g) for g in _load_games().values())
         decky.logger.info("game settings: %d games with a profile, database %s", n, _server() or "off")
+        decky.logger.info("upscaling: OptiScaler %s", upscaling._version() or "not installed")
+        decky.logger.info("extras: %d optional components offered", len(extras._manifest(log=True)))
+        try:
+            info = await self.perf_info()
+            decky.logger.info("performance: kettle-powerd up, fan control %s", info["fan"])
+        except GLib.Error as e:
+            decky.logger.error("performance: kettle-powerd unreachable: %s", e.message)
+        self._framegen = asyncio.create_task(framegen.run())
 
     async def _unload(self):
-        pass
+        if getattr(self, "_framegen", None):
+            self._framegen.cancel()

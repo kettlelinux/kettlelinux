@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// Power: the desktop's counterpart of Steam's Performance panel and the Power plugin, in the
+// Power: the desktop's counterpart of Steam's Performance panel and Game Settings, in the
 // system tray. Everything goes through kettle-powerd (PowerBackend).
 import QtQuick
 

@@ -209,7 +209,7 @@ void PowerBackend::tick()
                 m_activeGame = active;
                 Q_EMIT activeGameChanged();
             }
-            readGame(); // the Power plugin may have changed them too
+            readGame(); // Game Settings may have changed them too
         } else if (active != desktop) {
             // kettle-powerd restarted, or another applet was removed
             call(QStringLiteral("SetActiveGame"), {desktop});

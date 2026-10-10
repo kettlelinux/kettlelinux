@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // The Settings tab: the same controls as Quick Access > Performance (Steam's values, shared with
-// Steam), the Power plugin (fan and CPU, per game) and Quick Access > Screens (the bottom
+// Steam), Game Settings (fan and CPU, per game) and Device Settings > Screens (the bottom
 // screen's brightness), all through the same settings, so each shows what the others set.
 import QtQuick
 import QtQuick.Controls as QQC2
@@ -40,7 +40,7 @@ QQC2.ScrollView {
         return all.filter(f => f >= range[0] && f <= range[1]);
     }
     readonly property var clusterLabel: ({little: "Efficiency cores", mid: "Performance cores", prime: "Prime core"})
-    // Game Mode: the running game (the Power plugin tells kettle-powerd which it is)
+    // Game Mode: the running game (Device Settings tells kettle-powerd which it is)
     readonly property bool hasGame: gameMode && power.activeGame !== ""
     readonly property string gameName: !hasGame ? ""
         : game.appid === power.activeGame && game.name ? game.name

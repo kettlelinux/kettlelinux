@@ -8,9 +8,33 @@ import { FlathubApp, FlathubCategory, FlathubDetails, cancel, flathubApp, flathu
 import { addShortcut, inLibrary, play, removeShortcut } from "./shortcuts";
 import { JobProgress, act, dim, openGame, small, usePoll } from "./ui";
 
+// Flathub's categories (the backend's FLATHUB_CATEGORIES): games, by genre, then the other apps
 const CATEGORIES: { data: FlathubCategory; label: string }[] = [
   { data: "games", label: "Games" },
   { data: "emulators", label: "Emulators" },
+  ...[
+    ["ActionGame", "Action"],
+    ["AdventureGame", "Adventure"],
+    ["ArcadeGame", "Arcade"],
+    ["BoardGame", "Board"],
+    ["CardGame", "Card"],
+    ["KidsGame", "Kids"],
+    ["LogicGame", "Puzzle"],
+    ["RolePlaying", "Role-playing"],
+    ["Shooter", "Shooter"],
+    ["Simulation", "Simulation"],
+    ["SportsGame", "Sports"],
+    ["StrategyGame", "Strategy"],
+  ].map(([data, label]) => ({ data, label: `Games › ${label}` })),
+  { data: "audiovideo", label: "Audio & Video" },
+  { data: "graphics", label: "Graphics & Photos" },
+  { data: "network", label: "Internet" },
+  { data: "office", label: "Productivity" },
+  { data: "development", label: "Development" },
+  { data: "education", label: "Education" },
+  { data: "science", label: "Science" },
+  { data: "system", label: "System" },
+  { data: "utility", label: "Utilities" },
   { data: "all", label: "All of Flathub" },
   { data: "installed", label: "Installed" },
 ];

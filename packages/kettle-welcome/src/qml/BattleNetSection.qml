@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Gaming Extras: Battle.net, Blizzard's launcher, added to Steam with Proton-CachyOS by
-// welcome-battlenet, which Game Mode's Welcome (kettle-decky-plugins welcome) uses too, so both
+// welcome-battlenet, which Game Mode's Game Stores (kettle-decky-plugins stores) uses too, so both
 // show the same Steam entry. Steam has to be running to add it.
 import QtQuick
 import QtQuick.Controls as QQC2

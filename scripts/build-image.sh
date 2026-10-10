@@ -217,11 +217,11 @@ systemctl set-default graphical.target >/dev/null 2>&1
 # (The default governor is now conservative, which turns EAS off too: see kernel/config/steamos.config.)
 systemctl enable steamos-manager kettle-mangoapp-tracefs kettle-steam-unpack kettle-reset-home >/dev/null 2>&1
 # kettle-powerd: CPU/GPU caps, power budget, fan and charge limit, behind Steam's own power
-# controls (steamos-manager remotes.d) and the Power plugin
+# controls (steamos-manager remotes.d) and the Device and Game Settings plugins
 systemctl enable kettle-powerd >/dev/null 2>&1
 # kettle-crashd: a crash report for each coredump (device dumps come through udev)
 systemctl enable kettle-crashd >/dev/null 2>&1
-# kettle-ledd: the stick lights (the Lights plugin's setting), in Game Mode and Desktop Mode
+# kettle-ledd: the stick lights (Device Settings' Lights tab), in Game Mode and Desktop Mode
 systemctl enable kettle-ledd >/dev/null 2>&1
 # Decky Loader (Game Mode plugins); its unit name is fixed by the loader itself
 systemctl enable plugin_loader >/dev/null 2>&1

@@ -206,7 +206,7 @@ built with it trust only development bundles. Keep the release key off the build
 ## Resetting
 
 `kettle-reset` puts an install back to how it started without reinstalling it. Desktop: **Reset
-Kettle** (System menu). Game Mode: Welcome > Reset, and Steam's Settings > System > Factory Reset
+Kettle** (System menu). Game Mode: Device Settings > System > Reset, and Steam's Settings > System > Factory Reset
 for erasing. Both work on the next boot, then the device restarts.
 
 - **Reset settings** (`sudo kettle-reset settings`): every setting goes back to its default, and

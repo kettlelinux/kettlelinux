@@ -4,8 +4,8 @@
 // left out. The installs run in welcome-flatpak, outside this window, so closing it is fine.
 // Below them, Battle.net (BattleNetSection, welcome-battlenet) and community Proton builds for
 // Steam (ProtonSection, welcome-proton).
-// Game Mode's Welcome (kettle-decky-plugins welcome/src/extras.tsx) offers the ones that work with
-// a controller: keep the two lists in step.
+// In Game Mode, Game Stores' Flathub tab (kettle-decky-plugins stores) offers every Flathub app,
+// these among them.
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts

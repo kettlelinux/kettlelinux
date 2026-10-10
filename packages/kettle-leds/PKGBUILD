@@ -1,7 +1,7 @@
 # kettle-ledd: the RGB rings around the sticks on Kettle's handhelds (the Odin 2 Portal, the Thor,
 # the Retroid Pocket 5): off, a color, the battery level, breathe or rainbow, dark while asleep.
-# Their one writer, as root; serves org.kettlelinux.Leds1 to the Lights plugin
-# (kettle-decky-lights). Sources live next to this PKGBUILD.
+# Their one writer, as root; serves org.kettlelinux.Leds1 to Device Settings'
+# Lights tab (kettle-decky-device-settings). Sources live next to this PKGBUILD.
 pkgname=kettle-leds
 pkgver=0.1.0
 pkgrel=1

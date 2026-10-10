@@ -22,6 +22,15 @@
 # (`flatpak run <id>`, no Proton). Its jobs, shortcuts and pending entries use the store name
 # "flathub"; it has no sign-in.
 #
+# Battle.net: Blizzard's launcher, added to Steam with Proton-CachyOS and its installer started, by
+# kettle-welcome's welcome-battlenet (the desktop's Kettle Welcome uses it too, so both show the
+# same Steam entry); its status also switches the entry to the installed launcher. It was in
+# Welcome's Gaming Extras up to 1.12.0-39.
+#
+# Android games, with kettle-lepton (where it's installed): kettle-android-games adds F-Droid apps
+# and APK files to Steam, one command at a time; its download progress comes on stderr. Google
+# Play is left to the desktop's Kettle Welcome: signing in to it goes through Firefox.
+#
 # State (stores.json in the plugin's settings dir):
 #   shortcuts  "<store>:<id>" -> the Steam shortcut's appid
 #   pending    installs finished while the frontend wasn't listening: it adds their shortcuts
@@ -69,12 +78,28 @@ GOG_REDIRECT = "https://embed.gog.com/on_login_success"
 AMAZON_CODE = "openid.oa2.authorization_code="
 LOGIN_TIMEOUT = 600
 
+BATTLENET = "/usr/lib/kettle/welcome-battlenet"  # package kettle-welcome
+ANDROID = "/usr/bin/kettle-android-games"  # package kettle-lepton
+_ANDROID_COMMANDS = ("add", "remove", "fdroid-search", "fdroid-add")
+# the running or last kettle-android-games command: {"command", "busy", "done", "total", "result"}
+_android: dict = {"command": None, "busy": False, "done": 0, "total": 0, "result": None}
+
 FLATHUB_API = "https://flathub.org/api/v2"
+# points Flathub's RetroArch at libretro's aarch64 cores (device/common/overlay)
+RETROARCH_CORES = "/usr/lib/kettle/retroarch-cores"
 FLATHUB_REPO = "https://dl.flathub.org/repo/flathub.flatpakrepo"
 FLATHUB_ICON = "https://dl.flathub.org/repo/appstream/aarch64/icons/128x128/{}.png"
 FLATHUB_PAGE = 48
 # Flathub's browse categories: search filters (all: the whole of Flathub)
-FLATHUB_CATEGORIES = {"games": [("main_categories", "game")], "emulators": [("sub_categories", "Emulator")], "all": []}
+# the Flathub tab's categories: Flathub's own main categories and its games' subcategories (the
+# frontend's CATEGORIES has their names), each a search filter
+_GAME_GENRES = ("ActionGame", "AdventureGame", "ArcadeGame", "BoardGame", "CardGame", "KidsGame", "LogicGame",
+                "RolePlaying", "Shooter", "Simulation", "SportsGame", "StrategyGame")
+_APP_CATEGORIES = ("audiovideo", "graphics", "network", "office", "development", "education", "science", "system",
+                   "utility")
+FLATHUB_CATEGORIES = {"games": [("main_categories", "game")], "emulators": [("sub_categories", "Emulator")], "all": [],
+                      **{g: [("sub_categories", g)] for g in _GAME_GENRES},
+                      **{c: [("main_categories", c)] for c in _APP_CATEGORIES}}
 APP_ID = re.compile(r"^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$")
 FLATPAK = "/usr/bin/flatpak"
 FLATPAK_ICONS = os.path.join(HOME, ".local", "share", "flatpak", "exports", "share", "icons", "hicolor")
@@ -638,7 +663,11 @@ def _job_commands(job: dict, base: str) -> list[list[str]]:
     """The job's commands, run one after the other (GOG: then the redistributables the game needs)."""
     main = _job_command(job, base)
     if job["store"] == "flathub" and job["kind"] == "install":
-        return [[FLATPAK, "remote-add", "--user", "--if-not-exists", "flathub", FLATHUB_REPO], main]
+        add = [FLATPAK, "remote-add", "--user", "--if-not-exists", "flathub", FLATHUB_REPO]
+        if job["id"] == "org.libretro.RetroArch" and os.access(RETROARCH_CORES, os.X_OK):
+            # before its first start, so its core downloader works from the outset
+            return [add, main, ["sh", "-c", f"{RETROARCH_CORES} || true"]]
+        return [add, main]
     if job["store"] == "gog":
         return [main, [WRAPPER, "gog-redist", job["id"]]]
     return [main]
@@ -821,6 +850,34 @@ def _locations() -> list[dict]:
         except OSError:
             o["free"] = 0
     return out
+
+
+async def _android_run(command: str, arg: str):
+    """Runs kettle-android-games, following its PROGRESS lines; the JSON result ends up in _android."""
+    try:
+        p = await asyncio.create_subprocess_exec(ANDROID, command, arg, env=_env(),
+                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        err = []
+
+        async def follow():
+            async for line in p.stderr:
+                parts = line.decode(errors="replace").split()
+                if len(parts) == 3 and parts[0] == "PROGRESS":
+                    _android["done"], _android["total"] = int(parts[1]), int(parts[2])
+                else:
+                    err.append(" ".join(parts))
+
+        out, _ = await asyncio.gather(p.stdout.read(), follow())
+        await p.wait()
+        try:
+            result = json.loads(out)
+        except ValueError:
+            result = {"ok": False, "error": (err[-1] if err else "") or "kettle-android-games failed."}
+    except OSError as e:
+        result = {"ok": False, "error": str(e)}
+    if not result.get("ok"):
+        decky.logger.warning("kettle-android-games %s: %s", command, result.get("error"))
+    _android.update(busy=False, result=result)
 
 
 class Plugin:
@@ -1077,6 +1134,51 @@ class Plugin:
         decky.logger.info("stores: %s %s: %s", job["kind"], job["id"], "done" if ok else error)
         await decky.emit("job", job, ok, error)
         await self._next()
+
+    async def battlenet_status(self) -> dict:
+        """welcome-battlenet status: {proton, steam, appid, in_steam, ready}; available: it's installed."""
+        if not os.access(BATTLENET, os.X_OK):
+            return {"available": False}
+        r = await asyncio.to_thread(_run, BATTLENET, "status", timeout=30)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip() or "welcome-battlenet status failed")
+        return {**json.loads(r.stdout), "available": True}
+
+    async def battlenet_install(self):
+        """Downloads Battle.net's installer, adds it to Steam and starts it; raises with the reason."""
+        r = await asyncio.to_thread(_run, BATTLENET, "install", timeout=180, quiet=True)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip() or "welcome-battlenet install failed")
+        decky.logger.info("Battle.net added to Steam, installer started")
+
+    async def android_info(self) -> dict:
+        """available: kettle-lepton is installed; files: where to look for an APK file first."""
+        downloads = os.path.join(HOME, "Downloads")
+        return {"available": os.access(ANDROID, os.X_OK), "files": downloads if os.path.isdir(downloads) else HOME}
+
+    async def android_list(self) -> dict:
+        r = await asyncio.create_subprocess_exec(ANDROID, "list", env=_env(), stdout=asyncio.subprocess.PIPE,
+                                                 stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await r.communicate()
+        try:
+            return json.loads(out)
+        except ValueError:
+            return {"ok": False, "games": []}
+
+    async def android_start(self, command: str, arg: str):
+        """Starts a kettle-android-games command (add FILE, remove PACKAGE, fdroid-search TEXT,
+        fdroid-add PACKAGE); android_job says how it goes. One at a time."""
+        if command not in _ANDROID_COMMANDS:
+            raise ValueError(f"unknown command {command!r}")
+        if command == "add" and not os.path.isfile(arg):
+            raise ValueError(f"no such file: {arg}")
+        if _android["busy"]:
+            raise ValueError("busy with another game")
+        _android.update(command=command, busy=True, done=0, total=0, result=None)
+        asyncio.get_running_loop().create_task(_android_run(command, arg))
+
+    async def android_job(self) -> dict:
+        return _android
 
     async def _main(self):
         os.makedirs(SETTINGS, exist_ok=True)
