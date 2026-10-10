@@ -243,7 +243,7 @@ footer p { margin: 4px 0; }
   max-width: 1120px; margin: 0 auto; padding: 14px 16px; border-bottom: 1px solid var(--border);
 }
 .brand { display: flex; align-items: center; gap: 10px; line-height: 0; }
-.topbar .links { display: flex; gap: 18px; }
+.topbar .links { display: flex; flex-wrap: wrap; gap: 6px 18px; }
 .topbar .links a { color: var(--text); text-decoration: none; font-weight: 600; }
 .topbar .links a:hover, .topbar .links a[aria-current] { color: var(--copper-light); }
 .games-intro h1 { font-size: 2rem; margin: 0 0 8px; }

@@ -53,3 +53,12 @@ CREATE TABLE IF NOT EXISTS engine_reports (
   PRIMARY KEY (app_id, reporter)
 );
 CREATE INDEX IF NOT EXISTS engine_reports_engine ON engine_reports (engine);
+
+-- new voters per entry from one address in the last day (worker.js VOTERS_PER_NET): only a
+-- SHA-256 of address and entry id, deleted after a day
+CREATE TABLE IF NOT EXISTS vote_nets (
+  net         TEXT NOT NULL,
+  created     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS vote_nets_net ON vote_nets (net);
+CREATE INDEX IF NOT EXISTS vote_nets_created ON vote_nets (created);

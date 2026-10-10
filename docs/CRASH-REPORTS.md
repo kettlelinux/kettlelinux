@@ -38,12 +38,13 @@ upload (`_bundle` in the plugin's `main.py`):
   systemd-resolved, ModemManager and logind (network and device names, logins)
 - the environment, except Proton, Wine, DXVK, vkd3d, Mesa/Turnip, FEX, Vulkan, gamescope, SDL and
   Steam's ids for the game
-- core files and device dumps (never uploaded), and all but the last 256 KB of each log
+- core files and device dumps (never uploaded), and all but the last 256 KB (of UTF-8) of each log
 
 The server answers with a link, `https://crash.kettlelinux.org/r/<id>`, which the plugin shows
 as a QR code. The page lists the report and has **Report on GitHub**: a new issue with the
 report's facts and link filled in. The id is 60 random bits: the page is public to anyone with
-the link, and unlisted (`noindex`).
+the link, unlisted (`noindex`), and kept only in the browser's cache (`private`, 5 minutes), so
+a removed report is gone at once.
 
 An image has the Share button only when it's built with `KETTLE_CRASH_URL` (in `local.env`); it
 is written to `/usr/lib/kettle/crash.conf`.
@@ -52,22 +53,45 @@ is written to `/usr/lib/kettle/crash.conf`.
 
 `server/crash-reports`: a Cloudflare Worker in front of an R2 bucket, next to the update server
 (UPDATES.md). It takes only gzipped Kettle reports in the plugin's format (1 MB compressed, 8 MB
-unpacked, 256 KB per file), 10 uploads a minute per address, and keeps each as
-`reports/<id>.json.gz`, with its kind, app id, build and device as metadata.
+unpacked), 10 uploads a minute per address, and 30 a day per address and 400 a day in all
+(counted in a KV namespace under a hash of the address, kept two days). It keeps each as
+`reports/<id>.json.gz`, with its kind, app id, build and device as metadata. What it keeps is
+the report cut down to the fields `kettle-crashd` writes, each to a set size (anything else is
+dropped), and the end of each file, 256 KB of UTF-8 at most. A report more than 90 days old is
+never served, even if the bucket still has it.
 
 One-time setup:
 
-1. R2: create a bucket `kettle-crash-reports`. Under *Settings > Object lifecycle rules*, add a
-   rule deleting objects with prefix `reports/` 90 days after upload (the page says reports are
-   kept 90 days).
-2. `cd server/crash-reports && npm install && npx wrangler login`, then `npx wrangler deploy`.
-   `wrangler.toml` puts it on the custom domain `crash.kettlelinux.org` (the `kettlelinux.org`
-   zone is on Cloudflare already) and binds the bucket and the upload rate limit.
-3. Check it: `curl -s https://crash.kettlelinux.org/r/aaaaaaaaaaaa` answers 404 "No such report".
-4. In `local.env`: `KETTLE_CRASH_URL=https://crash.kettlelinux.org`, then build images as usual.
+1. R2: create a bucket `kettle-crash-reports`.
+2. `cd server/crash-reports && npm install && npx wrangler login`.
+3. `./setup-lifecycle.sh`: the bucket's lifecycle rule deleting `reports/` 90 days after upload
+   (the page and the site's legal page say reports are kept 90 days). `npx wrangler r2 bucket
+   lifecycle list kettle-crash-reports` shows it.
+4. `npx wrangler kv namespace create kettle-crash-counts`, and put the id it prints in
+   `wrangler.toml` (`COUNTS`, the daily caps).
+5. `npx wrangler secret put ADMIN_TOKEN` (a long random string, for removals, below).
+6. `npx wrangler deploy`. `wrangler.toml` puts it on the custom domain `crash.kettlelinux.org`
+   (the `kettlelinux.org` zone is on Cloudflare already) and binds the bucket, the KV namespace
+   and the upload rate limit.
+7. Check it: `curl -s https://crash.kettlelinux.org/r/aaaaaaaaaaaa` answers 404 "No such report".
+8. In `local.env`: `KETTLE_CRASH_URL=https://crash.kettlelinux.org`, then build images as usual.
+
+Updating a server set up before the daily caps and removals: steps 3 to 6.
 
 Locally: `npx wrangler dev` serves it on `http://127.0.0.1:8787` with a local bucket; point a
 test at it with a `crash.conf` naming that address.
 
 Reports can be listed and fetched with rclone (the `r2` remote, UPDATES.md):
-`rclone ls r2:kettle-crash-reports/reports`, and `/r/<id>.json` gives one as uploaded.
+`rclone ls r2:kettle-crash-reports/reports`, and `/r/<id>.json` gives one as kept.
+
+### Removal requests
+
+Someone who shared a report can ask for it to be removed (kettlelinux.org/legal.html). With the
+report's id (the end of its link):
+
+```sh
+curl -s -X DELETE -H "Authorization: Bearer <admin token>" https://crash.kettlelinux.org/v1/admin/reports/<id>
+```
+
+It answers `{"ok":true}`, or 404 if there's no such report. Wrong tokens count against the
+address's upload rate limit.

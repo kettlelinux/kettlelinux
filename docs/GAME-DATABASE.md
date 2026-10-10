@@ -93,8 +93,15 @@ them: "Doesn't work" after any launch, "Works here" after 5 minutes. Sharing set
 the same kind of device already shared counts as a "works" for that entry.
 
 Entries are **community** until the Kettle team approves them (**verified**). Community entries
-show their counts; one reported broken 3 more times than confirmed is hidden. Notes show only on
-verified entries.
+show their counts; one reported broken 3 more times than confirmed is hidden (from the game's page
+and from the list of games). Notes, and the device model the sharer sent, show only on verified
+entries (community ones show the device type), and a game is named after a verified entry when it
+has one.
+
+Install ids are made up by the device, so votes are also counted by address: one address can add
+at most 2 new voters to an entry a day (a household with two devices still can; more is refused
+with a 429). The server keeps only a SHA-256 of the address and the entry id, for a day
+(`vote_nets`). "Worked for other games" suggestions come from verified entries only.
 
 An image has the database only when it's built with `KETTLE_GAMES_URL` (in `local.env`); it is
 written to `/usr/lib/kettle/games.conf`. Without it the panel has no database rows.
@@ -138,11 +145,11 @@ images.
 | `GET /v1/catalog` | the plugin's options (labels, choices, launch option targets) |
 | `GET /v1/games` | games with entries: verified / community counts, devices, last update |
 | `GET /v1/games/<app id>` | a game's entries, verified first, and its engine (the one most devices reported) |
-| `GET /v1/engines/<engine>` | FEX settings in entries for at least 3 of the engine's games, confirmed at least 3 times as often as reported broken (one value per option): Game Settings' "Worked for other games" |
+| `GET /v1/engines/<engine>` | FEX settings in verified entries for at least 3 of the engine's games, confirmed at least 3 times as often as reported broken (one value per option): Game Settings' "Worked for other games" |
 | `POST /v1/profiles` | share (5 a minute per address) |
 | `POST /v1/profiles/<id>/votes` | works / doesn't work (30 a minute per address) |
 | `GET /`, `GET /g/<app id>` | redirect to the site's Games page |
-| `/admin`, `/v1/admin/...` | the admin page and its API (bearer token) |
+| `/admin`, `/v1/admin/...` | the admin page and its API (bearer token; 10 wrong tokens a minute per address, then 429) |
 
 One-time setup:
 
@@ -153,7 +160,7 @@ One-time setup:
 5. `npx wrangler deploy` (custom domain `games.kettlelinux.org`).
 6. In `local.env`: `KETTLE_GAMES_URL=https://games.kettlelinux.org`, then build images as usual.
 
-After an update that changes `schema.sql` (it only adds tables: `engine_reports` is the latest),
+After an update that changes `schema.sql` (it only adds tables: `vote_nets` is the latest),
 run step 3 again, then deploy.
 
 Locally: `npx wrangler d1 execute kettle-games --local --file schema.sql`, `ADMIN_TOKEN=test` in

@@ -33,3 +33,9 @@ simple = { limit = 5, period = 60 }
 name = "VOTES"
 namespace_id = "1003"
 simple = { limit = 30, period = 60 }
+
+# per address: 10 refused admin tokens a minute, then 429 (a right token is never counted)
+[[ratelimits]]
+name = "ADMIN_FAILS"
+namespace_id = "1004"
+simple = { limit = 10, period = 60 }

@@ -140,7 +140,7 @@ function entryCard(e, catalog) {
       el("span", { className: e.status === "approved" ? "badge verified" : "badge", textContent: e.status === "approved" ? "Verified" : "Community" }),
       el("span", { className: `badge ${e.rating}`, textContent: e.rating === "great" ? "Runs great" : "Playable" })),
     el("p", { className: "muted small", textContent:
-      `${DEVICES[e.variant] ?? e.device} · Kettle ${e.build} · shared ${ago(e.created)}` }),
+      `${DEVICES[e.variant] ?? (e.status === "approved" ? e.device : e.variant)} · Kettle ${e.build} · shared ${ago(e.created)}` }),
     el("p", { className: "small" },
       el("span", { className: "works", textContent: `Works for ${e.works}` }),
       e.broken ? el("span", { className: "broken", textContent: ` · didn't for ${e.broken}` }) : null),
@@ -168,7 +168,8 @@ async function showGame(appId) {
     return;
   }
   const entries = data.profiles;
-  const name = entries[0]?.game ?? `Steam app ${appId}`;
+  // the server names the game from a verified entry when there is one
+  const name = data.game ?? entries[0]?.game ?? `Steam app ${appId}`;
   document.title = `${name} · Kettle Linux game settings`;
   const verified = entries.filter((e) => e.status === "approved");
   const community = entries.filter((e) => e.status !== "approved");
