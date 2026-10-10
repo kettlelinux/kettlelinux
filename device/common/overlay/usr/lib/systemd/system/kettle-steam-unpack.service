@@ -12,7 +12,9 @@ Type=oneshot
 User=kettle
 ExecStartPre=-/usr/bin/plymouth display-message --text="Setting up Steam for the first start..."
 ExecStart=/usr/lib/kettle/run-steam --bootstrap
-TimeoutStartSec=infinity
+# a few minutes on a slow card; a hung unpack must not keep the device at the splash for ever.
+# Cut short, it leaves no .kettle-unpacked, so run-steam --bootstrap (steam.service) does it again.
+TimeoutStartSec=20min
 
 [Install]
 WantedBy=multi-user.target

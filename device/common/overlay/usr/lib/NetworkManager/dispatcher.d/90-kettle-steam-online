@@ -10,9 +10,12 @@ case "$2" in
   *) exit 0 ;;
 esac
 for log in /home/*/.local/share/Steam/logs/bootstrap_log.txt; do
-  [ -f "$log" ] || continue
-  tail -n 3 "$log" | grep -q 'Steam needs to be online' || continue
-  user=$(stat -c %U "$log") || continue
+  [ -f "$log" ] && [ ! -L "$log" ] || continue
+  uid=$(stat -c %u "$log") gid=$(stat -c %g "$log") user=$(stat -c %U "$log") || continue
+  [ "$uid" -ge 1000 ] || continue
+  # read as its owner: a link on the way there can't make root read another file
+  setpriv --reuid="$uid" --regid="$gid" --clear-groups -- tail -n 3 "$log" 2>/dev/null |
+    grep -q 'Steam needs to be online' || continue
   systemctl --user -M "$user@" -q is-active steam.service 2>/dev/null || continue
   logger -t kettle-steam-online "network is up: restarting Steam for $user to download the client"
   systemctl --user -M "$user@" --no-block restart steam.service

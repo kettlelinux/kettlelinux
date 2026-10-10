@@ -52,7 +52,16 @@ if [ "$KIND" = essentials ]; then
   skip_off=$(part_start_b "$UD") skip_len=$(part_size_b "$UD")
 fi
 
+# A backup holds Android's data and the device's own calibration: readable by the desktop user's
+# group (the Kettle Installer lists and copies them as the user), no one else. setgid: what's made
+# inside keeps that group.
+umask 027
 DEST="${DEST:-$BACKUPS/$(date +%Y%m%d-%H%M%S)}"
+if [[ $DEST == "$BACKUPS"/* ]]; then
+  install -d -m 2750 -o 0 -g "$(id -g 1000)" "$BACKUPS"
+  # and backups made before this were anyone's
+  chgrp -R "$(id -g 1000)" "$BACKUPS"; chmod -R o-rwx "$BACKUPS"
+fi
 mkdir -p "$DEST"
 [ -z "$(ls -A "$DEST")" ] || die "$DEST is not empty"
 complete=0

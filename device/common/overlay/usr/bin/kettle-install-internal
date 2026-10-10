@@ -423,15 +423,27 @@ mkdir -p $W/dst/SteamOS/conf
 holo-bootconf --conf-dir $W/dst/SteamOS/conf create --image A >/dev/null
 holo-bootconf --conf-dir $W/dst/SteamOS/conf config --image A \
   --set title "Kettle Linux-A-${VERSION_ID:-}-${BUILD_ID:-}" --set comment "${BUILD_ID:-}" >/dev/null
-# \KERNEL for the ROCKNIX ABL (v1.1.9+ starts no EFI program): slot A is this system's copy
-boot_files $W/dst / "$EFIA"
-# the fallback path U-Boot loads: written last, it makes the install bootable
-install -m 0644 /usr/lib/holo-efi/aarch64-efi/steamcl.efi $W/dst/EFI/BOOT/BOOTAA64.EFI
+# What makes the install bootable is written aside first and moved into place only once slot A
+# has its final name, so "bootable" never comes before "installed": \KERNEL for the ROCKNIX ABL
+# (v1.1.9+ starts no EFI program; slot A is this system's copy) and the fallback path U-Boot
+# loads (\EFI\BOOT\BOOTAA64.EFI). Renames on the ESP: no data written after the relabel.
+pending=$W/dst/.kettle-pending
+mkdir -p "$pending"
+boot_files "$pending" / "$EFIA"
+install -m 0644 /usr/lib/holo-efi/aarch64-efi/steamcl.efi "$pending/BOOTAA64.EFI"
 umount $W/dst
 fsck.fat -n "$ESP" >/dev/null || die "file system check of $ESP failed; rerun with --reinstall"
 
 relabel "$ROOT" "$ROOT_LABEL"
+mount "$ESP" $W/dst
+trap '' INT TERM HUP
+mv -f "$pending/KERNEL" "$pending/KERNEL.md5" $W/dst/
+mv -f "$pending/BOOTAA64.EFI" $W/dst/EFI/BOOT/BOOTAA64.EFI
+rm -rf "$pending"
+umount $W/dst
+trap - INT TERM HUP
 sync
+fsck.fat -n "$ESP" >/dev/null || die "file system check of $ESP failed; rerun with --reinstall"
 
 done_msg "Kettle Linux is installed to internal storage"
 cat <<EOF

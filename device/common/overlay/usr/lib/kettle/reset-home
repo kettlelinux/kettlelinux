@@ -30,6 +30,7 @@ stamp=$(cat "$dir/home")
 [[ $stamp =~ ^[0-9-]+$ ]] || { echo "bad request '$stamp', ignored" >&2; rm -f "$dir/home"; exit 0; }
 IFS=: read -r user _ _ _ _ home _ < <(getent passwd 1000)
 [ -d "$home" ] || { echo "no home directory for uid 1000: nothing to reset"; rm -f "$dir/home"; exit 0; }
+home=$(realpath -e -- "$home")
 backup=/home/.kettle/settings-backup/$stamp
 echo "resetting $user's settings in $home (backup: $backup)"
 plymouth display-message --text="Resetting settings..." 2>/dev/null || :
@@ -45,10 +46,21 @@ declare -A DECKY_KEEP=([kettle-stores]=. [kettle-upscaling]=.
                        [kettle-welcome]="installed.json shortcuts.json welcome.json"
                        [kettle-game-settings]=install-id)
 
+# safe <path under the home directory>: no folder on the way there is a link. This runs as root
+# and the user owns these folders: a link (~/.config -> /etc) would make root move other files.
+safe() {
+  local d=${1%/*}
+  [ "$d" = "$1" ] && return 0
+  [ "$(realpath -e -- "$home/$d" 2>/dev/null)" = "$home/$d" ] && return 0
+  echo "skipped $1: a link on the way" >&2
+  return 1
+}
+
 # reset <path under the home directory>: moved into the backup, in the same place
 reset() {
   local p=$1
   [ -e "$home/$p" ] || [ -L "$home/$p" ] || return 0
+  safe "$p" || return 0
   mkdir -p "$backup/home/$(dirname "$p")"
   mv "$home/$p" "$backup/home/$p"
 }
@@ -59,6 +71,11 @@ install -d -m 0700 "$backup/home"
 # only the newest backup is kept: it holds Wi-Fi passwords and sign-ins
 find "${backup%/*}" -mindepth 1 -maxdepth 1 ! -name "$stamp" -exec rm -rf {} +
 find /var/lib/kettle/settings-backup -mindepth 1 -maxdepth 1 ! -name "$stamp" -exec rm -rf {} + 2>/dev/null || :
+
+# what writes in the user's files runs as the user. setpriv, not runuser: runuser's PAM session
+# asks logind for the user's manager, which waits for systemd-user-sessions.service, which waits
+# for this.
+as_user() { setpriv --reuid="$user" --regid="$(id -g "$user")" --init-groups -- "$@"; }
 
 cd "$home"
 shopt -s nullglob dotglob
@@ -90,10 +107,10 @@ fi
 # Welcome's record of the Desktop entry it added to Steam stays; that the welcome page was seen
 # and which Steam defaults it applied don't, so both happen again
 w=homebrew/settings/kettle-welcome/welcome.json
-if [ -f "$w" ]; then
+if [ -f "$w" ] && [ ! -L "$w" ] && safe "$w"; then
   mkdir -p "$backup/home/${w%/*}"
   [ -e "$backup/home/$w" ] || cp -a "$w" "$backup/home/$w"
-  python3 -I - "$w" <<'EOF'
+  as_user python3 -I - "$w" <<'EOF'
 import json, sys
 p = sys.argv[1]
 with open(p) as f:
@@ -106,9 +123,7 @@ EOF
 fi
 
 # a new user's defaults, where they are now missing (cp -n: nothing kept is overwritten), as
-# the user, who owns them then. setpriv, not runuser: runuser's PAM session asks logind for the
-# user's manager, which waits for systemd-user-sessions.service, which waits for this.
-as_user() { setpriv --reuid="$user" --regid="$(id -g "$user")" --init-groups -- "$@"; }
+# the user, who owns them then.
 as_user cp -rn --preserve=mode,timestamps,links /etc/skel/. "$home/"
 if [ -e /usr/lib/systemd/user/gamemoded.service ]; then  # as holo-create-homedir sets it up
   as_user mkdir -p .config/systemd/user/default.target.wants
