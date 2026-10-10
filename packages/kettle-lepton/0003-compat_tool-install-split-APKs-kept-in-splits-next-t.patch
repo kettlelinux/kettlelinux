@@ -20,7 +20,7 @@ index ddec9ca..3d615a0 100755
 +        # A game Google Play delivers as an app bundle comes as a base APK plus split APKs
 +        # (native code, screen density, language, install-time assets), kept in splits/ next
 +        # to the base APK: install them together.
-+        local SPLIT_PATHS=( $(compgen -G "$(dirname "${APK_PATH}")/splits/*.apk") )
++        local -a SPLIT_PATHS; mapfile -t SPLIT_PATHS < <(compgen -G "$(dirname "${APK_PATH}")/splits/*.apk")
 +        local INSTALL_CMD=(install -g "${APK_PATH}")
 +        if (( ${#SPLIT_PATHS[@]} > 0 )); then
 +            INSTALL_CMD=(install-multiple -g "${APK_PATH}" "${SPLIT_PATHS[@]}")

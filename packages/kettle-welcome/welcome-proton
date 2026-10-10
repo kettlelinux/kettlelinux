@@ -1,7 +1,8 @@
 #!/bin/bash
 # Installs the community Proton builds that have ARM64 releases (GE-Proton, Proton-CachyOS) into
 # Steam's compatibilitytools.d, for the calling user only (no root). Downloads the latest release
-# from the project's own GitHub releases and checks it against the sha512sum published with it.
+# from the project's own GitHub releases and checks it against the sha512sum published with it,
+# and against the SHA-256 digest GitHub's API reports for the asset, when it has one.
 #
 #   welcome-proton start TOOL     install in the background (a transient systemd user unit, so it
 #                                 carries on when the Welcome Center is closed)
@@ -38,7 +39,8 @@ check_tool() {
   [[ " ${tools[*]} " == *" ${1:-} "* ]] || { echo "not a tool: ${1:-}" >&2; exit 2; }
 }
 
-# the newest release (not a draft or pre-release) with an ARM64 build: "NAME URL SIZE SUMURL"
+# the newest release (not a draft or pre-release) with an ARM64 build: "NAME URL SIZE SUMURL
+# DIGEST" (DIGEST: GitHub's "sha256:..." for the asset, or - for older assets without one)
 latest_release() {
   curl -fsSL --max-time 30 -H 'Accept: application/vnd.github+json' \
       "https://api.github.com/repos/$(repo "$1")/releases?per_page=10" |
@@ -46,7 +48,8 @@ latest_release() {
       [.[] | select(.draft | not) | select(.prerelease | not)
            | . as $r | ($r.assets[] | select(.name | test($re))) as $a
            | ($r.assets[] | select(.name == ($a.name | sub("\\.tar\\.[gx]z$"; ".sha512sum")))) as $s
-           | [($a.name | sub("\\.tar\\.[gx]z$"; "")), $a.browser_download_url, $a.size, $s.browser_download_url]
+           | [($a.name | sub("\\.tar\\.[gx]z$"; "")), $a.browser_download_url, $a.size, $s.browser_download_url,
+              ($a.digest // "-")]
       ] | first // empty | @tsv'
 }
 
@@ -83,7 +86,7 @@ case "${1:-}" in
     echo "running $t download 0 0" >"$state"
     rel=$(latest_release "$t") && [ -n "$rel" ] ||
       fail "$t" "Could not find the latest release. Check the internet connection."
-    IFS=$'\t' read -r name url size sumurl <<<"$rel"
+    IFS=$'\t' read -r name url size sumurl digest <<<"$rel"
     [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || fail "$t" "Unexpected release name: $name"
     file="$cache/${url##*/}"
 
@@ -100,6 +103,10 @@ case "${1:-}" in
     rm -f "$partial"
     echo "${sum%% *}  $file" | sha512sum -c --status - ||
       { rm -f "$file"; fail "$t" "The download is damaged (checksum mismatch). Try again."; }
+    if [[ $digest == sha256:* ]]; then
+      echo "${digest#sha256:}  $file" | sha256sum -c --status - ||
+        { rm -f "$file"; fail "$t" "The download doesn't match GitHub's checksum for it. Try again."; }
+    fi
 
     # unpack next to the final folder, then move it in, so Steam never sees half a tool
     echo "running $t unpack" >"$state"

@@ -87,5 +87,8 @@ CFG
   entry "$title" "$SPLASH"
   entry "$title (verbose boot)" "$VERBOSE"
 } >"$out.new"
+# FAT has no journal: the new file on disk before the rename, and the rename before going on
+sync -f "$out.new"
 mv "$out.new" "$out"
+sync -f "$out"
 echo "update-grub: wrote $out (root $root_uuid${root_partnum:+ on partition $root_partnum $root_partuuid}, efi $efi_partuuid)"

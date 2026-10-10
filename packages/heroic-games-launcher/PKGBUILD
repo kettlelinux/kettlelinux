@@ -16,11 +16,12 @@
 # of Heroic's downloaded x86 DXVK/VKD3D/anti-cheat runtimes installed into prefixes.
 pkgname=heroic-games-launcher
 pkgver=2.22.3
-pkgrel=1
+pkgrel=2
 _electron=43.7.5
 _node=22.23.3
 _legendary=0.21.1
 _gogdl=1.3.0
+_gogdl_commit=4fe373914d625cbce75973e92f6c5c4faf9815e2  # tag v1.3.0
 _nile=1.2.0
 _vkhelper=b2fdbab594dc4d41987fcdcdb893c7441d804550
 pkgdesc='Open source launcher for Epic, GOG and Amazon games'
@@ -37,7 +38,7 @@ source=("HeroicGamesLauncher-$pkgver.tar.gz::https://github.com/Heroic-Games-Lau
         "https://github.com/electron/electron/releases/download/v$_electron/electron-v$_electron-linux-arm64.zip"
         "https://nodejs.org/dist/v$_node/node-v$_node-linux-arm64.tar.xz"
         "legendary-$_legendary.tar.gz::https://github.com/legendary-gl/legendary/archive/refs/tags/$_legendary.tar.gz"
-        "heroic-gogdl::git+https://github.com/Heroic-Games-Launcher/heroic-gogdl.git#tag=v$_gogdl"
+        "heroic-gogdl::git+https://github.com/Heroic-Games-Launcher/heroic-gogdl.git#commit=$_gogdl_commit"
         "xdelta::git+https://github.com/jmacd/xdelta.git#commit=0525275fe4b553a10f38e455d30c60dc6ed9b45d"
         "nile-$_nile.tar.gz::https://github.com/imLinguin/nile/archive/refs/tags/v$_nile.tar.gz"
         "vulkan-helper-rs::git+https://github.com/imLinguin/vulkan-helper-rs.git#commit=$_vkhelper"
@@ -51,7 +52,7 @@ sha256sums=('f542b2f894288df6fc3992ccc135798110ab952889a7def0c7a203d7524c9923'
             'SKIP'
             'a06dd595248f0b4bf8fccf2b14a534391c94b810f725b6bbeaca92bc3ac2673d'
             'SKIP'
-            'SKIP')
+            'b9509c7c9bd0006b21323910b64070dd4a90ef05bab5ba7e2da32e8266824221')
 
 prepare() {
   rm -rf electron; mkdir electron
@@ -118,7 +119,8 @@ package() {
   cd "$srcdir/HeroicGamesLauncher-$pkgver"
   install -d "$pkgdir/usr/lib" "$pkgdir/usr/bin"
   cp -a dist/linux-arm64-unpacked "$pkgdir/usr/lib/heroic"
-  chmod 4755 "$pkgdir/usr/lib/heroic/chrome-sandbox"
+  # not setuid: Chromium sandboxes with unprivileged user namespaces (CONFIG_USER_NS) instead
+  chmod 0755 "$pkgdir/usr/lib/heroic/chrome-sandbox"
   ln -s /usr/lib/heroic/heroic "$pkgdir/usr/bin/heroic"
   # Heroic looks for its helpers next to vulkan-helper (bin/<arch>/<platform>)
   local bin="$pkgdir/usr/lib/heroic/resources/app.asar.unpacked/build/bin/arm64/linux"
