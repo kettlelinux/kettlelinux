@@ -7,7 +7,7 @@
 # a newer compiler than the snapshot's.
 pkgname=apkeep
 pkgver=1.1.0
-pkgrel=2
+pkgrel=1
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Command-line tool for downloading APK files from various sources'
