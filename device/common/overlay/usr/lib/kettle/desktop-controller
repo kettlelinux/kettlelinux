@@ -44,6 +44,10 @@ BUTTON_KEYS = {  # pad button -> key or mouse button, pressed while held
 # ABS_Z/ABS_RZ, the Retroid pad (RP5) as ABS_HAT2X/ABS_HAT2Y
 TRIGGER_KEYS = {e.ABS_RZ: e.BTN_LEFT, e.ABS_Z: e.BTN_RIGHT,
                 e.ABS_HAT2Y: e.BTN_LEFT, e.ABS_HAT2X: e.BTN_RIGHT}
+# a d-pad reported as a hat (the KONKR's AYANEO MCU pad) as the d-pad buttons above:
+# axis -> (button at -1, button at +1)
+HAT_BUTTONS = {e.ABS_HAT0X: (e.BTN_DPAD_LEFT, e.BTN_DPAD_RIGHT),
+               e.ABS_HAT0Y: (e.BTN_DPAD_UP, e.BTN_DPAD_DOWN)}
 TAP_CHORDS = {  # tapped on release, unless the button was part of the toggle combo
     e.BTN_START: [e.KEY_LEFTMETA],  # Plasma opens the launcher on a lone Meta tap
     e.BTN_SELECT: [e.KEY_LEFTMETA, e.KEY_W],
@@ -221,6 +225,11 @@ class Controller:
             toggle_osk()
 
     def on_abs(self, code, value):
+        if code in HAT_BUTTONS:
+            if self.enabled:
+                for btn, on in zip(HAT_BUTTONS[code], (value < 0, value > 0)):
+                    self.set_source(btn, BUTTON_KEYS[btn], on)
+            return
         axis = self.axes.get(code)
         if not axis:
             return

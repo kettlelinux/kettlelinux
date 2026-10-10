@@ -1,0 +1,17 @@
+# steamos-manager device config for the KONKR Pocket FIT Elite. The power controls themselves
+# (TDP, performance profiles, GPU clock, fan control) are kettle-powerd's, relayed through
+# remotes.d/kettle-power.toml: configuring them here would make steamos-manager write the same
+# cpufreq/devfreq files and fight it. Booted by the ROCKNIX ABL there is no SMBIOS, so it
+# matches on the devicetree only. The charge limit stays with the firmware's end threshold
+# (packages/kettle-power/pocket-fit-elite.toml), so no remotes.d/kettle-power-charge.toml yet.
+[[device]]
+dt.compatible = "konkr,pocket-fit-elite"
+device = "pocket_fit_elite"
+variant = "Elite"
+friendly_name = "KONKR Pocket FIT Elite"
+
+# Steam lowers the TDP to this while it downloads in sleep; the rest of TdpLimit1 comes
+# from kettle-powerd
+[tdp_limit]
+method = "remote_interface"
+download_mode_limit = 5

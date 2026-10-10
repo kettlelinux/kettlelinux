@@ -17,7 +17,12 @@ own *Check for updates*.
 >
 > **Retroid Pocket 5** (Snapdragon 865): first public test build, 20261001.5. See
 > [docs/RP5.md](docs/RP5.md) for what has been tested, and [docs/INSTALL-RP5.md](docs/INSTALL-RP5.md)
-> to install it. Each device gets its own image and its own updates;
+> to install it.
+>
+> **KONKR Pocket FIT Elite** (Snapdragon 8 Elite, SM8750): port in progress, not yet run on
+> hardware. See [docs/POCKETFITELITE.md](docs/POCKETFITELITE.md).
+>
+> Each device gets its own image and its own updates;
 > [docs/PORTING.md](docs/PORTING.md) has how devices are kept apart and how to add one.
 
 **Documentation lives in the [wiki](https://github.com/kettlelinux/kettlelinux/wiki).**
