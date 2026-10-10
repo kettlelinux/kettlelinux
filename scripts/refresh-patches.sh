@@ -9,8 +9,13 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/kernel/kernel.conf"
 WORK="$ROOT/build/refresh"
 
+TAR="$ROOT/cache/linux-$KERNEL_VERSION.tar.xz"
+[ -f "$TAR" ] || { echo "no $TAR; run scripts/build-kernel.sh prepare"; exit 1; }
+# the pinned source, as build-kernel.sh checks it
+echo "$KERNEL_SOURCE_SHA256  $TAR" | sha256sum -c --quiet || { echo "checksum mismatch: $TAR"; exit 1; }
+
 rm -rf "$WORK"; mkdir -p "$WORK"
-tar -xf "$ROOT/cache/linux-$KERNEL_VERSION.tar.xz" -C "$WORK"
+tar -xf "$TAR" -C "$WORK"
 cd "$WORK/linux-$KERNEL_VERSION"
 git init -q && git add -A && git -c user.name=r -c user.email=r@r commit -qm base
 

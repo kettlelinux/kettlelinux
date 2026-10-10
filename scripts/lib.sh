@@ -65,6 +65,35 @@ chroot_umount() {
   rm -rf "$(chroot_tmp "$r")"
 }
 
+# Stop if anything is still mounted under the chroot at $1 (chroot_umount hides its errors):
+# before files under it are deleted or packed into an image.
+chroot_assert_umounted() {
+  local r="$1" left
+  left="$(awk -v r="$r/" 'index($5, r) == 1 { print $5 }' /proc/self/mountinfo)"
+  [ -z "$left" ] || die "still mounted under ${r#"$ROOT"/}: $(echo $left)"
+}
+
+# Hold an exclusive (or with -s, shared) lock on the file $1 until the script exits, waiting for
+# another build that has it. Take them in this order: the update tree, build/image-<device>,
+# build/pkgroot, out/repo. The fd is in LOCK_FD, to release one early: exec {LOCK_FD}>&-
+lock() {
+  local f="$1" mode="${2:--x}"
+  mkdir -p "$(dirname "$f")"
+  exec {LOCK_FD}>>"$f"
+  if ! flock -n "$mode" "$LOCK_FD"; then
+    log "waiting for ${f#"$ROOT"/} (another build is using it)"
+    flock "$mode" "$LOCK_FD"
+  fi
+}
+
+# A hash of the files under the given git pathspecs (relative to ROOT) as they are on disk,
+# committed or not, gitignored ones left out. build-kernel.sh and build-packages.sh record it
+# for what they build; build-image.sh compares, to warn of a stale kernel or package.
+src_hash() {
+  (cd "$ROOT" && git ls-files -coz --exclude-standard -- "$@" 2>/dev/null | sort -zu \
+     | xargs -0r sha256sum 2>/dev/null; true) | sha256sum | cut -d' ' -f1
+}
+
 # Where builds get Valve's packages: KETTLE_MIRROR (a URL with one directory per repo), else
 # the local mirror from scripts/mirror-repos.sh if there is one, else Valve's servers.
 mirror_url() {
@@ -96,6 +125,9 @@ pacman_root() {
     --cachedir "$PKG_CACHE" --noconfirm --noprogressbar "$@"
 }
 
+# The kernel's src_hash (generated.config is build-kernel.sh's output, not its input)
+kernel_src_hash() { src_hash kernel ':!kernel/config/generated.config'; }
+
 # Build IDs (YYYYMMDD.N), oldest first, from names like kettle-<buildid>-<device>.*
 sort_buildids() { sort -u -t. -k1,1n -k2,2n; }
 
@@ -106,7 +138,7 @@ sort_buildids() { sort -u -t. -k1,1n -k2,2n; }
 prune_builds() {
   local device="$1" keep="$2" dry="${3:-}" out="$ROOT/out" id
   [ "$keep" -gt 0 ] 2>/dev/null || return 0
-  local ids; ids="$(find "$out" -maxdepth 1 -name "kettle-*-$device.*" -printf '%f\n' \
+  local ids; ids="$(find "$out" -maxdepth 1 -name "kettle-*-$device.*" ! -name '*.id' -printf '%f\n' \
     | sed -nE "s/^kettle-([0-9]{8}\.[0-9]+)-$device\..*/\1/p" | sort_buildids)"
   for id in $(head -n -"$keep" <<<"$ids"); do
     if [ -n "$dry" ]; then echo "would remove kettle-$id-$device ($(du -shc "$out/kettle-$id-$device".* | tail -1 | cut -f1))"

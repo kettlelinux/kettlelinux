@@ -31,6 +31,11 @@ WIFI_SSID='MyNetwork' WIFI_PSK='secret' scripts/build-image.sh   # Wi-Fi optiona
 sudo dd if=out/kettle-YYYYMMDD.N-odin2portal.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
+`build-image.sh` lists the kernel or packages built from an older `kernel/` or `packages/<name>`
+than the one checked out (`KETTLE_STRICT_STALE=1` stops instead): rebuild those first. Each
+device builds in its own `build/image-<device>`, so two devices' images can be built at once;
+builds that share the build chroot or the local repo wait for each other.
+
 Check `/dev/sdX` with `lsblk` first — dd overwrites the whole target. (A downloaded
 `.img.xz`: `xzcat` it into the same dd, or see [INSTALL.md](INSTALL.md).) The card needs 32 GB or
 more. On first boot the system creates slot B and `/home` in the rest of the card (the SteamOS

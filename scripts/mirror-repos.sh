@@ -65,7 +65,8 @@ done
 
 # filename -> sha256 for every package the (mirrored) databases list
 declare -A SHA OF_REPO
-TMP="$(mktemp -d)"
+mkdir -p "$ROOT/build/tmp"   # on disk: /tmp is a small tmpfs
+TMP="$(mktemp -d -p "$ROOT/build/tmp")"
 trap 'rm -rf "$TMP"' EXIT
 for repo in "${!UPSTREAM[@]}"; do
   mkdir -p "$TMP/db/$repo"

@@ -13,8 +13,8 @@
 #
 # Env (also read from ./local.env, gitignored):
 #   KETTLE_UPDATE_REMOTE   rclone remote and bucket, e.g. r2:kettle-updates (docs/UPDATES.md)
-#   KETTLE_KEEP_IMAGES     how many images stay up per device, newest by build ID (default 3);
-#                          older ones are removed from the index and the bucket
+#   KETTLE_KEEP_IMAGES     how many images stay up per device, newest by build ID (default 3;
+#                          0 keeps all); older ones are removed from the index and the bucket
 #   RCLONE_BWLIMIT         rclone's own, e.g. 5M, to leave the connection usable meanwhile
 #   KETTLE_DISCORD_WEBHOOK Discord webhook URL (secret: local.env only); a build new to the index
 #                          is announced there with its notes. Unset, nothing is posted.
@@ -32,6 +32,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [ -f "$ROOT/local.env" ]; then set -a; . "$ROOT/local.env"; set +a; fi
 REMOTE="${KETTLE_UPDATE_REMOTE:?set KETTLE_UPDATE_REMOTE (e.g. r2:kettle-updates) in local.env}"
 KEEP="${KETTLE_KEEP_IMAGES:-3}"
+[[ "$KEEP" =~ ^[0-9]+$ ]] || die "KETTLE_KEEP_IMAGES must be a number"
 
 xzimg="${1:?usage: $0 out/kettle-<buildid>-<variant>.img.xz}"
 case "$xzimg" in *.img.xz) ;; *) die "expected an .img.xz (KETTLE_RELEASE=1 scripts/build-image.sh)" ;; esac
@@ -69,7 +70,9 @@ rc copyto "${forever[@]}" "$dir/$name.sha256" "$dest/$name.sha256"
 
 # the current index, if there is one (a failed listing stops here rather than starting over)
 index="$REMOTE/downloads/releases.json"
-if [ -n "$(rc lsf --files-only --include releases.json "$REMOTE/downloads")" ]; then current="$(rc cat "$index")"; else current='{"images": []}'; fi
+listing="$(rc lsf --files-only --include releases.json "$REMOTE/downloads")"
+if [ -n "$listing" ]; then current="$(rc cat "$index")"; else current='{"images": []}'; fi
+jq -e '.images | type == "array"' >/dev/null <<<"$current" || die "$index isn't an index of images"
 entry="$(jq -n --argjson m "$manifest" --arg name "$name" --arg variant "$variant" --arg model "$model" \
   --arg file "downloads/$variant/$name.img.xz" --arg sums "downloads/$variant/$name.sha256" \
   --argjson size "$(stat -c %s "$xzimg")" --argjson image_size "$(stat -c %s "$dir/$name.img" 2>/dev/null || echo null)" \
@@ -83,9 +86,9 @@ new="$(jq --argjson e "$entry" \
   '(first(.images[] | select(.name == $e.name) | .notes) // null) as $old
    | .images = ([.images[] | select(.name != $e.name)] + [$e + {notes: ($e.notes // $old)}]
               | sort_by(.buildid | split(".") | map(tonumber)) | reverse)' <<<"$current")"
-# the newest KEEP of each device's images stay; the rest are dropped from the index
-kept="$(jq --argjson n "$KEEP" '.images as $all | .images = [range(0; $all | length) as $i
-  | $all[$i] | select([$all[:$i][] | select(.variant == $all[$i].variant)] | length < $n)]' <<<"$new")"
+# the newest KEEP of each device's images stay (0: all); the rest are dropped from the index
+kept="$(jq --argjson n "$KEEP" 'if $n == 0 then . else .images as $all | .images = [range(0; $all | length) as $i
+  | $all[$i] | select([$all[:$i][] | select(.variant == $all[$i].variant)] | length < $n)] end' <<<"$new")"
 
 log "index -> $index ($(jq '.images | length' <<<"$kept") images)"
 rc rcat "${brief[@]}" "$index" <<<"$kept"
