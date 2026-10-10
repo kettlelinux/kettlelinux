@@ -108,9 +108,9 @@ Subject: [PATCH 3/7] drm/msm/dpu: save layer mixers in encoder mode set and
  perform clean up on them instead of newly assigned ones
 
 ---
- drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c   | 87 ++++++++++++++-----
+ drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c   | 88 ++++++++++++++-----
  .../gpu/drm/msm/disp/dpu1/dpu_encoder_phys.h  | 19 +---
- 2 files changed, 64 insertions(+), 42 deletions(-)
+ 2 files changed, 65 insertions(+), 42 deletions(-)
 
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
 index 334a49106e6f..bc1f1dacddbc 100644
@@ -171,7 +171,7 @@ index 334a49106e6f..bc1f1dacddbc 100644
 -	struct dpu_hw_mixer *hw_mixer[2];
 +	int i;
  	struct dpu_hw_ctl *ctl = phys_enc->hw_ctl;
-+	struct dpu_encoder_virt *dpu_enc = to_dpu_encoder_virt(phys_enc->parent);;
++	struct dpu_encoder_virt *dpu_enc = to_dpu_encoder_virt(phys_enc->parent);
  
  	/* reset all mixers for this encoder */
  	if (ctl->ops.clear_all_blendstages)
@@ -227,7 +227,7 @@ index 334a49106e6f..bc1f1dacddbc 100644
  }
  
  static void dpu_encoder_dsc_pipe_clr(struct dpu_hw_ctl *ctl,
-@@ -2907,6 +2918,34 @@ enum dpu_intf_mode dpu_encoder_get_intf_mode(struct drm_encoder *encoder)
+@@ -2907,6 +2918,35 @@ enum dpu_intf_mode dpu_encoder_get_intf_mode(struct drm_encoder *encoder)
  	return INTF_MODE_NONE;
  }
  
@@ -238,12 +238,13 @@ index 334a49106e6f..bc1f1dacddbc 100644
 +enum dpu_3d_blend_mode dpu_encoder_helper_get_3d_blend_mode(
 +		struct dpu_encoder_phys *phys_enc)
 +{
-+	struct dpu_encoder_virt *dpu_enc = to_dpu_encoder_virt(phys_enc->parent);
++	struct dpu_encoder_virt *dpu_enc;
 +	int i, num_mixers = 0;
 +
 +	if (!phys_enc || phys_enc->enable_state == DPU_ENC_DISABLING)
 +		return BLEND_3D_NONE;
 +
++	dpu_enc = to_dpu_encoder_virt(phys_enc->parent);
 +	for (i = 0; i < ARRAY_SIZE(dpu_enc->hw_mixer); i++) {
 +		if (!dpu_enc->hw_mixer[i])
 +			break;

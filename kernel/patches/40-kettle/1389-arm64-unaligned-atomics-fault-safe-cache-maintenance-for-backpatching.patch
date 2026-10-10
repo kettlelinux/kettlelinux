@@ -1,0 +1,100 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] arm64: unaligned atomics: fault-safe cache maintenance for backpatching
+
+The backpatching (40-kettle/1260) rewrites the faulting instruction pair
+in the process's code with exception-table-covered stores, then made it
+visible with flush_icache_range(), the kernel-address maintenance, which
+has no fault handling: had another thread unmapped the code in between,
+the kernel oopsed. Use caches_clean_inval_user_pou(), as the compat
+cacheflush syscall does, which returns -EFAULT instead; the emulation is
+done either way and an unpatched pair only traps again.
+
+Also ratelimit the "Unhandled JIT SIGBUS Atomic mem op" warning, which
+a process can trigger at will.
+---
+--- a/arch/arm64/kernel/unaligned_atomic.c
++++ b/arch/arm64/kernel/unaligned_atomic.c
+@@ -1813,7 +1813,7 @@ static struct fault_info HandleAtomicMemOp(u32 Instr, u64* GPRs) {
+     case ATOMIC_EOR_OP: DesiredFunction = CASEORDesired16; break;
+     case ATOMIC_SET_OP: DesiredFunction = CASORDesired16; break;
+     case ATOMIC_SWAP_OP: DesiredFunction = CASSWAPDesired16; break;
+-    default: pr_warn("Unhandled JIT SIGBUS Atomic mem op 0x%02x\n", Op); return (struct fault_info) {.error = -ENOSYS};
++    default: pr_warn_ratelimited("Unhandled JIT SIGBUS Atomic mem op 0x%02x\n", Op); return (struct fault_info) {.error = -ENOSYS};
+     }
+ 
+     u16 Res = 0;
+@@ -1834,7 +1834,7 @@ static struct fault_info HandleAtomicMemOp(u32 Instr, u64* GPRs) {
+     case ATOMIC_EOR_OP: DesiredFunction = CASEORDesired32; break;
+     case ATOMIC_SET_OP: DesiredFunction = CASORDesired32; break;
+     case ATOMIC_SWAP_OP: DesiredFunction = CASSWAPDesired32; break;
+-    default: pr_warn("Unhandled JIT SIGBUS Atomic mem op 0x%02x\n", Op); return (struct fault_info) {.error = -ENOSYS};
++    default: pr_warn_ratelimited("Unhandled JIT SIGBUS Atomic mem op 0x%02x\n", Op); return (struct fault_info) {.error = -ENOSYS};
+     }
+ 
+     u32 Res = 0;
+@@ -1856,7 +1856,7 @@ static struct fault_info HandleAtomicMemOp(u32 Instr, u64* GPRs) {
+     case ATOMIC_EOR_OP: DesiredFunction = CASEORDesired64; break;
+     case ATOMIC_SET_OP: DesiredFunction = CASORDesired64; break;
+     case ATOMIC_SWAP_OP: DesiredFunction = CASSWAPDesired64; break;
+-    default: pr_warn("Unhandled JIT SIGBUS Atomic mem op 0x%02x\n", Op); return (struct fault_info) {.error = -ENOSYS};
++    default: pr_warn_ratelimited("Unhandled JIT SIGBUS Atomic mem op 0x%02x\n", Op); return (struct fault_info) {.error = -ENOSYS};
+     }
+ 
+     u64 Res = 0;
+@@ -1945,6 +1945,20 @@ static struct fault_info HandleAtomicStore(u32 Instr, u64* GPRs, s64 Offset) {
+ }
+ 
+ 
++/*
++ * Make a backpatched instruction pair visible to instruction fetch. The pair
++ * is in user memory that another thread may unmap at any time, so use the
++ * user-address maintenance, which fails with -EFAULT instead of oopsing; the
++ * emulation is done either way and an unpatched pair only traps again.
++ */
++static void SyncPatchedCode(u64 Addr) {
++  if (!access_ok((void __user*)Addr, 8) ||
++      caches_clean_inval_user_pou(Addr, Addr + 8))
++    return;
++
++  kick_all_cpus_sync();
++}
++
+ int do_unaligned_atomic_fixup(struct pt_regs* regs, u64* fault_addr) {
+   u32* PC = (u32*)regs->pc;
+   u64* GPRs = (u64*)regs->regs;
+@@ -1972,7 +1986,7 @@ int do_unaligned_atomic_fixup(struct pt_regs* regs, u64* fault_addr) {
+         LDR |= AddrReg << 5;
+         LDR |= DataReg;
+         StoreRelease32(LDR, PatchAddr);
+-        flush_icache_range(PatchAddr, PatchAddr + 8);
++        SyncPatchedCode(PatchAddr);
+       }
+     }
+     fi = HandleAtomicLoad(Instr, GPRs, 0);
+@@ -1988,7 +2002,7 @@ int do_unaligned_atomic_fixup(struct pt_regs* regs, u64* fault_addr) {
+         STR |= AddrReg << 5;
+         STR |= DataReg;
+         StoreRelease32(STR, PatchAddr + 4);
+-        flush_icache_range(PatchAddr, PatchAddr + 8);
++        SyncPatchedCode(PatchAddr);
+       }
+     }
+     fi = HandleAtomicStore(Instr, GPRs, 0);
+@@ -2005,7 +2019,7 @@ int do_unaligned_atomic_fixup(struct pt_regs* regs, u64* fault_addr) {
+         LDUR |= DataReg;
+         LDUR |= Instr & (0b111111111 << 12);
+         StoreRelease32(LDUR, PatchAddr);
+-        flush_icache_range(PatchAddr, PatchAddr + 8);
++        SyncPatchedCode(PatchAddr);
+       }
+     }
+     // Extract the 9-bit offset from the instruction
+@@ -2024,7 +2038,7 @@ int do_unaligned_atomic_fixup(struct pt_regs* regs, u64* fault_addr) {
+         STUR |= DataReg;
+         STUR |= Instr & (0b111111111 << 12);
+         StoreRelease32(STUR, PatchAddr + 4);
+-        flush_icache_range(PatchAddr, PatchAddr + 8);
++        SyncPatchedCode(PatchAddr);
+       }
+     }
+     // Extract the 9-bit offset from the instruction

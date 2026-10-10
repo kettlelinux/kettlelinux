@@ -17,10 +17,15 @@ component resume, before the DAPM resume event: DPCM does not re-prepare
 a BE that was prepared but not running, and codecs may need the port
 clock when DAPM powers them. The first prepare after resume leaves a
 restored port running rather than stopping it while codecs start.
+
+The prepare-time port start ROCKNIX carries for the Odin 3's AW88166
+PLL check (20-sm8550/0612) is limited to playback MI2S backends, so it
+does not change the prepare/trigger order of other LPASS DAIs (squashed
+in from Armada 0613, which did only that).
 ---
 --- a/sound/soc/qcom/qdsp6/q6apm-dai.c
 +++ b/sound/soc/qcom/qdsp6/q6apm-dai.c
-@@ -90,7 +90,7 @@
+@@ -90,7 +90,7 @@ struct q6apm_dai_data {
  static const struct snd_pcm_hardware q6apm_dai_hardware_capture = {
  	.info =                 (SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_BLOCK_TRANSFER |
  				 SNDRV_PCM_INFO_MMAP_VALID | SNDRV_PCM_INFO_INTERLEAVED |
@@ -29,7 +34,7 @@ restored port running rather than stopping it while codecs start.
  				 SNDRV_PCM_INFO_NO_REWINDS | SNDRV_PCM_INFO_SYNC_APPLPTR |
  				 SNDRV_PCM_INFO_BATCH),
  	.formats =              (SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE),
-@@ -110,7 +110,7 @@
+@@ -110,7 +110,7 @@ static const struct snd_pcm_hardware q6apm_dai_hardware_capture = {
  static const struct snd_pcm_hardware q6apm_dai_hardware_playback = {
  	.info =                 (SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_BLOCK_TRANSFER |
  				 SNDRV_PCM_INFO_MMAP_VALID | SNDRV_PCM_INFO_INTERLEAVED |
@@ -38,7 +43,7 @@ restored port running rather than stopping it while codecs start.
  				 SNDRV_PCM_INFO_NO_REWINDS | SNDRV_PCM_INFO_SYNC_APPLPTR |
  				 SNDRV_PCM_INFO_BATCH),
  	.formats =              (SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE),
-@@ -211,6 +211,19 @@
+@@ -211,6 +211,19 @@ static void event_handler_compr(uint32_t opcode, uint32_t token,
  	}
  }
  
@@ -58,7 +63,7 @@ restored port running rather than stopping it while codecs start.
  static int q6apm_dai_prepare(struct snd_soc_component *component,
  			     struct snd_pcm_substream *substream)
  {
-@@ -240,8 +253,10 @@
+@@ -240,8 +253,10 @@ static int q6apm_dai_prepare(struct snd_soc_component *component,
  		/* clear the previous setup if any  */
  		q6apm_graph_stop(prtd->graph);
  		q6apm_free_fragments(prtd->graph, substream->stream);
@@ -69,7 +74,7 @@ restored port running rather than stopping it while codecs start.
  	prtd->last_pos_index = 0;
  	prtd->pcm_count = snd_pcm_lib_period_bytes(substream);
  	if (q6apm_is_graph_in_push_pull_mode(prtd->graph)) {
-@@ -317,6 +332,10 @@
+@@ -317,6 +332,10 @@ static int q6apm_dai_ack(struct snd_soc_component *component, struct snd_pcm_sub
  	struct q6apm_dai_rtd *prtd = runtime->private_data;
  	int i, ret = 0, avail_periods;
  
@@ -80,7 +85,7 @@ restored port running rather than stopping it while codecs start.
  	if (q6apm_is_graph_in_push_pull_mode(prtd->graph))
  		return 0;
  
-@@ -458,14 +477,8 @@
+@@ -458,14 +477,8 @@ static int q6apm_dai_close(struct snd_soc_component *component,
  	struct snd_pcm_runtime *runtime = substream->runtime;
  	struct q6apm_dai_rtd *prtd = runtime->private_data;
  
@@ -97,7 +102,7 @@ restored port running rather than stopping it while codecs start.
  	kfree(prtd);
  	runtime->private_data = NULL;
  
-@@ -479,6 +492,9 @@
+@@ -479,6 +492,9 @@ static snd_pcm_uframes_t q6apm_dai_pointer(struct snd_soc_component *component,
  	struct q6apm_dai_rtd *prtd = runtime->private_data;
  	snd_pcm_uframes_t ptr;
  
@@ -107,7 +112,7 @@ restored port running rather than stopping it while codecs start.
  	if (q6apm_is_graph_in_push_pull_mode(prtd->graph)) {
  		int retries = 10;
  		uint32_t index, fc1, fc2;
-@@ -1001,6 +1017,72 @@
+@@ -1001,6 +1017,72 @@ static const struct snd_compress_ops q6apm_dai_compress_ops = {
  	.copy		= q6apm_compr_copy,
  };
  
@@ -180,7 +185,7 @@ restored port running rather than stopping it while codecs start.
  static const struct snd_soc_component_driver q6apm_fe_dai_component = {
  	.name		= DRV_NAME,
  	.open		= q6apm_dai_open,
-@@ -1052,6 +1134,7 @@
+@@ -1052,6 +1134,7 @@ static struct platform_driver q6apm_dai_platform_driver = {
  	.driver = {
  		.name = "q6apm-dai",
  		.of_match_table = of_match_ptr(q6apm_dai_device_id),
@@ -199,7 +204,7 @@ restored port running rather than stopping it while codecs start.
  	struct audioreach_module_config module_config[APM_PORT_MAX];
  };
  
-@@ -35,6 +37,7 @@
+@@ -35,6 +37,7 @@ static int q6dma_set_channel_map(struct snd_soc_dai *dai,
  	struct audioreach_module_config *cfg = &dai_data->module_config[dai->id];
  	int i;
  
@@ -207,7 +212,7 @@ restored port running rather than stopping it while codecs start.
  	switch (dai->id) {
  	case WSA_CODEC_DMA_TX_0:
  	case WSA_CODEC_DMA_TX_1:
-@@ -103,6 +106,7 @@
+@@ -103,6 +106,7 @@ static int q6hdmi_hw_params(struct snd_pcm_substream *substream,
  	int channels = hw_param_interval_c(params, SNDRV_PCM_HW_PARAM_CHANNELS)->max;
  	int ret;
  
@@ -215,7 +220,7 @@ restored port running rather than stopping it while codecs start.
  	cfg->bit_width = params_width(params);
  	cfg->sample_rate = params_rate(params);
  	cfg->num_channels = channels;
-@@ -133,6 +137,7 @@
+@@ -133,6 +137,7 @@ static int q6dma_hw_params(struct snd_pcm_substream *substream,
  	struct audioreach_module_config *cfg = &dai_data->module_config[dai->id];
  	int channels = hw_param_interval_c(params, SNDRV_PCM_HW_PARAM_CHANNELS)->max;
  
@@ -223,7 +228,7 @@ restored port running rather than stopping it while codecs start.
  	cfg->bit_width = params_width(params);
  	cfg->sample_rate = params_rate(params);
  	cfg->num_channels = channels;
-@@ -157,6 +162,8 @@
+@@ -157,6 +162,8 @@ static void q6apm_lpass_dai_shutdown(struct snd_pcm_substream *substream, struct
  		q6apm_graph_close(dai_data->graph[dai->id]);
  		dai_data->graph[dai->id] = NULL;
  	}
@@ -232,7 +237,7 @@ restored port running rather than stopping it while codecs start.
  }
  
  static int q6apm_lpass_dai_trigger(struct snd_pcm_substream *substream, int cmd,
-@@ -169,6 +176,11 @@
+@@ -169,6 +176,11 @@ static int q6apm_lpass_dai_trigger(struct snd_pcm_substream *substream, int cmd,
  	case SNDRV_PCM_TRIGGER_START:
  	case SNDRV_PCM_TRIGGER_RESUME:
  	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
@@ -244,7 +249,7 @@ restored port running rather than stopping it while codecs start.
  		if (!dai_data->is_port_started[dai->id]) {
  			ret = q6apm_graph_start(dai_data->graph[dai->id]);
  			if (ret < 0)
-@@ -184,25 +196,74 @@
+@@ -184,25 +196,74 @@ static int q6apm_lpass_dai_trigger(struct snd_pcm_substream *substream, int cmd,
  	return ret;
  }
  
@@ -322,7 +327,7 @@ restored port running rather than stopping it while codecs start.
  		graph = q6apm_graph_open(dai->dev, NULL, dai->dev, graph_id, substream->stream);
  		if (IS_ERR(graph)) {
  			dev_err(dai->dev, "Failed to open graph (%d)\n", graph_id);
-@@ -212,35 +273,11 @@
+@@ -212,32 +273,11 @@ static int q6apm_lpass_dai_prepare(struct snd_pcm_substream *substream, struct s
  		dai_data->graph[graph_id] = graph;
  	}
  
@@ -346,10 +351,7 @@ restored port running rather than stopping it while codecs start.
 -	 * PCM trigger; start the port here so BCLK is up in time. The
 -	 * trigger's !is_port_started guard then no-ops. Playback only.
 -	 */
--	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK &&
--	    ((dai->id >= PRIMARY_MI2S_RX && dai->id <= QUATERNARY_MI2S_TX) ||
--	     (dai->id >= QUINARY_MI2S_RX &&
--	      dai->id <= QUINARY_MI2S_TX))) {
+-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 -		rc = q6apm_graph_start(dai_data->graph[dai->id]);
 -		if (rc < 0) {
 -			dev_err(dai->dev, "Failed to start APM port %d\n", dai->id);
@@ -361,7 +363,7 @@ restored port running rather than stopping it while codecs start.
  	return 0;
  err:
  	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-@@ -273,6 +310,7 @@
+@@ -270,6 +310,7 @@ static int q6i2s_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
  	struct q6apm_lpass_dai_data *dai_data = dev_get_drvdata(dai->dev);
  	struct audioreach_module_config *cfg = &dai_data->module_config[dai->id];
  
@@ -369,7 +371,7 @@ restored port running rather than stopping it while codecs start.
  	cfg->fmt = fmt;
  
  	return 0;
-@@ -306,12 +344,66 @@
+@@ -303,12 +344,66 @@ static const struct snd_soc_dai_ops q6hdmi_ops = {
  	.trigger	= q6apm_lpass_dai_trigger,
  };
  

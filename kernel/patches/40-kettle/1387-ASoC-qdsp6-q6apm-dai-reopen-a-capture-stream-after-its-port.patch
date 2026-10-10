@@ -1,0 +1,65 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] ASoC: qdsp6: q6apm-dai: reopen a capture stream after its port at resume
+
+40-kettle/1293 reopens every stream graph released at system suspend
+from the q6apm-dai device resume, which runs before the card restores
+the port graphs, so that a stream graph is back before its port graph.
+That is the DSP's required order (source first, then sink) for
+playback only: for capture the port is the source and the stream the
+sink, which is why the BE opens a capture port graph at startup, before
+the FE opens its stream. Capture streams came back sink first.
+
+Reopen only playback streams at device resume, and a capture stream at
+its next prepare (userspace must re-prepare after resume), which DPCM
+runs after the BE's: its port graph is restored or reopened by then.
+---
+--- a/sound/soc/qcom/qdsp6/q6apm-dai.c
++++ b/sound/soc/qcom/qdsp6/q6apm-dai.c
+@@ -238,6 +238,24 @@ static int q6apm_dai_prepare(struct snd_soc_component *component,
+ 	if (!pdata)
+ 		return -EINVAL;
+ 
++	/*
++	 * A capture stream (the sink) released at system suspend reopens here,
++	 * after its port (the source): DPCM prepares the BE first.
++	 */
++	if (prtd && !prtd->graph && substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
++		struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++		struct q6apm_graph *graph;
++
++		graph = q6apm_graph_open(dev, event_handler, prtd,
++					 snd_soc_rtd_to_cpu(rtd, 0)->driver->id,
++					 substream->stream);
++		if (IS_ERR(graph)) {
++			dev_err(dev, "Failed to reopen graph (%ld)\n", PTR_ERR(graph));
++			return PTR_ERR(graph);
++		}
++		prtd->graph = graph;
++	}
++
+ 	if (!prtd || !prtd->graph) {
+ 		dev_err(dev, "%s: private data null or audio client freed\n", __func__);
+ 		return -EINVAL;
+@@ -1017,7 +1035,11 @@ static const struct snd_compress_ops q6apm_dai_compress_ops = {
+ 	.copy		= q6apm_compr_copy,
+ };
+ 
+-/* Device PM: the card's device link orders this before the BE restores the sink graph */
++/*
++ * Device PM: the card's device link orders this before the BE restores its
++ * port. A playback stream is the source of its port's graph and reopens
++ * here, before it; a capture stream is the sink and reopens at prepare.
++ */
+ static void q6apm_dai_walk(struct snd_soc_component *component, bool release)
+ {
+ 	struct snd_soc_pcm_runtime *rtd;
+@@ -1047,7 +1069,8 @@ static void q6apm_dai_walk(struct snd_soc_component *component, bool release)
+ 						continue;
+ 					if (release && prtd->graph) {
+ 						q6apm_dai_release_graph(prtd, dir);
+-					} else if (!release && !prtd->graph) {
++					} else if (!release && !prtd->graph &&
++						   dir == SNDRV_PCM_STREAM_PLAYBACK) {
+ 						graph = q6apm_graph_open(component->dev, event_handler, prtd,
+ 									 snd_soc_rtd_to_cpu(rtd, 0)->driver->id,
+ 									 dir);

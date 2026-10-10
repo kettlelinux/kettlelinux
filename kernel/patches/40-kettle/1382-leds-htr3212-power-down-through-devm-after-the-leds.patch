@@ -1,0 +1,173 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] leds: htr3212: power down through devm, after the LEDs, and only once
+
+- A probe failure after the supply was enabled (register setup, LED
+  registration) left it enabled. Power down from a devm action instead
+  of remove().
+- remove() powered the chip down before devm unregistered the LED class
+  devices, whose unregistration then wrote brightness 0 to a chip with
+  no supply. The devm action is registered before the LEDs, so it runs
+  after them, and the regmap is now set up before it so it outlives it.
+- Any error from getting the sdb GPIO other than -EPROBE_DEFER left the
+  ERR_PTR in use. Fail the probe (every DT using the driver has one).
+- A failed regulator_enable() at resume left the supply off, and the
+  next suspend or remove disabled it again, dropping a reference that
+  another consumer of the shared vdd_mcu_3v3 rail holds. Track whether
+  it is off, as rsinput does.
+- More than 12 child nodes overran the LED array.
+---
+--- a/drivers/leds/leds-htr3212.c
++++ b/drivers/leds/leds-htr3212.c
+@@ -39,6 +39,7 @@ struct htr3212_priv {
+ 	struct device *dev;
+ 	struct gpio_desc *sdb;
+ 	struct regulator *vdd;
++	bool vdd_off;
+ 	struct regmap *regmap;
+ 	struct mutex lock;
+ 	struct htr3212_led_data leds[HTR3212_CHANNELS];
+@@ -217,6 +218,25 @@ static const struct regmap_config htr3212_regmap_config = {
+ 	.cache_type = REGCACHE_NONE,
+ };
+ 
++static void htr3212_power_off(void *data)
++{
++	struct htr3212_priv *priv = data;
++	int ret;
++
++	/* Suspend already shut it down, or resume failed to power it up. */
++	if (priv->vdd_off)
++		return;
++
++	ret = htr3212_reset_regs(priv);
++	if (ret)
++		dev_err(priv->dev, "Failed to reset registers on removal (%pe)\n",
++			ERR_PTR(ret));
++
++	gpiod_set_value_cansleep(priv->sdb, 0);
++
++	regulator_disable(priv->vdd);
++}
++
+ static int htr3212_probe(struct i2c_client *client)
+ {
+ 	struct device *dev = &client->dev;
+@@ -225,7 +245,7 @@ static int htr3212_probe(struct i2c_client *client)
+ 	int ret = 0;
+ 
+ 	count = of_get_available_child_count(dev_of_node(dev));
+-	if (!count)
++	if (!count || count > HTR3212_CHANNELS)
+ 		return -EINVAL;
+ 
+ 	priv = devm_kzalloc(dev, struct_size(priv, leds, count),
+@@ -234,8 +254,9 @@ static int htr3212_probe(struct i2c_client *client)
+ 		return -ENOMEM;
+ 
+ 	priv->sdb = devm_gpiod_get(dev, "sdb", GPIOD_OUT_HIGH);
+-	if (PTR_ERR(priv->sdb) == -EPROBE_DEFER)
+-		return -EPROBE_DEFER;
++	if (IS_ERR(priv->sdb))
++		return dev_err_probe(dev, PTR_ERR(priv->sdb),
++				     "Failed to get sdb GPIO\n");
+ 
+ 	priv->vdd = devm_regulator_get(dev, "vdd");
+ 	if (IS_ERR(priv->vdd)) {
+@@ -243,16 +264,9 @@ static int htr3212_probe(struct i2c_client *client)
+ 		return ret;
+ 	}
+ 
+-	ret = regulator_enable(priv->vdd);
+-	if (ret < 0) {
+-		return ret;
+-	}
+-
+-	gpiod_set_value_cansleep(priv->sdb, 1);
+-	usleep_range(10000, 11000);
+-
+ 	priv->dev = &client->dev;
+ 
++	/* Before the power-off action, which uses it, so it outlives it. */
+ 	priv->regmap = devm_regmap_init_i2c(client, &htr3212_regmap_config);
+ 	if (IS_ERR(priv->regmap)) {
+ 		ret = PTR_ERR(priv->regmap);
+@@ -262,6 +276,22 @@ static int htr3212_probe(struct i2c_client *client)
+ 	i2c_set_clientdata(client, priv);
+ 	mutex_init(&priv->lock);
+ 
++	ret = regulator_enable(priv->vdd);
++	if (ret < 0) {
++		return ret;
++	}
++
++	/*
++	 * Registered before the LEDs, so it runs after their unregistration
++	 * turns them off, while the chip is still powered.
++	 */
++	ret = devm_add_action_or_reset(dev, htr3212_power_off, priv);
++	if (ret)
++		return ret;
++
++	gpiod_set_value_cansleep(priv->sdb, 1);
++	usleep_range(10000, 11000);
++
+ 	ret = htr3212_init_regs(priv);
+ 	if (ret)
+ 		return ret;
+@@ -278,6 +308,10 @@ static int htr3212_suspend(struct device *dev)
+ 	struct htr3212_priv *priv = dev_get_drvdata(dev);
+ 	int ret;
+ 
++	/* Still off from a failed resume. */
++	if (priv->vdd_off)
++		return 0;
++
+ 	ret = htr3212_write(priv, HTR3212_SHUTDOWN, 0x00);
+ 	if (ret)
+ 		dev_err(dev, "Failed to shut down device on suspend (%pe)\n",
+@@ -285,6 +319,7 @@ static int htr3212_suspend(struct device *dev)
+ 
+ 	gpiod_set_value_cansleep(priv->sdb, 0);
+ 	regulator_disable(priv->vdd);
++	priv->vdd_off = true;
+ 
+ 	return 0;
+ }
+@@ -300,6 +335,7 @@ static int htr3212_resume(struct device *dev)
+ 			ERR_PTR(ret));
+ 		return ret;
+ 	}
++	priv->vdd_off = false;
+ 
+ 	gpiod_set_value_cansleep(priv->sdb, 1);
+ 	usleep_range(10000, 11000);
+@@ -315,21 +351,6 @@ static int htr3212_resume(struct device *dev)
+ static DEFINE_SIMPLE_DEV_PM_OPS(htr3212_pm_ops, htr3212_suspend,
+ 				htr3212_resume);
+ 
+-static void htr3212_remove(struct i2c_client *client)
+-{
+-	struct htr3212_priv *priv = i2c_get_clientdata(client);
+-	int ret;
+-
+-	ret = htr3212_reset_regs(priv);
+-	if (ret)
+-		dev_err(&client->dev, "Failed to reset registers on removal (%pe)\n",
+-			ERR_PTR(ret));
+-
+-	gpiod_set_value_cansleep(priv->sdb, 0);
+-
+-	regulator_disable(priv->vdd);
+-}
+-
+ static const struct of_device_id of_htr3212_match[] = {
+ 	{ .compatible = "heroic,htr3212", },
+ 	{ /* sentinel */ }
+@@ -351,7 +372,6 @@ static struct i2c_driver htr3212_driver = {
+ 		.pm	= pm_sleep_ptr(&htr3212_pm_ops),
+ 	},
+ 	.probe		= htr3212_probe,
+-	.remove		= htr3212_remove,
+ 	.id_table	= htr3212_id,
+ };
+ 
