@@ -81,6 +81,8 @@ const applyLaunchOptions = (appid: number, g: Game, s: Status) => {
   const on = g.enabled && s.layer;
   const cap = on ? baseCap(g) : null;
   return editLaunchOptions(appid, (o) => {
+    // off, and no KETTLE_FG=1 left behind: a frame cap or WSI setting there is the player's own
+    if (!on && !hasEnv(o, KETTLE)) return o;
     o = withEnv(o, WSI, on && g.bypass_wsi ? "0" : null);
     o = withDxvkOption(withDxvkOption(o, "dxgi.maxFrameRate", cap), "d3d9.maxFrameRate", cap);
     o = withEnv(o, "VKD3D_FRAME_RATE", cap);
@@ -106,9 +108,9 @@ function FrameGenSettings({ appid, name, s, onChanged }: { appid: number; name: 
     setG(null);
     getGame(appid).then((g) => {
       setG(g);
-      // launch options edited by hand (or from an older plugin version): make them match;
-      // a no-op when they already do
-      if (g.enabled) applyLaunchOptions(appid, g, s);
+      // launch options edited by hand (or from an older plugin version, or Frame Gen turned off
+      // while they couldn't be edited): make them match; a no-op when they already do
+      applyLaunchOptions(appid, g, s);
     });
   }, [appid]);
   if (!g) return null;

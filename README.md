@@ -32,10 +32,10 @@ opens the same tour in Welcome. These are from an Odin 2 Portal.
 | <img src="packages/kettle-decky-plugins/welcome/assets/gs-compat.jpg" width="200" alt="Compat tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/gs-perf.jpg" width="200" alt="Perf tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/gs-upscale.jpg" width="200" alt="Upscale tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/gs-framegen.jpg" width="200" alt="Frame Gen tab"> |
 | **Compat**: Proton, FEX, DXVK, vkd3d and Turnip options, known good settings | **Perf**: fan, CPU limits, refresh rate, Auto TDP | **Upscale**: FSR 1, and SGSR 2 / Arm ASR / FSR 2.2 through OptiScaler | **Frame Gen**: Kettle's own frame generation |
 
-| Device Settings | | | Quick Access |
-|:-:|:-:|:-:|:-:|
-| <img src="packages/kettle-decky-plugins/welcome/assets/ds-power.jpg" width="200" alt="Power tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/ds-lights.jpg" width="200" alt="Lights tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/ds-gyro.jpg" width="200" alt="Gyro tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/plugins.jpg" width="200" alt="Kettle's plugins in Quick Access"> |
-| **Power**: charge limit and speed, refresh rate | **Lights**: the stick and power lights | **Gyro**, and **System**: start-up mode, SSH, reset | Game Settings, Crash Reports, Game Stores, Device Settings, Welcome |
+| Device Settings | | | | Quick Access |
+|:-:|:-:|:-:|:-:|:-:|
+| <img src="packages/kettle-decky-plugins/welcome/assets/ds-power.jpg" width="160" alt="Power tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/ds-lights.jpg" width="160" alt="Lights tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/ds-gyro.jpg" width="160" alt="Gyro tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/ds-system.jpg" width="160" alt="System tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/plugins.jpg" width="160" alt="Kettle's plugins in Quick Access"> |
+| **Power**: charge limit and speed, refresh rate | **Lights**: the stick lights, and the Portal's power light | **Gyro**: motion controls | **System**: start-up mode, SSH, reset, bootloader updates | Game Settings, Crash Reports, Game Stores, Device Settings, Welcome |
 
 <img src="packages/kettle-decky-plugins/welcome/assets/stores.jpg" width="820" alt="Game Stores, on its Flathub tab">
 
