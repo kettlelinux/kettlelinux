@@ -24,7 +24,7 @@ for (const box of document.querySelectorAll("[data-tabs]")) {
     }
   };
   for (const b of buttons) b.addEventListener("click", () => show(b.dataset.tab, false));
-  box.querySelector('[role="tablist"]').addEventListener("keydown", (e) => {
+  box.querySelector('[role="tablist"]')?.addEventListener("keydown", (e) => {
     const i = buttons.indexOf(document.activeElement);
     if (i < 0) return;
     const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: buttons.length - 1 }[e.key];

@@ -15,9 +15,12 @@ const battlenetInstall = callable<[], void>("battlenet_install");
 
 export function BattleNetTab() {
   // status also switches the entry to the launcher once the installer has finished
-  const [s, refresh] = usePoll(battlenetStatus, 5000);
+  // a failed check shows its error rather than an empty tab
+  const [r, refresh] = usePoll(() => battlenetStatus().catch((e) => ({ error: String(e?.message ?? e) })), 5000);
   const [busy, setBusy] = useState(false);
-  if (!s) return null;
+  if (!r) return null;
+  if ("error" in r) return <div style={small}>Couldn't check Battle.net: {r.error}</div>;
+  const s = r;
   if (!s.available) return <div style={small}>Battle.net needs kettle-welcome, which isn't installed.</div>;
   const done = !!s.in_steam && s.ready;
   return (

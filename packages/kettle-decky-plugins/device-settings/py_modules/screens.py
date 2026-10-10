@@ -6,6 +6,7 @@
 import json
 import os
 import subprocess
+import threading
 
 import decky
 
@@ -26,11 +27,15 @@ def _load() -> dict:
     return s
 
 
+_save_lock = threading.Lock()  # the brightness slider saves beside the toggles' threads
+
+
 def _save(s: dict):
     os.makedirs(os.path.dirname(STATE), exist_ok=True)
-    with open(STATE + ".new", "w") as f:
-        json.dump(s, f)
-    os.replace(STATE + ".new", STATE)
+    with _save_lock:
+        with open(STATE + ".new", "w") as f:
+            json.dump(s, f)
+        os.replace(STATE + ".new", STATE)
 
 
 def _user_env() -> dict:

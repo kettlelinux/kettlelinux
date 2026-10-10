@@ -82,7 +82,11 @@ def session_env() -> dict:
     uid = os.getuid()
     env = dict(os.environ, XDG_RUNTIME_DIR=f"/run/user/{uid}",
                DBUS_SESSION_BUS_ADDRESS=f"unix:path=/run/user/{uid}/bus")
-    r = subprocess.run(["systemctl", "--user", "show-environment"], env=env, capture_output=True, text=True)
+    try:
+        r = subprocess.run(["systemctl", "--user", "show-environment"], env=env, capture_output=True, text=True,
+                           timeout=10)
+    except subprocess.TimeoutExpired:
+        return env
     for k in ("GAMESCOPE_WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY"):
         m = re.search(rf"^{k}=(.+)$", r.stdout, re.M)
         if m:

@@ -29,6 +29,7 @@ import json
 import os
 import re
 import secrets
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -43,6 +44,14 @@ import steamlib
 import upscaling
 from gi.repository import GLib
 from powerd import get_json, key, power
+
+# OptiScaler's files, one change at a time: a slider sends a change per step, each in a thread
+_up_lock = threading.Lock()
+
+
+def _up(fn, *args):
+    with _up_lock:
+        return fn(*args)
 
 CATALOG = os.path.join(decky.DECKY_PLUGIN_DIR, "game-options.json")
 GAMES = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "games.json")
@@ -615,19 +624,19 @@ class Plugin:
         return upscaling.status()
 
     async def up_get_game(self, appid: int) -> dict:
-        return await asyncio.to_thread(upscaling.get_game, appid)
+        return await asyncio.to_thread(_up, upscaling.get_game, appid)
 
     async def up_enable(self, appid: int, exe_dir: str, proxy: str) -> dict:
-        return await asyncio.to_thread(upscaling.enable, appid, exe_dir, proxy)
+        return await asyncio.to_thread(_up, upscaling.enable, appid, exe_dir, proxy)
 
     async def up_disable(self, appid: int) -> dict:
-        return await asyncio.to_thread(upscaling.disable, appid)
+        return await asyncio.to_thread(_up, upscaling.disable, appid)
 
     async def up_configure(self, appid: int, settings: dict) -> dict:
-        return await asyncio.to_thread(upscaling.configure, appid, settings)
+        return await asyncio.to_thread(_up, upscaling.configure, appid, settings)
 
     async def up_reset(self, appid: int) -> dict:
-        return await asyncio.to_thread(upscaling.reset, appid)
+        return await asyncio.to_thread(_up, upscaling.reset, appid)
 
     # ---------- Frame Gen: the kettle-framegen layer ----------
 
@@ -671,12 +680,14 @@ class Plugin:
         decky.logger.info("game settings: %d games with a profile, database %s", n, _server() or "off")
         decky.logger.info("upscaling: OptiScaler %s", upscaling._version() or "not installed")
         decky.logger.info("extras: %d optional components offered", len(extras._manifest(log=True)))
+        self._framegen = asyncio.create_task(framegen.run())
         try:
             info = await self.perf_info()
             decky.logger.info("performance: kettle-powerd up, fan control %s", info["fan"])
         except GLib.Error as e:
             decky.logger.error("performance: kettle-powerd unreachable: %s", e.message)
-        self._framegen = asyncio.create_task(framegen.run())
+        except Exception as e:
+            decky.logger.error("performance: kettle-powerd's info: %s", e)
 
     async def _unload(self):
         if getattr(self, "_framegen", None):

@@ -1,5 +1,5 @@
 import { ButtonItem, DropdownItem, Field, Focusable, Navigation, PanelSection, PanelSectionRow, SidebarNavigation, SliderField, ToggleField, staticClasses } from "@decky/ui";
-import { callable, definePlugin, routerHook } from "@decky/api";
+import { callable, definePlugin, routerHook, toaster } from "@decky/api";
 import { ReactElement, useEffect, useMemo, useState } from "react";
 import { FaBatteryHalf, FaBolt, FaCog, FaDesktop, FaLightbulb, FaTabletAlt, FaTools, FaHdd, FaInfoCircle, FaMemory, FaMicrochip, FaTachometerAlt, FaThermometerHalf, FaWifi, FaCube } from "react-icons/fa";
 import { runningAppId } from "../../shared/GamePicker";
@@ -279,7 +279,12 @@ function Battery({ s, inf }: { s: Status; inf: Info }) {
 function Screen({ r, onChange }: { r: Refresh; onChange: (r: Refresh) => void }) {
   const pick = async (hz: number) => {
     onChange({ ...r, hz });
-    onChange(await setRefresh(hz));
+    try {
+      onChange(await setRefresh(hz));
+    } catch (e) {
+      onChange(r);
+      toaster.toast({ title: "Device Settings", body: `The refresh rate wasn't set: ${e}` });
+    }
   };
   return (
     <PanelSection title="Screen">
@@ -289,7 +294,7 @@ function Screen({ r, onChange }: { r: Refresh; onChange: (r: Refresh) => void })
           description={(r.hz === 0
             ? "Steam's frame limit picks it: each limit runs at a rate it divides evenly"
             : "Holds in games and the Steam UI alike. Lower rates use less power") +
-            ". A game can have its own, in Game Settings › Performance"}
+            ". A game can have its own, in Game Settings › Perf"}
           rgOptions={[{ data: 0, label: "Auto" }, ...r.rates.map((hz) => ({ data: hz, label: `${hz} Hz` }))]}
           selectedOption={r.hz}
           onChange={(o) => pick(o.data)}
@@ -306,7 +311,7 @@ function PowerTab() {
   const [error, setError] = useState(false);
   const [refresh, setRefreshState] = useState<Refresh | null>(null);
   useEffect(() => {
-    getRefresh().then(setRefreshState);
+    getRefresh().then(setRefreshState).catch(() => {});
     info().then(setInf).catch(() => setError(true));
     const poll = () => status().then(setS).catch(() => setError(true));
     poll();

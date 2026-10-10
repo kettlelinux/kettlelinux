@@ -63,9 +63,9 @@ async def _watch_fps_limit():
     property at start and on every change; it ends with gamescope, and starts again."""
     sent = None
     while True:
-        env = await asyncio.to_thread(refresh.session_env)
         proc = None
         try:
+            env = await asyncio.to_thread(refresh.session_env)
             if "DISPLAY" in env:
                 # line buffered: xprop's own output to a pipe waits for a full buffer
                 proc = await asyncio.create_subprocess_exec(
@@ -391,7 +391,10 @@ class Plugin:
         return await lights.set(changes)
 
     async def gyro_get(self) -> dict:
-        return await gyro.get()
+        # the Gyro tab asks several times a second: an error is logged when kettle-motiond goes away, not on every ask
+        r = await gyro.get(quiet=getattr(self, "_gyro_down", False))
+        self._gyro_down = not r.get("service")
+        return r
 
     async def gyro_set_mode(self, mode: str) -> dict:
         return await gyro.set_mode(mode)
