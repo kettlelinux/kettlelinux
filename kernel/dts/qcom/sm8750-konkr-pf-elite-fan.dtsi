@@ -1,0 +1,115 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Kettle Linux: the fan curve in the kernel for the KONKR Pocket FIT Elite (included at the end
+ * of sm8750-konkr-pf-elite.dts), as qcs8550-ayn-fan.dtsi does for the AYN boards. ROCKNIX's dts
+ * has the pwm-fan but no thermal zone drives it (ROCKNIX runs a userspace fan daemon), so
+ * without this the fan sits at its boot duty cycle. Bind it to active trips (step_wise) on the
+ * main and prime CPU clusters and the GPU: off below 50 C, then the stock cooling levels
+ * 64/128/255 (of 255) at 50/60/70 C. kettle-powerd's custom curves take over these zones
+ * (packages/kettle-power/pocket-fit-elite.toml). Not yet checked on hardware.
+ */
+
+&{/thermal-zones/cpuss-0-0-thermal} {
+	trips {
+		cpuss00_fan0: trip-fan0 {
+			temperature = <50000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		cpuss00_fan1: trip-fan1 {
+			temperature = <60000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		cpuss00_fan2: trip-fan2 {
+			temperature = <70000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+	};
+
+	cooling-maps {
+		fan0 {
+			trip = <&cpuss00_fan0>;
+			cooling-device = <&fan 1 1>;
+		};
+		fan1 {
+			trip = <&cpuss00_fan1>;
+			cooling-device = <&fan 2 2>;
+		};
+		fan2 {
+			trip = <&cpuss00_fan2>;
+			cooling-device = <&fan 3 3>;
+		};
+	};
+};
+
+&{/thermal-zones/cpuss-1-0-thermal} {
+	trips {
+		cpuss10_fan0: trip-fan0 {
+			temperature = <50000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		cpuss10_fan1: trip-fan1 {
+			temperature = <60000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		cpuss10_fan2: trip-fan2 {
+			temperature = <70000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+	};
+
+	cooling-maps {
+		fan0 {
+			trip = <&cpuss10_fan0>;
+			cooling-device = <&fan 1 1>;
+		};
+		fan1 {
+			trip = <&cpuss10_fan1>;
+			cooling-device = <&fan 2 2>;
+		};
+		fan2 {
+			trip = <&cpuss10_fan2>;
+			cooling-device = <&fan 3 3>;
+		};
+	};
+};
+
+&{/thermal-zones/gpuss0-thermal} {
+	trips {
+		gpuss0_fan0: trip-fan0 {
+			temperature = <50000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		gpuss0_fan1: trip-fan1 {
+			temperature = <60000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		gpuss0_fan2: trip-fan2 {
+			temperature = <70000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+	};
+
+	cooling-maps {
+		fan0 {
+			trip = <&gpuss0_fan0>;
+			cooling-device = <&fan 1 1>;
+		};
+		fan1 {
+			trip = <&gpuss0_fan1>;
+			cooling-device = <&fan 2 2>;
+		};
+		fan2 {
+			trip = <&gpuss0_fan2>;
+			cooling-device = <&fan 3 3>;
+		};
+	};
+};

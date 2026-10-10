@@ -16,7 +16,7 @@ OUT="$ROOT/out/kernel"
 be_nice   # sets JOBS
 KMAKE=(make -C "$KSRC" ARCH=arm64 LLVM=1 -j"$JOBS")
 # Merged in order over base.config; one kernel serves every device, so each SoC adds its own.
-FRAGMENTS=(steamos.config sm8250.config)
+FRAGMENTS=(steamos.config sm8250.config sm8750.config)
 
 # The kernel needs bc; fall back to the timeconst-only shim if the host lacks it.
 command -v bc >/dev/null || export PATH="$ROOT/tools:$PATH"
