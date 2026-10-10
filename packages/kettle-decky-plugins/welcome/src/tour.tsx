@@ -285,10 +285,15 @@ export function DevicePage({ f }: { f: Features }) {
 const CONTROLS =
   "Left stick: pointer · Right stick: scroll · A / R2: click · B / L2: right click · R1 (held): precise pointer · R3: middle click · X / Home: on-screen keyboard · Y: Enter · D-pad: arrow keys · L1: Escape · Start: application menu · Select: Overview";
 
+declare const appStore: { GetAppOverviewByAppID(appid: number): { m_gameid: string } | null };
+
 export function DesktopPage() {
-  const [nested, setNested] = useState<number | null>(null);
+  // the Desktop entry's game ID (a shortcut's 64-bit one, which RunGame takes), while it's in the library
+  const [nested, setNested] = useState<string | null>(null);
   useEffect(() => {
-    desktopAppid().then(setNested).catch(() => {});
+    desktopAppid()
+      .then((appid) => setNested((appid && appStore.GetAppOverviewByAppID(appid)?.m_gameid) || null))
+      .catch(() => {});
   }, []);
   return (
     <div style={page}>
@@ -309,7 +314,7 @@ export function DesktopPage() {
       </Text>
       {nested !== null && (
         <Buttons>
-          <Button label="Start the Desktop" onClick={() => SteamClient.Apps.RunGame(String(nested), "", -1, 100)} />
+          <Button label="Start the Desktop" onClick={() => SteamClient.Apps.RunGame(nested, "", -1, 100)} />
         </Buttons>
       )}
       <Heading>Desktop Mode</Heading>

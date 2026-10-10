@@ -102,11 +102,12 @@ def reset(what: str):
     """Resets on the next start, and restarts the device now."""
     if what not in RESETS:
         raise ValueError(f"unknown reset {what!r}")
-    r = subprocess.run(["pkexec", RESET, what, "--no-reboot"], capture_output=True, text=True, timeout=60)
+    # kettle-reset restarts the device itself: as root, which logind lets reboot (Decky's backend,
+    # outside any session, would need a password)
+    decky.logger.info("reset %s on the next start; restarting", what)
+    r = subprocess.run(["pkexec", RESET, what], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         raise RuntimeError((r.stderr or r.stdout).strip() or f"kettle-reset failed ({r.returncode})")
-    decky.logger.info("reset %s on the next start; restarting", what)
-    subprocess.run(["systemctl", "reboot"], timeout=30)
 
 
 def _abl(*args: str, timeout: int) -> dict:
@@ -127,9 +128,17 @@ def _abl(*args: str, timeout: int) -> dict:
     return out
 
 
+# the ABL update running, and the last status: a check can't run beside it (kettle-abl-update's
+# lock), and the System tab, reopened meanwhile, shows it still going
+_abl_update = {"busy": False, "last": None}
+
+
 def abl_status() -> dict:
     """What the bootloader is, and what kettle-abl-update would do. installed: some abl slot holds
-    a ROCKNIX ABL (the System tab shows its section only then)."""
+    a ROCKNIX ABL (the System tab shows its section only then). busy: an update is running."""
+    if _abl_update["busy"]:
+        return {**(_abl_update["last"] or {"slots": {}, "image": None, "result": None}),
+                "installed": True, "busy": True}
     if not os.access(ABL_UPDATE, os.X_OK):
         return {"installed": False}
     try:
@@ -137,12 +146,21 @@ def abl_status() -> dict:
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as e:
         decky.logger.warning("kettle-abl-update --check: %s", e)
         return {"installed": False}
-    return {**s, "installed": any(v != "other" for v in s["slots"].values())}
+    s = {**s, "installed": any(v != "other" for v in s["slots"].values())}
+    _abl_update["last"] = s
+    return s
 
 
 def abl_update() -> dict:
     """Updates a recognised, older ROCKNIX ABL in both slots; the result as abl_status's."""
+    if _abl_update["busy"]:
+        raise RuntimeError("an update is already running")
     decky.logger.info("updating the ROCKNIX ABL")
-    s = _abl("--yes", timeout=300)
+    _abl_update["busy"] = True
+    try:
+        s = {**_abl("--yes", timeout=300), "installed": True}
+    finally:
+        _abl_update["busy"] = False
     decky.logger.info("kettle-abl-update: %s", s["result"])
-    return {**s, "installed": True}
+    _abl_update["last"] = s
+    return s

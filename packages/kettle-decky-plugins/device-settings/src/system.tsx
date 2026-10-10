@@ -18,7 +18,7 @@ const resetStatus = callable<[], ResetStatus>("reset_status");
 const reset = callable<[what: What], void>("reset");
 // kettle-abl-update's view: each abl slot's ROCKNIX release ("test-signed": one it can't
 // identify, "other": stock), the image's release, and what it did or would do
-type Abl = { installed: boolean; slots?: Record<string, string>; image?: string | null; result?: string | null };
+type Abl = { installed: boolean; busy?: boolean; slots?: Record<string, string>; image?: string | null; result?: string | null };
 const ablStatus = callable<[], Abl>("abl_status");
 const ablUpdate = callable<[], Abl>("abl_update");
 
@@ -231,6 +231,12 @@ function Bootloader() {
   useEffect(() => {
     ablStatus().then(setA).catch(() => {});
   }, []);
+  // an update started before the tab was reopened: follow it until it's done
+  useEffect(() => {
+    if (!a?.busy || busy) return;
+    const t = setInterval(() => ablStatus().then(setA).catch(() => {}), 3000);
+    return () => clearInterval(t);
+  }, [a?.busy, busy]);
   if (!a?.installed) return null;
   const update = () =>
     showModal(
@@ -270,12 +276,13 @@ function Bootloader() {
       <PanelSectionRow>
         <div style={small}>{ablText(a)}</div>
       </PanelSectionRow>
-      {busy ? (
+      {busy || a.busy ? (
         <PanelSectionRow>
           <ProgressBarWithInfo indeterminate nProgress={0} sOperationText="Updating the bootloader… keep the device on" />
         </PanelSectionRow>
       ) : (
-        a.result === "would-update" && (
+        // low-battery: again once the charger is in
+        (a.result === "would-update" || a.result === "low-battery") && (
           <PanelSectionRow>
             <ButtonItem layout="below" onClick={update}>
               Update to ROCKNIX ABL {a.image}…

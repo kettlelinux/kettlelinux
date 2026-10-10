@@ -1,5 +1,6 @@
 # Publishes site/ to GitHub Pages (kettlelinux.org). The logo files in site/ are symlinks into
-# packages/kettle-branding/art, so the site and the image share one copy of the art.
+# packages/kettle-branding/art, so the site and the image share one copy of the art; site/tour is a
+# symlink to the Welcome plugin's screenshots.
 name: Website
 
 on:
@@ -8,6 +9,7 @@ on:
     paths:
       - "site/**"
       - "packages/kettle-branding/art/**"
+      - "packages/kettle-decky-plugins/welcome/assets/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 

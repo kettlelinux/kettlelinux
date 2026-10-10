@@ -55,7 +55,11 @@ if [ -z "${KETTLE_ABL_INHIBITED:-}" ] && [ "$CHECK" = 0 ] && command -v systemd-
     --what=sleep:shutdown:idle:handle-power-key:handle-suspend-key "$0" "$@"
 fi
 exec 9>/run/kettle-abl-update.lock
-flock -n 9 || die "already running"
+if [ "$CHECK" = 1 ]; then
+  flock -w 30 9 || die "already running"   # a check waits for another check (Device Settings)
+else
+  flock -n 9 || die "already running"
+fi
 
 # The device's SoC (device.conf ABL_SOC): which of ROCKNIX's builds it takes
 ABL_SOC=""

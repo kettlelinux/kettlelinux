@@ -51,7 +51,8 @@ function selectLayout(appid: number, pads: any[]) {
 }
 
 export async function addDesktop() {
-  if (await claimDefault("desktop-shortcut")) await addShortcut();
+  // not again when the entry is still there (Reset settings forgets the claim, not the library)
+  if ((await claimDefault("desktop-shortcut")) && !inLibrary(await desktopAppid())) await addShortcut();
   const appid = await desktopAppid();
   if (!appid) return;
   // a new entry and the pad can both come up a moment later: try for a while

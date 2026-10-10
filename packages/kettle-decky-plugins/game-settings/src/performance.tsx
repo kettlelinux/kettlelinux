@@ -87,8 +87,10 @@ function PowerSettings({ appid, name, inf, fanControl, fpsLimit }: { appid: numb
   const update = async (patch: { fan?: Partial<Settings["fan"]>; cpu?: Partial<Settings["cpu"]>; auto_tdp?: boolean }) => {
     const next = { fan: { ...s.fan, ...patch.fan }, cpu: { ...s.cpu, ...patch.cpu }, auto_tdp: patch.auto_tdp ?? s.auto_tdp };
     setG({ ...g, settings: next });
-    setG(await setGame(target, next));
+    setG(own(await setGame(target, next)));
   };
+  // kettle-powerd's answer for the all-games settings says custom; for a game following them, it isn't
+  const own = (r: Game): Game => (target === null ? { ...r, custom: false } : r);
   const clusters = Object.fromEntries(inf.clusters.map((c) => [c.name, c]));
   const midCount = clusters.mid?.cpus.length ?? 0;
 
@@ -174,7 +176,7 @@ function PowerSettings({ appid, name, inf, fanControl, fpsLimit }: { appid: numb
       <PanelSectionRow>
         <ButtonItem
           layout="below"
-          onClick={async () => setG(await setGame(target, target === null ? { fan: { mode: "auto", curve: inf.default_curve, fixed: 50 }, cpu: { little: null, mid: null, prime: null, mid_cores: midCount, prime_core: true }, auto_tdp: false } : null))}
+          onClick={async () => setG(own(await setGame(target, target === null ? { fan: { mode: "auto", curve: inf.default_curve, fixed: 50 }, cpu: { little: null, mid: null, prime: null, mid_cores: midCount, prime_core: true }, auto_tdp: false } : null)))}
         >
           {target === null ? "Reset all-games settings" : `Reset ${name} to all-games settings`}
         </ButtonItem>

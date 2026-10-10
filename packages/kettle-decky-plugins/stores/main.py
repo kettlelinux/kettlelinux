@@ -862,7 +862,7 @@ async def _android_run(command: str, arg: str):
         async def follow():
             async for line in p.stderr:
                 parts = line.decode(errors="replace").split()
-                if len(parts) == 3 and parts[0] == "PROGRESS":
+                if len(parts) == 3 and parts[0] == "PROGRESS" and parts[1].isdigit() and parts[2].isdigit():
                     _android["done"], _android["total"] = int(parts[1]), int(parts[2])
                 else:
                     err.append(" ".join(parts))

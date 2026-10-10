@@ -137,7 +137,7 @@ applet's controls in a window.
   app reads again as soon as it's gone.
 - **Settings**: the bottom screen's brightness (the Screens setting,
   `~/.config/kettle/bottom-screen.json`); Steam's performance profile, TDP limit and GPU clock;
-  fan and CPU settings for the running game or all games, as Game Settings' Performance tab has them; the
+  fan and CPU settings for the running game or all games, as Game Settings' Perf tab has them; the
   charge limit where the charger has one; how often the readings update.
 - **Shared with Steam and the plugins**: every setting is the same one Quick Access sets, read
   back from kettle-powerd each update, so a change made in Steam shows here. Steam's own sliders
@@ -225,7 +225,7 @@ encoding (Remote Play host, game recording) is untested.
    - The Performance app opens filling the bottom screen, and stays usable at the shell's 2x
      scale; its readings update while a game runs (frame rate matching Steam's overlay, the
      graph moving, temperatures and clocks), and its CPU use is small.
-   - The app's "Settings for this game only" against Game Settings' Performance tab; its brightness slider
+   - The app's "Settings for this game only" against Game Settings' Perf tab; its brightness slider
      against Screens'; the fixed GPU clock both ways (TDP and profile sync is checked).
 5. **Brightness by eye**: Steam's slider on the top screen only, Screens' slider on the bottom
    one, both screens dimming together when idle and coming back on a touch on either; the low
