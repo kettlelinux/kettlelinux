@@ -11,6 +11,11 @@ than the Portal: see its release notes for what has been tested on it.
 Kettle is early and in active development. Check the known issues in the release notes on
 [kettlelinux.org](https://kettlelinux.org) before you start.
 
+> **At your own risk.** Kettle Linux is provided as is, without warranty. Installing it changes how
+> your device starts up and can erase data, affect your warranty, or leave a device that doesn't
+> start until it's restored. Back up anything you want to keep first. See the
+> [disclaimer](https://kettlelinux.org/legal.html#disclaimer).
+
 **Retroid Pocket 5:** it starts Kettle with a U-Boot flashed from a computer. Follow
 [INSTALL-RP5.md](INSTALL-RP5.md).
 

@@ -12,6 +12,11 @@ instructions below use the way that works.
 Kettle on the RP5 is new. Check the known issues in the release notes on
 [kettlelinux.org](https://kettlelinux.org) before you start.
 
+> **At your own risk.** Kettle Linux is provided as is, without warranty. Installing it changes how
+> your device starts up and can erase data, affect your warranty, or leave a device that doesn't
+> start until it's restored. Back up anything you want to keep first. See the
+> [disclaimer](https://kettlelinux.org/legal.html#disclaimer).
+
 ## What you need
 
 - A Retroid Pocket 5

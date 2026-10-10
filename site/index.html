@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <a class="skip" href="#content">Skip to content</a>
   <header class="hero">
     <div class="hero-inner">
       <div class="hero-text">
@@ -43,7 +44,7 @@
     </ul>
   </header>
 
-  <main>
+  <main id="content" tabindex="-1">
     <section class="intro" id="tour">
       <p class="eyebrow">A look around Game Mode</p>
       <h2>Everything in Quick Access</h2>
@@ -52,29 +53,29 @@
     </section>
 
     <section class="showcase" id="game-settings" data-tabs>
-      <div class="qam"><img class="panel-shot active" data-tab="compat" src="tour/gs-compat.jpg" alt="Game Settings, Compat tab" width="655" height="902"><img class="panel-shot" data-tab="perf" src="tour/gs-perf.jpg" alt="Game Settings, Perf tab" width="655" height="902" loading="lazy"><img class="panel-shot" data-tab="upscale" src="tour/gs-upscale.jpg" alt="Game Settings, Upscale tab" width="655" height="902" loading="lazy"><img class="panel-shot" data-tab="framegen" src="tour/gs-framegen.jpg" alt="Game Settings, Frame Gen tab" width="655" height="902" loading="lazy"><img class="panel-shot" data-tab="extras" src="tour/gs-extras.jpg" alt="Game Settings, Extras tab" width="655" height="902" loading="lazy"></div>
+      <div class="qam"><img class="panel-shot active" data-tab="compat" src="tour/gs-compat.jpg" alt="Game Settings, Compat tab" width="655" height="902"><img class="panel-shot" aria-hidden="true" data-tab="perf" src="tour/gs-perf.jpg" alt="Game Settings, Perf tab" width="655" height="902" loading="lazy"><img class="panel-shot" aria-hidden="true" data-tab="upscale" src="tour/gs-upscale.jpg" alt="Game Settings, Upscale tab" width="655" height="902" loading="lazy"><img class="panel-shot" aria-hidden="true" data-tab="framegen" src="tour/gs-framegen.jpg" alt="Game Settings, Frame Gen tab" width="655" height="902" loading="lazy"><img class="panel-shot" aria-hidden="true" data-tab="extras" src="tour/gs-extras.jpg" alt="Game Settings, Extras tab" width="655" height="902" loading="lazy"></div>
       <div class="showcase-text">
         <p class="eyebrow">Game Settings</p>
         <h2>Every game, set up its own way</h2>
         <p class="lead">A tab for each part of a game. It opens on the game that's running, sets up any installed game before you start it, and <em>All games</em> holds the defaults. Everything is off until you turn it on.</p>
-        <div class="tab-buttons" role="tablist"><button type="button" role="tab" data-tab="compat" aria-selected="true">Compat</button><button type="button" role="tab" data-tab="perf">Perf</button><button type="button" role="tab" data-tab="upscale">Upscale</button><button type="button" role="tab" data-tab="framegen">Frame Gen</button><button type="button" role="tab" data-tab="extras">Extras</button></div>
-        <div class="tab-panel active" data-tab="compat" role="tabpanel">
+        <div class="tab-buttons" role="tablist" aria-label="Game Settings tabs"><button type="button" role="tab" id="game-settings-tab-compat" data-tab="compat" aria-controls="game-settings-panel-compat" aria-selected="true" tabindex="0">Compat</button><button type="button" role="tab" id="game-settings-tab-perf" data-tab="perf" aria-controls="game-settings-panel-perf" aria-selected="false" tabindex="-1">Perf</button><button type="button" role="tab" id="game-settings-tab-upscale" data-tab="upscale" aria-controls="game-settings-panel-upscale" aria-selected="false" tabindex="-1">Upscale</button><button type="button" role="tab" id="game-settings-tab-framegen" data-tab="framegen" aria-controls="game-settings-panel-framegen" aria-selected="false" tabindex="-1">Frame Gen</button><button type="button" role="tab" id="game-settings-tab-extras" data-tab="extras" aria-controls="game-settings-panel-extras" aria-selected="false" tabindex="-1">Extras</button></div>
+        <div class="tab-panel active" data-tab="compat" role="tabpanel" id="game-settings-panel-compat" aria-labelledby="game-settings-tab-compat">
           <h3>Compat</h3>
           <p>How a Windows game runs: the Proton version and FEX, DXVK, vkd3d and Turnip options, presets for the engine it's built on, and <a href="games.html">known good settings</a> other players shared in Kettle's game database.</p>
         </div>
-        <div class="tab-panel" data-tab="perf" role="tabpanel">
+        <div class="tab-panel" data-tab="perf" role="tabpanel" id="game-settings-panel-perf" aria-labelledby="game-settings-tab-perf" hidden>
           <h3>Perf</h3>
           <p>A fan curve or fixed speed, CPU core and clock limits and the refresh rate, for one game or all. <strong>Auto TDP</strong> holds Steam's frame limit on the lowest clocks that keep it.</p>
         </div>
-        <div class="tab-panel" data-tab="upscale" role="tabpanel">
+        <div class="tab-panel" data-tab="upscale" role="tabpanel" id="game-settings-panel-upscale" aria-labelledby="game-settings-tab-upscale" hidden>
           <h3>Upscale</h3>
           <p><strong>FSR 1</strong> through gamescope for any game, or <strong>Snapdragon GSR 2</strong>, Arm ASR and FSR 2.2 in place of a game's DLSS, FSR 2+ or XeSS, through OptiScaler.</p>
         </div>
-        <div class="tab-panel" data-tab="framegen" role="tabpanel">
+        <div class="tab-panel" data-tab="framegen" role="tabpanel" id="game-settings-panel-framegen" aria-labelledby="game-settings-tab-framegen" hidden>
           <h3>Frame Gen</h3>
           <p>Kettle's own frame generation: 2×, 3× or the fewest frames that fill the display, with the game's base frame rate capped for you.</p>
         </div>
-        <div class="tab-panel" data-tab="extras" role="tabpanel">
+        <div class="tab-panel" data-tab="extras" role="tabpanel" id="game-settings-panel-extras" aria-labelledby="game-settings-tab-extras" hidden>
           <h3>Extras</h3>
           <p>GE-Proton, Proton-CachyOS and AMD FSR 3.1, each downloaded from its own project and checked before it's installed.</p>
         </div>
@@ -94,21 +95,21 @@
     </section>
 
     <section class="showcase flip" id="device-settings" data-tabs>
-      <div class="qam"><img class="panel-shot active" data-tab="power" src="tour/ds-power.jpg" alt="Device Settings, Power tab" width="655" height="902"><img class="panel-shot" data-tab="lights" src="tour/ds-lights.jpg" alt="Device Settings, Lights tab" width="655" height="902" loading="lazy"><img class="panel-shot" data-tab="gyro" src="tour/ds-gyro.jpg" alt="Device Settings, Gyro tab" width="655" height="902" loading="lazy"></div>
+      <div class="qam"><img class="panel-shot active" data-tab="power" src="tour/ds-power.jpg" alt="Device Settings, Power tab" width="655" height="902"><img class="panel-shot" aria-hidden="true" data-tab="lights" src="tour/ds-lights.jpg" alt="Device Settings, Lights tab" width="655" height="902" loading="lazy"><img class="panel-shot" aria-hidden="true" data-tab="gyro" src="tour/ds-gyro.jpg" alt="Device Settings, Gyro tab" width="655" height="902" loading="lazy"></div>
       <div class="showcase-text">
         <p class="eyebrow">Device Settings</p>
         <h2>The device, looked after</h2>
         <p class="lead">The device's own settings, a tab each. A tab for something your device doesn't have, motion sensors or a second screen, isn't shown.</p>
-        <div class="tab-buttons" role="tablist"><button type="button" role="tab" data-tab="power" aria-selected="true">Power</button><button type="button" role="tab" data-tab="lights">Lights</button><button type="button" role="tab" data-tab="gyro">Gyro &amp; System</button></div>
-        <div class="tab-panel active" data-tab="power" role="tabpanel">
+        <div class="tab-buttons" role="tablist" aria-label="Device Settings tabs"><button type="button" role="tab" id="device-settings-tab-power" data-tab="power" aria-controls="device-settings-panel-power" aria-selected="true" tabindex="0">Power</button><button type="button" role="tab" id="device-settings-tab-lights" data-tab="lights" aria-controls="device-settings-panel-lights" aria-selected="false" tabindex="-1">Lights</button><button type="button" role="tab" id="device-settings-tab-gyro" data-tab="gyro" aria-controls="device-settings-panel-gyro" aria-selected="false" tabindex="-1">Gyro &amp; System</button></div>
+        <div class="tab-panel active" data-tab="power" role="tabpanel" id="device-settings-panel-power" aria-labelledby="device-settings-tab-power">
           <h3>Power</h3>
           <p>A charge limit that keeps the battery from sitting at 100%, the charge speed, and the screen's refresh rate, from 50 to 165 Hz on the Portal.</p>
         </div>
-        <div class="tab-panel" data-tab="lights" role="tabpanel">
+        <div class="tab-panel" data-tab="lights" role="tabpanel" id="device-settings-panel-lights" aria-labelledby="device-settings-tab-lights" hidden>
           <h3>Lights</h3>
           <p>The rings around the sticks and the power light: a color, the battery level, breathe or rainbow. Dark while the device sleeps.</p>
         </div>
-        <div class="tab-panel" data-tab="gyro" role="tabpanel">
+        <div class="tab-panel" data-tab="gyro" role="tabpanel" id="device-settings-panel-gyro" aria-labelledby="device-settings-tab-gyro" hidden>
           <h3>Gyro &amp; System</h3>
           <p>Motion controls for Steam Input, on while a game runs. <strong>System</strong> holds the start-up mode, the SSH server and reset.</p>
         </div>
@@ -141,6 +142,9 @@
 
     <section id="download">
       <h2>Download</h2>
+      <p class="notice" role="note"><strong>Before you install:</strong> back up your data, and know that installing
+        is at your own risk: it can erase data, affect your warranty, or leave a device that doesn't start until it's
+        restored. <a href="legal.html#disclaimer">Disclaimer</a>.</p>
       <div id="release" class="releases">
         <div class="card"><p class="muted">Loading the latest releases…</p></div>
       </div>
@@ -180,9 +184,13 @@
   </main>
 
   <footer>
+    <p>Kettle Linux is provided as is, without warranty: installing it is at your own risk, and can erase data or
+      leave a device that doesn't start. <a href="legal.html#disclaimer">Read the disclaimer</a>.</p>
     <p>Kettle Linux's own work is under the <a href="https://github.com/kettlelinux/kettlelinux/blob/main/LICENSE">BSD 3-Clause License</a>; everything built from other projects keeps its upstream license.</p>
     <p>Built on ROCKNIX, SteamOS, Mesa, KDE Plasma, FEX, Wine and many more. <a href="https://github.com/kettlelinux/kettlelinux#thanks">Thanks, all.</a></p>
-    <p class="muted">Not affiliated with Valve or AYN.</p>
+    <p><a href="legal.html">Legal</a> · <a href="legal.html#privacy">Privacy (no cookies, no tracking)</a> ·
+      <a href="legal.html#accessibility">Accessibility</a></p>
+    <p class="muted">Not affiliated with Valve, AYN or Retroid. Steam and SteamOS are trademarks of Valve Corporation.</p>
   </footer>
 
   <script src="main.js"></script>
