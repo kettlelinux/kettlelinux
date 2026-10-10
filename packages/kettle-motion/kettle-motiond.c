@@ -18,8 +18,10 @@
 //   SetMode(s)             "games", "always" or "off" (kept in /var/lib/kettle-motion)
 //   SetGame(b)             whether a game is running
 //
-// Usage: kettle-motiond [--rate HZ] [--matrix x1,x2,x3,y1,y2,y3,z1,z2,z3]
-//   --rate    sample rate requested from both sensors (default 400)
+// Usage: kettle-motiond [--rate HZ] [--accel-rate HZ] [--matrix x1,x2,x3,y1,y2,y3,z1,z2,z3]
+//   --rate        sample rate requested from the gyroscope (default 400)
+//   --accel-rate  and from the accelerometer (default 100): it only gives Steam the direction
+//                 of gravity, which InputPlumber holds between its reports
 //   --matrix  rotates the Sensor Core's axes into the layout above (default: the device's
 //             entry in /usr/share/kettle-motion/devices.conf, else identity)
 
@@ -54,7 +56,9 @@
 #define STANDARD_GRAVITY 9.80665
 // The gyro's first samples after it starts read its full scale (2000 degree/s) on every axis
 #define GYRO_STARTUP_RADS 34.9
+// Finding or starting the sensors again after a failure: this long, doubled each time, up to MAX
 #define SENSOR_RETRY_SECONDS 3
+#define SENSOR_RETRY_MAX_SECONDS 60
 
 static const gchar introspection_xml[] =
 	"<node>"
@@ -69,6 +73,8 @@ static GMainLoop *loop;
 static GDBusConnection *system_bus;
 static double matrix[3][3] = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
 static gdouble rate = 400;
+static gdouble accel_rate = 100;
+static int exit_status;
 
 static SSCSensorAccelerometer *accel;
 static SSCSensorGyroscope *gyro;
@@ -82,25 +88,26 @@ static gchar *mode;		// "games", "always" or "off"
 static gboolean game_running;
 static gboolean sleeping;
 static int sleep_lock = -1;
+static guint start_retry;	// a timeout to try starting the sensors again
+static guint start_backoff;	// its seconds, 0 after a start that worked
+static guint find_backoff;	// the same for finding them
 
-static void emit(__u16 type, __u16 code, __s32 value)
-{
-	struct input_event ev = { .type = type, .code = code, .value = value };
-
-	if (write(uinput_fd, &ev, sizeof(ev)) != sizeof(ev))
-		g_warning("uinput write failed: %s", g_strerror(errno));
-}
-
+// One sample: the timestamp, three axes and the report, in one write()
 static void report(__u16 code, gfloat x, gfloat y, gfloat z, double scale)
 {
 	double in[3] = { x, y, z };
+	struct input_event ev[5] = {
+		{ .type = EV_MSC, .code = MSC_TIMESTAMP, .value = (__s32)(g_get_monotonic_time() & 0x7fffffff) },
+		[4] = { .type = EV_SYN, .code = SYN_REPORT },
+	};
 
-	emit(EV_MSC, MSC_TIMESTAMP, (__s32)(g_get_monotonic_time() & 0x7fffffff));
 	for (int i = 0; i < 3; i++) {
 		double v = matrix[i][0] * in[0] + matrix[i][1] * in[1] + matrix[i][2] * in[2];
-		emit(EV_ABS, code + i, (__s32)lround(v * scale));
+
+		ev[1 + i] = (struct input_event){ .type = EV_ABS, .code = code + i, .value = (__s32)lround(v * scale) };
 	}
-	emit(EV_SYN, SYN_REPORT, 0);
+	if (write(uinput_fd, ev, sizeof(ev)) != sizeof(ev))
+		g_warning("uinput write failed: %s", g_strerror(errno));
 }
 
 // m/s²
@@ -158,6 +165,20 @@ err:
 
 /* Streaming ********************************************************************************/
 
+static void update_streaming(void);
+
+static gboolean start_retry_cb(gpointer data)
+{
+	start_retry = 0;
+	update_streaming();
+	return G_SOURCE_REMOVE;
+}
+
+static guint backoff_next(guint s)
+{
+	return s ? MIN(s * 2, SENSOR_RETRY_MAX_SECONDS) : SENSOR_RETRY_SECONDS;
+}
+
 static void sensors_start(void)
 {
 	g_autoptr(GError) err = NULL;
@@ -165,12 +186,15 @@ static void sensors_start(void)
 	gyro_settled = FALSE;
 	if (!ssc_sensor_accelerometer_open_sync(accel, NULL, &err) ||
 	    !ssc_sensor_gyroscope_open_sync(gyro, NULL, &err)) {
-		g_printerr("Can't start the sensors: %s\n", err->message);
+		start_backoff = backoff_next(start_backoff);
+		g_printerr("Can't start the sensors (trying again in %u s): %s\n", start_backoff, err->message);
 		ssc_sensor_accelerometer_close_sync(accel, NULL, NULL);
+		start_retry = g_timeout_add_seconds(start_backoff, start_retry_cb, NULL);
 		return;
 	}
+	start_backoff = 0;
 	streaming = TRUE;
-	g_print("Streaming at %.0f Hz\n", rate);
+	g_print("Streaming: gyroscope at %.0f Hz, accelerometer at %.0f Hz\n", rate, accel_rate);
 }
 
 static void sensors_stop(void)
@@ -188,7 +212,12 @@ static void update_streaming(void)
 	gboolean want = available && !sleeping &&
 			(g_str_equal(mode, "always") || (g_str_equal(mode, "games") && game_running));
 
-	if (want && !streaming)
+	if (!want && start_retry) {
+		g_source_remove(start_retry);
+		start_retry = 0;
+		start_backoff = 0;
+	}
+	if (want && !streaming && !start_retry)
 		sensors_start();
 	else if (!want && streaming)
 		sensors_stop();
@@ -203,10 +232,12 @@ static void sensors_found(void)
 	uinput_fd = uinput_create();
 	if (uinput_fd < 0) {
 		g_printerr("Can't create the uinput device: %s\n", g_strerror(errno));
+		exit_status = 1;
 		g_main_loop_quit(loop);
 		return;
 	}
-	g_object_set(accel, SSC_SENSOR_SAMPLE_RATE, (gfloat)rate, NULL);
+	find_backoff = 0;
+	g_object_set(accel, SSC_SENSOR_SAMPLE_RATE, (gfloat)accel_rate, NULL);
 	g_object_set(gyro, SSC_SENSOR_SAMPLE_RATE, (gfloat)rate, NULL);
 	g_signal_connect(accel, "measurement", G_CALLBACK(accel_measurement), NULL);
 	g_signal_connect(gyro, "measurement", G_CALLBACK(gyro_measurement), NULL);
@@ -215,15 +246,28 @@ static void sensors_found(void)
 	update_streaming();
 }
 
+// Not found: looked for again later and later, said the first time and once the wait is at its
+// longest (the Sensor Core may never come up: no sensor files to copy, say)
+static void find_again(const char *what, const char *why)
+{
+	guint before = find_backoff;
+
+	find_backoff = backoff_next(find_backoff);
+	if (!before)
+		g_printerr("No %s yet: %s\n", what, why);
+	else if (find_backoff == SENSOR_RETRY_MAX_SECONDS && before != find_backoff)
+		g_printerr("Still no %s (%s): looking every %u s\n", what, why, find_backoff);
+	g_timeout_add_seconds(find_backoff, find_sensors, NULL);
+}
+
 static void gyro_new_done(GObject *source, GAsyncResult *res, gpointer data)
 {
 	g_autoptr(GError) err = NULL;
 
 	gyro = ssc_sensor_gyroscope_new_finish(res, &err);
 	if (!gyro) {
-		g_printerr("No gyroscope yet: %s\n", err->message);
 		g_clear_object(&accel);
-		g_timeout_add_seconds(SENSOR_RETRY_SECONDS, find_sensors, NULL);
+		find_again("gyroscope", err->message);
 		return;
 	}
 	sensors_found();
@@ -235,8 +279,7 @@ static void accel_new_done(GObject *source, GAsyncResult *res, gpointer data)
 
 	accel = ssc_sensor_accelerometer_new_finish(res, &err);
 	if (!accel) {
-		g_printerr("No accelerometer yet: %s\n", err->message);
-		g_timeout_add_seconds(SENSOR_RETRY_SECONDS, find_sensors, NULL);
+		find_again("accelerometer", err->message);
 		return;
 	}
 	ssc_sensor_gyroscope_new(NULL, gyro_new_done, NULL);
@@ -360,6 +403,7 @@ static const GDBusInterfaceVTable vtable = { on_method_call, NULL, NULL, { 0 } }
 static void on_name_lost(GDBusConnection *conn, const gchar *name, gpointer data)
 {
 	g_printerr("Lost or couldn't own %s\n", name);
+	exit_status = 1;
 	g_main_loop_quit(loop);
 }
 
@@ -410,7 +454,8 @@ int main(int argc, char **argv)
 	g_autoptr(GDBusNodeInfo) node = NULL;
 	gchar *matrix_str = NULL;
 	GOptionEntry options[] = {
-		{ "rate", 0, 0, G_OPTION_ARG_DOUBLE, &rate, "Sample rate in Hz (default 400)", "HZ" },
+		{ "rate", 0, 0, G_OPTION_ARG_DOUBLE, &rate, "Gyroscope sample rate in Hz (default 400)", "HZ" },
+		{ "accel-rate", 0, 0, G_OPTION_ARG_DOUBLE, &accel_rate, "Accelerometer sample rate in Hz (default 100)", "HZ" },
 		{ "matrix", 0, 0, G_OPTION_ARG_STRING, &matrix_str, "Axis rotation, 9 values by rows", "M" },
 		{ NULL }
 	};
@@ -457,5 +502,5 @@ int main(int argc, char **argv)
 		ioctl(uinput_fd, UI_DEV_DESTROY);
 		close(uinput_fd);
 	}
-	return 0;
+	return exit_status;
 }

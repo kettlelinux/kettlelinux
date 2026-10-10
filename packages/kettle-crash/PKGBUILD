@@ -7,7 +7,7 @@
 # engine a game is built on, for its reports) is Game Settings' (kettle-decky-plugins/shared).
 pkgname=kettle-crash
 pkgver=0.1.0
-pkgrel=6
+pkgrel=7
 pkgdesc='Kettle Linux crash reports'
 arch=(any)
 license=(BSD-3-Clause)

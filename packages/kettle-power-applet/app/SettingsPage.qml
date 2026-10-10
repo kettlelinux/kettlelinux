@@ -56,13 +56,10 @@ QQC2.ScrollView {
         return khz ? Math.round(khz / 1000) + " MHz" : "off";
     }
 
-    // the fan and CPU settings shown, with a change in fan or cpu
+    // a change in fan, cpu or auto_tdp: only what changed is sent, so a change made elsewhere
+    // (Game Settings) since the last read stays
     function update(patch) {
-        power.setSettings({
-            fan: Object.assign({}, fan, patch.fan ?? {}),
-            cpu: Object.assign({}, cpu, patch.cpu ?? {}),
-            auto_tdp: patch.auto_tdp ?? power.settings.auto_tdp ?? false,
-        });
+        power.setSettings(patch);
     }
 
     function amps(ua) {

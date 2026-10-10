@@ -23,23 +23,26 @@ versions; the game's Kettle features) and text and data files next to it.
                                     (kettle-crashd.service)
   kettle-crashd --devcoredump NAME  save /sys/class/devcoredump/NAME and free it
 """
+import ctypes
 import datetime
 import glob
 import gzip
 import json
 import os
 import re
+import select
 import shutil
+import stat
+import struct
 import subprocess
 import sys
 import threading
 import time
 from collections import deque
 
-try:
-    import gameengine  # next to this script; a report goes without the engine if it's missing
-except ImportError:
-    gameengine = None
+# next to this script, run as the game's user; a report goes without the engine if it's missing
+GAMEENGINE = os.path.join(os.path.dirname(os.path.realpath(__file__)), "gameengine.py")
+GAMEENGINE_TIMEOUT = 20
 
 DIR = os.environ.get("KETTLE_CRASH_DIR", "/var/log/kettle-crash")
 CURSOR = os.path.join(DIR, ".cursor")
@@ -55,6 +58,10 @@ STEAM_OUTPUT = os.environ.get("KETTLE_CRASH_OUTPUT",
                               STEAM_HOMES[0] + "/logs/steam_output.log")  # fake for testing
 OUTPUT_LINES = 400  # game output kept from before a crash
 OUTPUT_AFTER_S = 4  # and after it: Wine's debugger prints its backtrace then
+OUTPUT_COALESCE_S = 0.5  # output read at most this often while it comes in
+OUTPUT_RETRY_S = 5  # no logs folder to watch yet (Steam never ran): looked for this often
+OUTPUT_IDLE_S = 60  # read anyway this often, should an inotify event go missing
+USER_FILE_MAX = 1 << 20  # a file of the user's read as root (an appmanifest): at most this much
 # a game's crash in its output: Wine's unhandled exception (start_debugger: "Unhandled page fault
 # on read access to ...", "Unhandled exception 0xc0000409 ...", "Unhandled stack overflow ...")
 # and the GPU lost under DXVK, vkd3d-proton or a native Vulkan game
@@ -76,6 +83,43 @@ def read(path, default=""):
     try:
         with open(path, errors="replace") as f:
             return f.read()
+    except OSError:
+        return default
+
+
+def user_ids():
+    """The Game Mode user's uid and gid: the owner of its home."""
+    try:
+        st = os.stat(HOME)
+        return st.st_uid, st.st_gid
+    except OSError:
+        return 1000, 1000
+
+
+def open_user(path):
+    """path opened for reading as root, if it's a regular file of the user's: not through a link
+    the user put there (to /etc/shadow), and not blocking on a FIFO. A file object, or None."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if stat.S_ISREG(st.st_mode) and st.st_uid == user_ids()[0]:
+            return os.fdopen(fd, "rb")
+    except OSError:
+        pass
+    os.close(fd)
+    return None
+
+
+def read_user(path, default=""):
+    f = open_user(path)
+    if not f:
+        return default
+    try:
+        with f:
+            return f.read(USER_FILE_MAX).decode(errors="replace")
     except OSError:
         return default
 
@@ -167,7 +211,7 @@ def running_app_id():
 def steam_libraries():
     libs = []
     for home in STEAM_HOMES:
-        vdf = read(os.path.join(home, "steamapps", "libraryfolders.vdf"))
+        vdf = read_user(os.path.join(home, "steamapps", "libraryfolders.vdf"))
         libs += re.findall(r'"path"\s+"([^"]+)"', vdf) or [home]
     return list(dict.fromkeys(libs))
 
@@ -177,18 +221,17 @@ def game_info(app):
     features."""
     info = {"app_id": app}
     for lib in steam_libraries():
-        acf = read(os.path.join(lib, "steamapps", f"appmanifest_{app}.acf"))
+        acf = read_user(os.path.join(lib, "steamapps", f"appmanifest_{app}.acf"))
         if acf:
             for key in ("name", "installdir"):
                 m = re.search(rf'"{key}"\s+"([^"]*)"', acf)
                 if m:
                     info[key] = m.group(1)
             d = os.path.join(lib, "steamapps", "common", info.get("installdir", ""))
-            if gameengine and info.get("installdir") and os.path.isdir(d):
-                try:
-                    info["engine"] = gameengine.detect(d)
-                except Exception as e:  # never in the way of the report
-                    log(f"engine of {app}: {e!r}")
+            if info.get("installdir") and os.path.isdir(d):
+                engine = game_engine(d)
+                if engine:
+                    info["engine"] = engine
             break
     features = []
     if os.path.exists(f"{HOME}/.config/kettle-framegen/{app}.conf"):  # only while it's on
@@ -196,14 +239,29 @@ def game_info(app):
     # Game Settings' Upscaling tab's record of the folder it put OptiScaler in (in the settings of
     # the Upscaling plugin it was before), with its marker there while it's on
     try:
-        with open(f"{HOME}/homebrew/settings/kettle-upscaling/optiscaler/{app}.json") as f:
-            exe_dir = json.load(f).get("dir") or ""
+        exe_dir = json.loads(read_user(f"{HOME}/homebrew/settings/kettle-upscaling/optiscaler/{app}.json")).get("dir") or ""
         if os.path.exists(os.path.join(exe_dir, "kettle-optiscaler.json")):
             features.append("optiscaler")
-    except (OSError, ValueError, AttributeError):
+    except (OSError, ValueError, AttributeError, TypeError):
         pass
     info["kettle_features"] = features
     return info
+
+
+def game_engine(folder):
+    """gameengine.py's look at a game's folder, run as the user who owns it and with a time
+    limit: the folder is theirs, so nothing in it (a link, a FIFO) can make root read or wait."""
+    if not os.path.exists(GAMEENGINE):
+        return None
+    uid, gid = user_ids()
+    try:
+        out = subprocess.run([sys.executable, "-I", GAMEENGINE, folder], capture_output=True, text=True,
+                             errors="replace", timeout=GAMEENGINE_TIMEOUT, user=uid, group=gid,
+                             extra_groups=[], env={"PATH": "/usr/bin", "LANG": "C.UTF-8"}, cwd="/")
+        return json.loads(out.stdout) if out.returncode == 0 else None
+    except (OSError, ValueError, subprocess.SubprocessError) as e:  # never in the way of the report
+        log(f"engine of {folder}: {e!r}")
+        return None
 
 
 # ---------------------------------------------------------------- reports
@@ -258,18 +316,17 @@ def journal_before(until_us, *match, lines=300):
 
 
 def repeat_of(kind, key, value, now_us):
-    """The last report, when it's this program (or game) crashing again within REPEAT_S."""
-    last = reports()[-1:]
-    if not last:
-        return None
-    try:
-        with open(os.path.join(last[0], "report.json")) as f:
-            r = json.load(f)
-    except (OSError, ValueError):
-        return None
-    if r.get("kind") == kind and r.get(key) == value and \
-            now_us - r.get("last_time_us", r["time_us"]) < REPEAT_S * 1e6:
-        return last[0], r
+    """The last report of this program (or game), when it's crashing again within REPEAT_S of
+    it, whatever other reports came in between."""
+    for path in reversed(reports()):
+        try:
+            with open(os.path.join(path, "report.json")) as f:
+                r = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if isinstance(r, dict) and r.get("kind") == kind and r.get(key) == value:
+            last = r.get("last_time_us", r.get("time_us", 0))
+            return (path, r) if 0 <= now_us - last < REPEAT_S * 1e6 else None
     return None
 
 
@@ -362,8 +419,8 @@ def follow():
 
 def on_game_crash(kind, what, line, app, env, before, after, now):
     # the same game again soon after is the same crash still being reported (a lost GPU,
-    # every frame), not a new one
-    if repeat_of("game", "app_id", app, now):
+    # every frame), or a crash loop: counted in its report, not a new one
+    if count_repeat("game", "app_id", app, now):
         return
     info = game_info(app) if app else None
     path = new_report("game", (info or {}).get("name") or kind)
@@ -386,27 +443,93 @@ def on_game_crash(kind, what, line, app, env, before, after, now):
     finish(path, report)
 
 
+class OutputWatch:
+    """inotify on Steam's output (its writes) and its folder (it made anew), so following it
+    wakes the daemon only when there is output. Without inotify: polling."""
+    IN_MODIFY, IN_ATTRIB, IN_MOVED_TO, IN_CREATE = 0x2, 0x4, 0x80, 0x100
+    IN_DELETE_SELF, IN_MOVE_SELF, IN_IGNORED = 0x400, 0x800, 0x8000
+    IN_DONT_FOLLOW, IN_NONBLOCK, IN_CLOEXEC = 0x02000000, 0o4000, 0o2000000
+
+    def __init__(self, path):
+        self.path, self.dir = path, os.path.dirname(path)
+        self.fd = -1
+        self.wd_dir = self.wd_file = -1
+        try:
+            self.libc = ctypes.CDLL(None, use_errno=True)
+            self.fd = self.libc.inotify_init1(self.IN_NONBLOCK | self.IN_CLOEXEC)
+        except (OSError, AttributeError):
+            pass
+        if self.fd < 0:
+            log("no inotify: polling Steam's output")
+
+    def _add(self, path, mask):
+        return self.libc.inotify_add_watch(self.fd, os.fsencode(path), mask)
+
+    def rewatch(self):
+        """Watches on the folder and on the file there now (each made anew as needed)."""
+        if self.fd < 0:
+            return
+        if self.wd_dir < 0:
+            self.wd_dir = self._add(self.dir, self.IN_CREATE | self.IN_MOVED_TO)
+        # the same file keeps its watch descriptor; a new one gets its own
+        self.wd_file = self._add(self.path, self.IN_DONT_FOLLOW | self.IN_MODIFY | self.IN_ATTRIB | self.IN_DELETE_SELF | self.IN_MOVE_SELF)
+
+    def wait(self, timeout):
+        """Until something may have changed, or timeout seconds."""
+        if self.fd < 0 or self.wd_dir < 0:
+            # polling: the output twice a second, the folder every OUTPUT_RETRY_S
+            time.sleep(min(timeout, OUTPUT_COALESCE_S if self.fd < 0 else OUTPUT_RETRY_S))
+            return
+        select.select([self.fd], [], [], timeout)
+        time.sleep(OUTPUT_COALESCE_S)  # a burst of lines: one read for it
+        try:
+            data = os.read(self.fd, 64 << 10)
+        except BlockingIOError:
+            return
+        except OSError:
+            data = b""
+        off = 0
+        while off + 16 <= len(data):
+            wd, mask, _, size = struct.unpack_from("iIII", data, off)
+            off += 16 + size
+            if mask & self.IN_IGNORED and wd == self.wd_dir:
+                self.wd_dir = -1  # the folder went: looked for again
+            if mask & self.IN_IGNORED and wd == self.wd_file:
+                self.wd_file = -1
+
+
 def follow_output():
     """Steam's output, which games write theirs to: Steam makes it anew when it starts."""
     lines = deque(maxlen=OUTPUT_LINES)
+    watch = OutputWatch(STEAM_OUTPUT)
     f = ino = None
+    first = True
     rest = b""
     crash = None  # a crash seen, still collecting the output after it
     while True:
+        watch.rewatch()
         try:
             st = os.stat(STEAM_OUTPUT)
             if st.st_ino != ino or (f and st.st_size < f.tell()):
                 if f:
                     f.close()
-                f = open(STEAM_OUTPUT, "rb")
-                if ino is None:
+                # Steam's, in the user's home: no following a link, no hanging on a FIFO
+                f = open_user(STEAM_OUTPUT)
+                if f is None:
+                    raise OSError(f"{STEAM_OUTPUT} isn't a file of the user's")
+                if first:
                     f.seek(0, os.SEEK_END)  # what was there before the daemon started: not ours
-                ino, rest = st.st_ino, b""
-            data = f.read()
+                ino, rest = os.fstat(f.fileno()).st_ino, b""
+                lines.clear()  # another file: the lines before aren't its
+            first = False
+            data = f.read(1 << 20)
         except OSError:
             data = b""
+            first = False
         if data:
             *new, rest = (rest + data).split(b"\n")
+            if len(rest) > 1 << 16:  # no newline for that long: not a line to keep
+                rest = b""
             for raw in new:
                 line = raw.decode(errors="replace") + "\n"
                 if crash:
@@ -423,6 +546,8 @@ def follow_output():
                                  "now": int(time.time() * 1e6), "until": time.monotonic() +
                                  OUTPUT_AFTER_S}
                         break
+            if len(data) == 1 << 20:
+                continue  # more to read now
         if crash and (time.monotonic() > crash["until"] or len(crash["after"]) > OUTPUT_LINES):
             c, crash = crash, None
             try:
@@ -432,7 +557,9 @@ def follow_output():
             except Exception as e:
                 log(f"game crash report failed: {e!r}")
             lines.clear()
-        time.sleep(0.5)
+        # asleep until there's output; while collecting after a crash, until that's done
+        watch.wait(max(0.0, crash["until"] - time.monotonic()) if crash else
+                   (OUTPUT_IDLE_S if f else OUTPUT_RETRY_S))
 
 
 # ---------------------------------------------------------------- devcoredumps

@@ -28,6 +28,7 @@ type Settings = {
   cpu: { little: number | null; mid: number | null; prime: number | null; mid_cores: number; prime_core: boolean };
   auto_tdp: boolean;
 };
+type Patch = { fan?: Partial<Settings["fan"]>; cpu?: Partial<Settings["cpu"]>; auto_tdp?: boolean };
 type Game = { custom: boolean; settings: Settings };
 // what the tab needs from kettle-powerd's status
 type Status = { steam: { fan_control: number }; auto_tdp: { fps_limit: number } };
@@ -37,7 +38,8 @@ type Refresh = { rates: number[]; hz: number; games: Record<string, number> };
 const info = callable<[], Info>("perf_info");
 const status = callable<[], Status>("perf_status");
 const getGame = callable<[appid: number | null], Game>("perf_get_game");
-const setGame = callable<[appid: number | null, settings: Settings | null], Game>("perf_set_game");
+// kettle-powerd merges what it gets into the game's settings (fan and cpu key by key); null resets
+const setGame = callable<[appid: number | null, settings: Patch | Settings | null], Game>("perf_set_game");
 const getRefresh = callable<[], Refresh>("get_refresh");
 const setGameRefresh = callable<[appid: number, hz: number | null, running: boolean], Refresh>("set_game_refresh");
 
@@ -84,10 +86,11 @@ function PowerSettings({ appid, name, inf, fanControl, fpsLimit }: { appid: numb
   const s = g.settings;
   // a game without its own settings shows (and edits) the all-games ones
   const target = appid !== null && g.custom ? appid : null;
-  const update = async (patch: { fan?: Partial<Settings["fan"]>; cpu?: Partial<Settings["cpu"]>; auto_tdp?: boolean }) => {
+  // only the change goes out, so it can't undo one made meanwhile elsewhere (the Performance app)
+  const update = async (patch: Patch) => {
     const next = { fan: { ...s.fan, ...patch.fan }, cpu: { ...s.cpu, ...patch.cpu }, auto_tdp: patch.auto_tdp ?? s.auto_tdp };
     setG({ ...g, settings: next });
-    setG(own(await setGame(target, next)));
+    setG(own(await setGame(target, patch)));
   };
   // kettle-powerd's answer for the all-games settings says custom; for a game following them, it isn't
   const own = (r: Game): Game => (target === null ? { ...r, custom: false } : r);

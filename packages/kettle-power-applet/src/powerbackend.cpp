@@ -302,14 +302,24 @@ void PowerBackend::setSteam(const QString &key, const QVariant &value)
     Q_EMIT statusChanged();
 }
 
-void PowerBackend::setSettings(const QVariantMap &settings)
+void PowerBackend::setSettings(const QVariantMap &patch)
 {
     const QString key = editKey();
-    m_settings = settings;
+    // shown at once: fan and cpu changed key by key, as kettle-powerd's SetGame merges them
+    for (auto it = patch.cbegin(); it != patch.cend(); ++it) {
+        if (it.value().typeId() == QMetaType::QVariantMap) {
+            QVariantMap merged = m_settings.value(it.key()).toMap();
+            merged.insert(it.value().toMap());
+            m_settings.insert(it.key(), merged);
+        } else {
+            m_settings.insert(it.key(), it.value());
+        }
+    }
     if (m_mode == Desktop)
         m_custom = true;
     Q_EMIT settingsChanged();
-    call(QStringLiteral("SetGame"), {key, toJson(settings)}, [this](bool, const QString &) { readGame(); });
+    // only what changed: what another client (Game Settings) changed since the last read stays
+    call(QStringLiteral("SetGame"), {key, toJson(patch)}, [this](bool, const QString &) { readGame(); });
 }
 
 void PowerBackend::resetSettings()

@@ -82,7 +82,8 @@ DEFAULT = {
     },
 }
 SLEEP_LEVEL = 0.01                       # the power light asleep: just enough to see it
-FRAME = 1 / 20                           # animations: 20 updates a second
+FRAME = 1 / 10                           # animations: 10 updates a second (each one I2C writes to
+                                         # every LED); they follow the clock, so keep their speed
 BATTERY_POLL = 60                        # uevents tell of a plug or unplug; this is the level
 CRITICAL = 10                            # percent: blink red at or below, discharging
 ORANGE = (255, 80, 0)

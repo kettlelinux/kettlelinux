@@ -14,8 +14,9 @@ clusters = [
 
 [gpu]
 devfreq = "/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu"
-# busy percentage (kernel patch 40-kettle/1110)
-load = "/sys/kernel/debug/dri/0/perf_now"
+# busy percentage (kernel patch 40-kettle/1110). By device name, not dri/0: under U-Boot's
+# EFI simpledrm can take minor 0 for the boot framebuffer (as on the RP5)
+load = "/sys/kernel/debug/dri/ae01000.display-controller/perf_now"
 # lowest clock offered for a fixed (manual) GPU clock, MHz
 manual_min_mhz = 220
 
