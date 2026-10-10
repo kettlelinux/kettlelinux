@@ -1,0 +1,36 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] power: supply: qcom_battmgr: a nonzero set result is a failure
+
+The reply to a BATTMGR_BAT_PROPERTY_SET (40-kettle/1190) passed the
+firmware's result through as the request's return value, so a positive
+result read as success to the power supply core (it only fails on a
+negative value) and a negative one came back as a random errno. Treat
+any nonzero result as -EIO, as the property get replies do (they keep
+no value unless the result is 0).
+
+Also clamp a constant_charge_current write to
+constant_charge_current_max once the firmware has reported it, rather
+than handing it a current above its own maximum.
+---
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -788,6 +788,9 @@ static int qcom_battmgr_set_charge_current(struct qcom_battmgr *battmgr, int ua)
+ 		return -EINVAL;
+ 
+ 	mutex_lock(&battmgr->lock);
++	/* Clamp to the firmware's maximum once it has been read. */
++	if (battmgr->info.charge_current_max)
++		ua = min_t(unsigned int, ua, battmgr->info.charge_current_max);
+ 	ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_SET,
+ 					    BATT_CHG_CTRL_LIM, ua);
+ 	mutex_unlock(&battmgr->lock);
+@@ -1612,7 +1615,8 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 			battmgr->error = -ENODATA;
+ 			break;
+ 		}
+-		battmgr->error = le32_to_cpu(resp->intval.result);
++		/* The firmware's result is not an errno: any nonzero is a failure. */
++		battmgr->error = le32_to_cpu(resp->intval.result) ? -EIO : 0;
+ 		break;
+ 	case BATTMGR_REQUEST_NOTIFICATION:
+ 	case BATTMGR_CHG_CTRL_LIMIT_EN:

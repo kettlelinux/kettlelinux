@@ -1,0 +1,258 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] input: rsinput: balance the supply on errors and retry a failed resume init
+
+- The supply enabled in probe stayed on when a later probe step failed.
+  Release it with a devm action that, like remove did, skips it when
+  suspend has already dropped it, so the enable count stays balanced
+  across probe failure, suspend, resume and remove.
+- The port stayed open when setting the baud rate failed. Close it.
+- The client ops and driver data were set only after the port was
+  opened and the input device registered; serdev dereferences the ops
+  for any byte received in between. Register the input device first and
+  set them before opening the port.
+- A failed MCU handshake at resume left the pad dead until the next
+  suspend. Retry it from a delayed work (every 2 s, 5 times), cancelled
+  at suspend and remove.
+- A checksum mismatch skipped the whole length read from the supposed
+  header, which on a false header match inside other data skipped real
+  frames. Resync a byte later instead. Drop any buffered partial frame
+  at suspend and resume.
+- handle_cmd_status() reads 14 payload bytes but checked for 6.
+---
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/completion.h>
++#include <linux/workqueue.h>
+ #include <linux/errno.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/init.h>
+@@ -138,6 +139,10 @@ module_param(axis_righty_antideadzone,int,0660);
+ #define MCU_VERSION_ACK_TIMEOUT_MS  500
+ #define MCU_INIT_MAX_ATTEMPTS       3
+ 
++/* A failed resume init is retried from a work this often, this many times. */
++#define MCU_RESUME_RETRY_MS         2000
++#define MCU_RESUME_MAX_RETRIES      5
++
+ struct rsinput_driver {
+     struct serdev_device *serdev;
+     struct input_dev *input;
+@@ -163,6 +168,8 @@ struct rsinput_driver {
+      * handshake cannot falsely complete the wait.
+      */
+     bool version_ack_pending;
++    struct delayed_work resume_work;
++    unsigned int resume_retries;
+ };
+ 
+ static bool rumble_enable = true;
+@@ -372,7 +379,7 @@ static void handle_cmd_commod(struct rsinput_driver *drv, const uint8_t *data, s
+ }
+ 
+ static void handle_cmd_status(struct rsinput_driver *drv, const uint8_t *data, size_t payload_length) {
+-    if (payload_length >= 6) {
++    if (payload_length >= 14) {
+     static unsigned long prev_states;
+     unsigned long keys = data[FRAME_POS_DATA_1] | (data[FRAME_POS_DATA_2] << 8);
+     unsigned long current_states = keys, changes;
+@@ -537,11 +544,18 @@ static size_t rsinput_rx(struct serdev_device *serdev, const u8 *data, size_t co
+         if (avail < frame_length)
+             break;
+ 
+-        if (compute_checksum(frame, frame_length) == frame[frame_length - 1])
+-            rsinput_process_data(drv, frame, frame_length);
+-        else
++        /*
++         * A header match can be a false one inside other data; its length
++         * then spans real frames, so resync a byte later, not past it.
++         */
++        if (compute_checksum(frame, frame_length) != frame[frame_length - 1]) {
+             dev_warn_ratelimited(&serdev->dev, "Checksum mismatch\n");
++            consumed++;
++            avail--;
++            continue;
++        }
+ 
++        rsinput_process_data(drv, frame, frame_length);
+         consumed += frame_length;
+         avail -= frame_length;
+     }
+@@ -597,6 +611,17 @@ static ssize_t rumble_enable_store(struct device *dev, struct device_attribute *
+ 
+ static DEVICE_ATTR_RW(rumble_enable);
+ 
++static void rsinput_vdd_disable(void *data)
++{
++    struct rsinput_driver *drv = data;
++
++    /* Balanced against suspend, which may have dropped it already. */
++    if (!drv->vdd_off)
++        regulator_disable(drv->vdd);
++}
++
++static void rsinput_resume_work(struct work_struct *work);
++
+ static int rsinput_probe(struct serdev_device *serdev) {
+     struct rsinput_driver *drv;
+     u32 gamepad_bus = 0;
+@@ -657,6 +682,12 @@ static int rsinput_probe(struct serdev_device *serdev) {
+         return error;
+     }
+ 
++    error = devm_add_action_or_reset(&serdev->dev, rsinput_vdd_disable, drv);
++    if (error)
++        return error;
++
++    INIT_DELAYED_WORK(&drv->resume_work, rsinput_resume_work);
++
+     drv->boot_gpio =
+         devm_gpiod_get_optional(&serdev->dev, "boot", GPIOD_OUT_HIGH);
+     if (IS_ERR(drv->boot_gpio)) {
+@@ -678,21 +709,9 @@ static int rsinput_probe(struct serdev_device *serdev) {
+         dev_warn(&serdev->dev, "Unable to get reset gpio: %d\n", error);
+     }
+ 
+-    error = serdev_device_open(serdev);
+-    if (error)
+-        return dev_err_probe(&serdev->dev, error, "Unable to open UART device\n");
+-
+     drv->serdev = serdev;
+     drv->sequence_number = 0;
+ 
+-    serdev_device_set_drvdata(serdev, drv);
+-
+-    error = serdev_device_set_baudrate(serdev, 115200);
+-    if (error < 0)
+-        return dev_err_probe(&serdev->dev, error, "Failed to set up host baud rate\n");
+-
+-    serdev_device_set_flow_control(serdev, false);
+-
+     drv->input = devm_input_allocate_device(&serdev->dev);
+     if (!drv->input)
+         return -ENOMEM;
+@@ -754,20 +773,37 @@ static int rsinput_probe(struct serdev_device *serdev) {
+     if (error)
+         return error;
+ 
++    /* Set up before opening: the MCU may already be sending. */
++    serdev_device_set_drvdata(serdev, drv);
+     serdev_device_set_client_ops(serdev, &rsinput_rx_ops);
+ 
+-    error = rsinput_init_commands(drv);
++    error = serdev_device_open(serdev);
++    if (error)
++        return dev_err_probe(&serdev->dev, error, "Unable to open UART device\n");
++
++    error = serdev_device_set_baudrate(serdev, 115200);
+     if (error < 0) {
+-        serdev_device_close(serdev);
+-        return error;
++        dev_err_probe(&serdev->dev, error, "Failed to set up host baud rate\n");
++        goto err_close;
+     }
+ 
++    serdev_device_set_flow_control(serdev, false);
++
++    error = rsinput_init_commands(drv);
++    if (error < 0)
++        goto err_close;
++
+     return 0;
++
++err_close:
++    serdev_device_close(serdev);
++    return error;
+ }
+ 
+ static void rsinput_remove(struct serdev_device *serdev) {
+     struct rsinput_driver *drv = serdev_device_get_drvdata(serdev);
+ 
++    cancel_delayed_work_sync(&drv->resume_work);
+     serdev_device_close(serdev);
+     input_unregister_device(drv->input);
+     if (drv->enable_gpio)
+@@ -776,8 +812,7 @@ static void rsinput_remove(struct serdev_device *serdev) {
+     if (drv->reset_gpio)
+         gpiod_set_value_cansleep(drv->reset_gpio, 0);
+ 
+-    if (!drv->vdd_off)
+-        regulator_disable(drv->vdd);
++    /* rsinput_vdd_disable() drops the supply. */
+ }
+ 
+ static int rsinput_suspend(struct device *dev)
+@@ -785,6 +820,8 @@ static int rsinput_suspend(struct device *dev)
+     struct rsinput_driver *drv = dev_get_drvdata(dev);
+     int error;
+ 
++    cancel_delayed_work_sync(&drv->resume_work);
++
+     /*
+      * The MCU streams gamepad reports continuously over the UART. If it keeps
+      * sending across the system-suspend teardown, the geni-serial RX interrupt
+@@ -811,18 +848,20 @@ static int rsinput_suspend(struct device *dev)
+         drv->vdd_off = true;
+     }
+ 
++    /* Drop any partial frame from before the MCU went quiet. */
++    drv->rx_len = 0;
++
+     return 0;
+ }
+ 
+-static int rsinput_resume(struct device *dev)
++static int rsinput_power_up(struct rsinput_driver *drv)
+ {
+-    struct rsinput_driver *drv = dev_get_drvdata(dev);
+     int error;
+ 
+     if (drv->vdd_off) {
+         error = regulator_enable(drv->vdd);
+         if (error) {
+-            dev_err(dev, "Failed to enable MCU supply: %d\n", error);
++            dev_err(&drv->serdev->dev, "Failed to enable MCU supply: %d\n", error);
+             return error;
+         }
+         drv->vdd_off = false;
+@@ -831,6 +870,38 @@ static int rsinput_resume(struct device *dev)
+     return rsinput_init_commands(drv);
+ }
+ 
++static void rsinput_resume_work(struct work_struct *work)
++{
++    struct rsinput_driver *drv = container_of(to_delayed_work(work),
++                                              struct rsinput_driver, resume_work);
++
++    if (!rsinput_power_up(drv))
++        return;
++
++    if (++drv->resume_retries < MCU_RESUME_MAX_RETRIES)
++        schedule_delayed_work(&drv->resume_work,
++                              msecs_to_jiffies(MCU_RESUME_RETRY_MS));
++    else
++        dev_err(&drv->serdev->dev, "MCU init failed after resume, giving up\n");
++}
++
++static int rsinput_resume(struct device *dev)
++{
++    struct rsinput_driver *drv = dev_get_drvdata(dev);
++
++    drv->rx_len = 0;
++
++    /* A pad left dead until the next suspend is worse than a late one. */
++    if (rsinput_power_up(drv)) {
++        dev_warn(dev, "MCU init failed, retrying\n");
++        drv->resume_retries = 0;
++        schedule_delayed_work(&drv->resume_work,
++                              msecs_to_jiffies(MCU_RESUME_RETRY_MS));
++    }
++
++    return 0;
++}
++
+ static DEFINE_SIMPLE_DEV_PM_OPS(rsinput_pm_ops, rsinput_suspend, rsinput_resume);
+ 
+ static const struct of_device_id rsinput_of_match[] = {

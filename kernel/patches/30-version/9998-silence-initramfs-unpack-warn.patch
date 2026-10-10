@@ -1,3 +1,10 @@
+ROCKNIX: keep "Initramfs unpacking failed" off the console
+
+KERN_EMERG prints on every console, over the boot splash. Log it at
+KERN_INFO (ROCKNIX uses KERN_DEBUG): off the console at the default
+loglevel, but still in the journal's normal priorities if a real
+initramfs failure needs looking into.
+
 diff -rupbN linux.orig/init/initramfs.c linux/init/initramfs.c
 --- linux.orig/init/initramfs.c	2026-07-28 15:53:35.261634269 +0000
 +++ linux/init/initramfs.c	2026-07-28 15:56:55.329082848 +0000
@@ -6,7 +13,7 @@ diff -rupbN linux.orig/init/initramfs.c linux/init/initramfs.c
  		populate_initrd_image(err);
  #else
 -		printk(KERN_EMERG "Initramfs unpacking failed: %s\n", err);
-+		printk(KERN_DEBUG "Initramfs unpacking failed: %s\n", err);
++		printk(KERN_INFO "Initramfs unpacking failed: %s\n", err);
  #endif
  	}
  

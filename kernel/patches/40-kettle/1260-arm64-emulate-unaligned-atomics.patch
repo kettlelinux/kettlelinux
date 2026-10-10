@@ -7,6 +7,11 @@ Subject: [PATCH] arch: arm64: Implement unaligned atomic
 
 Port the integration points to Linux 7.2.3 after the compat-input patch.
 
+Load128 makes its 128-bit read single-copy atomic by writing the value
+back with stlxp; give the store an exception table entry like
+StoreCAS128's, or a read-only (e.g. copy-on-write) page oopses the
+kernel (Armada 0505a, squashed in).
+
 ---
 diff --git a/arch/arm64/include/asm/exception.h b/arch/arm64/include/asm/exception.h
 --- a/arch/arm64/include/asm/exception.h
@@ -80,7 +85,7 @@ diff --git a/arch/arm64/kernel/unaligned_atomic.c b/arch/arm64/kernel/unaligned_
 new file mode 100644
 --- /dev/null
 +++ b/arch/arm64/kernel/unaligned_atomic.c
-@@ -0,0 +1,2056 @@
+@@ -0,0 +1,2057 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +
 +#include <linux/compiler.h>
@@ -212,10 +217,11 @@ new file mode 100644
 +
 +  uaccess_enable_privileged();
 +  asm volatile("1: ldaxp %[ResultLower], %[ResultUpper], [%[Addr]]\n"
-+               "   stlxp %w[Tmp], %[ResultLower], %[ResultUpper], [%[Addr]]\n"
++               "2: stlxp %w[Tmp], %[ResultLower], %[ResultUpper], [%[Addr]]\n"
 +               "   cbnz %w[Tmp], 1b\n"
-+               "2:\n"
-+               _ASM_EXTABLE_UACCESS_ERR(1b, 2b, %w[ret])
++               "3:\n"
++               _ASM_EXTABLE_UACCESS_ERR(1b, 3b, %w[ret])
++               _ASM_EXTABLE_UACCESS_ERR(2b, 3b, %w[ret])
 +               : [Tmp] "=&r"(Tmp), [ResultLower] "=&r"(Lower), [ResultUpper] "=&r"(Upper), [ret] "+r"(ret)
 +               : [Addr] "r"(Addr)
 +               : "memory");
