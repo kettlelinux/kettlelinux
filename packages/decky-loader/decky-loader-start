@@ -15,39 +15,115 @@ set -eu
 IFS=: read -r user _ uid gid _ home _ < <(getent passwd 1000)
 hb="$home/homebrew"
 priv=/home/.kettle/decky
-install -d -o "$uid" -g "$gid" "$hb" "$hb"/{settings,data,logs,services}
+# Paths under the user's home are made as the user: as root, a link there could point anywhere
+asuser() { setpriv --reuid="$uid" --regid="$gid" --clear-groups -- "$@"; }
+asuser mkdir -p "$hb"/{settings,data,logs,services} || :
 install -d -m 0755 -o 0 -g 0 /home/.kettle "$priv" "$priv"/{plugins,plugins-aside,settings}
 
 # Once, from images that kept plugins in ~/homebrew/plugins: Decky's settings come along, and so
 # do store plugins Decky unpacked (all root's); anything else there was put by the user and goes
 # to ~/homebrew/plugins-aside, not loaded. Links to the shipped plugins are made again below.
+# Python, to walk the user's folders by fd without following links, and to check each entry only
+# after it is in root's staging folder, where the user can't swap it.
 if [ ! -e "$priv/.moved" ]; then
-  if [ -f "$hb/settings/loader.json" ] && [ ! -e "$priv/settings/loader.json" ]; then
-    install -m 0644 -o 0 -g 0 "$hb/settings/loader.json" "$priv/settings/loader.json"
-    rm -f "$hb/settings/loader.json"
-  fi
-  if [ -d "$hb/plugins" ] && [ ! -L "$hb/plugins" ]; then
-    for l in "$hb"/plugins/* "$hb"/plugins/.[!.]*; do
-      [ -e "$l" ] || [ -L "$l" ] || continue
-      n=${l##*/}
-      if [ -L "$l" ]; then
-        case "$(readlink "$l")" in /usr/share/decky/plugins/*) rm -f "$l"; continue;; esac
-      elif [[ $n != *.user-* ]] && [ -d "$l" ] && [ -f "$l/plugin.json" ] && [ ! -e "$priv/plugins/$n" ] &&
-           [ -z "$(find "$l" ! -user 0 -print -quit)" ]; then
-        mv -T "$l" "$priv/plugins/$n"
+  asuser mkdir -p "$hb/plugins-aside" 2>/dev/null || :
+  stage=$(mktemp -d "$priv/.migrate.XXXXXX")
+  /usr/bin/python3 -I - "$home" "$priv" "$stage" <<'EOF' || echo "decky-loader-start: plugin migration failed" >&2
+import os, stat, sys, time
+home, priv, stage = sys.argv[1:]
+D = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+def opendir(path):
+    fd = os.open("/", D)
+    for part in path.strip("/").split("/"):
+        try:
+            nfd = os.open(part, D, dir_fd=fd)
+        finally:
+            os.close(fd)
+        fd = nfd
+    return fd
+
+def root_owned(sfd, n):
+    if os.stat(n, dir_fd=sfd, follow_symlinks=False).st_uid != 0:
+        return False
+    for _, dirs, files, dfd in os.fwalk(n, dir_fd=sfd):
+        for e in dirs + files:
+            if os.stat(e, dir_fd=dfd, follow_symlinks=False).st_uid != 0:
+                return False
+    return True
+
+def plugin(sfd, n):
+    try:
+        st = os.stat(n, dir_fd=sfd, follow_symlinks=False)
+        if not stat.S_ISDIR(st.st_mode) or ".user-" in n:
+            return False
+        pj = os.stat(n + "/plugin.json", dir_fd=sfd, follow_symlinks=False)
+        return stat.S_ISREG(pj.st_mode) and root_owned(sfd, n)
+    except OSError:
+        return False
+
+try:
+    hb = opendir(home + "/homebrew")
+except OSError:
+    sys.exit(0)
+sfd, pfd = os.open(stage, D), os.open(priv + "/plugins", D)
+
+try:
+    set_fd = os.open("settings", D, dir_fd=hb)
+    if not os.path.lexists(priv + "/settings/loader.json"):
+        f = os.open("loader.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=set_fd)
+        if stat.S_ISREG(os.fstat(f).st_mode):
+            data = os.read(f, 1 << 20)
+            tmp = priv + "/settings/.loader.json.new"
+            with open(tmp, "wb") as out:
+                out.write(data)
+            os.chmod(tmp, 0o644)
+            os.rename(tmp, priv + "/settings/loader.json")
+            os.unlink("loader.json", dir_fd=set_fd)
+        os.close(f)
+except OSError:
+    pass
+
+try:
+    plugins = os.open("plugins", D, dir_fd=hb)
+except OSError:
+    sys.exit(0)
+try:
+    aside = os.open("plugins-aside", D, dir_fd=hb)
+except OSError:
+    aside = None
+for n in os.listdir(plugins):
+    try:
+        os.rename(n, n, src_dir_fd=plugins, dst_dir_fd=sfd)
+    except OSError:
         continue
-      fi
-      install -d -o "$uid" -g "$gid" "$hb/plugins-aside"
-      mv -T "$l" "$hb/plugins-aside/$n.moved-$(date +%s)"
-    done
-    rmdir "$hb/plugins" 2>/dev/null || :
-  fi
+    try:
+        st = os.stat(n, dir_fd=sfd, follow_symlinks=False)
+        if stat.S_ISLNK(st.st_mode) and os.readlink(n, dir_fd=sfd).startswith("/usr/share/decky/plugins/"):
+            os.unlink(n, dir_fd=sfd)
+        elif plugin(sfd, n) and not os.path.lexists(priv + "/plugins/" + n):
+            os.rename(n, n, src_dir_fd=sfd, dst_dir_fd=pfd)
+        elif aside is not None:
+            os.rename(n, "%s.moved-%d" % (n, time.time()), src_dir_fd=sfd, dst_dir_fd=aside)
+        else:
+            raise OSError("no plugins-aside")
+    except OSError:
+        # back where it was; anything that can't go back stays in root's staging folder
+        try:
+            os.rename(n, n, src_dir_fd=sfd, dst_dir_fd=plugins)
+        except OSError:
+            pass
+try:
+    os.rmdir("plugins", dir_fd=hb)
+except OSError:
+    pass
+EOF
+  rmdir "$stage" 2>/dev/null || :
   touch "$priv/.moved"
 fi
 
-install -d -o "$uid" -g "$gid" "$home/.local" "$home/.local/share" "$home/.local/share/Steam"
-f="$home/.local/share/Steam/.cef-enable-remote-debugging"
-[ -e "$f" ] || install -m 0644 -o "$uid" -g "$gid" /dev/null "$f"
+asuser mkdir -p "$home/.local/share/Steam" || :
+asuser touch "$home/.local/share/Steam/.cef-enable-remote-debugging" || :
 
 for p in /usr/share/decky/plugins/*/; do
   [ -f "$p/plugin.json" ] || continue
@@ -67,5 +143,7 @@ export UNPRIVILEGED_USER="$user" UNPRIVILEGED_PATH="$hb" PRIVILEGED_PATH="$priv"
 # Don't chown -R plugin dirs: the system ones are symlinks into /usr, and the others stay root's
 export CHOWN_PLUGIN_PATH=0 KEEP_SYSTEMD_SERVICE=1
 export PYTHONPATH=/usr/lib/decky-loader PYTHONDONTWRITEBYTECODE=1
-cd "$hb/services"
-exec /usr/bin/python3 -c 'from decky_loader.main import main; main()'
+# -P: no '' (the cwd) on sys.path, and a root-owned cwd, so nothing the user can write is imported.
+# Decky only used its cwd for the self-updater, which 0001 turns off.
+cd "$priv"
+exec /usr/bin/python3 -P -c 'from decky_loader.main import main; main()'

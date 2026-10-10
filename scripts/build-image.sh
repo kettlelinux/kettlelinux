@@ -23,10 +23,13 @@
 #   KETTLE_GAMES_URL       game database Game Settings reads known good settings from and shares to
 #                          (docs/CRASH-REPORTS.md); without it the plugin has no Share button
 #   KETTLE_BRANCH          update branch the image follows (default: beta)
-#   KETTLE_BUILD_ID        YYYYMMDD.N (default: today's date .1)
+#   KETTLE_BUILD_ID        YYYYMMDD.N (default: today's date and the next N no build in out/ or
+#                          the update tree has, whatever the device: a name is published once)
 #   KETTLE_RAUC_KEY/_CERT  release signing key and certificate (default: a development key in
 #                          cache/keys/, made on first use)
 #   KETTLE_NO_BUNDLE=1     skip the update bundle (faster; the image only)
+#   KETTLE_STRICT_STALE=1  stop, rather than warn, when out/kernel or a package in out/repo was
+#                          built from an older kernel/ or packages/<name> than the one here
 #   KETTLE_KEEP_BUILDS     how many of this device's builds stay in out/, newest by build ID
 #                          (default 3; 0 keeps all); older ones are deleted after a build
 #   KETTLE_RELEASE=1       an image to hand out: WIFI_*, SSH_PUBKEY and USER_PASSWORD are ignored
@@ -39,13 +42,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib.sh"
-WORK="$ROOT/build/image"
-RFS="$WORK/rootfs"
-STAGE="$WORK/stage"
 # The device: device/common/overlay plus its own overlay, packages and settings (device.conf)
 VARIANT="${KETTLE_DEVICE:-odin2portal}"
 DEVICE="$ROOT/device/$VARIANT"
 [ "$VARIANT" != common ] && [ -f "$DEVICE/device.conf" ] || die "no device '$VARIANT' (device/*/device.conf)"
+# a work directory per device, so two devices' images can be built at once
+WORK="$ROOT/build/image-$VARIANT"
+RFS="$WORK/rootfs"
+STAGE="$WORK/stage"
 . "$DEVICE/device.conf"
 for v in MODEL DTB ABL_DTBS RAUC_COMPATIBLE PAD_NAME FACE_BUTTONS; do
   [ -n "${!v:-}" ] || die "device/$VARIANT/device.conf: $v not set (docs/PORTING.md)"
@@ -55,7 +59,26 @@ done
 [ -f "$DEVICE/overlay/usr/lib/kettle/gamescope.conf" ] ||
   die "device/$VARIANT has no overlay/usr/lib/kettle/gamescope.conf (docs/PORTING.md)"
 VERSION="$(sed -e 's/#.*//' -e '/^\s*$/d' "$ROOT/image/version")"
-BUILD_ID="${KETTLE_BUILD_ID:-$(date +%Y%m%d).1}"
+# The default build ID: today's next one. Valve's server tool takes a build ID once whatever the
+# device, and a name published again would leave the server's (immutable) copy of the old bundle,
+# so every device's builds count, in out/ and in the update tree. An out/<name>.id file holds the
+# ID until the build's own files are there (a build that fails keeps it: the next takes another).
+next_build_id() {
+  local day n tree="${KETTLE_UPDATE_DIR:-$ROOT/out/update-server}"
+  day="$(date +%Y%m%d)"
+  lock "$ROOT/out/.buildid.lock"
+  find "$ROOT/out" -maxdepth 1 -name 'kettle-*.id' ! -name "kettle-$day.*" -delete
+  n="$({ find "$ROOT/out" -maxdepth 1 -name "kettle-$day.*" -printf '%f\n'
+         find "$tree/images" -name "kettle-$day.*.manifest.json" -printf '%f\n' 2>/dev/null || true; } \
+       | sed -nE "s/^kettle-$day\.([0-9]+)-.*/\1/p" | sort -n | tail -1)"
+  KETTLE_BUILD_ID_AUTO="$day.$(( ${n:-0} + 1 ))"
+  : >"$ROOT/out/kettle-$KETTLE_BUILD_ID_AUTO-$VARIANT.id"
+  exec {LOCK_FD}>&-
+}
+if [ "${KETTLE_IN_NS:-}" != 1 ] && [ -z "${KETTLE_BUILD_ID:-}" ]; then
+  mkdir -p "$ROOT/out"; next_build_id; export KETTLE_BUILD_ID_AUTO
+fi
+BUILD_ID="${KETTLE_BUILD_ID:-${KETTLE_BUILD_ID_AUTO:?}}"
 BRANCH="${KETTLE_BRANCH:-beta}"
 NAME="kettle-$BUILD_ID-$VARIANT"
 IMG="$ROOT/out/$NAME.img"
@@ -69,6 +92,28 @@ be_nice
 enter_ns "$@"
 
 # ---------------------------------------------------------------- inside the namespace
+# one build of this device at a time (another device's has its own work directory)
+lock "$WORK.lock"
+
+# a kernel or package built from an older tree than the one here: listed, as an image made now
+# wouldn't have the change (KETTLE_STRICT_STALE=1 stops)
+stale=() unknown=()
+k="$(cat "$ROOT/out/kernel/.source-hash" 2>/dev/null || true)"
+if [ -z "$k" ]; then unknown+=(kernel)
+elif [ "$k" != "$(kernel_src_hash)" ]; then stale+=("kernel: kernel/ changed since out/kernel was built (scripts/build-kernel.sh)"); fi
+for d in "$ROOT"/packages/*/; do
+  d="$(basename "$d")"
+  if [ ! -f "$ROOT/out/repo/.source/$d" ]; then unknown+=("$d")
+  elif [ "$(cat "$ROOT/out/repo/.source/$d")" != "$(src_hash "packages/$d")" ]; then
+    stale+=("$d: packages/$d changed since it was built (scripts/build-packages.sh $d)")
+  fi
+done
+if [ ${#stale[@]} -gt 0 ]; then
+  printf '\033[1;33mwarning:\033[0m %s\n' "built from an older tree than the one here:" "${stale[@]/#/  }" >&2
+  [ "${KETTLE_STRICT_STALE:-}" != 1 ] || die "stale kernel or packages (KETTLE_STRICT_STALE=1)"
+fi
+[ ${#unknown[@]} = 0 ] || log "not known whether up to date (built before builds recorded their source): ${unknown[*]}"
+
 RELEASE=${KETTLE_RELEASE:-0}
 SSHD=sshd
 if [ "$RELEASE" = 1 ]; then
@@ -92,7 +137,7 @@ fi
 
 trap 'umount "$RFS/mnt/stage" 2>/dev/null || true; chroot_umount "$RFS"' EXIT
 register_binfmt
-PACMAN_CONF="$ROOT/build/pacman.image.conf"
+PACMAN_CONF="$ROOT/build/pacman.image-$VARIANT.conf"
 build_pacman_conf "$PACMAN_CONF"
 
 log "preparing rootfs at ${RFS#"$ROOT"/} (Kettle Linux $VERSION, build $BUILD_ID, $BRANCH)"
@@ -102,7 +147,9 @@ chroot_mount "$RFS"
 
 mapfile -t PKGS < <(sed -e 's/#.*//' -e '/^\s*$/d' "$ROOT/image/packages.txt" "$DEVICE/packages.txt")
 log "installing ${#PKGS[@]} packages for the $MODEL (kettle + deckard mash-20240428.1 + release-0.5 hotfixes)"
+lock "$ROOT/out/repo.lock" -s   # not while build-packages.sh is adding to the repo
 pacman_root "$RFS" --logfile "$WORK/pacman.log" -Sy --needed "${PKGS[@]}"
+exec {LOCK_FD}>&-
 install -m 0644 "$ROOT/image/pacman.conf" "$RFS/etc/pacman.conf"
 # The host's pacman 7 records %INSTALLED_DB%, which the image's pacman 6.1 warns about
 # on every run: drop the field (key line, value line, blank line) from the local db.
@@ -128,8 +175,8 @@ chmod 0750 "$RFS/etc/sudoers.d"; chmod 0440 "$RFS"/etc/sudoers.d/*
   cat "$DEVICE/device.conf"; } >"$RFS/usr/lib/kettle/device.conf"
 chmod 0644 "$RFS/usr/lib/kettle/device.conf"
 # the built-in gamepad's name, for the rule that keeps it a joystick
-sed -i "s|@PAD_NAME@|$PAD_NAME|" "$RFS/etc/udev/rules.d/60-input-kettle-gamepad.rules"
-grep -qF "ATTRS{name}==\"$PAD_NAME\"" "$RFS/etc/udev/rules.d/60-input-kettle-gamepad.rules" ||
+sed -i "s|@PAD_NAME@|$PAD_NAME|" "$RFS/usr/lib/udev/rules.d/60-input-kettle-gamepad.rules"
+grep -qF "ATTRS{name}==\"$PAD_NAME\"" "$RFS/usr/lib/udev/rules.d/60-input-kettle-gamepad.rules" ||
   die "60-input-kettle-gamepad.rules: PAD_NAME not set"
 # this device's devicetree for GRUB and extlinux, its alternatives, and the ABL's set
 sed -i -e "s|^DTB=@DTB@\$|DTB=$DTB|" -e "s|^DTB_ALT=\"@DTB_ALT@\"\$|DTB_ALT=\"${DTB_ALT:-}\"|" \
@@ -196,6 +243,7 @@ install -D -m 0644 "$CERT" "$RFS/etc/rauc/trusted_keys/$(openssl x509 -hash -noo
 
 log "configuring system (in aarch64 chroot)"
 USER_PASSWORD="${USER_PASSWORD:-kettle}"
+[[ "$USER_PASSWORD" != *$'\n'* ]] || die "USER_PASSWORD has a line break in it"
 chroot "$RFS" /bin/bash -euo pipefail -s <<EOF
 sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' /etc/locale.gen
 locale-gen >/dev/null
@@ -206,7 +254,6 @@ useradd -M -G wheel,video,input,audio,render -s /bin/bash kettle
 # subordinate ids for rootless podman (Lepton's Android containers); usermod needs the files
 touch /etc/subuid /etc/subgid
 usermod --add-subuids 100000-165535 --add-subgids 100000-165535 kettle
-echo 'kettle:$USER_PASSWORD' | chpasswd
 passwd -l root >/dev/null
 systemctl enable NetworkManager $SSHD bluetooth systemd-timesyncd sddm >/dev/null 2>&1
 systemctl set-default graphical.target >/dev/null 2>&1
@@ -233,6 +280,8 @@ systemctl mask systemd-firstboot.service >/dev/null 2>&1
 mkinitcpio -k $KVER -g /boot/initramfs-linux.img
 steamos-atomupd-mkmanifest >/etc/steamos-atomupd/manifest.json
 EOF
+# on its stdin, not in the script above: any character may be in it
+printf 'kettle:%s\n' "$USER_PASSWORD" | chroot "$RFS" chpasswd
 [ -s "$RFS/boot/initramfs-linux.img" ] || die "no initramfs"
 # the update server's record of this build (scripts/publish-update.sh)
 mkdir -p "$ROOT/out"
@@ -325,6 +374,7 @@ cp "$STAGE/efi-B/SteamOS/partsets/B" "$STAGE/efi-B/SteamOS/partsets/self"
 cp "$STAGE/efi-B/SteamOS/partsets/A" "$STAGE/efi-B/SteamOS/partsets/other"
 
 chroot_umount "$RFS"; trap - EXIT
+chroot_assert_umounted "$RFS"   # before files under it are deleted or packed
 rm -rf "$RFS"/var/cache/pacman/pkg/* "$RFS"/tmp/* "$RFS"/var/log/pacman.log "$RFS/home/kettle"
 # the package database belongs to the (read-only) system image, as on SteamOS 3.5+
 install -d "$RFS/usr/lib/holo"
@@ -431,11 +481,14 @@ format=verity
 filename=rootfs.img
 EOF
   cp "$KEY" "$B/keys/key.pem"; cp "$CERT" "$B/keys/cert.pem"
+  lock "$ROOT/build/pkgroot.lock"   # build-packages.sh and publish-update.sh use it too
   trap 'umount "$TOOLS/mnt/bundle" 2>/dev/null || true; rm -rf "$B/keys"; chroot_umount "$TOOLS"' EXIT
   chroot_mount "$TOOLS"
   cp /etc/resolv.conf "$TOOLS/etc/resolv.conf"
   PACMAN_CONF="$ROOT/build/pacman.pkgbuild.conf"
-  pacman_root "$TOOLS" -Sy --needed rauc casync squashfs-tools >/dev/null
+  build_pacman_conf "$PACMAN_CONF"
+  # -u as in build-packages.sh: a partial upgrade of the chroot can break its installed packages
+  pacman_root "$TOOLS" -Syu --needed rauc casync squashfs-tools >/dev/null
   mount --bind "$B" "$TOOLS/mnt/bundle"
   chroot "$TOOLS" /bin/bash -euo pipefail -s <<EOF
 cd /mnt/bundle
@@ -446,6 +499,7 @@ rm plain.raucb
 rauc extract --keyring=keys/cert.pem $NAME.raucb extracted >/dev/null
 EOF
   umount "$TOOLS/mnt/bundle"; chroot_umount "$TOOLS"; trap - EXIT
+  exec {LOCK_FD}>&-
   rm -rf "$B/keys" "$ROOT/out/$NAME.castr"
   mv "$B/$NAME.raucb" "$BUNDLE"; mv "$B/$NAME.castr" "$ROOT/out/"
   # the running slot's chunk index, seeding the next update's download (post-install.sh
@@ -503,6 +557,7 @@ put "$ROOTFS_IMG" $off;     off=$((off + ROOTFS_MB))
 put "$WORK/var-A.ext4" $off; off=$((off + VAR_MB))
 put "$WORK/var-B.ext4" $off; off=$((off + VAR_MB))
 put "$WORK/home.ext4" $off
+rm -f "$ROOT/out/$NAME.id"   # the image holds the build ID now
 chown "$(stat -c %u:%g "$ROOT")" "$IMG" "$ROOT"/out/"$NAME".* 2>/dev/null || true
 rm -f "$WORK"/*.fat "$WORK"/*.ext4
 

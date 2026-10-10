@@ -5,7 +5,8 @@
 [ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
 
 OUT="/home/kettle/hwcheck-$(date +%Y%m%d-%H%M%S).txt"
-exec > >(tee "$OUT") 2>&1
+# written as the user, whose folder it is: as root, a link put there could point anywhere
+exec > >(setpriv --reuid=1000 --regid="$(id -g 1000)" --clear-groups -- tee "$OUT") 2>&1
 
 pass() { printf '  [ OK ] %s\n' "$*"; }
 fail() { printf '  [FAIL] %s\n' "$*"; }

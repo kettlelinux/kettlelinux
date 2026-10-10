@@ -9,9 +9,10 @@ set -euo pipefail
 FORMATTING=/run/kettle/sd-formatting
 ESP_TYPES="c12a7328-f81f-11d2-ba4b-00a0c93ec93b 0xef"
 
-# Steam ignores addlibraryfolder unless the path is encoded whole, slashes included
+# Steam ignores addlibraryfolder unless the path is encoded whole, slashes included. Byte by
+# byte (LC_ALL=C), so a non-ASCII label is sent as its UTF-8 bytes.
 urlencode() {
-  local s=$1 out= c i
+  local LC_ALL=C s=$1 out= c i
   for (( i = 0; i < ${#s}; i++ )); do
     c=${s:i:1}
     case $c in [a-zA-Z0-9._~-]) out+=$c ;; *) printf -v c '%%%02X' "'$c"; out+=$c ;; esac
@@ -39,7 +40,7 @@ steam_add() {
 }
 
 add() {
-  local part=/dev/$1 disk root user home fstype name mnt opts
+  local part=/dev/$1 disk root user gid home fstype name mnt opts n
   [ -e "$FORMATTING" ] && { echo "$part: card is being formatted"; exit 0; }
   disk=/dev/$(lsblk -no PKNAME "$part")
   root=$(findmnt -no SOURCE /)
@@ -50,19 +51,28 @@ add() {
     case " $ESP_TYPES " in *" ${t,,} "*) echo "$part: $disk is a boot card (EFI system partition)"; exit 0 ;; esac
   done
   fstype=$(blkid -o value -s TYPE "$part" || true)
+  # nosuid,nodev: a card's files are anyone's. Not noexec: games run from it (exFAT and ext4 are
+  # Steam libraries, and the desktop runs what's put on any of them)
   case $fstype in
-    ext4|btrfs) opts=rw,noatime,lazytime ;;
-    exfat|vfat) opts=rw,noatime,lazytime,uid=1000,gid=1000,umask=022 ;;
+    ext4|btrfs) opts=rw,nosuid,nodev,noatime,lazytime ;;
+    exfat|vfat) opts=rw,nosuid,nodev,noatime,lazytime,uid=1000,gid=1000,umask=022 ;;
     *) echo "$part: no filesystem to mount (${fstype:-none})"; exit 0 ;;
   esac
   findmnt -S "$part" >/dev/null && { echo "$part: already mounted"; exit 0; }
-  user=$(id -nu 1000) home=$(getent passwd 1000 | cut -d: -f6)
+  user=$(id -nu 1000) gid=$(id -g 1000) home=$(getent passwd 1000 | cut -d: -f6)
+  # the label names the mount point: not one that leaves the folder or can't be shown
   name=$(blkid -o value -s LABEL "$part" || true)
   name=${name//\//_}
-  [ -n "$name" ] || name=$(blkid -o value -s UUID "$part")
-  mnt=/run/media/$user/$name
+  case $name in ''|.|..|*[[:cntrl:]]*) name=$(blkid -o value -s UUID "$part" || true) ;; esac
+  case $name in ''|.|..|*[[:cntrl:]]*|*/*) name=$1 ;; esac
+  # root's, readable by the user (as udisks makes it): the user can't put a link where root mounts
   install -d -m 0755 /run/media
-  install -d -m 0750 -o "$user" -g "$user" "/run/media/$user"
+  install -d -m 0750 -o 0 -g "$gid" "/run/media/$user"
+  mnt=/run/media/$user/$name n=1
+  # two cards (or partitions) with the same label: LABEL-2, ...
+  while [ -L "$mnt" ] || { [ -e "$mnt" ] && { [ ! -d "$mnt" ] || mountpoint -q "$mnt" || [ -n "$(ls -A "$mnt")" ]; }; }; do
+    n=$((n + 1)) mnt=/run/media/$user/$name-$n
+  done
   mkdir -p "$mnt"
   if ! mount -t "$fstype" -o "$opts" "$part" "$mnt"; then
     rmdir "$mnt"; exit 1

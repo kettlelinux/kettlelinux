@@ -1,11 +1,15 @@
 #!/usr/bin/python3 -I
 # Kettle Linux: the person holding the device confirms an action by holding Volume Up and Volume
 # Down together for a second, within 30 seconds. Run as root, by what pkexec lets Game Mode and
-# the desktop run without a password (kettle-reset everything, kettle-ssh on, kettle-abl-update):
+# the desktop run without a password (kettle-reset, kettle-ssh on, kettle-abl-update):
 # polkit can't tell those apart from any other program running as the user, a game included, and
-# a dialog can be clicked by one. Key presses are read from the device's own buttons (input
-# devices outside /sys/devices/virtual), which a program can't fake: what it can make (uinput) is
-# virtual. Only presses made after the request count.
+# a dialog can be clicked by one. Key presses are read from the device's own buttons, which a
+# program can't fake: what it can make (uinput, uhid) is virtual, and a USB or Bluetooth keyboard
+# isn't "the person holding it" either. So only input devices whose parent is a platform device
+# (not virtual, USB or HID) and whose name is one of the device's key inputs count: CONFIRM_KEYS
+# in /usr/lib/kettle/device.conf, by default the devicetree's gpio-keys (Volume Up) and the
+# PMIC's resin (Volume Down: pmic_resin on SM8550, pm8941_resin on SM8250). Only presses made
+# after the request count.
 #
 #   confirm-keys "<what>"   exit 0: confirmed; 1: not (the time ran out); 2: no volume keys
 #
@@ -19,19 +23,37 @@ import struct
 import sys
 import time
 
+sys.path.insert(0, "/usr/lib/kettle")
+import kettle_device  # noqa: E402
+
 KEY_VOLUMEDOWN, KEY_VOLUMEUP = 114, 115
 EV_KEY = 1
 WAIT = 30.0   # s to confirm in
 HOLD = 1.0    # s both keys stay down
 STATE = "/run/kettle/confirm.json"
 EVENT = struct.Struct("llHHi")  # struct input_event on 64-bit: timeval, type, code, value
+KEY_INPUTS = set(kettle_device.conf.get("CONFIRM_KEYS", "gpio-keys pmic_resin pm8941_resin").split())
+
+
+def built_in(ev: str) -> bool:
+    """An input device of the device's own keys: by name, made by a platform device driver."""
+    dev = os.path.realpath(ev + "/device")
+    if "/devices/virtual/" in dev or "/usb" in dev:
+        return False
+    try:
+        with open(ev + "/device/name") as f:
+            name = f.read().strip()
+    except OSError:
+        return False
+    parent_bus = os.path.realpath(ev + "/device/device/subsystem")
+    return name in KEY_INPUTS and parent_bus == "/sys/bus/platform"
 
 
 def volume_keys() -> list[int]:
-    """Open the physical input devices that have a volume key."""
+    """Open the device's own key inputs that have a volume key."""
     fds = []
     for ev in sorted(glob.glob("/sys/class/input/event*")):
-        if "/devices/virtual/" in os.path.realpath(ev + "/device"):
+        if not built_in(ev):
             continue
         try:
             with open(ev + "/device/capabilities/key") as f:

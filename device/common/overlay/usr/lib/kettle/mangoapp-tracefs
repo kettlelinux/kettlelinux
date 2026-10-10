@@ -1,16 +1,26 @@
 #!/bin/bash
-# mangoapp (gamescope's performance overlay) runs as the session user but reads GPU/CPU
-# activity through an ftrace instance: libtracefs tracefs_instance_create("mangohud"), and it
-# abort()s with "failed to create instance" when it can't. tracefs is root-only (0700), so
-# create that instance here, hand it to the user, and open only the paths it needs to reach
-# it plus the two ring-buffer header files used to decode it.
-# It also reads GPU load from the msm card's debugfs perf_now (kernel patch 1110), so let the user
-# traverse the debugfs root (0711: no listing; world-readable files become reachable).
+# mangoapp (gamescope's performance overlay) runs as the session user but reads the GPU's memory
+# use (gpu_mem/gpu_mem_total) through an ftrace instance: libtracefs
+# tracefs_instance_create("mangohud"), and it abort()s with "failed to create instance" when it
+# can't. tracefs is root-only, so create that instance here with only that event on, and give
+# the user no more than it needs: the folders to find it (listing only), the event formats and
+# ring-buffer headers to decode it, that one event's enable switch, and the per-CPU raw buffers.
+# The instance's other events stay root's, so the user can't trace anything else through it.
+# It also reads GPU load from the msm card's debugfs perf_now (0444, kernel patch 1110), so let
+# the user's group traverse the debugfs root (0710: no listing, no one else).
 set -eu
 user="${1:-kettle}"
+gid=$(id -g "$user")
 t=/sys/kernel/tracing
+i=$t/instances/mangohud
 chmod 755 "$t" "$t/instances" "$t/events"
 chmod 644 "$t/events/header_page" "$t/events/header_event"
-mkdir -p "$t/instances/mangohud"
-chown -R "$user:" "$t/instances/mangohud"
-if [ -d /sys/kernel/debug/dri ]; then chmod 711 /sys/kernel/debug; fi
+mkdir -p "$i"
+ev=$i/events/gpu_mem/gpu_mem_total
+[ -e "$ev/enable" ] && echo 1 >"$ev/enable"
+find "$i" -type d -exec chmod 755 {} +
+find "$i/events" -type f \( -name format -o -name header_page -o -name header_event \) -exec chmod 444 {} +
+find "$i" -type f -name buffer_subbuf_size_kb -exec chmod 444 {} +
+[ -e "$ev/enable" ] && chown "$user:" "$ev/enable"
+chown "$user:" "$i"/per_cpu/cpu*/trace_pipe_raw
+if [ -d /sys/kernel/debug/dri ]; then chgrp "$gid" /sys/kernel/debug && chmod 710 /sys/kernel/debug; fi

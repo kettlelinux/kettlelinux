@@ -12,7 +12,7 @@ bash-completion
 e2fsprogs
 dosfstools
 btrfs-progs
-# compressed swap in RAM (etc/systemd/zram-generator.conf)
+# compressed swap in RAM (usr/lib/systemd/zram-generator.conf)
 zram-generator
 
 # network

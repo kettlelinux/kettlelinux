@@ -37,7 +37,30 @@ inhibit "Restoring the internal storage" "${ARGS[@]}"
 start_log restore-ufs "${ARGS[@]}"
 need_power
 
-m() { sed -n "s/^$1=//p" "$DIR/manifest"; }
+# The backup may be on a drive the user can write to: its manifest and checksums are read once,
+# into root's own folder, and each image's checksum is taken again from the very bytes written
+# (unpack), so a file changed after "checking the backup" can't pass for the checked one.
+work=$(mktemp -d /run/kettle-restore.XXXXXX)
+trap 'rm -rf "$work"' EXIT
+cp "$DIR/manifest" "$work/manifest"
+[ -f "$DIR/SHA256SUMS" ] || die "$DIR has no SHA256SUMS"
+cp "$DIR/SHA256SUMS" "$work/SHA256SUMS"
+m() { sed -n "s/^$1=//p" "$work/manifest"; }
+# expected <image name>: its checksum in the backup's SHA256SUMS
+expected() { awk -v f="$1" '$2 == f || $2 == "*" f { print $1; exit }' "$work/SHA256SUMS"; }
+# unpack <image>: decompressed to stdout; the sha256 of the compressed bytes read, to $work/sum
+unpack() {
+  rm -f "$work/fifo" "$work/sum"; mkfifo "$work/fifo"
+  sha256sum <"$work/fifo" | cut -d' ' -f1 >"$work/sum" &
+  local p=$!
+  tee "$work/fifo" <"$1" | zstd -q -dc
+  wait "$p"
+}
+# written <image>: what unpack read was the checked file
+written() {
+  [ "$(cat "$work/sum" 2>/dev/null)" = "$(expected "${1##*/}")" ] ||
+    die "${1##*/} changed while it was being written: the internal storage now holds something else. Copy the backup somewhere no program can change it and restore again."
+}
 KIND=$(m kind); KIND=${KIND:-full}   # backups from before "kind" existed are full
 bserial=$(m serial)
 [ -z "$bserial" ] || [ "$bserial" = "$(device_serial)" ] ||
@@ -51,7 +74,7 @@ else
 fi
 
 say "checking the backup"
-( cd "$DIR" && sha256sum -c --quiet SHA256SUMS ) || die "checksum mismatch in $DIR"
+( cd "$DIR" && sha256sum -c --quiet "$work/SHA256SUMS" ) || die "checksum mismatch in $DIR"
 plan=()
 for lun in "${luns[@]}"; do
   img="$DIR/lun$lun.img.zst"; [ -f "$img" ] || die "missing $img"
@@ -60,6 +83,7 @@ for lun in "${luns[@]}"; do
   none_mounted "$dev" || die "$dev (or a partition of it) is mounted"
   for f in "$img" "$DIR/lun$lun-tail.img.zst"; do
     [ -f "$f" ] || continue
+    [ -n "$(expected "${f##*/}")" ] || die "$(basename "$f") is not in SHA256SUMS"
     zstd -q -t "$f" || die "$(basename "$f") is corrupt"
   done
   plan+=("$lun $dev")
@@ -86,19 +110,22 @@ for p in "${plan[@]}"; do
   if [ "$lun" = "$skip_lun" ]; then
     end=$((skip_off + skip_len))
     say "writing LUN $lun ($dev), before userdata"
-    zstd -q -dc "$DIR/lun$lun.img.zst" |
+    unpack "$DIR/lun$lun.img.zst" |
       dd of="$dev" bs=4M iflag=fullblock oflag=direct conv=fsync status=progress 2> >(dd_pct "$skip_off")
+    written "$DIR/lun$lun.img.zst"
     say "writing LUN $lun ($dev), after userdata"
-    zstd -q -dc "$DIR/lun$lun-tail.img.zst" |
+    unpack "$DIR/lun$lun-tail.img.zst" |
       dd of="$dev" bs=4M iflag=fullblock oflag=direct,seek_bytes seek="$end" conv=fsync status=progress 2> >(dd_pct "$((size - end))")
+    written "$DIR/lun$lun-tail.img.zst"
     say "clearing Android's userdata"
     blkdiscard -f -o "$skip_off" -l "$skip_len" "$dev" 2>/dev/null ||
       note "trim not supported; clearing the start of userdata only"
     dd if=/dev/zero of="$dev" bs=1M count=8 oflag=seek_bytes seek="$skip_off" conv=fsync status=none
   else
     say "writing LUN $lun ($dev)"
-    zstd -q -dc "$DIR/lun$lun.img.zst" |
+    unpack "$DIR/lun$lun.img.zst" |
       dd of="$dev" bs=4M iflag=fullblock oflag=direct conv=fsync status=progress 2> >(dd_pct "$size")
+    written "$DIR/lun$lun.img.zst"
   fi
   blockdev --rereadpt "$dev" 2>/dev/null || partx -u "$dev" 2>/dev/null || true
 done
