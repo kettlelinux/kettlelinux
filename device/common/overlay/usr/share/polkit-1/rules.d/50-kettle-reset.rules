@@ -1,6 +1,8 @@
 // Kettle Linux: resetting the device (kettle-reset) from Steam's Settings > System > Factory
 // Reset and Game Mode's Device Settings, where no password prompt can be shown, and from the
-// desktop's Reset Kettle alike: as on a Steam Deck, the person holding it can reset it.
+// desktop's Reset Kettle alike: as on a Steam Deck, the person holding it can reset it. Erasing
+// everything then waits for both volume keys (kettle-reset, confirm-keys): any program running as
+// the user gets this far too.
 // fromDecky: one of Decky Loader's plugin backends. They run in its own system service, outside
 // the user's login session, so polkit sees them as neither local nor active. (All rule files share
 // one scope: 50-kettle-*.rules define the same function.) Newer polkit says which unit a

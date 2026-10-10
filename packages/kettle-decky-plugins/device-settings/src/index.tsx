@@ -1,5 +1,5 @@
 import { ButtonItem, DropdownItem, Field, Focusable, Navigation, PanelSection, PanelSectionRow, SidebarNavigation, SliderField, ToggleField, staticClasses } from "@decky/ui";
-import { callable, definePlugin, routerHook, toaster } from "@decky/api";
+import { addEventListener, callable, definePlugin, removeEventListener, routerHook, toaster } from "@decky/api";
 import { ReactElement, useEffect, useMemo, useState } from "react";
 import { FaBatteryHalf, FaBolt, FaCog, FaDesktop, FaLightbulb, FaTabletAlt, FaTools, FaHdd, FaInfoCircle, FaMemory, FaMicrochip, FaTachometerAlt, FaThermometerHalf, FaWifi, FaCube } from "react-icons/fa";
 import { runningAppId } from "../../shared/GamePicker";
@@ -375,8 +375,27 @@ function Content() {
   );
 }
 
+// Turning SSH on, erasing everything and updating the bootloader wait for both volume keys,
+// checked as root (confirm-keys): whichever asked, Steam's Factory Reset included, this says so
+let confirmToast: { dismiss: () => void } | null = null;
+const onConfirm = (what: string, until: number) => {
+  confirmToast?.dismiss();
+  confirmToast = toaster.toast({
+    title: "Hold Volume Up + Down for a second",
+    body: `To confirm: ${what}`,
+    duration: Math.max(1000, until * 1000 - Date.now()),
+    critical: true,
+  });
+};
+const onConfirmDone = () => {
+  confirmToast?.dismiss();
+  confirmToast = null;
+};
+
 export default definePlugin(() => {
   routerHook.addRoute(ROUTE, DiagnosticsPage);
+  addEventListener("confirm", onConfirm);
+  addEventListener("confirm_done", onConfirmDone);
   syncActive();
   // Steam's sliders follow what the Performance app sets (steamSync.ts)
   let tdpMax: number | null = null;
@@ -397,6 +416,9 @@ export default definePlugin(() => {
       lifetime.unregister();
       stopSync();
       routerHook.removeRoute(ROUTE);
+      removeEventListener("confirm", onConfirm);
+      removeEventListener("confirm_done", onConfirmDone);
+      onConfirmDone();
     },
   };
 });

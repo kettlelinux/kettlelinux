@@ -100,6 +100,21 @@ async def _watch_fps_limit():
         await asyncio.sleep(5)
 
 
+async def _watch_confirm():
+    """What confirm-keys waits for (Device Settings' own SSH switch, reset and bootloader update,
+    and Steam's Factory Reset alike), to the frontend, which says to hold the volume keys."""
+    shown = None
+    while True:
+        pending = system.confirm_pending()
+        if pending != shown:
+            if pending:
+                await decky.emit("confirm", pending.get("what", ""), pending.get("until", 0))
+            else:
+                await decky.emit("confirm_done")
+            shown = pending
+        await asyncio.sleep(0.5)
+
+
 def _read(path: str) -> str | None:
     try:
         with open(path) as f:
@@ -454,7 +469,9 @@ class Plugin:
         motion = await gyro.get(quiet=True)
         decky.logger.info("gyro: service %s, sensors %s, mode %s", motion["service"], motion.get("available"), motion.get("mode"))
         self._fps_limit = asyncio.create_task(_watch_fps_limit())
+        self._confirm = asyncio.create_task(_watch_confirm())
 
     async def _unload(self):
-        if getattr(self, "_fps_limit", None):
-            self._fps_limit.cancel()
+        for t in ("_fps_limit", "_confirm"):
+            if getattr(self, t, None):
+                getattr(self, t).cancel()
