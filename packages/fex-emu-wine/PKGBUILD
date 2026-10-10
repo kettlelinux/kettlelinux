@@ -11,7 +11,7 @@
 # the aarch64 chroot), with only the submodules the Windows build uses.
 pkgname=fex-emu-wine
 pkgver=2610
-pkgrel=1
+pkgrel=2
 _llvm_mingw=20260908
 pkgdesc='FEX x86 and x86-64 emulation for ARM64EC Wine'
 arch=(aarch64)
@@ -23,7 +23,7 @@ options=(!strip !buildflags !lto)  # the DLLs are PE (stripped with llvm-mingw's
 _llvm="llvm-mingw-$_llvm_mingw-ucrt-ubuntu-22.04-aarch64"
 _submodules=(External/fmt External/range-v3 External/rpmalloc External/unordered_dense
              External/xxhash Source/Common/cpp-optparse External/Vulkan-Headers External/drm-headers)
-source=("FEX::git+https://github.com/FEX-Emu/FEX.git#tag=FEX-$pkgver"
+source=("FEX::git+https://github.com/FEX-Emu/FEX.git#commit=14c92681f4d62cf84d901460e0358de09c8847a7"  # tag FEX-2610
         "fmt::git+https://github.com/fmtlib/fmt.git#commit=c07e2aa4b130b4fd359a1c6455a5201b17af01fa"
         "range-v3::git+https://github.com/ericniebler/range-v3.git#commit=ca1388fb9da8e69314dda222dc7b139ca84e092f"
         "rpmalloc::git+https://github.com/FEX-Emu/rpmalloc.git#commit=09142d726429416bfa7b459151515fe3ab7622dd"
@@ -36,7 +36,7 @@ source=("FEX::git+https://github.com/FEX-Emu/FEX.git#tag=FEX-$pkgver"
         Config.json)
 sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
             'c907dd2302a292b663add18752a55ce9d544ca0fd19cf33c086ca242d5994ea6'
-            'SKIP')
+            'a24388fd648fd1dc342816b3b75694e601e6f7e7a79ee4cf2955a882b55f056f')
 
 prepare() {
   cd FEX

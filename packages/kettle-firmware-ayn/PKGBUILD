@@ -16,7 +16,7 @@ _extra_rev=e1eb71af80427aa1fec1659d2967f7ba8bef83b5
 _linux_fw=20260221-1
 _ath12k_fw=20260916
 pkgver=${_linux_fw%-*}.${_extra_rev:0:8}.$_ath12k_fw
-pkgrel=1
+pkgrel=2
 pkgdesc='Firmware for AYN SM8550 handhelds (DSPs, audio, GPU, Wi-Fi, Bluetooth)'
 arch=(any)
 url='https://github.com/ROCKNIX/extra-firmware'
@@ -31,7 +31,8 @@ source=("extra-firmware::git+https://github.com/ROCKNIX/extra-firmware.git#commi
         "$_mirror/linux-firmware-atheros-$_linux_fw-any.pkg.tar.zst"
         "wcn7850-amss-$_ath12k_fw.bin::$_lfw_raw/amss.bin"
         "wcn7850-m3-$_ath12k_fw.bin::$_lfw_raw/m3.bin"
-        "wcn7850-Notice-$_ath12k_fw.txt::$_lfw_raw/Notice.txt")
+        "wcn7850-Notice-$_ath12k_fw.txt::$_lfw_raw/Notice.txt"
+        LICENSE.extra-firmware)
 noextract=("linux-firmware-qcom-$_linux_fw-any.pkg.tar.zst"
            "linux-firmware-atheros-$_linux_fw-any.pkg.tar.zst")
 sha256sums=('SKIP'
@@ -39,7 +40,8 @@ sha256sums=('SKIP'
             '59e0a43b634246312db82bc0e4944faee72cc846fb71ab918e5a13135d7837d1'
             '43aadfd3df887f27de74020273aee484bac6a31dd53068f91baf2a9b094d6a68'
             '0e72f44df7defc269fe92dcea25d4d409046c04b77d41c510c52879b3dfc1055'
-            '515bf4c9d620a87458e4447fe01a0e9bc384d1c3e0037cc4c3d2037b1ff25525')
+            '515bf4c9d620a87458e4447fe01a0e9bc384d1c3e0037cc4c3d2037b1ff25525'
+            '840d595103838947a5ebd3d631c777751d787cf0feb6c9f3dc54cb30143945a8')
 
 # $1: the device's directory under qcom/sm8550/ayn/ (its ADSP firmware and amplifier tuning, as
 # its device tree names them), $2: its audio topology (the sound card's name)
@@ -55,6 +57,8 @@ _package() {
   # WCN7850 firmware c7-00108 from linux-firmware (see the top): same paths, uncompressed
   install -m644 "$srcdir/wcn7850-amss-$_ath12k_fw.bin" "$fw/ath12k/WCN7850/hw2.0/amss.bin"
   install -m644 "$srcdir/wcn7850-m3-$_ath12k_fw.bin" "$fw/ath12k/WCN7850/hw2.0/m3.bin"
+  # where ROCKNIX's files come from, and that no licence for them is recorded
+  install -Dm644 "$srcdir/LICENSE.extra-firmware" -t "$pkgdir/usr/share/licenses/$pkgname"
   install -Dm644 "$srcdir/wcn7850-Notice-$_ath12k_fw.txt" \
     "$pkgdir/usr/share/licenses/$pkgname/ath12k-WCN7850-Notice.txt"
 

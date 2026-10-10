@@ -13,7 +13,7 @@
 # (scripts/build-packages.sh) and pinned by hash. releases.tsv identifies installed releases.
 pkgname=rocknix-abl
 pkgver=1.2
-pkgrel=2
+pkgrel=3
 pkgdesc='ROCKNIX ABL builds, and kettle-abl-update to keep an installed one up to date'
 arch=(any)
 url='https://github.com/ROCKNIX/abl'
@@ -24,12 +24,14 @@ source=("rocknix-abl-v$pkgver.tar.gz::https://github.com/ROCKNIX/abl/releases/do
         releases.tsv
         kettle-abl-update
         org.kettle.abl-update.policy
-        50-kettle-abl-update.rules)
+        50-kettle-abl-update.rules
+        LICENSE)
 sha256sums=('64034fb076ea0bb858beaa2f29dbef635e97d29f3e3d32c13bce61bd4af4cff7'
             '3d72c8ac7ef9076135f7ad84b48c29a6b6380acf95481b06f6016d2592c6ebde'
-            '53140d58333f54a3360eef3d3ad3294a75f5f669e859901a37b83775007d624b'
+            'a154692eb2d0edaa13120d71f70bc36315551b141182f00fcdb3c1f00baac928'
             'ccb041990f5a20869fa85b551f1c207e52052adfa3962fdbd404e0399672a798'
-            '7b38271af0e1aa1b143cc1ed82ba47025c2e00757ff9d33649c34091eb60cff3')
+            '7b38271af0e1aa1b143cc1ed82ba47025c2e00757ff9d33649c34091eb60cff3'
+            '85c4d9a67a22b9658ac18fd375d2e1e42d41364776c694c955b2b252756df5cc')
 
 package() {
   local d="$pkgdir/usr/share/kettle/rocknix-abl" f
@@ -43,4 +45,5 @@ package() {
   install -Dm755 kettle-abl-update "$pkgdir/usr/bin/kettle-abl-update"
   install -Dm644 org.kettle.abl-update.policy -t "$pkgdir/usr/share/polkit-1/actions"
   install -Dm644 50-kettle-abl-update.rules -t "$pkgdir/usr/share/polkit-1/rules.d"
+  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
 }

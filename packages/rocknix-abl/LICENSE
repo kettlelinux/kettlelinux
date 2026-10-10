@@ -1,0 +1,11 @@
+ROCKNIX ABL (abl_signed-*.elf in /usr/share/kettle/rocknix-abl)
+Source: https://github.com/ROCKNIX/abl, release v1.2 (rocknix-abl-v1.2.tar.gz)
+
+The ROCKNIX ABL is published only as signed binaries, built from ROCKNIX's private fork of
+Qualcomm's LinuxLoader (BSD-3-Clause). The ROCKNIX/abl repository states no licence.
+
+ROCKNIX's developers agreed to Kettle Linux redistributing these binaries in its images
+(recorded 2026-10-09). No other terms were given: this file records that permission, and grants
+none of its own. Ask ROCKNIX (https://github.com/ROCKNIX) about any other use.
+
+kettle-abl-update, releases.tsv and the polkit files in this package are Kettle Linux's own.

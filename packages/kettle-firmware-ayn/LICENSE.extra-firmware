@@ -1,0 +1,20 @@
+Firmware from ROCKNIX extra-firmware
+Source: https://github.com/ROCKNIX/extra-firmware, commit e1eb71af80427aa1fec1659d2967f7ba8bef83b5,
+SM8550/ directory
+
+Files in this package taken from it (under /usr/lib/firmware):
+  qcom/sm8550/ayn/cdsp.mbn, cdsp_dtb.mbn, qcom/sm8550/ayn/<device>/* (ADSP firmware and
+  amplifier tuning), qcom/sm8550/<card>-tplg.bin (audio topology), qcom/vpu/vpu30_p4.mbn,
+  ath12k/WCN7850/hw2.0/board-2.bin and regdb.bin
+
+These are proprietary firmware images, not Kettle Linux's or ROCKNIX's own work: they come from
+the device's vendor (AYN) and its chip vendor (Qualcomm), as ROCKNIX collected them for its
+images. The ROCKNIX/extra-firmware repository states no licence for them, and the files carry
+no licence text of their own.
+
+Status: redistribution permission from the rights holders has NOT been recorded for Kettle
+Linux. They are shipped pending that permission; this file grants no rights of any kind.
+
+The other firmware in this package comes with its own licence files in this directory:
+linux-firmware-qcom/ and linux-firmware-atheros/ (Arch's linux-firmware packages) and
+ath12k-WCN7850-Notice.txt (upstream linux-firmware).

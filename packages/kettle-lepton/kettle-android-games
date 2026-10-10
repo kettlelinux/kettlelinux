@@ -47,6 +47,7 @@ import html
 import json
 import os
 import re
+import select
 import shutil
 import socket
 import sqlite3
@@ -72,6 +73,7 @@ PLAY_CONFIG = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expandus
 PLAY_DEVICE = "poco_f1"  # Android 11 (Lepton's), arm64, Adreno
 PLAY_SEARCH = "https://play.google.com/store/search?c=apps&hl=en&q="
 PLAY_PACKAGE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$")
+BUNDLE_MAX = 8 << 30  # what an .xapk may unpack to: a zip bomb stops here, not at a full drive
 
 
 class Refused(Exception):
@@ -210,15 +212,22 @@ def resolve_icon_paths(table, strings, rid, depth=0):
 
 # ---------------------------------------------------------------- APK inspection
 
+def _zip_names(path):
+    with zipfile.ZipFile(path) as z:
+        return set(z.namelist())
+
+
 def inspect_apk(path, splits=()):
     try:
-        z = zipfile.ZipFile(path)
+        with zipfile.ZipFile(path) as z:
+            names = set(z.namelist())
+            if "AndroidManifest.xml" not in names:
+                raise Refused("Not an Android app: it has no AndroidManifest.xml.")
+            manifest_data = z.read("AndroidManifest.xml")
+            arsc = z.read("resources.arsc") if "resources.arsc" in names else None
     except (zipfile.BadZipFile, OSError) as e:
         raise Refused("Not an Android app file (%s)." % e)
-    names = set(z.namelist())
-    if "AndroidManifest.xml" not in names:
-        raise Refused("Not an Android app: it has no AndroidManifest.xml.")
-    elements = parse_axml(z.read("AndroidManifest.xml"))
+    elements = parse_axml(manifest_data)
     manifest = next((a for n, a in elements if n == "manifest"), {})
     app = next((a for n, a in elements if n == "application"), {})
     package = (manifest.get("package") or (None, None, None))[2]
@@ -236,9 +245,9 @@ def inspect_apk(path, splits=()):
 
     label, icon = None, None
     table, strings = ({}, [])
-    if "resources.arsc" in names:
+    if arsc is not None:
         try:
-            table, strings = parse_arsc(z.read("resources.arsc"))
+            table, strings = parse_arsc(arsc)
         except (struct.error, IndexError):
             pass
     lab = app.get(ATTR_LABEL)
@@ -247,7 +256,7 @@ def inspect_apk(path, splits=()):
     ic = app.get(ATTR_ICON)
     if ic and ic[0] == 0x01:
         # an app bundle keeps its icons in the screen density splits
-        where = [(path, names)] + [(sp, set(zipfile.ZipFile(sp).namelist())) for sp in splits]
+        where = [(path, names)] + [(sp, _zip_names(sp)) for sp in splits]
         for p in resolve_icon_paths(table, strings, ic[1]):
             found = next((f for f, n in where if p in n), None) if p.endswith(".png") else None
             if found:
@@ -269,6 +278,9 @@ def inspect_apk(path, splits=()):
 def check_runnable(info, splits=()):
     if not info["package"]:
         raise Refused("The app has no package name.")
+    if not PLAY_PACKAGE.match(info["package"]):
+        # it names the game's folder: no "..", "/" or other surprises
+        raise Refused("The app's package name (%r) isn't a valid one." % info["package"][:100])
     if info["split_name"]:
         raise Refused("This is one part (%s) of a game split into several APK files, not the game "
                       "itself." % info["split_name"])
@@ -280,7 +292,7 @@ def check_runnable(info, splits=()):
                       "Add the .xapk or .apks file that holds all of them, or a universal APK."
                       % info["name"])
     if splits:
-        abis = {n.split("/")[1] for sp in splits for n in zipfile.ZipFile(sp).namelist()
+        abis = {n.split("/")[1] for sp in splits for n in _zip_names(sp)
                 if n.startswith("lib/") and n.count("/") >= 2}
         if abis and "arm64-v8a" not in abis:
             raise Refused("%s has no 64-bit ARM (arm64-v8a) code, only %s, so it can't run on this "
@@ -297,17 +309,23 @@ def split_apk_set(apks):
 
 def unpack_bundle(path, workdir):
     """An .xapk or .apks file: extract its APKs and OBB files. Returns (apk, [splits], [obbs])."""
+    apks, obbs = [], []
     try:
-        z = zipfile.ZipFile(path)
+        with zipfile.ZipFile(path) as z:
+            wanted = [i for i in z.infolist() if not i.is_dir() and (
+                i.filename.lower().endswith(".apk") and "/" not in i.filename
+                or i.filename.lower().endswith(".obb"))]
+            for i in wanted:
+                parts = i.filename.replace("\\", "/").split("/")
+                if i.filename.startswith("/") or ".." in parts or ":" in i.filename:
+                    raise Refused("This file has an entry with an unsafe path (%s)." % i.filename[:100])
+            # zipfile stops each file at its declared size, so the sum is a real bound
+            if sum(i.file_size for i in wanted) > BUNDLE_MAX:
+                raise Refused("This file unpacks to more than %d GiB." % (BUNDLE_MAX >> 30))
+            for i in wanted:
+                (apks if i.filename.lower().endswith(".apk") else obbs).append(z.extract(i, workdir))
     except (zipfile.BadZipFile, OSError) as e:
         raise Refused("Not an XAPK or APKS file (%s)." % e)
-    apks, obbs = [], []
-    for n in z.namelist():
-        low = n.lower()
-        if low.endswith(".apk") and "/" not in n:
-            apks.append(z.extract(n, workdir))
-        elif low.endswith(".obb"):
-            obbs.append(z.extract(n, workdir))
     if not apks:
         raise Refused("This file holds no APK.")
     apk, splits = split_apk_set(apks)
@@ -429,11 +447,22 @@ def _copy(src, dst, move=False):
         os.replace(dst + ".part", dst)
 
 
+def _game_folder(package):
+    """~/Games/Android/<package>, made sure to stay inside ~/Games/Android."""
+    games = os.path.realpath(GAMES_DIR)
+    folder = os.path.join(GAMES_DIR, package)
+    if os.path.dirname(os.path.realpath(folder)) != games:
+        raise Refused("%s isn't a folder in Games/Android." % package)
+    return folder
+
+
 def add_game(apk, splits, obbs, notify=False, move=False, name=None):
     """Put the game in ~/Games/Android/<package>/ (APK, splits/, obb/) and add it to Steam, as
     name if given (else the app's own label)."""
     info = inspect_apk(apk)
-    folder = os.path.join(GAMES_DIR, info["package"] or "unknown")
+    if not PLAY_PACKAGE.match(info["package"] or ""):
+        check_runnable(info)  # refuses it, with the reason
+    folder = _game_folder(info["package"])
     target = os.path.join(folder, "%s.apk" % info["package"])
     split_dir = os.path.join(folder, "splits")
     in_place = os.path.abspath(apk) == target
@@ -556,7 +585,7 @@ def cmd_remove(package):
     shader cache and files."""
     if not PLAY_PACKAGE.match(package):
         raise Refused("That isn't a package name.")
-    folder = os.path.join(GAMES_DIR, package)
+    folder = _game_folder(package)
     if not os.path.isdir(folder):
         raise Refused("%s isn't in Games/Android." % package)
     appid = _game_appid(folder)
@@ -607,7 +636,7 @@ def report_progress(done, total, force=False):
 
 
 def download(url, path, timeout=60):
-    """Download url to path, reporting progress."""
+    """Download url to path, reporting progress. A cut-short download is an error."""
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as r, open(path, "wb") as f:
         total = int(r.headers.get("Content-Length") or 0)
@@ -620,6 +649,8 @@ def download(url, path, timeout=60):
             done += len(chunk)
             if total:
                 report_progress(done, total)
+        if total and done != total:
+            raise OSError("the download stopped at %d of %d bytes" % (done, total))
         if total:
             report_progress(total, total, force=True)
 
@@ -658,7 +689,7 @@ def cmd_fdroid_add(package):
     candidates = [b["versionCode"] for b in builds if b["versionName"] == newest]
     candidates.sort(key=lambda c: c != suggested)
     last_error = None
-    with tempfile.TemporaryDirectory() as tmp:
+    with work_dir() as tmp:
         for code in candidates[:4]:
             apk = os.path.join(tmp, "%s_%d.apk" % (package, code))
             try:
@@ -671,7 +702,7 @@ def cmd_fdroid_add(package):
             except Refused as e:
                 last_error = e
                 continue
-            return cmd_add(apk)
+            return add_game(apk, [], [], move=True)
     raise last_error or Refused("No build of %s can run on this device." % package)
 
 
@@ -907,6 +938,9 @@ def run_apkeep(args, timeout):
             if time.monotonic() > deadline:
                 proc.kill()
                 raise subprocess.TimeoutExpired(args, timeout)
+            # read only when there's output, so a silent apkeep still meets the deadline
+            if not select.select([master], [], [], 5)[0]:
+                continue
             try:
                 data = os.read(master, 1 << 16)
             except OSError:  # EIO: apkeep has exited and the terminal is closed

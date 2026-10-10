@@ -24,7 +24,7 @@
 pkgname=steamos-customizations-kettle
 _srctag=jupiter-20260916.1
 pkgver=${_srctag#jupiter-}
-pkgrel=1
+pkgrel=2
 pkgdesc='SteamOS atomic A/B system (Valve steamos-customizations) for Kettle Linux'
 arch=(aarch64)
 url='https://gitlab.steamos.cloud/holo/steamos-customizations'
@@ -64,7 +64,7 @@ sha256sums=('5cec58098008822caf86aee0991421568df04a603cd0c1b9c80fe930749daaee'
             '78f47e2565d9a48bbd0cebaa318eeaca1540fc116003f616e5fb5817a80c5d02'
             'a99f7889fff91cc3e11615e5a128acab636228dabcc0803b0b661f479ac685f2'
             '4e795fe93549b171628d9737ccbf6119c1cb39bf4e6f29687c593ed87ef64362'
-            '3b41dab2b4aeeaef460f5697358b89081281e24b61d68aa611c6e5fd45654ac5'
+            '8bdf96228dbf51560cafa6182fe88619c3614110ce534bf161d28b67f7057e4c'
             'f245b5c76e2bf47172b531c89cc5e2a35d2c834e07845d57c47864cff6e4c395'
             'cb8c07b9dde2c1ab060433af0a6406020ec07774b208450a0210c7e848b5ae6a'
             'c5676c03913c976637d3a61ac93aa8d9e4d0e5dc6c78858161f030f0dc571062'

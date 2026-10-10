@@ -167,11 +167,21 @@ for p in "${todo[@]}"; do
   old=$(sha256sum "$W/old-$s" | cut -d' ' -f1)
   say "writing ROCKNIX ABL $NEW to abl_$s ($dev)"
   if put "$payload" "$dev" && [ "$(on_disk "$dev")" = "$want" ]; then written+=("$p"); continue; fi
+  # a one-off write or read error: once more before giving up
+  say "abl_$s didn't read back as written: writing it once more"
+  if put "$payload" "$dev" && [ "$(on_disk "$dev")" = "$want" ]; then written+=("$p"); continue; fi
   if put "$W/old-$s" "$dev" && [ "$(on_disk "$dev")" = "$old" ]; then
     die "abl_$s didn't read back as written: its old contents were put back$(
       [ ${#written[@]} -gt 0 ] && echo " (${written[*]} already has $NEW, which is fine to boot)")"
   fi
-  die "abl_$s didn't read back as written, and putting its old contents back failed too. Don't turn the device off: keep it running and ask for help (docs/BOOTLOADER.md)"
+  # the worst case: keep the old ABL somewhere the exit trap doesn't remove, for whoever helps
+  keep=/var/lib/kettle/abl-backups f=/var/lib/kettle/abl-backups/abl_$s-$(date +%Y%m%d-%H%M%S).img
+  saved="(saving its old contents failed too)"
+  if mkdir -p /var/lib/kettle && mkdir -p -m 0700 "$keep" && cp "$W/old-$s" "$f.part" &&
+     mv "$f.part" "$f" && sync -f "$f"; then
+    saved="(its old contents are saved in $f)"
+  fi
+  die "abl_$s didn't read back as written, and putting its old contents back failed too $saved. Don't turn the device off: keep it running and ask for help (docs/BOOTLOADER.md)"
 done
 say "ROCKNIX ABL $NEW installed in ${todo[*]}"
 machine "result updated"

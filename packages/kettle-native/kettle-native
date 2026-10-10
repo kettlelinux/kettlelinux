@@ -83,8 +83,18 @@ def game_args(cmd, root):
     return []
 
 
+def mapper_version():
+    """Of steamapi-map and the libsteam_api.so that reads its maps: updating either remakes them."""
+    h = hashlib.sha256()
+    for name in ("steamapi-map", "libsteam_api.so"):
+        with open(os.path.join(STEAM_API, name), "rb") as f:
+            h.update(f.read())
+    return h.hexdigest()[:12]
+
+
 def steam_api_map(root):
-    """The map of the game's x86-64 libsteam_api.so for Kettle's ARM64 one (None: it has none)."""
+    """The map of the game's x86-64 libsteam_api.so for Kettle's ARM64 one (None: it has none).
+    Raises when the library can't be mapped (remembered, so it isn't tried at every launch)."""
     found = []
     for d, dirs, files in os.walk(root):
         if d[len(root):].count(os.sep) >= 3:
@@ -96,15 +106,25 @@ def steam_api_map(root):
             data = f.read()
         if data[:4] != b"\x7fELF" or data[18:20] != b"\x3e\x00":  # x86-64
             continue
-        path = os.path.join(CACHE, "steamapi", hashlib.sha256(data).hexdigest()[:24] + ".map")
+        path = os.path.join(CACHE, "steamapi", f"{hashlib.sha256(data).hexdigest()[:24]}-{mapper_version()}.map")
+        if os.path.exists(path + ".failed"):
+            raise RuntimeError(f"{lib} couldn't be mapped before ({path}.failed)")
         if not os.path.exists(path):
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            out = subprocess.run([sys.executable, os.path.join(STEAM_API, "steamapi-map"), lib],
-                                 capture_output=True, text=True, check=True).stdout
+            r = subprocess.run([sys.executable, os.path.join(STEAM_API, "steamapi-map"), lib],
+                               capture_output=True, text=True)
+            if r.returncode:
+                with open(path + ".failed", "w") as f:
+                    f.write(r.stderr)
+                raise RuntimeError(f"steamapi-map failed on {lib}: {r.stderr.strip()[-300:]}")
             with open(path + ".tmp", "w") as f:
-                f.write(out)
+                f.write(r.stdout)
             os.replace(path + ".tmp", path)
             log(f"mapped {lib}")
+        with open(path) as f:
+            unmapped = [line.split()[1] for line in f if line.startswith("unmapped ")]
+        if unmapped:
+            log(f"{len(unmapped)} Steam API functions not mapped (calling one ends the game): {' '.join(unmapped)}")
         return path
     return None
 
@@ -307,14 +327,18 @@ def main():
     if not cmd:
         sys.exit("usage: kettle-native %command%   (in a Steam game's launch options)")
     appid = os.environ.get("SteamAppId") or os.environ.get("SteamGameId") or ""
-    root = install_dir(appid) if appid.isdigit() else None
-    found = gameengine.detect(root) if root else {}
-    run = None
-    if found.get("platform") == "linux" and found.get("engine") in NATIVE:
-        try:
+    found, run = {}, None
+    # anything going wrong here starts Steam's command, under FEX as without kettle-native
+    try:
+        root = install_dir(appid) if appid.isdigit() else None
+        found = gameengine.detect(root) if root else {}
+        if found.get("platform") == "linux" and found.get("engine") in NATIVE:
             run = runner(root, found)(root, found, game_args(cmd, root))
-        except Exception as e:
-            log(f"can't run it natively: {e!r}")
+            if run:
+                env = native_env(root)
+    except Exception as e:
+        log(f"can't run it natively: {e!r}")
+        run = None
     if not run:
         log(f"app {appid or '?'} ({found.get('engine', 'not found')}, {found.get('platform') or '?'}): "
             "not run natively, starting Steam's command")
@@ -322,7 +346,7 @@ def main():
     cwd, argv = run
     log(f"app {appid}: {found['engine']} natively: {' '.join(argv)}")
     os.chdir(cwd)
-    os.execve(argv[0], argv, native_env(root))
+    os.execve(argv[0], argv, env)
 
 
 if __name__ == "__main__":

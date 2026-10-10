@@ -152,7 +152,10 @@ static void load_map(void) {
 
 __attribute__((constructor)) static void kettle_steam_api_load(void) { load_map(); }
 
-// A flat function the game's library has but its map couldn't say how to pass on (flat.S)
+// A flat function the game's library has but its map couldn't say how to pass on (flat.S).
+// It can't just return 0: flat.S doesn't know the return type, and functions returning a large
+// struct (ISteamInput_GetMotionData, ISteamGameServer_GetPublicIP) do it through a buffer the
+// caller passes in x8, which would be left as garbage for the game to use.
 void kettle_flat_missing(int i) {
     say("%s: not passed through (not a plain virtual call in the game's library)", kettle_flat_names[i]);
     abort();
@@ -528,39 +531,69 @@ static void run_result(CallbackBase *cb, void *param, bool failed, SteamAPICall_
     ((void (*)(CallbackBase *, void *, bool, SteamAPICall_t))cb->vtable[1])(cb, param, failed, call);
 }
 
-// Callbacks and call results for C++ games' registered objects (.NET games dispatch manually)
+static bool registered(CallbackBase *cb) {
+    for (size_t i = 0; i < nregs; i++)
+        if (regs[i].cb == cb && !regs[i].call)
+            return true;
+    return false;
+}
+
+// Callbacks and call results for C++ games' registered objects (.NET games dispatch manually).
+// The game's code runs without our lock held: a callback waiting on a game thread that is
+// registering something (and so waiting on our lock) would deadlock otherwise.
 EXPORT void SteamAPI_RunCallbacks(void) {
     if (!pipe_ || manual_dispatch)
         return;
-    pthread_mutex_lock(&lock);
-    CallbackMsg msg;
-    while (pipe_ && BGetCallback(pipe_, &msg)) {
-        if (msg.callback == API_CALL_COMPLETED && msg.size >= (int)sizeof(CallCompleted)) {
-            CallCompleted *c = (CallCompleted *)msg.param;
+    for (;;) {
+        // under the lock: one message, copied, and who it goes to
+        pthread_mutex_lock(&lock);
+        CallbackMsg msg;
+        if (!pipe_ || !BGetCallback(pipe_, &msg)) {
+            pthread_mutex_unlock(&lock);
+            return;
+        }
+        size_t size = msg.size > 0 ? (size_t)msg.size : 0;
+        uint8_t *param = malloc(size ? size : 1);
+        memcpy(param, msg.param, size);
+        CallbackBase *result_cb = NULL;
+        void *result = NULL;
+        bool failed = false, have_result = false;
+        SteamAPICall_t call = 0;
+        if (msg.callback == API_CALL_COMPLETED && size >= sizeof(CallCompleted)) {
+            CallCompleted *c = (CallCompleted *)param;
             for (size_t i = 0; i < nregs; i++) {
                 if (regs[i].call != c->call)
                     continue;
-                CallbackBase *cb = regs[i].cb;
+                result_cb = regs[i].cb;  // a call result runs once: its registration goes now
                 regs[i] = regs[--nregs];
-                void *buf = calloc(1, c->size ? c->size : 1);
-                bool failed = false;
-                if (GetAPICallResult(pipe_, c->call, buf, (int)c->size, c->callback, &failed))
-                    run_result(cb, buf, failed, c->call);
-                free(buf);
+                call = c->call;
+                result = calloc(1, c->size ? c->size : 1);
+                have_result = GetAPICallResult(pipe_, c->call, result, (int)c->size, c->callback, &failed);
                 break;
             }
         }
-        // a copy: a callback may register or unregister others
-        size_t n = nregs;
-        Registration *now = malloc((n ? n : 1) * sizeof *now);
-        memcpy(now, regs, n * sizeof *now);
-        for (size_t i = 0; i < n; i++)
-            if (!now[i].call && now[i].cb->callback == msg.callback && !(now[i].cb->flags & CALLBACK_GAME_SERVER))
-                run(now[i].cb, msg.param);
-        free(now);
+        size_t n = 0;
+        CallbackBase **targets = malloc((nregs ? nregs : 1) * sizeof *targets);
+        for (size_t i = 0; i < nregs; i++)
+            if (!regs[i].call && regs[i].cb->callback == msg.callback && !(regs[i].cb->flags & CALLBACK_GAME_SERVER))
+                targets[n++] = regs[i].cb;
         FreeLastCallback(pipe_);
+        pthread_mutex_unlock(&lock);
+
+        if (have_result)
+            run_result(result_cb, result, failed, call);
+        free(result);
+        for (size_t i = 0; i < n; i++) {
+            // an earlier callback may have unregistered (and freed) this one
+            pthread_mutex_lock(&lock);
+            bool still = registered(targets[i]);
+            pthread_mutex_unlock(&lock);
+            if (still)
+                run(targets[i], param);
+        }
+        free(targets);
+        free(param);
     }
-    pthread_mutex_unlock(&lock);
 }
 
 EXPORT void SteamAPI_ManualDispatch_Init(void) { manual_dispatch = true; }
