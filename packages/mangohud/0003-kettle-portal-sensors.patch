@@ -9,7 +9,8 @@ Portal (SM8550, mainline msm) sensors for Valve's Steam Frame metrics.
 - ftrace GPU memory: without tracefs access, report 0 instead of
   abort()ing the host process; disable events on our instance only.
 - Battery: also accept power supplies of type Battery (the Portal's
-  pmic_glink battery is named "battery", not BAT*).
+  pmic_glink battery is named "battery", not BAT*), but not ones with
+  scope Device (controller batteries).
 ---
 diff --git a/src/battery.cpp b/src/battery.cpp
 index f10ec5f..3995f3e 100644
@@ -23,13 +24,15 @@ index f10ec5f..3995f3e 100644
  
  namespace fs = ghc::filesystem;
  using namespace std;
-@@ -15,7 +16,9 @@ void BatteryStats::numBattery() {
+@@ -15,7 +16,11 @@ void BatteryStats::numBattery() {
          for (const auto& p : fs::directory_iterator(dir)) {
              string fileName = p.path().filename();
  
 -            if ( (fileName.find("BAT") != std::string::npos) && (batteryCount < BATTERY_COUNT_MAX) ) {
 +            bool is_battery = fileName.find("BAT") != std::string::npos ||
 +                              read_line((p.path() / "type").string()) == "Battery";
++            // controllers and other peripherals' batteries aren't the system's
++            is_battery = is_battery && read_line((p.path() / "scope").string()) != "Device";
 +            if (is_battery && (batteryCount < BATTERY_COUNT_MAX) ) {
                  battPath[batteryCount++] = p.path();
              }

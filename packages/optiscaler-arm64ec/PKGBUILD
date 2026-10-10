@@ -14,14 +14,15 @@
 #         to ~0, which showed as moving vertical strips of black/white pixels while turning
 #         (tested)
 #   0002  SGSR2: display-resolution motion vectors (MVLowRes unset, UE's DLSS plugin default)
-#         are fetched at the display pixel and scaled by the display size, as FSR2 does
+#         are fetched at the display pixel (clamped to the texture) and scaled by the display
+#         size, as FSR2 does
 #   0003  Arm ASR (MIT, FSR2-derived, tuned for mobile GPUs): a D3D12 backend for its ffxm
 #   0004  API, DXIL built from its HLSL; upscaler=asr / asr_12, [ASR] ShaderQuality
 #         (quality|balanced|performance; performance is broken upstream in 25.06).
 #         Hands the game's inputs back in the state they came in, keeps typed sRGB
 #         views, frees a context that fails to build (and doesn't retry it every
-#         frame), falls back to auto exposure without an exposure texture as FSR2
-#         does; menu: RCAS shown on for SGSR2/ASR, FSR camera settings for ASR
+#         frame), frees a replaced context or output buffer a few frames later,
+#         falls back to auto exposure without an exposure texture as FSR2 does; menu: RCAS shown on for SGSR2/ASR, FSR camera settings for ASR
 #   0005  FSR2 2.2.1's DX12 shader permutations generated with Linux dxc instead of AMD's
 #         FidelityFX_SC.exe under Wine
 #   0006  SGSR2's Vulkan SPIR-V compiled with Linux dxc instead of dxc.exe under Wine; run in
@@ -35,7 +36,7 @@
 # runs makepkg in the aarch64 chroot.
 pkgname=optiscaler-arm64ec
 pkgver=10.0.0.20260923
-pkgrel=4
+pkgrel=5
 _commit=f80e4da339cd4624212fd0546922571fe01205c1
 _llvm_mingw=20260908
 _ffx=c6efa6bf7f2027b3ec94f28578bb5965eabb9e55   # FidelityFX-SDK: only ffx-api/include is used
@@ -78,9 +79,9 @@ done
 sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
             'c907dd2302a292b663add18752a55ce9d544ca0fd19cf33c086ca242d5994ea6'
             'ce46e7c303821ed685c0b1cb83fc2e70a0e7ebc5ff4a9aed3134da0244e6499e'
-            '01bd2313e3262a953255064b0f9d1b441b4067cd689964ad17a74a4ea75d105d'
+            '16a3ec10d539cec58526286af0a0a45dca4b6523a012721778ab05f6788b4758'
             'c5cb95cbd4b0ca00181d02e86e2e5dbbb2465591a3edc00b0b70313da5fef258'
-            '09c6c676b01aa941aa6a6b61ca5c7043b115013770477fac9d3a587ed59ab781'
+            '7a962fe0a6bcf95309c1b1d6863d8d5f6f12c02544d2c57a7b324309caa94426'
             '1d58a3681595c43a6e92758cd06c154fbfd893062103e2b204468fb368d428ef'
             '1543cfa8a9c49e225bb0c48f8a4d478c43aa0177ce5624b772ba201e2999288a'
             'SKIP'
@@ -103,7 +104,7 @@ _submodules=(simpleini unordered_dense xess vulkan spdlog magic_enum nvapi)
 prepare() {
   cd Sloptiscaler
   for p in "$srcdir"/0*.patch; do
-    patch -Np1 -i "$p"
+    patch -Np1 --fuzz=0 -i "$p"
   done
   git submodule init "${_submodules[@]/#/external/}"
   for s in "${_submodules[@]}"; do

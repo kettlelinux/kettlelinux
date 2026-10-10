@@ -20,7 +20,9 @@
 #   0012 and 0013 are OpenGamingCollective's PRs #13 (squashed, without its HDR change) and #20;
 #   0014-0016 are Armada's 0013-0015, ported without the drm-lease-v1 protocol they sit on
 #   (which only apps that request a lease themselves, e.g. emulators, need). BSD-2-Clause,
-#   as gamescope.
+#   as gamescope. Ours on top: the socket defaults to $XDG_RUNTIME_DIR and serves only our own
+#   uid, its thread is joined before the lease is revoked, a full socket drops touch motions
+#   only, and the blank commit holds a lock Present also holds.
 # 0017 (ours) keeps the second screen's gamescope from sending mangoapp its frames: every
 #   gamescope uses the same message queue, and Game Mode's MangoHud flickered between the two.
 # 0018 (ours) counts the second screen's touches as input, which Steam's idle dimming and sleep
@@ -44,7 +46,7 @@
 # names and drop whichever patches it already contains.
 pkgname=gamescope
 pkgver=3.16.30
-pkgrel=1.1
+pkgrel=1.2
 _commit=ad2763da1c48860f649abfe842a087188dcb6e20
 pkgdesc='gaming shell based on Xwayland, powered by Vulkan and DRM (deckard + Kettle Linux, SGSR 1)'
 arch=(aarch64)
@@ -81,16 +83,16 @@ sha256sums=('SKIP'
             'e7fa87a462fcac3bcad8fe0f7a57cd18b881dc23c75c4336db8b5d0c4d51b618'
             'a883f259b6a0d0f20dc133f3b427ce6a85a2b4b4c4cf4fd5b2c351c51f4b5037'
             '864467f87ad0d88527e6dbfd247a5c5b46bdbab20a8de24b3f2ec0fb985be876'
-            '56e1a273a1c8b6194706d1915ae264ed17d6deddc711e96386f50978ab1f0016'
-            'f67be5e91d4a3203aac877d0926ed64c4940da5cc379d2ac4fc916a34265c6e9'
-            'c5b7107c935881cd9aa76516e8f5e03bf93e00de45e88fa6e3ce44b28b9b4bd1'
+            '846da39b8486cfb112c58ec602d7768628c3ea32b497fbdb0ce011659e3d383c'
+            'bd63919b9b8d614b19943e9cc644695dad3d3e3e2cc3436b000a9d79b74496f8'
+            'd343a5065e9415ca4f06938b8ec8ac87c0cc2d0d73a9580ca8d78f4536ed2014'
             'f6bcd3513d80215460b44051434adf5bce4bf1a34e8bfecaa5c1762be3a74a0c'
-            'd8a548a2bddd12206beaa75627b3b01f7b29ed676cd3de2df57c1c9682feb04c'
+            'b4629b11c7185330a29839931568c0c40ab481df53952fe9f2457ead2821fc9d'
             'a7bfd70b27c550b88752d5bd8246a6bcb678f45d6e1cfeba8f3b45ada4ee0bd7'
             '067108ac58982b069d78dbc0f0efb7a41185ca8633af82e76261d413a0f8bd65'
-            '968c17a5734f5f6ac86007e98864c7de69f5d06c4442af7d553ae5958555cc27'
+            'e07ff0272e9084b1fc26ec49d1c491ab675a0419397da00aa8b4a1c05bec3a4a'
             '8e2e9c2039445f32430de9a6ad66d6baef3eeee5ca7d2a3a6b0b02cbc6d13221'
-            '3311f3353848d99c11c9cd83aa75d1429f952864c4361d27b33e47cbdd2fdb71'
+            '4e66a75e8a3c92cb7c622d8d7fecb9aa634f27fea80d8d8fcd36ab41cb374c74'
             '56b541730fb5d6d7f8cf033a321a5af83f228696dff52d631b28fdd0f2d83e98'
             'ada2309bea24c4034e5c09cb252bc5f85d1af31f9fd1d483fcd65d5ef10baa34')
 

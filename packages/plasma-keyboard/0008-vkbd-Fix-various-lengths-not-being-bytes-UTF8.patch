@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Devin Lin <espidev@gmail.com>
+Date: Wed, 1 Apr 2026 22:27:15 -0400
+Subject: [PATCH] vkbd: Fix various lengths not being bytes (UTF8)
+
+Problems:
+- Cursor and anchor positions were reported to Qt VKBD in bytes, where
+  Qt expects positions in the QString (UTF-16) surrounding text
+- ImCurrentSelection passed the anchor as mid()'s length, and didn't
+  account for reverse selecting text
+- ImTextAfterCursor used a +1 adjustment hack, which dropped the
+  character after the cursor
+
+Backported from upstream commit 4cd5f75d6afb2e94a059b839954cd2b9a8dbdd63
+(its input method query part, with 8a405a8's bound checks on the new
+anchor and cursor conversions, as upstream has them). Its byte offsets
+for replacements and preedit attributes aren't ported.
+---
+ src/inputlisteneritem.cpp | 22 ++++++++++++++++------
+ 1 file changed, 16 insertions(+), 6 deletions(-)
+
+diff --git a/src/inputlisteneritem.cpp b/src/inputlisteneritem.cpp
+index a1f9d21..3e235a6 100644
+--- a/src/inputlisteneritem.cpp
++++ b/src/inputlisteneritem.cpp
+@@ -240,12 +240,22 @@ QVariant InputListenerItem::inputMethodQuery(Qt::InputMethodQuery query) const
+     case Qt::ImCurrentSelection: {
+         // cursorPos and anchorPos are in bytes, we need to convert QString to QByteArray for index operations
+         QByteArray surroundingText = m_input.surroundingText().toUtf8();
+-        return QString::fromUtf8(surroundingText.mid(m_input.cursorPos(), m_input.anchorPos()));
++        int start = qMin(m_input.cursorPos(), m_input.anchorPos());
++        int end = qMax(m_input.cursorPos(), m_input.anchorPos());
++        return QString::fromUtf8(surroundingText.mid(start, end - start));
++    }
++    case Qt::ImAnchorPosition: {
++        // anchorPos is in bytes, we need to convert QString to QByteArray for index operations
++        QByteArray surroundingText = m_input.surroundingText().toUtf8();
++        int anchorBytes = qBound(0, int(m_input.anchorPos()), surroundingText.size());
++        return QString::fromUtf8(surroundingText.first(anchorBytes)).length();
++    }
++    case Qt::ImCursorPosition: {
++        // cursorPos is in bytes, we need to convert QString to QByteArray for index operations
++        QByteArray surroundingText = m_input.surroundingText().toUtf8();
++        int cursorBytes = qBound(0, int(m_input.cursorPos()), surroundingText.size());
++        return QString::fromUtf8(surroundingText.first(cursorBytes)).length();
+     }
+-    case Qt::ImAnchorPosition:
+-        return m_input.anchorPos();
+-    case Qt::ImCursorPosition:
+-        return m_input.cursorPos();
+     case Qt::ImTextBeforeCursor: {
+         // cursorPos is in bytes, we need to convert QString to QByteArray for index operations
+         QByteArray surroundingText = m_input.surroundingText().toUtf8();
+@@ -255,7 +265,7 @@ QVariant InputListenerItem::inputMethodQuery(Qt::InputMethodQuery query) const
+     case Qt::ImTextAfterCursor: {
+         // cursorPos is in bytes, we need to convert QString to QByteArray for index operations
+         QByteArray surroundingText = m_input.surroundingText().toUtf8();
+-        return QString::fromUtf8(surroundingText.mid(m_input.cursorPos() + 1));
++        return QString::fromUtf8(surroundingText.mid(m_input.cursorPos()));
+     }
+     case Qt::ImCursorRectangle:
+     case Qt::ImFont:
+-- 
+2.56.0
+

@@ -10,12 +10,14 @@ Gyroscope events in Steam Deck units and axis order, the inverse of the
 kernel's hid-steam mapping. For sensors without a kernel driver that a
 userspace daemon exposes through uinput (Kettle Linux: kettle-motiond, for
 the Qualcomm Sensor Core motion sensors on AYN handhelds), so its virtual
-device, "Kettle Motion Sensors", joins the virtual device whitelist.
+device, "Kettle Motion Sensors", joins the virtual device whitelist. Only
+devices named in IMU_DEVICE_NAMES get this driver: other accelerometer
+nodes (a DualShock 4's motion node) keep the gamepad driver.
 ---
  src/input/manager.rs          |   1 +
- src/input/source/evdev.rs     |  33 ++++++++
+ src/input/source/evdev.rs     |  40 ++++++++
  src/input/source/evdev/imu.rs | 144 ++++++++++++++++++++++++++++++++++
- 3 files changed, 178 insertions(+)
+ 3 files changed, 185 insertions(+)
  create mode 100644 src/input/source/evdev/imu.rs
 
 diff --git a/src/input/manager.rs b/src/input/manager.rs
@@ -31,7 +33,7 @@ index 1696f67..5c76367 100644
  
  #[derive(Error, Debug)]
 diff --git a/src/input/source/evdev.rs b/src/input/source/evdev.rs
-index 2db1cad..0098d3c 100644
+index 2db1cad..85fd9d6 100644
 --- a/src/input/source/evdev.rs
 +++ b/src/input/source/evdev.rs
 @@ -1,11 +1,13 @@
@@ -133,20 +135,27 @@ index 2db1cad..0098d3c 100644
              DriverType::Touchscreen => {
                  let touch_config = conf
                      .as_ref()
-@@ -179,6 +196,9 @@ impl EventDevice {
+@@ -179,6 +196,13 @@ impl EventDevice {
          }
  
          let properties = device.get_properties();
-+        if properties.contains_key("ID_INPUT_ACCELEROMETER") || is_accelerometer(device) {
++        // Only the motion sensors this driver is made for: other accelerometer nodes (e.g. a
++        // DualShock 4's motion node) keep the gamepad driver they had before.
++        if IMU_DEVICE_NAMES.contains(&device.name().as_str())
++            && (properties.contains_key("ID_INPUT_ACCELEROMETER") || is_accelerometer(device))
++        {
 +            return DriverType::Imu;
 +        }
          if properties.contains_key("ID_INPUT_TOUCHSCREEN") {
              return DriverType::Touchscreen;
          }
-@@ -196,6 +216,19 @@ impl EventDevice {
+@@ -196,6 +220,22 @@ impl EventDevice {
      }
  }
  
++/// Motion sensor devices read with the IMU driver (Kettle Linux: kettle-motiond's uinput device)
++const IMU_DEVICE_NAMES: &[&str] = &["Kettle Motion Sensors"];
++
 +/// Whether the device has INPUT_PROP_ACCELEROMETER, from sysfs: devices found at start-up
 +/// don't carry udev's ID_INPUT_* properties yet
 +fn is_accelerometer(device: &UdevDevice) -> bool {

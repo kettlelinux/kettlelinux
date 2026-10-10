@@ -1,4 +1,4 @@
-From c03707280122e5898f10b7af51f12f48eca6444e Mon Sep 17 00:00:00 2001
+From 15d8da2017db9ae9f0523d1803deaee36efbb4b4 Mon Sep 17 00:00:00 2001
 From: virtudude <virtudude@protonmail.com>
 Date: Mon, 28 Sep 2026 18:28:04 -0500
 Subject: [PATCH 16/16] DRM: blank the leased connector when the companion goes
@@ -10,20 +10,21 @@ the connector from its own outputs, so a companion that exits without
 disabling the CRTC leaves its last frame frozen on the panel. When the
 companion disconnects, zero the leased connector, CRTC and plane
 properties with one atomic commit on the master fd, using ids captured
-at lease creation.
+at lease creation. The commit holds a mutex that CDRMBackend::Present
+also holds, so it never runs alongside the compositor's own commits.
 
 Ported from Armada's 0015 without its drm-lease-v1 hunk.
 
 Based-on: https://github.com/armada-os/armada/blob/main/packages/gamescope/patches/0015-drm-blank-leased-connector-on-release.patch
 ---
- src/Backends/DRMBackend.cpp | 77 +++++++++++++++++++++++++++++++------
- 1 file changed, 65 insertions(+), 12 deletions(-)
+ src/Backends/DRMBackend.cpp | 89 +++++++++++++++++++++++++++++++------
+ 1 file changed, 76 insertions(+), 13 deletions(-)
 
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index 898a353e..b911af35 100644
+index 9a8fe7cd..c8c7ddb3 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
-@@ -12,6 +12,7 @@
+@@ -13,6 +13,7 @@
  #include <sys/socket.h>
  #include <sys/un.h>
  
@@ -31,21 +32,25 @@ index 898a353e..b911af35 100644
  #include <atomic>
  #include <cassert>
  #include <cinttypes>
-@@ -171,6 +172,8 @@ struct drm_t {
+@@ -172,6 +173,8 @@ struct drm_t {
  	std::unordered_set< uint32_t > leasedPlaneIds;
  	uint32_t uLeaseId = 0;
  	int nLeaseFd = -1;
 +	std::string sLeasedConnectorName;
 +	std::array< std::pair< uint32_t, uint32_t >, 5 > leaseBlankProperties = {};
  	int nLeaseSocketFd = -1;
- 	std::atomic<bool> bLeaseThreadRunning = { false };
- 	std::string sLeaseSocketPath;
-@@ -1581,6 +1584,43 @@ static std::mutex g_leaseClientMutex;
+ 	int nLeaseWakeFd = -1;
+ 	std::thread leaseThread;
+@@ -1591,6 +1594,47 @@ static std::mutex g_leaseClientMutex;
  static int g_nLeaseClientFd = -1;
  static bool g_bLeaseClientWantsTouch = false;
  
-+// Held while blanking the leased objects or revoking the lease.
++// Held while blanking the leased objects, sending the lease fd or revoking the lease.
 +static std::mutex g_leaseBlankMutex;
++
++// The blank commits from the lease socket thread: held with it, and by
++// CDRMBackend::Present, so it never runs alongside the compositor's commits.
++static std::mutex g_DRMCommitMutex;
 +
 +// Closing a lease doesn't change what the leased panel shows: the kernel keeps
 +// scanning out the lessee's last frame. When the companion goes away, zero the
@@ -54,7 +59,7 @@ index 898a353e..b911af35 100644
 +// the leased plane isn't the CRTC's legacy primary).
 +static void drm_lease_blank()
 +{
-+	std::lock_guard lock( g_leaseBlankMutex );
++	std::scoped_lock lock( g_leaseBlankMutex, g_DRMCommitMutex );
 +	if ( g_DRM.nLeaseFd < 0 )
 +		return;
 +
@@ -84,7 +89,7 @@ index 898a353e..b911af35 100644
  static bool lease_send_fd( int nClientFd, int nLeaseFd )
  {
  	union {
-@@ -1616,7 +1656,8 @@ static void lease_disconnect_client( int &nClientFd )
+@@ -1626,7 +1670,8 @@ static void lease_disconnect_client( int &nClientFd )
  	}
  	close( nClientFd );
  	nClientFd = -1;
@@ -94,7 +99,21 @@ index 898a353e..b911af35 100644
  	drm_log.infof( "lease-connector: companion app disconnected" );
  }
  
-@@ -1973,6 +2014,14 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+@@ -1717,7 +1762,12 @@ static void lease_socket_thread_run( struct drm_t *drm )
+ 			continue;
+ 		}
+ 
+-		if ( !lease_send_fd( nAcceptedFd, drm->nLeaseFd ) )
++		bool bSent;
++		{
++			std::lock_guard lock( g_leaseBlankMutex );
++			bSent = lease_send_fd( nAcceptedFd, drm->nLeaseFd );
++		}
++		if ( !bSent )
+ 		{
+ 			drm_log.errorf( "lease-connector: sendmsg failed: %s", strerror( errno ) );
+ 			close( nAcceptedFd );
+@@ -2001,6 +2051,14 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
  					drm->leasedPlaneIds.insert( uPlaneId );
  					drm->uLeaseId = uLeaseId;
  					drm->nLeaseFd = nLeaseFd;
@@ -109,7 +128,7 @@ index 898a353e..b911af35 100644
  
  					drm_log.infof( "lease-connector: leased '%s' (connector=%u, crtc=%u, plane=%u) -> fd=%d, lessee=%u",
  						g_sLeaseConnectorName, uConnectorId, uCRTCId, uPlaneId, nLeaseFd, uLeaseId );
-@@ -2195,19 +2244,23 @@ void finish_drm(struct drm_t *drm)
+@@ -2234,19 +2292,22 @@ void finish_drm(struct drm_t *drm)
  	}
  
  	// Revoke any active DRM lease before cleaning up
@@ -122,7 +141,6 @@ index 898a353e..b911af35 100644
 -	{
 -		close( drm->nLeaseFd );
 -		drm->nLeaseFd = -1;
-+		// The lease socket thread may still be blanking the leased objects.
 +		std::lock_guard lock( g_leaseBlankMutex );
 +		if ( drm->uLeaseId != 0 )
 +		{
@@ -144,3 +162,15 @@ index 898a353e..b911af35 100644
  
  	// Disable all connectors, CRTCs and planes. This is necessary to leave a
  	// clean KMS state behind. Some other KMS clients might not support all of
+@@ -4442,6 +4503,8 @@ namespace gamescope
+ 
+ 		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync )
+ 		{
++			std::lock_guard commitLock( g_DRMCommitMutex );
++
+ 			static uint64_t s_ulLastTime = get_time_in_nanos();
+ 			uint64_t ulNow = get_time_in_nanos();
+ 			drm_log.debugf( "CDRMBackend::Present Begin: %lu -> delta: %lu", ulNow, ulNow - s_ulLastTime );
+-- 
+2.56.0
+
