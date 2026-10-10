@@ -1,6 +1,6 @@
 [Unit]
 Description=Bottom screen brightness in Game Mode (AYN Thor)
-# its own level (Quick Access > Screens), dimmed with the top screen when Steam dims it
+# its own level (Device Settings > Screens), dimmed with the top screen when Steam dims it
 PartOf=gamescope-session.target
 After=gamescope-session.service
 

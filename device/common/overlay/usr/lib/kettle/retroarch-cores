@@ -3,7 +3,8 @@
 # one for x86 and 32-bit ARM Linux, so on aarch64 core_updater_buildbot_cores_url is empty and
 # Online Updater > Core Downloader has nothing to offer. Sets it to libretro's aarch64 buildbot when
 # it is missing or empty; a URL the user set is left alone. Runs at login
-# (kettle-retroarch-cores.service) and from welcome-flatpak right after it installs RetroArch.
+# (kettle-retroarch-cores.service), and right after RetroArch is installed by welcome-flatpak or
+# Game Stores (kettle-decky-plugins stores).
 set -euo pipefail
 APP=org.libretro.RetroArch
 KEY=core_updater_buildbot_cores_url

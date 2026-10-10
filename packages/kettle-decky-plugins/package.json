@@ -4,8 +4,8 @@
   "type": "module",
   "license": "BSD-3-Clause",
   "scripts": {
-    "build": "cd framegen && rollup -c && cd ../upscaling && rollup -c && cd ../welcome && rollup -c && cd ../power && rollup -c && cd ../screens && rollup -c && cd ../crash && rollup -c && cd ../game-settings && rollup -c && cd ../lights && rollup -c && cd ../stores && rollup -c && cd ../gyro && rollup -c",
-    "typecheck": "tsc -p framegen --noEmit && tsc -p upscaling --noEmit && tsc -p welcome --noEmit && tsc -p power --noEmit && tsc -p screens --noEmit && tsc -p crash --noEmit && tsc -p game-settings --noEmit && tsc -p lights --noEmit && tsc -p stores --noEmit && tsc -p gyro --noEmit"
+    "build": "cd welcome && rollup -c && cd ../device-settings && rollup -c && cd ../crash && rollup -c && cd ../game-settings && rollup -c && cd ../stores && rollup -c",
+    "typecheck": "tsc -p welcome --noEmit && tsc -p device-settings --noEmit && tsc -p crash --noEmit && tsc -p game-settings --noEmit && tsc -p stores --noEmit"
   },
   "devDependencies": {
     "@decky/rollup": "1.0.2",

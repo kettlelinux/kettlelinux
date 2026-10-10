@@ -38,7 +38,8 @@ export type Location = { path: string; label: string; free: number };
 export type ShortcutInfo = { title: string; exe: string; dir: string; launch: string; native?: boolean; icon?: string };
 
 // Flathub: a browse or search result, and an app's page
-export type FlathubCategory = "games" | "emulators" | "all" | "installed";
+// "installed", or one of the backend's FLATHUB_CATEGORIES (flathub.tsx's CATEGORIES names them)
+export type FlathubCategory = string;
 export type FlathubApp = { id: string; title: string; summary: string; icon: string; developer: string; verified: boolean };
 export type FlathubDetails = FlathubApp & {
   description: string;

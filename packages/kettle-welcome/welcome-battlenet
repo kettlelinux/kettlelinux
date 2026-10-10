@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-# Battle.net in Steam, for the desktop's Kettle Welcome and Game Mode's Welcome (Decky): Blizzard's
+# Battle.net in Steam, for the desktop's Kettle Welcome and Game Mode's Game Stores (Decky): Blizzard's
 # launcher, which Kettle can't ship, added to Steam as "Battle.net" and run with Proton-CachyOS
 # (with Valve's Proton the launcher's sign-in page shows no text fields).
 #

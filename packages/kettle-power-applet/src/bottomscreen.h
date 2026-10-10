@@ -8,7 +8,7 @@
 
 // The bottom screen's brightness in Game Mode, the Thor's Screens setting
 // (~/.config/kettle/bottom-screen.json, "brightness", percent), which the device's
-// bottom-brightness service applies. Quick Access > Screens sets the same file; a change made
+// bottom-brightness service applies. Device Settings > Screens sets the same file; a change made
 // there shows here.
 class BottomScreen : public QObject
 {

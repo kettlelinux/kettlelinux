@@ -13,13 +13,13 @@ Steam's power controls through steamos-manager's remote interfaces (remotes.d/ke
   FanControl1           0: device tree fan curve only, 1: per-game fan settings apply
 
 Steam keeps those per game itself. org.kettlelinux.Power1 adds what Steam has no UI for,
-per game (the Power plugin): fan curve or fixed speed, per-cluster CPU caps and core
+per game (Game Settings' Performance tab): fan curve or fixed speed, per-cluster CPU caps and core
 parking; and the charge speed (a preset, or a current of its own) and the fan while charging
 asleep (pwm-fan's pwm1_sleep_charging, kernel 40-kettle/1300), for every game. Every cap source is combined here, the lowest wins, so no two writers fight over
 scaling_max_freq or devfreq max_freq.
 
 Auto TDP (per game, off by default): the lowest CPU/GPU caps that still hold the game at
-Steam's frame rate limit (gamescope's GAMESCOPE_FPS_LIMIT, which the Power plugin passes on with
+Steam's frame rate limit (gamescope's GAMESCOPE_FPS_LIMIT, which Device Settings passes on with
 SetFpsLimit), or at the display's refresh rate without one. The frame rate comes from our
 mangoapp build's $XDG_RUNTIME_DIR/kettle-fps (packages/mangohud 0005). It walks the caps down
 while the game holds the target, back up as soon as it falls short on a unit at its limit, and keeps off a
@@ -323,7 +323,7 @@ class Daemon:
             self.state["charge_custom_ua"] = self.clamp_custom(self.state["charge_custom_ua"] or self.custom_max // 2)
         self.charge_held = False  # at the charge limit, charging stopped
         self.charge_wait = 0
-        self.active = ""  # running game's appid, from the Power plugin
+        self.active = ""  # running game's appid, from Device Settings
         self.written = {}  # path -> value last written, so only changes are written
         self.fan_saved_cdev = None  # device tree fan level when the daemon took the fan over
         self.fan_pct = None
@@ -332,7 +332,7 @@ class Daemon:
         self.tdp_gpu = 0  # steps down the GPU frequency table
         self.tdp_wait = 0
         self.cpu_load = 0.0  # busiest CPU over the last tick
-        self.fps_limit = 0  # Steam's frame rate limit (the Power plugin), 0: none
+        self.fps_limit = 0  # Steam's frame rate limit (from Device Settings), 0: none
         self.ticks = 0
         self.auto_reset()
         self.cpu_ladder = self._cpu_ladder()
@@ -593,7 +593,7 @@ class Daemon:
         self.auto_block = {}  # unit -> (step it fell short at, tick it may be tried again)
         self.auto_fails = {}  # (unit, step) -> times the game fell short there
         self.auto_peak = {"cpu": 0.0, "gpu": 0}  # highest CPU share / GPU clock while holding
-        self.auto_fps = None  # the frame rate and target judged last (the Power plugin's readout)
+        self.auto_fps = None  # the frame rate and target judged last (Device Settings' Diagnostics readout)
         self.auto_target = None
 
     def auto_on(self):
@@ -839,7 +839,7 @@ class Daemon:
             self.conn.emit_signal(None, OBJ_PATH, "org.freedesktop.DBus.Properties", "PropertiesChanged",
                                   GLib.Variant("(sa{sv}as)", (iface, {prop: v}, [])))
 
-    # --- the Power plugin's interface ---
+    # --- the Device Settings and Game Settings plugins' interface ---
 
     def status(self):
         cpu, (gmin, gmax) = self.targets()

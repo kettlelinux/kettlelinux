@@ -1,19 +1,26 @@
-// Game Stores: Epic Games, GOG and Amazon Games in Game Mode, and Flathub's ARM64 apps (main.py).
+// Game Stores: Epic Games, GOG and Amazon Games in Game Mode, Flathub's ARM64 apps and Android
+// games (main.py).
 // The Quick Access panel shows the accounts and the running download and opens the Game Stores
 // page (library.tsx); each game has its own page (game.tsx). The listeners here run while Game
 // Mode does: leaving Steam's browser after a sign-in, and adding a finished install to Steam
 // (shortcuts.ts).
 import { ButtonItem, Navigation, PanelSection, PanelSectionRow, staticClasses } from "@decky/ui";
 import { addEventListener, definePlugin, removeEventListener, routerHook, toaster } from "@decky/api";
+import { useEffect, useState } from "react";
 import { FaStore } from "react-icons/fa";
 import { Job, NAMES, STORES, Source, Store, pending, status } from "./api";
 import { GamePage } from "./game";
 import { Page } from "./library";
 import { addShortcut } from "./shortcuts";
+import { androidInfo } from "./android";
 import { GAME_ROUTE, JobProgress, ROUTE, act, openGame, openStores, signIn, usePoll } from "./ui";
 
 function Content() {
   const [s] = usePoll(status, 2000);
+  const [android, setAndroid] = useState(false);
+  useEffect(() => {
+    androidInfo().then((a) => setAndroid(a.available)).catch(() => {});
+  }, []);
   return (
     <>
       <PanelSection>
@@ -27,6 +34,13 @@ function Content() {
             Browse Flathub
           </ButtonItem>
         </PanelSectionRow>
+        {android && (
+          <PanelSectionRow>
+            <ButtonItem layout="below" onClick={() => openStores("android")}>
+              Android games
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
         {s?.job && (
           <PanelSectionRow>
             <div onClick={() => openStores("downloads")}>

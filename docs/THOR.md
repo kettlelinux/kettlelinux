@@ -23,7 +23,7 @@ KETTLE_DEVICE=thor scripts/build-image.sh   # -> out/kettle-<build>-thor.img (+ 
 | Audio | card `AYN-Thor` (`ayn-AYNOdin2` under EFI), internal mic on DMIC3 (ROCKNIX `0005_Add-AYN-Thor.patch`) | `kettle-ucm-thor` (`packages/kettle-ucm-ayn`) |
 | Power | `thor.toml`, picked by the device tree's compatible; power figures copied from the Portal | `packages/kettle-power` |
 | Steam's device | steamos-manager `ayn-thor.toml` (DMI "AYN Odin 2" as the Thor's U-Boot reports it, "AYN Thor", DT `ayn,thor`), in the Thor's image only | `device/thor/overlay/usr/share/steamos-manager` |
-| Brightness | Steam's slider sets the top screen (the bottom panel's backlight is named `bottom-panel`, so Steam finds the top one first); the bottom screen has its own, in Quick Access > Screens, and dims with the top one | `40-kettle/1130`, `device/thor/overlay` (`kettle-bottom-brightness`), `kettle-decky-screens` |
+| Brightness | Steam's slider sets the top screen (the bottom panel's backlight is named `bottom-panel`, so Steam finds the top one first); the bottom screen has its own, in Device Settings > Screens, and dims with the top one | `40-kettle/1130`, `device/thor/overlay` (`kettle-bottom-brightness`), `kettle-decky-device-settings` |
 | Controller | Steam Deck target as on the Portal, plus the AYN key as Quick Access | `packages/inputplumber/40-kettle-thor.yaml` |
 | Game Mode | Steam on the top screen (orientation `right`, output found by its 1080x1920 mode); Plasma Mobile's touch shell on the bottom one, see below | `device/thor/overlay`, `packages/gamescope` 0012-0016 |
 | Performance app | opens on the bottom screen with Game Mode: readings and power settings, see below | `packages/kettle-power-applet` (`app/`), `bottom-shell` |
@@ -83,12 +83,12 @@ shell (`usr/lib/kettle/bottom-screen`, `bottom-shell`). The same mechanism as Ba
 - Apps started there use the desktop's settings (`~/.config`, linked in), so Firefox has one
   profile; only KWin's and Plasma's own settings are kept apart.
 - The shell's own screen comes back if it ends or crashes (`Restart=always`, 5 times a minute).
-- Quick Access > Screens (`kettle-decky-screens`) turns the bottom screen on or off (kept across
+- Device Settings > Screens (`kettle-decky-device-settings`) turns the bottom screen on or off (kept across
   reboots) and sets its brightness (`~/.config/kettle/bottom-screen.json`).
   `kettle-bottom-brightness.service` applies it, and dims the bottom screen with the top one when
   Steam dims it for idleness (the top backlight falling with no input for a few seconds);
   touches on the bottom screen count as input for Steam's dimming (gamescope 0018).
-- Its refresh rate: 60 Hz, or 30 Hz from Quick Access > Screens (`"refresh_hz"` in the same
+- Its refresh rate: 60 Hz, or 30 Hz from Device Settings > Screens (`"refresh_hz"` in the same
   file), switched live with `gamescopectl refresh_hz` (gamescope 0023, a fixed rate) on the
   bottom gamescope (`bottom-shell` names it in `$XDG_RUNTIME_DIR/kettle-bottom-gamescope`).
   The panel's driver lists 60 Hz only, as AYN's Android does; gamescope 0022
@@ -128,7 +128,7 @@ applet's controls in a window.
   down), battery and time left, CPU load and each cluster's clock (and its cap), GPU clock and
   load, CPU, GPU and battery temperatures, fan speed, memory and swap, the performance profile.
   The frame times come from mangoapp (`packages/mangohud` 0005, `frametimes=` in
-  `$XDG_RUNTIME_DIR/kettle-fps`, next to the frame rate the Frame Generation plugin reads);
+  `$XDG_RUNTIME_DIR/kettle-fps`, next to the frame rate Game Settings' Frame Gen tab reads);
   mangoapp runs all through Game Mode, so the overlay needn't be on. The game is the process
   mangoapp reports, named by its Steam app manifest.
 - While Steam has dimmed the screens for idleness, the readings stop (and so do the app's
@@ -137,11 +137,11 @@ applet's controls in a window.
   app reads again as soon as it's gone.
 - **Settings**: the bottom screen's brightness (the Screens setting,
   `~/.config/kettle/bottom-screen.json`); Steam's performance profile, TDP limit and GPU clock;
-  fan and CPU settings for the running game or all games, as the Power plugin has them; the
+  fan and CPU settings for the running game or all games, as Game Settings' Performance tab has them; the
   charge limit where the charger has one; how often the readings update.
 - **Shared with Steam and the plugins**: every setting is the same one Quick Access sets, read
   back from kettle-powerd each update, so a change made in Steam shows here. Steam's own sliders
-  follow the app's changes through the Power plugin (`kettle-decky-power`, `steamSync.ts`): this
+  follow the app's changes through the Device Settings plugin (`kettle-decky-device-settings`, `steamSync.ts`): this
   Steam build keeps the TDP limit, performance profile and fixed GPU clock as client settings
   (`steamos_tdp_limit`, `steamos_platform_performance_profile`, `steamos_manual_gpu_clock_*`)
   and sends them to kettle-powerd through steamos-manager, but never reads them back (set in
@@ -149,7 +149,7 @@ applet's controls in a window.
   watches kettle-powerd once a second: a value that changes there to something Steam's setting
   doesn't have was set outside Steam, and goes into Steam's setting through the setter Steam's
   settings pages use, which moves the slider and sends it back. Checked on a Thor, both ways.
-  The running game is the one the Power plugin tells kettle-powerd about (`active_game`).
+  The running game is the one Device Settings tells kettle-powerd about (`active_game`).
 - `KETTLE_BOTTOM_SHELL=1` (set by `bottom-shell`) puts the app in Game Mode: it follows the
   running game instead of making Desktop Mode the active one, and offers the bottom screen's
   brightness.
@@ -225,7 +225,7 @@ encoding (Remote Play host, game recording) is untested.
    - The Performance app opens filling the bottom screen, and stays usable at the shell's 2x
      scale; its readings update while a game runs (frame rate matching Steam's overlay, the
      graph moving, temperatures and clocks), and its CPU use is small.
-   - The app's "Settings for this game only" against the Power plugin's; its brightness slider
+   - The app's "Settings for this game only" against Game Settings' Performance tab; its brightness slider
      against Screens'; the fixed GPU clock both ways (TDP and profile sync is checked).
 5. **Brightness by eye**: Steam's slider on the top screen only, Screens' slider on the bottom
    one, both screens dimming together when idle and coming back on a touch on either; the low

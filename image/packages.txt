@@ -155,34 +155,37 @@ kettle-wallpaper
 kettle-desktop-art
 
 # Game Mode plugins (built by us, packages/): Decky Loader (native aarch64, no self-update)
-# with our Frame Generation (our own kettle-framegen layer) and Upscaling (per-game gamescope
-# FSR 1, and SGSR 2 through our ARM64EC OptiScaler build) plugins preinstalled, and Welcome
-# (first-boot tour, setup checklist, optional components downloaded from upstream on request)
+# with Welcome (first-boot tour, setup checklist, optional components downloaded from upstream
+# on request) preinstalled. Frame generation (our own kettle-framegen layer) and upscaling
+# (per-game gamescope FSR 1, and SGSR 2 through our ARM64EC OptiScaler build) are tabs of the
+# Game Settings plugin, listed below with what else it needs
 decky-loader
 kettle-framegen
-kettle-decky-framegen
 optiscaler-arm64ec
-kettle-decky-upscaling
 kettle-decky-welcome
 # Power (built by us, packages/): kettle-powerd behind Steam's TDP limit, performance profiles,
-# GPU clock, charge limit and fan control, and the Power plugin for per-game fan curves and
-# CPU core/clock limits; in Desktop Mode, the Power applet in the system tray
+# GPU clock, charge limit and fan control; in Desktop Mode, the Power applet in the system tray
 kettle-power
-kettle-decky-power
 kettle-power-applet
 # Crash reports (built by us, packages/kettle-crash): kettle-crashd writes a report for each
 # coredump and each device dump (GPU hang, firmware crash) to /var/log/kettle-crash; local only.
 # The Crash Reports plugin lists and shows them in Game Mode
 kettle-crash
 kettle-decky-crash
-# Game Settings (built by us, packages/kettle-decky-plugins): per-game FEX, graphics and Proton
-# settings, Proton versions, and the game database's known good settings (docs/GAME-DATABASE.md)
+# Game Settings (built by us, packages/kettle-decky-plugins): everything set per game, a tab
+# each: compatibility (FEX, graphics and Proton settings, Proton versions, and the game
+# database's known good settings, docs/GAME-DATABASE.md), performance (fan, CPU and Auto TDP
+# through kettle-power, refresh rate), upscaling and frame generation
 kettle-decky-game-settings
 # Lights (built by us, packages/kettle-leds and kettle-decky-plugins): the RGB rings around the
 # sticks (all three devices have them): a color, the battery level, breathe or rainbow, and their
-# brightness. kettle-ledd sets them; the Lights plugin is its Game Mode UI
+# brightness. kettle-ledd sets them
 kettle-leds
-kettle-decky-lights
+# Device Settings (built by us, packages/kettle-decky-plugins): the device's own settings in Game
+# Mode, a tab each: Power (battery, the screen's refresh rate, through kettle-power), Lights
+# (kettle-leds) and Gyro (where a device's packages.txt adds kettle-motion), and a Diagnostics
+# window
+kettle-decky-device-settings
 # Game Stores (built by us, packages/kettle-decky-plugins): Epic Games, GOG and Amazon Games in
 # Game Mode: sign in, browse, install, update, and play from the Steam library (Proton shortcuts
 # through kettle-store-run), with Heroic's store tools and config (desktop Heroic shares them)

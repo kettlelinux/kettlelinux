@@ -21,8 +21,8 @@ class QDBusMessage;
 // are kept in kettle-powerrc and set again when the desktop starts.
 //
 // mode GameMode (the app on the Thor's bottom screen, next to Steam): nothing is made the active
-// game (the Power plugin says which game runs); the settings shown are the running game's, as in
-// the Power plugin: its own when it has them, else the all-games ones, which are the ones edited
+// game (Device Settings says which game runs); the settings shown are the running game's, as in
+// Game Settings: its own when it has them, else the all-games ones, which are the ones edited
 // then. Steam's values are set in kettle-powerd, and aren't kept for Desktop Mode; the Power
 // plugin sets them in Steam too (its steamSync.ts), so Steam's sliders follow. What they are is
 // always read back from kettle-powerd, so a change made in Steam shows here.

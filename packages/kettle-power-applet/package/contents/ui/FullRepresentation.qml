@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // The popup: a readout, Steam's values (profile, power limit, GPU clock) and Desktop Mode's fan
-// and CPU settings, the same controls as Quick Access > Performance and the Power plugin.
+// and CPU settings, the same controls as Quick Access > Performance and Game Settings.
 import QtQuick
 import QtQuick.Layouts
 

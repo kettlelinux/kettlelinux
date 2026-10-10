@@ -1,6 +1,6 @@
 # Power: the desktop's system tray applet for kettle-powerd (our own Plasma applet, sources next
 # to this PKGBUILD): performance profile, power limit (Steam's TDP slider) and GPU clock as in
-# Quick Access > Performance, and fan and CPU core settings as in the Power plugin, kept for
+# Quick Access > Performance, and fan and CPU core settings as in Game Settings, kept for
 # Desktop Mode apart from Game Mode's. In the tray by default (EnabledByDefault).
 # Also the Performance app (kettle-performance, app/): readings (power, clocks, temperatures, fan,
 # memory, battery, the game's frame rate and frame times) and the same settings, in two tabs, and

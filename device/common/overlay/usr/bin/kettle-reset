@@ -47,7 +47,7 @@ restart() {
 
 do_settings() {
   need_root settings
-  install -d -m 0755 "$RESET"   # readable: status is asked as the user (Welcome, Reset Kettle)
+  install -d -m 0755 "$RESET"   # readable: status is asked as the user (Device Settings, Reset Kettle)
   rm -f "$RESET/home"
   date +%Y%m%d-%H%M%S >"$RESET/request.new"
   mv "$RESET/request.new" "$RESET/request"

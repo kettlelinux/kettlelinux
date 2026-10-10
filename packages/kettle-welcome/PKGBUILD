@@ -17,7 +17,7 @@
 # (checked against their sha512sum), in a transient systemd user unit like welcome-flatpak. Not in
 # the image: about 2 GB each.
 # And Battle.net: Blizzard's installer, from Blizzard's own download link, added to Steam with
-# Proton-CachyOS by welcome-battlenet (also used by Game Mode's Welcome, kettle-decky-welcome).
+# Proton-CachyOS by welcome-battlenet (also used by Game Mode's Game Stores, kettle-decky-stores).
 pkgname=kettle-welcome
 pkgver=2.0.0
 pkgrel=12

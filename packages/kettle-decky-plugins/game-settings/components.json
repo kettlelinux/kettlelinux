@@ -1,0 +1,33 @@
+[
+ {
+  "id": "amd-fsr3",
+  "name": "AMD FSR 3.1",
+  "description": "AMD's signed FidelityFX runtime (DX12): FSR 3.1 upscaling and FSR frame generation. With it, the Upscaling tab offers both for DX11/DX12 games through OptiScaler.",
+  "license": "AMD FidelityFX SDK license (binary redistribution with notice; no reverse engineering)",
+  "homepage": "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK",
+  "version": "2.3.0",
+  "archive": "files",
+  "files": [
+   {
+    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.3.0/Kits/FidelityFX/signedbin/amd_fidelityfx_loader_dx12.dll",
+    "sha256": "e2d85aa05a9bd9ed8b38935fdf5199372cca6f74c12015143bb6f945ee1608aa",
+    "file": "amd_fidelityfx_loader_dx12.dll"
+   },
+   {
+    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.3.0/Kits/FidelityFX/signedbin/amd_fidelityfx_upscaler_dx12.dll",
+    "sha256": "d0dcccc74a43c44ba435b7a369b456e0970d8a4464e4bd683119b374f2c9fb46",
+    "file": "amd_fidelityfx_upscaler_dx12.dll"
+   },
+   {
+    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.3.0/Kits/FidelityFX/signedbin/amd_fidelityfx_framegeneration_dx12.dll",
+    "sha256": "02297beedd285e822d3a64f314cf00faf378dcec0edc47ff0c4dd71b3a8c2f18",
+    "file": "amd_fidelityfx_framegeneration_dx12.dll"
+   },
+   {
+    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.3.0/docs/license.md",
+    "sha256": "6757f2fec461238da6f84f83536ec195e8c036b1773a06f6f34301b9ed8c0963",
+    "file": "license.md"
+   }
+  ]
+ }
+]

@@ -3,7 +3,7 @@
 # thermal zone numbers, fan chip and power monitor; 0003 makes those reads work on the Portal,
 # 0004 fixes battery draw and time remaining for the Portal's fuel gauge.
 # 0005 has mangoapp write the focused app's displayed frame rate to $XDG_RUNTIME_DIR/kettle-fps
-# and its frame times (read by the Frame Generation plugin's automatic frame cap, and the
+# and its frame times (read by Game Settings' Frame Gen automatic frame cap, and the
 # Performance app's frame-rate readout and graph).
 # GPU load comes from the msm card's debugfs perf_now (kernel patch 40-kettle/1110), made
 # reachable by kettle-mangoapp-tracefs.service; 0006 finds that card instead of assuming

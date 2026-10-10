@@ -4,6 +4,8 @@ import { DropdownItem, PanelSectionRow, Router } from "@decky/ui";
 import { useEffect, useState } from "react";
 
 export type InstalledGame = { appid: number; name: string };
+// GamePicker's "All games" entry (allGames), for settings every game without its own uses
+export const ALL_GAMES = -1;
 
 let lastPicked: number | null = null;
 
@@ -30,7 +32,12 @@ export function useSelectedGame(games: InstalledGame[] | null): [number | null, 
   return [appid, (a) => { lastPicked = a; setAppid(a); }];
 }
 
-export function GamePicker({ games, appid, onChange }: { games: InstalledGame[]; appid: number | null; onChange: (a: number) => void }) {
+export function GamePicker({ games, appid, onChange, allGames }: {
+  games: InstalledGame[];
+  appid: number | null;
+  onChange: (a: number) => void;
+  allGames?: boolean;
+}) {
   const running = runningAppId();
   const opts = [...games].sort((a, b) => {
     if (a.appid === running) return -1;
@@ -44,7 +51,10 @@ export function GamePicker({ games, appid, onChange }: { games: InstalledGame[];
     <PanelSectionRow>
       <DropdownItem
         label="Game"
-        rgOptions={opts.map((g) => ({ data: g.appid, label: g.appid === running ? `▶ ${g.name}` : g.name }))}
+        rgOptions={[
+          ...(allGames ? [{ data: ALL_GAMES, label: "All games" }] : []),
+          ...opts.map((g) => ({ data: g.appid, label: g.appid === running ? `▶ ${g.name}` : g.name })),
+        ]}
         selectedOption={appid}
         onChange={(o) => onChange(o.data)}
       />

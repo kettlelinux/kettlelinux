@@ -1,1 +1,0 @@
-../../shared/steamlib.py

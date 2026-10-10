@@ -12,8 +12,8 @@ import {
 } from "@decky/ui";
 import { definePlugin, routerHook, toaster } from "@decky/api";
 import { useEffect, useState } from "react";
-import { FaSlidersH } from "react-icons/fa";
-import { GamePicker, InstalledGame, gameName, runningAppId, useSelectedGame } from "../../shared/GamePicker";
+import { FaBolt, FaDownload, FaExpandArrowsAlt, FaLayerGroup, FaSlidersH, FaWrench } from "react-icons/fa";
+import { ALL_GAMES, GamePicker, InstalledGame, gameName, runningAppId, useSelectedGame } from "../../shared/GamePicker";
 import { editLaunchOptions, getLaunchOptions, hasWrapper, withWrapper, withoutWrapper } from "../../shared/launchOptions";
 import { fixesFor } from "../../shared/gameFixes";
 import {
@@ -54,6 +54,11 @@ import { AddDllModal, AddEnvModal, ProfilesModal, ShareModal } from "./modals";
 import { Engine, NATIVE_WRAPPER, anticheatText, engineLabel, engineText, runsNatively } from "../../shared/engines";
 import { DatabasePage } from "./database";
 import { AUTO_EVERY_MS, AUTO_FIRST_MS, autoSync } from "./auto";
+import { Tab, Tabs } from "../../shared/Tabs";
+import { PerformanceTab } from "./performance";
+import { UpscalingTab } from "./upscaling";
+import { FrameGenTab, syncFrameGen } from "./framegen";
+import { ExtrasTab } from "./extras";
 
 const small: React.CSSProperties = { fontSize: "12px", lineHeight: "16px" };
 const mono: React.CSSProperties = { ...small, fontFamily: "monospace", wordBreak: "break-all" };
@@ -464,49 +469,86 @@ async function vote(appid: number, works: boolean, setG: (g: Game) => void) {
   }
 }
 
+const TABS: Tab[] = [
+  { id: "compat", label: "Compat", icon: <FaWrench /> },
+  { id: "perf", label: "Perf", icon: <FaBolt /> },
+  { id: "upscaling", label: "Upscale", icon: <FaExpandArrowsAlt /> },
+  { id: "framegen", label: "Frame Gen", icon: <FaLayerGroup /> },
+  { id: "extras", label: "Extras", icon: <FaDownload /> },
+];
+let lastTab = TABS[0].id; // kept while the panel is closed
+
+// The Compatibility tab with "All games" picked: the database's verified settings for every game
+function AllGames({ s, games, onSynced }: { s: Status; games: InstalledGame[]; onSynced: () => void }) {
+  const [auto, setAutoState] = useState(false);
+  useEffect(() => {
+    getAuto().then(setAutoState);
+  }, []);
+  return (
+    <>
+      {s.can_share && (
+        <PanelSectionRow>
+          <ToggleField
+            label="Use verified settings automatically"
+            description="Games you haven't changed get the settings the Kettle team verified for this device. Your own changes always win, and Reset takes them off for good."
+            checked={auto}
+            onChange={async (on) => {
+              setAutoState(await setAuto(on));
+              if (on && (await autoSync(true))) onSynced();
+            }}
+          />
+        </PanelSectionRow>
+      )}
+      <PanelSectionRow>
+        <div style={small}>
+          {s.configured.length > 0
+            ? `Changed for: ${s.configured.map((a) => gameName(games, a)).join(", ")}`
+            : "Compatibility settings are per game: pick one above."}
+        </div>
+      </PanelSectionRow>
+    </>
+  );
+}
+
 function Content() {
   const [s, setS] = useState<Status | null>(null);
   const [games, setGames] = useState<InstalledGame[] | null>(null);
   const [appid, pick] = useSelectedGame(games);
-  const [auto, setAutoState] = useState(false);
+  const [tab, setTab] = useState(lastTab);
   const [panelKey, setPanelKey] = useState(0);
   const refresh = () => status().then(setS);
   useEffect(() => {
     refresh();
     installedGames().then(setGames);
-    getAuto().then(setAutoState);
   }, []);
   if (!s || !games) return null;
-  const name = appid !== null ? gameName(games, appid) : "";
+  // null: "All games"
+  const game = appid !== null && appid !== ALL_GAMES ? appid : null;
+  const name = game !== null ? gameName(games, game) : "";
+  const pickTab = (t: string) => setTab((lastTab = t));
   return (
     <>
-      <PanelSection title="Game">
-        <GamePicker games={games} appid={appid} onChange={pick} />
-        {appid !== null && <GamePanel key={`${appid}-${panelKey}`} appid={appid} name={name} s={s} onChanged={refresh} />}
+      <PanelSection>
+        <GamePicker games={games} appid={appid} onChange={pick} allGames />
+        <Tabs tabs={TABS} tab={tab} onChange={pickTab} />
       </PanelSection>
-      {(s.can_share || s.configured.length > 0) && (
-        <PanelSection title="All games">
-          {s.can_share && (
-            <PanelSectionRow>
-              <ToggleField
-                label="Use verified settings automatically"
-                description="Games you haven't changed get the settings the Kettle team verified for this device. Your own changes always win, and Reset takes them off for good."
-                checked={auto}
-                onChange={async (on) => {
-                  setAutoState(await setAuto(on));
-                  if (on && (await autoSync(true))) {
-                    refresh();
-                    setPanelKey((k) => k + 1);
-                  }
-                }}
-              />
-            </PanelSectionRow>
-          )}
-          {s.configured.length > 0 && (
-            <PanelSectionRow>
-              <div style={small}>Changed for: {s.configured.map((a) => gameName(games, a)).join(", ")}</div>
-            </PanelSectionRow>
-          )}
+      {tab === "upscaling" ? (
+        <UpscalingTab appid={game} name={name} />
+      ) : tab === "extras" ? (
+        <ExtrasTab />
+      ) : (
+        <PanelSection>
+          {tab === "compat" &&
+            (game !== null ? (
+              <GamePanel key={`${game}-${panelKey}`} appid={game} name={name} s={s} onChanged={refresh} />
+            ) : (
+              <AllGames s={s} games={games} onSynced={() => {
+                refresh();
+                setPanelKey((k) => k + 1);
+              }} />
+            ))}
+          {tab === "perf" && <PerformanceTab appid={game} name={name} />}
+          {tab === "framegen" && <FrameGenTab appid={game} name={name} games={games} />}
         </PanelSection>
       )}
     </>
@@ -515,6 +557,7 @@ function Content() {
 
 export default definePlugin(() => {
   routerHook.addRoute(`${ROUTE}/:appid`, DatabasePage);
+  syncFrameGen().catch(() => {});
   // play time per profile: settings can be shared, or confirmed, only after real play
   const started = new Map<number, { at: number; tool: string }>();
   const lifetime = SteamClient.GameSessions.RegisterForAppLifetimeNotifications(
@@ -530,6 +573,9 @@ export default definePlugin(() => {
         const s = started.get(n.unAppID);
         started.delete(n.unAppID);
         if (s) recordPlay(n.unAppID, (Date.now() - s.at) / 1000, s.tool).catch(() => {});
+        // the backend stores the Frame Gen measurement after a game exits (it samples every
+        // 2 s), which can change the automatic cap: rewrite launch options for the next launch
+        setTimeout(() => syncFrameGen().catch(() => {}), 5000);
       }
     },
   );

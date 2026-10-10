@@ -34,7 +34,7 @@ core restores what they showed at resume. The
 power light ("sleep": true) stays on, very dim, in the color it had going to sleep: orange while
 charging, green when full or held at the charge limit, the battery's color on battery. It isn't
 changed until the device wakes: nothing is woken to follow a plug or unplug.
-org.kettlelinux.Leds1 serves the setting to the Lights plugin (kettle-decky-lights):
+org.kettlelinux.Leds1 serves the setting to Device Settings' Lights tab (kettle-decky-device-settings):
 
   Get() -> s          the setting and what the device has, JSON
   Set(s changes) -> s some of the setting's keys, JSON; returns what Get does

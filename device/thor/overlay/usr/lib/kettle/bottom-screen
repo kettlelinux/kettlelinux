@@ -3,7 +3,7 @@
 # leases the bottom panel's connector (GAMESCOPE_LEASE_OUTPUT, gamescope 0012-0016) and hands
 # the lease over GAMESCOPE_LEASE_SOCK; this runs a second gamescope on it, with the bottom
 # touchscreen's input forwarded over the same socket, and the touch shell in that
-# (bottom-shell). When it's turned off (Quick Access > Screens, or GAMESCOPE_BOTTOM_SCREEN=0) or
+# (bottom-shell). When it's turned off (Device Settings > Screens, or GAMESCOPE_BOTTOM_SCREEN=0) or
 # there is no lease (gamescope couldn't make one), the bottom screen stays off: this exits 3,
 # which kettle-bottom-screen.service doesn't restart on.
 set -u
@@ -11,14 +11,14 @@ for f in /usr/lib/kettle/gamescope.conf /etc/kettle/gamescope.conf "$HOME/.confi
   [ -r "$f" ] && . "$f"
 done
 [ "${GAMESCOPE_BOTTOM_SCREEN:-1}" = 0 ] && exit 3
-# turned off in Quick Access > Screens
+# turned off in Device Settings > Screens
 grep -qE '"enabled": *false' "$HOME/.config/kettle/bottom-screen.json" 2>/dev/null && exit 3
 [ -n "${GAMESCOPE_LEASE_OUTPUT:-}" ] || exit 3
 sock="$XDG_RUNTIME_DIR/gamescope-lease.sock"
 
 # The panel only lists 60 Hz, but runs at 30 with the same timings at half the pixel clock
 # (gamescope 0022; a longer vertical blank at the same clock draws black lines on it instead).
-# Quick Access > Screens picks the rate ("refresh_hz", 60 by default), live through gamescopectl;
+# Device Settings > Screens picks the rate ("refresh_hz", 60 by default), live through gamescopectl;
 # this is the one the screen starts at. It's a fixed rate (refresh_hz, 0023): ui_refresh_hz
 # would never apply here, as gamescope takes the shell's KWin window for a game that's open. It
 # also replaces Game Mode's refresh_hz from gamescope.conf above, which is the top screen's.
