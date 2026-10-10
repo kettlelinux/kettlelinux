@@ -1,19 +1,35 @@
-// The tour's showcases (index.html [data-tabs]): a row of tab buttons that swaps the panel
-// screenshot and its text, like the Quick Access panel it shows. Without this script the first
-// tab shows.
+// The tour's showcases (index.html [data-tabs]): an ARIA tab list that swaps the panel
+// screenshot and its text, like the Quick Access panel it shows. Arrow keys, Home and End move
+// along the tabs; only the selected one is in the Tab order. Without this script the first tab
+// shows.
 for (const box of document.querySelectorAll("[data-tabs]")) {
-  const buttons = [...box.querySelectorAll("button[data-tab]")];
-  const show = (tab) => {
-    for (const b of buttons) b.setAttribute("aria-selected", String(b.dataset.tab === tab));
-    for (const el of box.querySelectorAll(".panel-shot, .tab-panel")) el.classList.toggle("active", el.dataset.tab === tab);
+  const buttons = [...box.querySelectorAll('[role="tab"]')];
+  const show = (tab, focus) => {
+    for (const b of buttons) {
+      const on = b.dataset.tab === tab;
+      b.setAttribute("aria-selected", String(on));
+      b.tabIndex = on ? 0 : -1;
+      if (on && focus) b.focus();
+    }
+    for (const p of box.querySelectorAll(".tab-panel")) {
+      p.classList.toggle("active", p.dataset.tab === tab);
+      p.hidden = p.dataset.tab !== tab;
+    }
+    // the screenshot that shows is described by its alt text; the others are hidden from screen readers
+    for (const img of box.querySelectorAll(".panel-shot")) {
+      const on = img.dataset.tab === tab;
+      img.classList.toggle("active", on);
+      if (on) img.removeAttribute("aria-hidden");
+      else img.setAttribute("aria-hidden", "true");
+    }
   };
-  for (const b of buttons) b.addEventListener("click", () => show(b.dataset.tab));
-  // arrow keys move along the row, as in the panel
-  box.querySelector(".tab-buttons").addEventListener("keydown", (e) => {
+  for (const b of buttons) b.addEventListener("click", () => show(b.dataset.tab, false));
+  box.querySelector('[role="tablist"]').addEventListener("keydown", (e) => {
     const i = buttons.indexOf(document.activeElement);
-    if (i < 0 || (e.key !== "ArrowRight" && e.key !== "ArrowLeft")) return;
-    const next = buttons[(i + (e.key === "ArrowRight" ? 1 : buttons.length - 1)) % buttons.length];
-    next.focus();
-    show(next.dataset.tab);
+    if (i < 0) return;
+    const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: buttons.length - 1 }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    show(buttons[(to + buttons.length) % buttons.length].dataset.tab, true);
   });
 }

@@ -123,6 +123,17 @@ opens the same tour in Welcome. These are from an Odin 2 Portal.
 - **Adding a device:** [docs/PORTING.md](docs/PORTING.md)
 - **Repository layout:** [Repository Layout](https://github.com/kettlelinux/kettlelinux/wiki/Repository-Layout)
 
+## Disclaimer
+
+Kettle Linux is provided **as is, without warranty of any kind**, and you use it at your own risk.
+Installing it changes how your device starts up and can erase data, affect the manufacturer's
+warranty, or leave a device that doesn't start until it's restored; its power, fan and charging
+settings act on the hardware. The project and its contributors aren't liable for any damage or
+loss from using it (see the [LICENSE](LICENSE) and the
+[full disclaimer](https://kettlelinux.org/legal.html#disclaimer)). Kettle Linux is not affiliated
+with Valve, AYN, Retroid or any other company named here; their names and trademarks belong to
+them.
+
 ## Thanks
 
 Kettle Linux is built on the work of many projects and people. Thank you all.

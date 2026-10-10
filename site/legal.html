@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Legal and privacy · Kettle Linux</title>
+  <meta name="description" content="Kettle Linux's disclaimer, privacy notice, trademarks, licenses and accessibility statement.">
+  <link rel="icon" href="kettle.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <nav class="topbar" aria-label="Site">
+    <a class="brand" href="./"><img src="kettle.svg" alt="" width="28" height="28"><img src="wordmark.svg" alt="Kettle Linux" width="138" height="20"></a>
+    <div class="links">
+      <a href="./#download">Download</a>
+      <a href="games.html">Games</a>
+      <a href="legal.html" aria-current="page">Legal</a>
+      <a href="https://github.com/kettlelinux/kettlelinux">GitHub</a>
+    </div>
+  </nav>
+
+  <main id="content" tabindex="-1" class="legal">
+    <h1>Legal and privacy</h1>
+    <p class="muted">Last updated October 9, 2026.</p>
+
+    <nav aria-label="On this page" class="toc">
+      <ul>
+        <li><a href="#disclaimer">Use at your own risk</a></li>
+        <li><a href="#liability">No warranty, limitation of liability</a></li>
+        <li><a href="#third-party">Other people's software and services</a></li>
+        <li><a href="#trademarks">Trademarks and affiliation</a></li>
+        <li><a href="#licenses">Licenses and source code</a></li>
+        <li><a href="#privacy">Privacy</a></li>
+        <li><a href="#accessibility">Accessibility</a></li>
+        <li><a href="#contact">Contact</a></li>
+      </ul>
+    </nav>
+
+    <section id="disclaimer">
+      <h2>Use at your own risk</h2>
+      <p>Kettle Linux is free, community-made software in early, active development. It is not a product of, or
+        supported by, the maker of your device. By downloading, installing or using it, you accept that you do so
+        <strong>entirely at your own risk</strong>, and that you are responsible for any result.</p>
+      <p>Installing an operating system on a handheld is not risk-free. In particular:</p>
+      <ul>
+        <li><strong>Your device may stop starting.</strong> Installing Kettle changes how your device starts up
+          (bootloader settings, U-Boot or ABL images, partitions). A mistake, an interrupted write or a fault in the
+          software can leave a device that doesn't start until it is restored with a computer, or at all.</li>
+        <li><strong>You can lose data.</strong> Writing an image erases the card or partition it's written to. Erase
+          Everything, Reset and an internal install erase data on purpose. Back up anything you want to keep first,
+          Android's data included.</li>
+        <li><strong>Your warranty may be affected.</strong> Changing your device's software or bootloader may void or
+          limit the manufacturer's warranty or support. Check with the manufacturer before you install.</li>
+        <li><strong>Hardware settings are yours to choose.</strong> Kettle sets CPU and GPU clocks, power limits,
+          fan speeds, the battery's charge limit and charge current, the screen's refresh rate and the lights.
+          Settings outside a device's normal range can cause heat, instability, faster battery wear or damage.
+          Kettle's defaults are chosen to be safe, but they are tested on a small number of devices.</li>
+        <li><strong>Test builds are tests.</strong> Builds marked as test builds have not been checked on every
+          device, and some features are known not to work. Read the known issues and the release notes first.</li>
+      </ul>
+      <p>Nothing on this site, in the documentation, on the wiki or in the community channels is professional advice.
+        Follow it at your own risk.</p>
+    </section>
+
+    <section id="liability">
+      <h2>No warranty, limitation of liability</h2>
+      <p>Kettle Linux and everything on this site are provided <strong>"as is" and "as available", without warranty
+        of any kind</strong>, express or implied, including any warranty of merchantability, fitness for a particular
+        purpose, non-infringement, or that the software will work without errors or interruption.</p>
+      <p>To the fullest extent the law allows, the Kettle Linux project, its maintainers and its contributors are
+        <strong>not liable for any damage or loss</strong> arising from the use of, or inability to use, Kettle Linux,
+        this site or its downloads, however caused and on any theory of liability, including damage to or loss of
+        use of a device, loss of data, loss of game progress or accounts, or any direct, indirect, incidental,
+        special or consequential damages, even if advised that such damage was possible.</p>
+      <p>Kettle Linux's own code is released under the
+        <a href="https://github.com/kettlelinux/kettlelinux/blob/main/LICENSE">BSD 3-Clause License</a>, which
+        contains the same disclaimer; each other component's license has its own. Some places don't allow certain
+        warranties or liability to be excluded; there, these exclusions apply as far as the law permits.</p>
+    </section>
+
+    <section id="third-party">
+      <h2>Other people's software and services</h2>
+      <p>Kettle Linux includes and connects to software and services run by others: Valve's Steam client and Proton,
+        game stores (Epic Games, GOG, Amazon Games, Battle.net), Flathub, F-Droid, Android apps, emulators, and the
+        projects listed in the README. They are covered by their own licenses, terms and privacy policies, which you
+        agree to with their makers, not with Kettle Linux. Kettle Linux isn't responsible for them, for what they do
+        with your accounts or data, or for any action they take against an account, such as a game's anti-cheat or a
+        store refusing a device. Games and apps you install are yours to license; Kettle doesn't provide any.</p>
+    </section>
+
+    <section id="trademarks">
+      <h2>Trademarks and affiliation</h2>
+      <p>Kettle Linux is an independent project. It is <strong>not affiliated with, endorsed by or sponsored by</strong>
+        Valve, AYN, Retroid, Qualcomm, AMD, Arm, Epic Games, GOG, Amazon, Blizzard, Google or any other company named
+        on this site. Steam and SteamOS are trademarks of Valve Corporation; Snapdragon is a trademark of Qualcomm;
+        the other names are trademarks of their owners. They are used only to say what Kettle runs on and works with.
+        Screenshots show Kettle Linux's own interface; app and game names and icons in them belong to their owners.</p>
+    </section>
+
+    <section id="licenses">
+      <h2>Licenses and source code</h2>
+      <p>Kettle Linux's own work is under the
+        <a href="https://github.com/kettlelinux/kettlelinux/blob/main/LICENSE">BSD 3-Clause License</a>. Everything built
+        from other projects keeps its upstream license, and the source for every package is in the
+        <a href="https://github.com/kettlelinux/kettlelinux">repository</a> or linked from it. If you believe something
+        in Kettle Linux or on this site infringes your rights, please <a href="#contact">get in touch</a> and it will
+        be looked at promptly.</p>
+    </section>
+
+    <section id="privacy">
+      <h2>Privacy</h2>
+      <h3>This website</h3>
+      <ul>
+        <li><strong>No cookies, no analytics, no tracking, no ads.</strong> This site doesn't set cookies, doesn't use
+          your browser's storage, and has no analytics or tracking scripts, so there is no cookie banner.</li>
+        <li>The site is hosted on <a href="https://pages.github.com/">GitHub Pages</a>. Like any web server, GitHub
+          receives your IP address and browser details when you visit; see the
+          <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub
+          privacy statement</a>.</li>
+        <li>To show live information, your browser fetches it directly from: <code>api.github.com</code> (latest
+          issues), <code>updates.kettlelinux.org</code> (the download list, served through Cloudflare),
+          <code>discord.com</code> (how many people are online in the Discord), and on the
+          <a href="games.html">games page</a> <code>games.kettlelinux.org</code> (the game database) and Steam's image
+          server (game pictures). Those requests send your IP address and browser details to those services, under
+          their own privacy policies. Nothing else about you is sent.</li>
+      </ul>
+      <h3>Kettle Linux on your device</h3>
+      <ul>
+        <li><strong>No telemetry.</strong> Kettle Linux doesn't collect usage data. It contacts Kettle's servers to
+          check for and download updates (<code>updates.kettlelinux.org</code>), which, like any download, sends your
+          IP address.</li>
+        <li><strong>Crash reports stay on the device</strong> unless you choose <em>Share</em> on one. Before a shared
+          report is uploaded, the device removes your user name, Steam IDs and account names, network names, MAC and
+          IP addresses and the device's name; core dumps are never uploaded. A shared report can be read by anyone
+          who has its link, and is deleted after 90 days.</li>
+        <li><strong>The game database</strong> receives something only when you share settings or answer whether they
+          worked: the game, the settings, your device model and Kettle build, your rating and optional note, the
+          game's engine, and a hashed random ID for your install, so each device counts once. Shared entries are
+          public. With <em>Use verified settings automatically</em> turned on (it's off by default), your device asks
+          the database about your installed games by their Steam app IDs.</li>
+        <li>Kettle's servers use your IP address only to limit how often uploads can be made; they don't store it.
+          They run on Cloudflare, which processes requests under its own privacy policy.</li>
+        <li>To have a crash report or a database entry you shared removed, <a href="#contact">get in touch</a> with
+          its link or the game and date.</li>
+      </ul>
+      <p>Kettle Linux, this site and its services are not directed at children under 13, and don't knowingly collect
+        their personal information.</p>
+    </section>
+
+    <section id="accessibility">
+      <h2>Accessibility</h2>
+      <p>This site aims to meet the <a href="https://www.w3.org/TR/WCAG21/">Web Content Accessibility Guidelines
+        (WCAG) 2.1</a> at level AA: text and controls meet its contrast ratios, everything works with a keyboard with
+        a visible focus indicator, there's a skip link to the content, images have text alternatives, the screenshot
+        tabs use standard tab semantics for screen readers, the layout works at any width and zoom level, and motion
+        follows your system's reduce-motion setting.</p>
+      <p>Screenshots are pictures of Kettle's interface; what they show is also described in the text beside them.
+        Kettle Linux itself runs Steam's Game Mode, whose accessibility features are Valve's. If something on this
+        site is hard to use, please <a href="#contact">tell us</a> and it will be fixed.</p>
+    </section>
+
+    <section id="contact">
+      <h2>Contact</h2>
+      <p>Kettle Linux is run by volunteers. For anything on this page, open an issue on
+        <a href="https://github.com/kettlelinux/kettlelinux/issues">GitHub</a> or ask on
+        <a href="https://discord.gg/uKGartjFha">Discord</a>. For something that shouldn't be public, ask on Discord
+        for a private channel.</p>
+      <p class="muted small">This page may change as Kettle Linux does; the date at the top says when it last did.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>Kettle Linux is provided as is, without warranty; you use it at your own risk.
+      <a href="legal.html#disclaimer">Disclaimer</a> · <a href="legal.html#privacy">Privacy</a> ·
+      <a href="legal.html#accessibility">Accessibility</a></p>
+    <p class="muted">Not affiliated with Valve, AYN or Retroid.</p>
+  </footer>
+</body>
+</html>

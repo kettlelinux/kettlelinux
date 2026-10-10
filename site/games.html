@@ -11,16 +11,18 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <nav class="topbar">
+  <a class="skip" href="#content">Skip to content</a>
+  <nav class="topbar" aria-label="Site">
     <a class="brand" href="./"><img src="kettle.svg" alt="" width="28" height="28"><img src="wordmark.svg" alt="Kettle Linux" width="138" height="20"></a>
     <div class="links">
       <a href="./#download">Download</a>
       <a href="games.html" aria-current="page">Games</a>
+      <a href="legal.html">Legal</a>
       <a href="https://github.com/kettlelinux/kettlelinux">GitHub</a>
     </div>
   </nav>
 
-  <main>
+  <main id="content" tabindex="-1">
     <section id="games-list" class="games-intro">
       <h1>Game settings</h1>
       <p class="sub-left">Settings that got games running on Kettle Linux, shared by players after playing with them.
@@ -70,7 +72,8 @@
   <footer>
     <p>Entries are shared by Kettle Linux players and only hold options the Game Settings plugin offers. A setting that
       works on one device may not on another: check the device and build.</p>
-    <p class="muted">Game images from Steam. Not affiliated with Valve.</p>
+    <p class="muted">Game images from Steam. Not affiliated with Valve.
+      <a href="legal.html">Legal</a> · <a href="legal.html#privacy">Privacy</a> · <a href="legal.html#accessibility">Accessibility</a></p>
   </footer>
 
   <script src="games.js"></script>
