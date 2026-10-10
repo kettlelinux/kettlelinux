@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+# Kettle Linux: the KONKR Pocket FIT Elite's pad as a Steam Deck controller, as on the AYN devices.
+# Its buttons come from two drivers: the AYANEO MCU's SPI gamepad (kernel 22-sm8750/0058: sticks,
+# triggers, d-pad, the standard buttons) and the same MCU's UART (0069, konkr_sysbtn: the KONKR
+# key and the extra buttons). kettle-pocketfitelite (kettle-pocketfitelite-capability-map.yaml)
+# maps both. Not yet checked on hardware; ROCKNIX's 50-konkr_pf_elite.yaml is the reference.
+version: 1
+kind: CompositeDevice
+name: KONKR Pocket FIT Elite (Kettle)
+
+options:
+  auto_manage: true
+
+matches:
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
+        - name: compatible
+          value: konkr,pocket-fit-elite*
+
+source_devices:
+  - group: gamepad
+    capability_map_id: kettle-pocketfitelite
+    evdev:
+      name: AYANEO MCU Gamepad
+      phys_path: mcu-joystick/input0
+      handler: event*
+
+  - group: gamepad
+    capability_map_id: kettle-pocketfitelite
+    evdev:
+      name: KONKR System Buttons
+      phys_path: konkr-mcu/input0
+      handler: event*
+
+target_devices:
+  - deck

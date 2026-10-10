@@ -1,0 +1,78 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+# Kettle Linux: the KONKR Pocket FIT Elite's extra buttons on the Deck controller. Used by
+# 40-kettle-pocketfitelite.yaml. The standard buttons, sticks, triggers and d-pad (a hat) pass
+# through. The face buttons are Xbox-labelled (A bottom), as the driver reports them.
+# Which physical button is which comes from ROCKNIX's konkr_gamepad/konkr_sysbtn maps; not yet
+# checked on hardware. The two rear buttons send nothing (the MCU reports neither).
+version: 2
+kind: CapabilityMap
+name: KONKR Pocket FIT Elite (Kettle)
+id: kettle-pocketfitelite
+
+mapping:
+  # the KONKR key (konkr_sysbtn): Steam
+  - name: KONKR Key
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_TRIGGER_HAPPY2
+          value_type: button
+    target_event:
+      gamepad:
+        button: Guide
+
+  # the gamepad's front-top-left extra button (BTN_MODE): Quick Access, like the AYN devices'
+  # button below the right stick
+  - name: Front Top Left
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_MODE
+          value_type: button
+    target_event:
+      gamepad:
+        button: QuickAccess
+
+  # the extra shoulder buttons: L4/R4
+  - name: Left Extra Shoulder
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_TRIGGER_HAPPY3
+          value_type: button
+    target_event:
+      gamepad:
+        button: LeftPaddle1
+
+  - name: Right Extra Shoulder
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_TRIGGER_HAPPY4
+          value_type: button
+    target_event:
+      gamepad:
+        button: RightPaddle1
+
+  # the two other front buttons: L5/R5, bindable in Steam Input
+  - name: Front Top Right
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_TRIGGER_HAPPY5
+          value_type: button
+    target_event:
+      gamepad:
+        button: LeftPaddle2
+
+  - name: Front Bottom Right
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_TRIGGER_HAPPY1
+          value_type: button
+    target_event:
+      gamepad:
+        button: RightPaddle2
+
+filtered_events: []

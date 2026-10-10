@@ -1,0 +1,19 @@
+Firmware from ROCKNIX extra-firmware
+Source: https://github.com/ROCKNIX/extra-firmware, commit 8834a0c80f5b24fee5ed9e18c1560dc48a6f1bd9,
+SM8750/ directory
+
+Files in this package taken from it (under /usr/lib/firmware):
+  qcom/sm8750/konkr/pfe/* (ADSP and CDSP firmware, battery manager configuration, amplifier
+  tuning), qcom/sm8750/SM8750-KONKR-tplg.bin (audio topology), ath12k/WCN7860/hw2.0/* (Wi-Fi),
+  qca/gngbtfw20.mbn and gngbtnv20.bin (Bluetooth)
+
+These are proprietary firmware images, not Kettle Linux's or ROCKNIX's own work: they come from
+the device's vendor (KONKR/AYANEO) and its chip vendor (Qualcomm), as ROCKNIX collected them for
+its images. The ROCKNIX/extra-firmware repository states no licence for them, and the files carry
+no licence text of their own.
+
+Status: redistribution permission from the rights holders has NOT been recorded for Kettle
+Linux. They are shipped pending that permission; this file grants no rights of any kind.
+
+The other firmware in this package comes with its own licence files in this directory:
+linux-firmware-qcom/ (Arch's linux-firmware package).

@@ -1,0 +1,65 @@
+# kettle-powerd's description of the KONKR Pocket FIT Elite (SM8750, Snapdragon 8 Elite).
+# Written before the device arrived, from the SM8750 device tree and ROCKNIX's board dts: the
+# sysfs paths and the GPU table are the SoC's; the CPU caps, the TDP range and the charging
+# figures are placeholders until measured on a unit. Caps between frequency steps round down.
+
+[cpu]
+# cpufreq policies (SCMI, the frequency table comes from the firmware), smallest cluster first:
+# six Oryon cores and two prime cores. cpu0 can't be taken offline. "prime" lets a game park
+# both prime cores (Game Settings); the main cluster is never parked.
+clusters = [
+  { name = "main", policy = 0, cpus = [0, 1, 2, 3, 4, 5] },
+  { name = "prime", policy = 6, cpus = [6, 7] },
+]
+
+[gpu]
+devfreq = "/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu"
+# busy percentage (kernel patch 40-kettle/1110). By device name, not dri/0: under an EFI boot
+# simpledrm can take minor 0 for the boot framebuffer (as on the RP5)
+load = "/sys/kernel/debug/dri/ae01000.display-controller/perf_now"
+# lowest clock offered for a fixed (manual) GPU clock, MHz (sm8750.dtsi's A830 table runs
+# 160-1100 MHz; speed bins drop its top steps)
+manual_min_mhz = 222
+
+[fan]
+hwmon = "pwmfan"
+cooling_device = "pwm-fan"
+# Custom curves always run the fan at full speed from here, whatever the curve says (C)
+full_speed_temp = 90
+# The device tree curve (sm8750-konkr-pf-elite-fan.dtsi: cooling levels 64/128/255 of 255 at
+# 50/60/70 C), as percent: the starting point for a custom curve
+default_curve = [[45, 0], [50, 25], [60, 50], [70, 100]]
+
+[power]
+battery = "battery"
+charger = "qcom-battmgr-usb"
+# Share of the charger's input power that reaches the system and battery
+charger_efficiency = 0.9
+# Steam's TDP slider: whole-device draw in watts (screen included); max means no limit.
+# Placeholder: the 8 Elite draws more than the SM8550 at the top; measure on a unit
+tdp_min = 4
+tdp_max = 22
+# Charging: the SM8750 battery manager is the SM8550's (pmic-glink falls back to its
+# compatible), so 40-kettle/1190's constant_charge_current may be there as on the Portal;
+# until a unit shows it is, Steam's charge limit is the charger's end threshold (the default)
+# and there are no charge speeds. remotes.d/kettle-power-charge.toml (device overlay) is left
+# out for the same reason.
+charge_limit_min = 55
+
+# Steam's performance profiles (Quick Access > Performance). Caps in kHz / MHz; a cluster
+# left out runs up to its highest frequency. Placeholder caps until the firmware's tables
+# are read on a unit (they round down to its steps).
+[[profile]]
+name = "Performance"
+
+[[profile]]
+name = "Balanced"
+main = 2800000
+prime = 3400000
+gpu_mhz = 734
+
+[[profile]]
+name = "Powersave"
+main = 2000000
+prime = 2400000
+gpu_mhz = 525

@@ -1,0 +1,23 @@
+# ALSA UCM profile for KONKR's SM8750 handheld, from ROCKNIX's devices/SM8750 filesystem
+# (distribution @ bac971fe): card "SM8750-KONKR" (the AW88261 speakers on MI2S, the WCD9395
+# headphone jack with its HPH path in PCM mode, kernel 22-sm8750/0072-0074). Only new files:
+# Valve's alsa-ucm-conf stays untouched.
+pkgname=kettle-ucm-pocketfitelite
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='ALSA UCM profile for the KONKR Pocket FIT Elite'
+arch=(any)
+license=(BSD-3-Clause)
+depends=(alsa-ucm-conf)
+source=(KONKR-PocketFitElite.conf HiFi.conf)
+sha256sums=('3d07af20c1d5a833c156db031baa8b7a73b958c73aceaa29ba6bae7960797e12'
+            'dd43c735f66efe2d5b4eabc2e22635a1207d6bcd57984d8cbb171882be837682')
+
+package() {
+  local ucm="$pkgdir/usr/share/alsa/ucm2"
+  install -Dm644 -t "$ucm/KONKR/PocketFitElite" KONKR-PocketFitElite.conf HiFi.conf
+  # alsa-lib looks up conf.d/<driver>/<card name>.conf; booted by the ABL there is no SMBIOS,
+  # so the card name is the devicetree's sound model
+  install -d "$ucm/conf.d/sm8750"
+  ln -s ../../KONKR/PocketFitElite/KONKR-PocketFitElite.conf "$ucm/conf.d/sm8750/SM8750-KONKR.conf"
+}
