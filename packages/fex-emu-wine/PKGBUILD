@@ -11,7 +11,7 @@
 # the aarch64 chroot), with only the submodules the Windows build uses.
 pkgname=fex-emu-wine
 pkgver=2610
-pkgrel=2
+pkgrel=1
 _llvm_mingw=20260908
 pkgdesc='FEX x86 and x86-64 emulation for ARM64EC Wine'
 arch=(aarch64)
