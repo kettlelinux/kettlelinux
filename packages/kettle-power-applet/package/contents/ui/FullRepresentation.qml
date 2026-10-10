@@ -39,12 +39,9 @@ PlasmaExtras.Representation {
         return khz ? Math.round(khz / 1000) + " MHz" : "off";
     }
 
-    // Desktop Mode's fan and CPU settings with a change in fan or cpu
+    // a change in Desktop Mode's fan or cpu settings: only what changed is sent
     function update(patch) {
-        power.setSettings({
-            fan: Object.assign({}, fan, patch.fan ?? {}),
-            cpu: Object.assign({}, cpu, patch.cpu ?? {}),
-        });
+        power.setSettings(patch);
     }
 
     // curve points stay in order: raising a point raises the ones after it, lowering lowers the ones before

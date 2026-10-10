@@ -32,6 +32,7 @@ step that failed for a while. Steam's TDP limit still applies on top.
 import json
 import os
 import signal
+import stat
 import sys
 import time
 import tomllib
@@ -50,17 +51,20 @@ BUS = Gio.BusType.SESSION if os.environ.get("KETTLE_POWER_BUS") == "session" els
 BUS_NAME = "org.kettlelinux.Power1"
 OBJ_PATH = "/org/kettlelinux/Power1"
 SOM = "com.steampowered.SteamOSManager1."
-TICK_MS = 1000
+TICK_SLOW = 5  # s between ticks while nothing needs one every second (the charge limit's checks)
+STATUS_WATCH = 10  # s the power draw is measured for after a GetStatus call
 EMA = 0.4  # weight of each new power sample
 TDP_DWELL = 2  # ticks to wait after changing a cap before judging its effect
 CPU_STEPS = 16  # CPU budget ladder: 100% down to 30% of each cluster's top frequency
 FAN_HYST = 3  # C: the fan slows down only once the temperature is this far below a point
 CHARGE_RESUME = 5  # %: a held charge limit lets charging resume this far below the limit
-CHARGE_TICKS = 5  # ticks between charge current checks (each read is a firmware round trip)
+CHARGE_EVERY = 5  # s between charge limit checks (each read is a firmware round trip)
+SLEEP_MARGIN = 2  # %: going to sleep this close to the charge limit, charging stops for the sleep
 CUSTOM = "Custom"  # charge speed set as a current (charge_custom_ua)
 CUSTOM_MIN_UA = 500_000
 CUSTOM_STEP_UA = 500_000
 FPS_FILES = "/run/user"  # <uid>/kettle-fps, written by mangoapp about once a second
+FPS_MAX_BYTES = 4096  # kettle-fps is a few short lines
 FPS_STALE = 3  # s: an older frame rate means no game is drawing (paused, loading, gone)
 AUTO_RESET = 10  # s without frames: Auto TDP starts again from no cap
 AUTO_DWELL = 2  # ticks after an Auto TDP change before judging it
@@ -70,6 +74,7 @@ AUTO_BACKOFF_MAX = 4  # each time that step fails again, up to this many times a
 AUTO_UNDER = 0.95  # below this share of the target (over two seconds) the game falls short
 AUTO_GPU_BUSY = 0.9  # a capped GPU this busy is at its limit
 AUTO_STUCK = 3  # ticks falling short with neither unit at its limit before raising anyway
+MAX_GAMES = 500  # games with settings of their own kept, the least recently set go first
 
 
 def log(msg):
@@ -140,25 +145,58 @@ def find_class(cls, attr, value):
     return None
 
 
+def to_int(v, default, lo, hi):
+    """v as an int within lo..hi, or default if it isn't a number."""
+    try:
+        return max(lo, min(hi, int(v)))
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def read_user_file(path, uid):
+    """A small regular file of uid's: (its first FPS_MAX_BYTES as text, its mtime), or None.
+    Read as root from a folder the user owns: no following a link they put there, no blocking
+    on a FIFO, no reading /dev/zero to the end."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != uid:
+            return None
+        return os.read(fd, FPS_MAX_BYTES).decode(errors="replace"), st.st_mtime
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
 def read_fps():
     """The newest kettle-fps (mangoapp): {fps, refresh, steam_focused, age}, or None."""
     best = None
     for uid in listdir(FPS_FILES):
-        path = f"{FPS_FILES}/{uid}/kettle-fps"
+        if not uid.isdigit():
+            continue
+        path = ROOT + f"{FPS_FILES}/{uid}/kettle-fps"
         try:
-            mtime = os.stat(ROOT + path).st_mtime
+            mtime = os.lstat(path).st_mtime
         except OSError:
             continue
         if best is None or mtime > best[1]:
-            best = (path, mtime)
+            best = (path, mtime, int(uid))
     if not best:
         return None
-    kv = dict(line.split("=", 1) for line in (read(best[0], "") or "").splitlines() if "=" in line)
+    got = read_user_file(best[0], best[2])
+    if not got:
+        return None
+    text, mtime = got
+    kv = dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
     try:
         return {"fps": float(kv["fps"]), "refresh": int(kv.get("refresh") or 0),
                 "steam_focused": kv.get("steam_focused") == "1",
-                "age": time.time() - best[1]}
-    except (KeyError, ValueError):
+                "age": time.time() - mtime}
+    except (KeyError, ValueError, OverflowError):
         return None
 
 
@@ -170,16 +208,21 @@ class Hardware:
             for cpu_id in c["cpus"]:
                 if cpu_id != 0 and read_int(f"/sys/devices/system/cpu/cpu{cpu_id}/online") == 0:
                     write(f"/sys/devices/system/cpu/cpu{cpu_id}/online", 1)
+        # a cluster or GPU without a frequency table gets no caps; the fan and charging go on
         self.clusters = []
         for c in cfg["cpu"]["clusters"]:
             p = f"/sys/devices/system/cpu/cpufreq/policy{c['policy']}"
-            freqs = {int(f) for f in (read(f"{p}/scaling_available_frequencies", "") + " "
-                                      + read(f"{p}/scaling_boost_frequencies", "")).split()}
-            self.clusters.append({**c, "path": p, "freqs": sorted(freqs),
-                                  "base_max": max(int(f) for f in read(f"{p}/scaling_available_frequencies", "0").split())})
+            avail = freq_list(read(f"{p}/scaling_available_frequencies"))
+            freqs = sorted(set(avail + freq_list(read(f"{p}/scaling_boost_frequencies"))))
+            if not freqs:
+                log(f"no frequency table in {p}: no caps for the {c['name']} cluster")
+                continue
+            self.clusters.append({**c, "path": p, "freqs": freqs, "base_max": max(avail or freqs)})
         g = cfg["gpu"]["devfreq"]
-        self.gpu = g
-        self.gpu_freqs = sorted(int(f) for f in read(f"{g}/available_frequencies", "").split())
+        self.gpu_freqs = sorted(freq_list(read(f"{g}/available_frequencies")))
+        self.gpu = g if self.gpu_freqs else None
+        if not self.gpu:
+            log(f"no frequency table in {g}: no GPU caps")
         # auto (and the TDP limit's steps) stay at or below auto_max_mhz; the clocks above it
         # (overclock OPPs) are only for a manual GPU clock
         auto_max = cfg["gpu"].get("auto_max_mhz")
@@ -188,10 +231,13 @@ class Hardware:
         self.gpu_load_path = cfg["gpu"].get("load")
         self.hwmon = find_class("hwmon", "name", cfg["fan"]["hwmon"])
         self.fan_cdev = find_class("thermal", "type", cfg["fan"]["cooling_device"])
-        self.fan_zones = self._fan_zones()
-        # custom fan settings need the user_space governor to keep step_wise off the fan
-        self.fan_custom_ok = bool(self.hwmon and self.fan_zones) and all(
-            "user_space" in (read(f"{z}/available_policies", "") or "").split() for z in self.fan_zones)
+        self.fan_zones, self.fan_own_zones = self._fan_zones()
+        # custom fan settings need the user_space governor to keep step_wise off the fan, on the
+        # zones that cool with the fan alone. A zone that also throttles something (the AYN
+        # boards' gpuss zones: a passive trip on the GPU) stays on step_wise, which would stop
+        # that throttling; the fan steps it may set are written over at the next tick.
+        self.fan_custom_ok = bool(self.hwmon and self.fan_own_zones) and all(
+            "user_space" in (read(f"{z}/available_policies", "") or "").split() for z in self.fan_own_zones)
         # the fan's PWM kept through s2idle while a charger is plugged in (0: stopped, as always)
         p = f"{self.hwmon}/pwm1_sleep_charging" if self.hwmon else None
         self.sleep_fan = p if p and os.path.exists(ROOT + p) else None
@@ -211,21 +257,23 @@ class Hardware:
         return None
 
     def _fan_zones(self):
-        """Thermal zones that drive the fan (a cdevN link to the pwm-fan cooling device)."""
+        """Thermal zones that drive the fan (a cdevN link to the pwm-fan cooling device), and of
+        those the ones with no other cooling device."""
         if not self.fan_cdev:
-            return []
+            return [], []
         cdev = os.path.basename(self.fan_cdev)
-        zones = []
+        zones, own = [], []
         for z in listdir("/sys/class/thermal"):
             if not z.startswith("thermal_zone"):
                 continue
             base = f"/sys/class/thermal/{z}"
-            for e in listdir(base):
-                if e.startswith("cdev") and e[4:].isdigit():
-                    if os.path.basename(os.path.realpath(ROOT + f"{base}/{e}")) == cdev:
-                        zones.append(base)
-                        break
-        return zones
+            cdevs = {os.path.basename(os.path.realpath(ROOT + f"{base}/{e}"))
+                     for e in listdir(base) if e.startswith("cdev") and e[4:].isdigit()}
+            if cdev in cdevs:
+                zones.append(base)
+                if cdevs == {cdev}:
+                    own.append(base)
+        return zones, own
 
     # --- readings ---
 
@@ -237,14 +285,19 @@ class Hardware:
 
     def power_w(self):
         """Whole-device draw in watts: from the battery, or on the charger its input power
-        less what goes into the battery."""
+        less what goes into the battery. None without a reading to trust, as on the charger of
+        a device whose input readings aren't ([power] charger_power = false): the battery's
+        then is what goes into it, not the draw."""
         b, c = self.battery, self.charger
+        status = read(f"{b}/status", "")
+        plugged = bool(read_int(f"{c}/online", 0))  # any non-zero: the RP5's PM8150B says 16
+        if plugged and status != "Discharging" and not self.cfg["power"].get("charger_power", True):
+            return None
         v, i = read_int(f"{b}/voltage_now"), read_int(f"{b}/current_now")
         if v is None or i is None:
             return None
         bat = v * abs(i) / 1e12
-        status = read(f"{b}/status", "")
-        if status == "Discharging" or read(f"{c}/online") != "1":
+        if status == "Discharging" or not plugged:
             return bat
         vin, iin = read_int(f"{c}/voltage_now"), read_int(f"{c}/current_now")
         if vin is None or iin is None:
@@ -274,6 +327,11 @@ class Hardware:
         return None if v is None else v / 100
 
 
+def freq_list(text):
+    """The frequencies in a sysfs table ("" or None: none)."""
+    return [int(f) for f in (text or "").split() if f.isdigit()]
+
+
 def floor_freq(freqs, cap):
     """Highest frequency in freqs at or below cap (the lowest one if none is)."""
     below = [f for f in freqs if f <= cap]
@@ -298,13 +356,15 @@ class Daemon:
         self.profiles = {p["name"]: p for p in self.cfg.get("profile", [])}
         self.state = {
             "steam": {"tdp": pw["tdp_max"], "profile": next(iter(self.profiles), ""),
-                      "gpu_level": "auto", "gpu_clock": self.hw.gpu_auto_freqs[-1] // 1_000_000,
+                      "gpu_level": "auto",
+                      "gpu_clock": self.hw.gpu_auto_freqs[-1] // 1_000_000 if self.hw.gpu else 0,
                       "fan_control": 1, "charge_limit": -1},
             "games": {"default": self.normalize({})},
             "charge_speed": "",
             "charge_custom_ua": 0,
             "sleep_fan": 0,  # fan percent while charging asleep, 0: off
         }
+        self.saved = None  # state.json as last written, so an unchanged state isn't written again
         self.load()
         # charge_limit: true, the charger's end threshold; "current" or "inhibit", held here
         # through a charge current of 0 or the charger's charge_behaviour; false, none
@@ -322,12 +382,20 @@ class Daemon:
         if self.custom_max:
             self.state["charge_custom_ua"] = self.clamp_custom(self.state["charge_custom_ua"] or self.custom_max // 2)
         self.charge_held = False  # at the charge limit, charging stopped
-        self.charge_wait = 0
+        self.charge_next = 0.0  # monotonic time of the next charge limit check
+        self.sleep_hold = False  # charging stopped for a sleep begun near the charge limit
+        self.sleep_lock = -1  # logind's delay lock (fd)
+        self.login = None  # the system bus, for logind
         self.active = ""  # running game's appid, from Device Settings
         self.written = {}  # path -> value last written, so only changes are written
         self.fan_saved_cdev = None  # device tree fan level when the daemon took the fan over
         self.fan_pct = None
         self.power = None
+        self.power_at = 0.0  # monotonic time of the last power reading
+        self.watch_until = 0.0  # the power draw is measured until then (a GetStatus reader)
+        self.timer = 0  # the next tick's GLib source, and its interval in s
+        self.timer_s = 0
+        self.tick_errors = {}  # part of the tick -> its last error, logged once
         self.tdp_cpu = 0  # steps down the CPU budget ladder (0: no cap)
         self.tdp_gpu = 0  # steps down the GPU frequency table
         self.tdp_wait = 0
@@ -341,47 +409,119 @@ class Daemon:
     # --- settings ---
 
     def normalize(self, g):
-        """A game's (or the default) plugin settings with every field present and valid."""
-        fan = g.get("fan") or {}
-        cpu = g.get("cpu") or {}
-        curve = fan.get("curve") or self.cfg["fan"]["default_curve"]
+        """A game's (or the default) plugin settings with every field present and valid; what
+        isn't (a wrong type, a bad curve point) is left at its default."""
+        g = g if isinstance(g, dict) else {}
+        fan = g.get("fan") if isinstance(g.get("fan"), dict) else {}
+        cpu = g.get("cpu") if isinstance(g.get("cpu"), dict) else {}
         points = {}
-        for t, p in curve:  # one point per temperature, the later one wins
-            points[max(0, min(110, int(t)))] = max(0, min(100, int(p)))
+        curve = fan.get("curve")
+        for pt in curve if isinstance(curve, list) else []:  # one point per temperature, the later one wins
+            if isinstance(pt, (list, tuple)) and len(pt) == 2:
+                t, p = to_int(pt[0], None, 0, 110), to_int(pt[1], None, 0, 100)
+                if t is not None and p is not None:
+                    points[t] = p
+        if not points:
+            points = {int(t): int(p) for t, p in self.cfg["fan"]["default_curve"]}
         curve = sorted([t, p] for t, p in points.items())
         mode = fan.get("mode") if fan.get("mode") in ("auto", "curve", "fixed") else "auto"
-        out = {"fan": {"mode": mode, "curve": curve,
-                       "fixed": max(0, min(100, int(fan.get("fixed", 50))))},
-               "cpu": {"mid_cores": max(1, min(4, int(cpu.get("mid_cores", 4)))),
+        out = {"fan": {"mode": mode, "curve": curve, "fixed": to_int(fan.get("fixed"), 50, 0, 100)},
+               "cpu": {"mid_cores": to_int(cpu.get("mid_cores"), 4, 1, 4),
                        "prime_core": bool(cpu.get("prime_core", True))},
                "auto_tdp": bool(g.get("auto_tdp", False))}
         for c in self.cfg["cpu"]["clusters"]:
-            v = cpu.get(c["name"])
-            out["cpu"][c["name"]] = int(v) if v else None
+            out["cpu"][c["name"]] = to_int(cpu.get(c["name"]), None, 0, 1 << 31) or None
         return out
 
+    def steam_value(self, key, v):
+        """One of Steam's values checked and clamped as Steam may set it: ValueError (or
+        TypeError) if it can't be."""
+        pw = self.cfg["power"]
+        if key in ("profile", "gpu_level"):
+            if not isinstance(v, str) or v not in (self.profiles if key == "profile" else ("auto", "manual")):
+                raise ValueError(f"no {key} {v!r}")
+            return v
+        if isinstance(v, bool) or not isinstance(v, int):
+            raise TypeError(f"{key}: {v!r} isn't a number")
+        if key == "tdp":
+            return max(pw["tdp_min"], min(pw["tdp_max"], v))
+        if key == "gpu_clock":
+            lo, hi = self.gpu_range()
+            return max(lo, min(hi, v))
+        if key == "fan_control":
+            if v not in (0, 1):
+                raise ValueError(f"fan_control {v}")
+            return v
+        if key == "charge_limit":
+            return -1 if v < 0 or v >= 100 else max(pw["charge_limit_min"], v)
+        raise ValueError(key)
+
     def load(self):
+        """The saved state, entry by entry: one that isn't valid is dropped, the rest kept. A
+        file that can't be read at all goes aside as state.json.bad."""
         try:
             with open(STATE) as f:
-                saved = json.load(f)
-        except (OSError, ValueError):
+                text = f.read()
+            saved = json.loads(text)
+            if not isinstance(saved, dict):
+                raise ValueError("not a JSON object")
+        except FileNotFoundError:
             return
-        self.state["steam"].update({k: v for k, v in saved.get("steam", {}).items() if k in self.state["steam"]})
-        self.state["charge_speed"] = saved.get("charge_speed", "")
-        self.state["charge_custom_ua"] = saved.get("charge_custom_ua", 0)
+        except OSError as e:
+            log(f"reading {STATE}: {e}")
+            return
+        except ValueError as e:  # UnicodeDecodeError too
+            log(f"{STATE} isn't valid ({e}): moved to {STATE}.bad, starting from the defaults")
+            try:
+                os.replace(STATE, STATE + ".bad")
+            except OSError:
+                pass
+            return
+        steam = saved.get("steam")
+        for k, v in (steam.items() if isinstance(steam, dict) else ()):
+            if k in self.state["steam"]:
+                try:
+                    self.state["steam"][k] = self.steam_value(k, v)
+                except (TypeError, ValueError) as e:
+                    log(f"{STATE}: dropped steam {k}: {e}")
+        if isinstance(saved.get("charge_speed"), str):
+            self.state["charge_speed"] = saved["charge_speed"]
+        ua = saved.get("charge_custom_ua")
+        if isinstance(ua, int) and not isinstance(ua, bool):
+            self.state["charge_custom_ua"] = ua
         self.state["sleep_fan"] = clamp_pct(saved.get("sleep_fan", 0))
-        for k, v in saved.get("games", {}).items():
-            self.state["games"][k] = self.normalize(v)
+        games = saved.get("games")
+        for k, v in (games.items() if isinstance(games, dict) else ()):
+            if not isinstance(v, dict):
+                log(f"{STATE}: dropped the settings of {k!r}")
+                continue
+            try:
+                self.state["games"][k] = self.normalize(v)
+            except Exception as e:  # whatever is in it, the rest still loads
+                log(f"{STATE}: dropped the settings of {k!r}: {e!r}")
+        self.trim_games()
         if self.state["steam"]["profile"] not in self.profiles:
             self.state["steam"]["profile"] = next(iter(self.profiles), "")
+        self.saved = text
+
+    def trim_games(self):
+        """At most MAX_GAMES games' own settings: the least recently set go (the dict keeps them
+        in the order they were set)."""
+        g = self.state["games"]
+        for k in [k for k in g if k not in ("default", "desktop")][:-MAX_GAMES]:
+            del g[k]
 
     def save(self):
+        data = json.dumps(self.state, indent=1)
+        if data == self.saved:
+            return
         try:
             os.makedirs(os.path.dirname(STATE), exist_ok=True)
             tmp = STATE + ".tmp"
             with open(tmp, "w") as f:
-                json.dump(self.state, f, indent=1)
+                f.write(data)
             os.replace(tmp, STATE)
+            self.saved = data
         except OSError as e:
             log(f"saving {STATE}: {e}")
 
@@ -414,6 +554,8 @@ class Daemon:
                 if src:
                     cap = min(cap, src)
             cpu[c["name"]] = floor_freq(c["freqs"], cap)
+        if not self.hw.gpu:
+            return cpu, (None, None)
         gf = self.gpu_steps()
         gmax = gf[-1]
         if prof.get("gpu_mhz"):
@@ -463,6 +605,8 @@ class Daemon:
             if any(cpu_id == 0 or read_int(f"/sys/devices/system/cpu/cpu{cpu_id}/online") != 0 for cpu_id in c["cpus"]):
                 self.put(f"{c['path']}/scaling_max_freq", cpu[c["name"]])
         g = self.hw.gpu
+        if not g:
+            return
         # widen first so min <= max holds at every step
         if gmin > read_int(f"{g}/max_freq", 0):
             self.put(f"{g}/max_freq", gmax)
@@ -482,15 +626,15 @@ class Daemon:
             return {"mode": "auto"}
         return self.game()["fan"]
 
-    def set_zone_policy(self, policy):
-        for z in self.hw.fan_zones:
+    def set_zone_policy(self, policy, zones):
+        for z in zones:
             if read(f"{z}/policy") != policy:
                 write(f"{z}/policy", policy)
 
     def fan_takeover(self):
         if self.fan_saved_cdev is None:
             self.fan_saved_cdev = read_int(f"{self.hw.fan_cdev}/cur_state", 0)
-            self.set_zone_policy("user_space")
+            self.set_zone_policy("user_space", self.hw.fan_own_zones)
 
     def fan_release(self):
         """Give the fan back to step_wise at the level it had (or the level for this temperature)."""
@@ -499,7 +643,7 @@ class Daemon:
         level = self.fan_saved_cdev
         if level is None:
             level = kernel_fan_level(self.hw.fan_temp(), read_int(f"{self.hw.fan_cdev}/max_state", 7))
-        self.set_zone_policy("step_wise")
+        self.set_zone_policy("step_wise", self.hw.fan_zones)  # every one: an older kettle-powerd took them all
         write(f"{self.hw.fan_cdev}/cur_state", level)
         self.fan_saved_cdev = None
         self.fan_pct = None
@@ -535,16 +679,29 @@ class Daemon:
 
     # --- power budget ---
 
-    def tdp_tick(self):
+    def tdp_on(self):
+        return self.state["steam"]["tdp"] < self.cfg["power"]["tdp_max"]
+
+    def measure(self):
+        """The power draw, smoothed; None while there's no reading to trust. Each reading is a
+        few firmware round trips on qcom_battmgr: only taken while something uses it."""
         p = self.hw.power_w()
-        cpu_busy = self.cpu_load = self.hw.cpu_busy()
-        if p is not None:
-            self.power = p if self.power is None else self.power + EMA * (p - self.power)
-        limit = self.state["steam"]["tdp"]
-        if limit >= self.cfg["power"]["tdp_max"] or self.power is None:
+        now = time.monotonic()
+        if p is None or self.power is None or now - self.power_at > 3 * TICK_SLOW:
+            self.power = p  # a reading after a pause starts the average anew
+        else:
+            self.power += EMA * (p - self.power)
+        self.power_at = now
+
+    def tdp_tick(self):
+        cpu_busy = self.cpu_load
+        if not self.tdp_on():
             changed = self.tdp_cpu or self.tdp_gpu
             self.tdp_cpu = self.tdp_gpu = 0
             return bool(changed)
+        if self.power is None:
+            # no reading to trust (the RP5 on its charger): the caps stay where they are
+            return False
         if self.tdp_wait:
             self.tdp_wait -= 1
             return False
@@ -560,10 +717,11 @@ class Daemon:
             # over budget: slow down the busier unit, it's the one drawing the power
             for _ in range(steps):
                 gpu_first = gpu_busy >= cpu_busy
-                if (gpu_first or not cpu_room) and gpu_room:
+                # rooms > 0: a shorter GPU table (manual -> auto) can leave one below 0
+                if (gpu_first or cpu_room <= 0) and gpu_room > 0:
                     self.tdp_gpu += 1
                     gpu_room -= 1
-                elif cpu_room:
+                elif cpu_room > 0:
                     self.tdp_cpu += 1
                     cpu_room -= 1
         elif err < -0.8:
@@ -669,7 +827,8 @@ class Daemon:
                         self.auto_cpu -= 1
         else:
             self.auto_steady += 1
-            self.auto_peak["gpu"] = max(self.auto_peak["gpu"], read_int(f"{self.hw.gpu}/cur_freq", 0))
+            if self.hw.gpu:
+                self.auto_peak["gpu"] = max(self.auto_peak["gpu"], read_int(f"{self.hw.gpu}/cur_freq", 0))
             for c in self.hw.clusters:
                 cur = read_int(f"{c['path']}/scaling_cur_freq")
                 if cur:
@@ -709,10 +868,19 @@ class Daemon:
             setattr(self, f"auto_{unit}", options[unit])
             self.auto_last = unit
 
+    def gpu_steps_changed(self):
+        """The GPU table the TDP limit and Auto TDP step through changed (auto <-> manual):
+        their steps kept within it, and Auto TDP's record of the old table's steps dropped."""
+        top = max(0, len(self.gpu_steps()) - 1)
+        self.tdp_gpu = min(self.tdp_gpu, top)
+        self.auto_gpu = min(self.auto_gpu, top)
+        self.auto_block.pop("gpu", None)
+        self.auto_fails = {k: v for k, v in self.auto_fails.items() if k[0] != "gpu"}
+
     # --- charging ---
 
     def clamp_custom(self, ua):
-        ua = round(int(ua) / CUSTOM_STEP_UA) * CUSTOM_STEP_UA
+        ua = round(to_int(ua, self.custom_max // 2, 0, self.custom_max) / CUSTOM_STEP_UA) * CUSTOM_STEP_UA
         return max(CUSTOM_MIN_UA, min(self.custom_max, ua))
 
     def charge_speed_ua(self):
@@ -722,13 +890,14 @@ class Daemon:
 
     def charge_tick(self, now=False):
         """Charge current from the charge speed; while held at the charge limit, a current of
-        0 or inhibit-charge (the charger keeps powering the system, the battery sits idle)."""
+        0 or inhibit-charge (the charger keeps powering the system, the battery sits idle).
+        Every CHARGE_EVERY seconds, whatever the tick's pace."""
         if not (self.speeds or self.charge_mode in ("current", "inhibit")):
             return
-        if not now and self.charge_wait:
-            self.charge_wait -= 1
+        t = time.monotonic()
+        if not now and t < self.charge_next:
             return
-        self.charge_wait = CHARGE_TICKS - 1
+        self.charge_next = t + CHARGE_EVERY
         limit = self.state["steam"]["charge_limit"]
         if self.charge_mode in ("current", "inhibit") and limit >= 0:
             level = read_int(f"{self.hw.battery}/capacity")
@@ -739,27 +908,104 @@ class Daemon:
                     self.charge_held = False
         else:
             self.charge_held = False
+        held = self.charge_held or self.sleep_hold
         if self.charge_mode == "inhibit":
-            want = "inhibit-charge" if self.charge_held else "auto"
+            want = "inhibit-charge" if held else "auto"
             # the file lists every behaviour with the active one in brackets
             if f"[{want}]" not in (read(self.hw.charge_behaviour) or ""):
                 write(self.hw.charge_behaviour, want)
-        want = 0 if self.charge_held and self.charge_mode == "current" else self.charge_speed_ua()
+        want = 0 if held and self.charge_mode == "current" else self.charge_speed_ua()
         # read back rather than trust the last write: a firmware restart resets it
         if self.hw.charge_current and want is not None and read_int(self.hw.charge_current) != want:
             write(self.hw.charge_current, want)
 
-    def tick(self):
-        self.ticks += 1
+    def guarded(self, part, fn):
+        """fn(), its error logged (once while it repeats): one part failing keeps the others,
+        the fan's first, running."""
         try:
-            # both run every tick: auto_tick judges the CPU load tdp_tick reads
-            if self.tdp_tick() | self.auto_tick():
-                self.apply_caps()
-            self.fan_tick()
-            self.charge_tick()
-        except Exception as e:  # keep the fan loop alive whatever a sysfs read does
-            log(f"tick: {e!r}")
-        return True
+            r = fn()
+            self.tick_errors.pop(part, None)
+            return r
+        except Exception as e:
+            if self.tick_errors.get(part) != repr(e):
+                self.tick_errors[part] = repr(e)
+                log(f"tick: {part}: {e!r}")
+            return None
+
+    def caps_tick(self):
+        if self.tdp_on() or time.monotonic() < self.watch_until:
+            self.measure()
+        if self.tdp_on() or self.auto_on():
+            self.cpu_load = self.hw.cpu_busy()  # tdp_tick and auto_tick judge the busiest CPU
+        # both run every tick
+        changed = self.guarded("TDP limit", self.tdp_tick)
+        changed = self.guarded("Auto TDP", self.auto_tick) or changed
+        if changed:
+            self.apply_caps()
+
+    def fast(self):
+        """Whether a tick is needed every second: for a fan setting held here (and its full
+        speed from full_speed_temp), the TDP limit, Auto TDP, or someone reading the draw."""
+        return (self.fan_saved_cdev is not None or self.fan_setting()["mode"] != "auto"
+                or self.tdp_on() or self.auto_on() or bool(self.tdp_cpu or self.tdp_gpu or self.auto_cpu or self.auto_gpu)
+                or time.monotonic() < self.watch_until)
+
+    def schedule(self, seconds=None):
+        if self.timer:
+            GLib.source_remove(self.timer)
+        self.timer_s = seconds or (1 if self.guarded("schedule", self.fast) is not False else TICK_SLOW)
+        self.timer = GLib.timeout_add_seconds(self.timer_s, self.tick)
+
+    def wake(self):
+        """After a change that may need a tick every second: from now, not the next slow tick."""
+        if self.timer and self.timer_s > 1 and self.guarded("schedule", self.fast):
+            self.schedule(1)
+
+    def tick(self):
+        self.timer = 0
+        self.ticks += 1
+        self.guarded("fan", self.fan_tick)
+        self.guarded("caps", self.caps_tick)
+        self.guarded("charging", self.charge_tick)
+        self.schedule()
+        return False
+
+    # --- sleep ---
+
+    def inhibit(self):
+        """A logind delay lock: sleep waits (briefly) for the charge limit to be set for it."""
+        if self.sleep_lock >= 0 or not self.login:
+            return
+        try:
+            r, fds = self.login.call_with_unix_fd_list_sync(
+                "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager",
+                "Inhibit", GLib.Variant("(ssss)", ("sleep", "kettle-powerd", "Charge limit set for sleep", "delay")),
+                GLib.VariantType("(h)"), Gio.DBusCallFlags.NONE, 5000, None, None)
+            self.sleep_lock = fds.get(r.unpack()[0])
+        except GLib.Error as e:
+            log(f"no sleep delay lock: {e.message}")
+
+    def on_sleep(self, conn, sender, path, iface, signal_name, params):
+        """Asleep no tick runs, so a battery charging toward the charge limit would charge on to
+        full: one at or just below the limit stops charging for the sleep. One further below
+        keeps charging (overnight on the charger) and can still go past the limit by morning."""
+        going = params.unpack()[0]
+        try:
+            limit = self.state["steam"]["charge_limit"]
+            level = read_int(f"{self.hw.battery}/capacity") if going and limit >= 0 else None
+            self.sleep_hold = level is not None and level >= limit - SLEEP_MARGIN
+            if self.sleep_hold:
+                log(f"sleep at {level}% (limit {limit}%): charging held until wake")
+            self.charge_tick(now=True)
+        except Exception as e:
+            log(f"sleep: {e!r}")
+        finally:
+            if going:
+                if self.sleep_lock >= 0:
+                    os.close(self.sleep_lock)
+                    self.sleep_lock = -1
+            else:
+                self.inhibit()
 
     # --- Steam's properties ---
 
@@ -777,6 +1023,8 @@ class Daemon:
         write(f"{self.hw.battery}/charge_control_end_threshold", 100 if limit < 0 else limit)
 
     def gpu_range(self):
+        if not self.hw.gpu:
+            return (0, 0)
         return (max(self.cfg["gpu"]["manual_min_mhz"], self.hw.gpu_freqs[0] // 1_000_000),
                 self.hw.gpu_freqs[-1] // 1_000_000)
 
@@ -803,34 +1051,25 @@ class Daemon:
 
     def set_property(self, iface, prop, value):
         s = self.state["steam"]
-        pw = self.cfg["power"]
         iface = iface.removeprefix(SOM)
-        if (iface, prop) == ("TdpLimit1", "TdpLimit"):
-            s["tdp"] = max(pw["tdp_min"], min(pw["tdp_max"], value))
-        elif (iface, prop) == ("PerformanceProfile1", "PerformanceProfile"):
-            if value not in self.profiles:
-                return False
-            s["profile"] = value
-        elif (iface, prop) == ("GpuPerformanceLevel1", "GpuPerformanceLevel"):
-            if value not in ("auto", "manual"):
-                return False
-            s["gpu_level"] = value
-        elif (iface, prop) == ("GpuPerformanceLevel1", "ManualGpuClock"):
-            lo, hi = self.gpu_range()
-            s["gpu_clock"] = max(lo, min(hi, value))
-        elif (iface, prop) == ("BatteryChargeLimit1", "MaxChargeLevel"):
-            s["charge_limit"] = -1 if value < 0 or value >= 100 else max(pw["charge_limit_min"], value)
-            self.apply_charge_limit()
-        elif (iface, prop) == ("FanControl1", "FanControlState"):
-            if value not in (0, 1):
-                return False
-            s["fan_control"] = value
-            self.fan_tick()
-        else:
+        key = STEAM_PROPERTIES.get((iface, prop))
+        if not key:
             return False
+        try:
+            value = self.steam_value(key, value)
+        except (TypeError, ValueError):
+            return False
+        old, s[key] = s[key], value
+        if key == "charge_limit":
+            self.apply_charge_limit()
+        elif key == "fan_control":
+            self.fan_tick()
+        elif key == "gpu_level" and value != old:
+            self.gpu_steps_changed()
         self.save()
         self.apply_caps()
         self.changed(SOM + iface, prop)
+        self.wake()
         return True
 
     def changed(self, iface, prop):
@@ -852,8 +1091,8 @@ class Daemon:
             "fan_custom": self.fan_saved_cdev is not None,
             "cpu_khz": {c["name"]: read_int(f"{c['path']}/scaling_cur_freq") for c in hw.clusters},
             "cpu_cap_khz": cpu,
-            "gpu_mhz": (read_int(f"{hw.gpu}/cur_freq") or 0) // 1_000_000,
-            "gpu_cap_mhz": gmax // 1_000_000,
+            "gpu_mhz": (read_int(f"{hw.gpu}/cur_freq") or 0) // 1_000_000 if hw.gpu else None,
+            "gpu_cap_mhz": gmax // 1_000_000 if gmax else None,
             "gpu_load": hw.gpu_busy(),
             "tdp_limiting": bool(self.tdp_cpu or self.tdp_gpu),
             "auto_tdp": {"on": self.auto_on(), "target": self.auto_target, "fps_limit": self.fps_limit,
@@ -889,6 +1128,13 @@ class Daemon:
 
     def method(self, name, args):
         if name == "GetStatus":
+            # the draw is measured only while someone reads it: a reading now if there's none
+            # from the last tick, then every tick for STATUS_WATCH seconds
+            now = time.monotonic()
+            if now - self.power_at > 1.5:
+                self.measure()
+            self.watch_until = now + STATUS_WATCH
+            self.wake()
             return json.dumps(self.status())
         if name == "GetInfo":
             return json.dumps(self.info())
@@ -898,19 +1144,33 @@ class Daemon:
             return json.dumps({"custom": appid in g, "settings": g.get(appid) or g["default"]})
         if name == "SetGame":
             appid, settings = args[0] or "default", json.loads(args[1] or "null")
+            g = self.state["games"]
             if settings is None:
-                if appid != "default":
-                    self.state["games"].pop(appid, None)
+                if appid == "default" or appid not in g:
+                    return ""
+                del g[appid]
             else:
-                g = self.state["games"]
-                # a client without Auto TDP (the Performance app sends fan and cpu) leaves it as it
-                # was; {} is a reset to the defaults
+                if not isinstance(settings, dict):
+                    raise ValueError("settings: a JSON object, or null")
+                # {} is a reset to the defaults. Otherwise the keys sent change the game's
+                # settings (its own, or the all-games ones it follows until now), fan and cpu key
+                # by key: a client sends what it changes, and leaves what another changed meanwhile
                 if settings:
-                    settings.setdefault("auto_tdp", (g.get(appid) or g["default"])["auto_tdp"])
-                g[appid] = self.normalize(settings)
+                    base = g.get(appid) or g["default"]
+                    merged = {**base, **settings}
+                    for k in ("fan", "cpu"):
+                        merged[k] = {**base[k], **(settings[k] if isinstance(settings.get(k), dict) else {})}
+                    settings = merged
+                new = self.normalize(settings)
+                if g.get(appid) == new:
+                    return ""
+                g.pop(appid, None)
+                g[appid] = new  # last: the most recently set
+                self.trim_games()
             self.save()
             self.apply()
             self.fan_tick()
+            self.wake()
             return ""
         if name == "SetChargeSpeed":
             if args[0] not in self.speeds and not (self.custom_max and args[0] == CUSTOM):
@@ -948,6 +1208,7 @@ class Daemon:
                 self.auto_reset()
                 self.apply()
                 self.fan_tick()
+                self.wake()
             return ""
         raise ValueError(name)
 
@@ -973,6 +1234,13 @@ class Daemon:
             if iface.name == SOM + "BatteryChargeLimit1" and not self.charge_ok:
                 continue
             conn.register_object(OBJ_PATH, iface, self.on_method, self.on_get, self.on_set)
+        # a charge limit held here needs setting for sleep
+        if BUS == Gio.BusType.SYSTEM and self.charge_mode in ("current", "inhibit") and not self.login:
+            self.login = conn
+            conn.signal_subscribe("org.freedesktop.login1", "org.freedesktop.login1.Manager",
+                                  "PrepareForSleep", "/org/freedesktop/login1", None,
+                                  Gio.DBusSignalFlags.NONE, self.on_sleep)
+            self.inhibit()
 
     def run(self):
         self.apply()
@@ -990,9 +1258,19 @@ class Daemon:
             GLib.unix_signal_add(GLib.PRIORITY_HIGH, sig, stop)
         Gio.bus_own_name(BUS, BUS_NAME, Gio.BusNameOwnerFlags.NONE, self.on_bus, None,
                          lambda *_: log(f"lost the bus name {BUS_NAME}"))
-        GLib.timeout_add(TICK_MS, self.tick)
         loop.run()
         restore(self.hw, self)
+
+
+# Steam's properties and their names in state["steam"]
+STEAM_PROPERTIES = {
+    ("TdpLimit1", "TdpLimit"): "tdp",
+    ("PerformanceProfile1", "PerformanceProfile"): "profile",
+    ("GpuPerformanceLevel1", "GpuPerformanceLevel"): "gpu_level",
+    ("GpuPerformanceLevel1", "ManualGpuClock"): "gpu_clock",
+    ("BatteryChargeLimit1", "MaxChargeLevel"): "charge_limit",
+    ("FanControl1", "FanControlState"): "fan_control",
+}
 
 
 def clamp_pct(v):
@@ -1019,7 +1297,7 @@ def restore(hw, daemon=None):
         if hw.fan_cdev:
             write(f"{hw.fan_cdev}/cur_state",
                   kernel_fan_level(hw.fan_temp(), read_int(f"{hw.fan_cdev}/max_state", 7)))
-    for c in hw.clusters:
+    for c in hw.cfg["cpu"]["clusters"]:
         for cpu_id in c["cpus"]:
             if cpu_id != 0 and read_int(f"/sys/devices/system/cpu/cpu{cpu_id}/online") == 0:
                 write(f"/sys/devices/system/cpu/cpu{cpu_id}/online", 1)

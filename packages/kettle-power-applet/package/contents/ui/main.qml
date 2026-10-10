@@ -15,7 +15,9 @@ PlasmoidItem {
 
     PowerBackend {
         id: powerBackend
-        interval: root.expanded ? 1000 : 5000
+        // collapsed, the tooltip's readings and Desktop Mode kept active in kettle-powerd: each
+        // status read has it measure the draw for a while (firmware reads on the AYNs)
+        interval: root.expanded ? 1000 : 60000
     }
 
     Plasmoid.icon: "speedometer"

@@ -4,7 +4,7 @@
 pkgbase=kettle-ucm-ayn
 pkgname=(kettle-ucm-odin2portal kettle-ucm-thor)
 pkgver=1.0.0
-pkgrel=3
+pkgrel=4
 pkgdesc='ALSA UCM profiles for AYN SM8550 handhelds'
 arch=(any)
 license=(BSD-3-Clause)
@@ -40,11 +40,13 @@ _package() {
 
 package_kettle-ucm-odin2portal() {
   pkgdesc='ALSA UCM profile for the AYN Odin 2 Portal'
+  conflicts=(kettle-ucm-thor)  # both have conf.d/sm8550/ayn-AYNOdin2.conf
   _package Odin2 AYN-Odin2 ayn-AYNOdin2- ayn-AYNOdin2
 }
 
 package_kettle-ucm-thor() {
   pkgdesc='ALSA UCM profile for the AYN Thor'
+  conflicts=(kettle-ucm-odin2portal)
   _package Thor AYN-Thor ayn-AYNThor- ayn-AYNThor
   # The U-Boot on Thors reports the same SMBIOS product as the Odin 2's ("AYN Odin 2"), so
   # booted through EFI the Thor's card is "ayn-AYNOdin2" too (seen on a Thor): the Portal's

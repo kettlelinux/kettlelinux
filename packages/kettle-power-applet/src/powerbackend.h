@@ -71,9 +71,10 @@ public:
     // one of Steam's values, by its GetStatus name: profile, tdp, gpu_level, gpu_clock,
     // fan_control, charge_limit
     Q_INVOKABLE void setSteam(const QString &key, const QVariant &value);
-    // the fan and CPU settings shown (settings): Desktop Mode's own, or in GameMode the running
-    // game's own if it has them, else the all-games ones
-    Q_INVOKABLE void setSettings(const QVariantMap &settings);
+    // a change to the settings shown (settings), only the keys changed ({fan: {mode: "fixed"}}):
+    // Desktop Mode's own, or in GameMode the running game's own if it has them, else the
+    // all-games ones
+    Q_INVOKABLE void setSettings(const QVariantMap &patch);
     // back to the all-games settings (GameMode, with no game settings of its own: the all-games
     // settings back to their defaults)
     Q_INVOKABLE void resetSettings();

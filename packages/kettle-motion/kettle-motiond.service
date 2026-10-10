@@ -1,5 +1,9 @@
 [Unit]
 Description=Motion sensors for Steam Input
+# The ADSP's sensors, as kettle-hexagonrpcd.service: none on SM8250-era devices (the RP5 has no
+# fastrpc-adsp, and its sensors are on the SLPI, fastrpc-sdsp)
+ConditionPathExists=/dev/fastrpc-adsp
+ConditionPathExists=!/dev/fastrpc-sdsp
 Requires=kettle-hexagonrpcd.service
 After=kettle-hexagonrpcd.service
 

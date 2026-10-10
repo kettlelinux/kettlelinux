@@ -105,19 +105,25 @@ Kirigami.ApplicationWindow {
         property real trackpadSpeed: 6
     }
 
+    // the window can be seen: not minimized or hidden (Desktop Mode)
+    readonly property bool shown: visibility !== Window.Minimized && visibility !== Window.Hidden
+
     // While Steam has dimmed the screens for idleness, nobody is reading these: they stop, and
     // with them this window's redraws, each of which the bottom screen's KWin and gamescope
     // composite again (about 0.07 W on the Thor). They read at once when the screens come back.
     PowerBackend {
         id: powerBackend
         mode: window.gameMode ? PowerBackend.GameMode : PowerBackend.Desktop
-        interval: prefs.interval
+        // minimized, only kept in step with kettle-powerd (each status read has it measure the
+        // draw for a while, a few firmware reads a second)
+        interval: window.shown ? prefs.interval : 60000
         active: !bottomScreenSetting.dimmed
     }
+    // only the Stats tab shows these (its battery readings are firmware round trips on the AYNs)
     SystemStats {
         id: systemStats
         interval: prefs.interval
-        active: !bottomScreenSetting.dimmed
+        active: !bottomScreenSetting.dimmed && window.shown && prefs.tab === 0
     }
     GameStats {
         id: gameStats
