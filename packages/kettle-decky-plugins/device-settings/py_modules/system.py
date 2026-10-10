@@ -1,17 +1,22 @@
 # The System tab: what the device starts up in, Game Mode or the desktop (steamos-manager's
-# default login mode, through steamosctl on the user's session bus); the SSH server, started and
-# stopped (Game Mode has no password prompt, so polkit lets the active local user do that, and
-# only that, for sshd.service: 50-kettle-ssh.rules; enabling it at every start-up stays with the
-# desktop's Kettle Welcome); and resetting the device (kettle-reset, through pkexec:
-# 50-kettle-reset.rules lets Decky's plugin backends do that): every setting back to its default,
-# or everything erased. Erasing is refused while /home holds the Kettle Installer's backup of the
-# internal storage; the desktop's Reset Kettle says what that means first. These were the Welcome
-# window's up to 1.12.0-38.
+# default login mode, through steamosctl on the user's session bus); the SSH server, turned on and
+# off (Game Mode has no password prompt: kettle-ssh through pkexec, org.kettle.ssh,
+# 50-kettle-ssh.rules; enabling it at every start-up stays with the desktop's Kettle Welcome); and
+# resetting the device (kettle-reset, through pkexec: 50-kettle-reset.rules lets Decky's plugin
+# backends do that): every setting back to its default, or everything erased. Erasing is refused
+# while /home holds the Kettle Installer's backup of the internal storage; the desktop's Reset
+# Kettle says what that means first. These were the Welcome window's up to 1.12.0-38.
 #
 # And the bootloader, where it's the ROCKNIX ABL (devices whose stock bootloader can't start
 # U-Boot): kettle-abl-update (package rocknix-abl) through pkexec, as org.kettle.abl-update
 # (50-kettle-abl-update.rules lets Decky's plugin backends run it), --check first, then --yes. It
 # only ever replaces a ROCKNIX ABL it recognises with the image's release, never a stock one.
+#
+# Turning SSH on, erasing everything and updating the bootloader wait, as root, for the device's
+# Volume Up and Volume Down to be held together (/usr/lib/kettle/confirm-keys): no password is
+# asked, and a dialog could be clicked by any program running as the user. Plugin.main shows
+# what's waiting (/run/kettle/confirm.json) as a notification.
+import json
 import os
 import pwd
 import re
@@ -24,6 +29,8 @@ RESET = "/usr/bin/kettle-reset"
 UFS_BACKUP = "/home/.kettle/ufs-backup"  # the Kettle Installer's (kettle-backup-ufs)
 RESETS = ("settings", "everything")
 ABL_UPDATE = "/usr/bin/kettle-abl-update"  # package rocknix-abl
+SSH = "/usr/lib/kettle/kettle-ssh"
+CONFIRM = "/run/kettle/confirm.json"  # confirm-keys: what the volume keys are being waited for
 
 
 def _session_env() -> dict:
@@ -80,10 +87,11 @@ def ssh_status() -> dict:
 
 
 def set_ssh(on: bool):
-    r = subprocess.run(["systemctl", "start" if on else "stop", "sshd.service"], capture_output=True, text=True,
-                       timeout=30)
+    # on: up to 30 s for the volume keys
+    r = subprocess.run(["pkexec", SSH, "on" if on else "off"], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
-        raise RuntimeError(r.stderr.strip() or "systemd refused")
+        msg = (r.stderr.strip().splitlines() or ["kettle-ssh failed"])[-1]
+        raise RuntimeError(msg.removeprefix("kettle-ssh: "))
     decky.logger.info("SSH server %s", "started" if on else "stopped")
 
 
@@ -105,9 +113,10 @@ def reset(what: str):
     # kettle-reset restarts the device itself: as root, which logind lets reboot (Decky's backend,
     # outside any session, would need a password)
     decky.logger.info("reset %s on the next start; restarting", what)
-    r = subprocess.run(["pkexec", RESET, what], capture_output=True, text=True, timeout=60)
+    r = subprocess.run(["pkexec", RESET, what], capture_output=True, text=True, timeout=90)  # 30 s of it the keys
     if r.returncode != 0:
-        raise RuntimeError((r.stderr or r.stdout).strip() or f"kettle-reset failed ({r.returncode})")
+        msg = ((r.stderr or r.stdout).strip().splitlines() or [f"kettle-reset failed ({r.returncode})"])[-1]
+        raise RuntimeError(msg.removeprefix("kettle-reset: "))
 
 
 def _abl(*args: str, timeout: int) -> dict:
@@ -164,3 +173,12 @@ def abl_update() -> dict:
     decky.logger.info("kettle-abl-update: %s", s["result"])
     _abl_update["last"] = s
     return s
+
+
+def confirm_pending() -> dict | None:
+    """What the volume keys are being waited for ({"what", "until"}), if anything."""
+    try:
+        with open(CONFIRM) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None

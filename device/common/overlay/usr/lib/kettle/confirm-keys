@@ -1,0 +1,112 @@
+#!/usr/bin/python3 -I
+# Kettle Linux: the person holding the device confirms an action by holding Volume Up and Volume
+# Down together for a second, within 30 seconds. Run as root, by what pkexec lets Game Mode and
+# the desktop run without a password (kettle-reset everything, kettle-ssh on, kettle-abl-update):
+# polkit can't tell those apart from any other program running as the user, a game included, and
+# a dialog can be clicked by one. Key presses are read from the device's own buttons (input
+# devices outside /sys/devices/virtual), which a program can't fake: what it can make (uinput) is
+# virtual. Only presses made after the request count.
+#
+#   confirm-keys "<what>"   exit 0: confirmed; 1: not (the time ran out); 2: no volume keys
+#
+# While it waits, /run/kettle/confirm.json says what for ({"what", "until"}): Device Settings
+# shows it in Game Mode, and the desktop's Reset Kettle window says so itself.
+import glob
+import json
+import os
+import select
+import struct
+import sys
+import time
+
+KEY_VOLUMEDOWN, KEY_VOLUMEUP = 114, 115
+EV_KEY = 1
+WAIT = 30.0   # s to confirm in
+HOLD = 1.0    # s both keys stay down
+STATE = "/run/kettle/confirm.json"
+EVENT = struct.Struct("llHHi")  # struct input_event on 64-bit: timeval, type, code, value
+
+
+def volume_keys() -> list[int]:
+    """Open the physical input devices that have a volume key."""
+    fds = []
+    for ev in sorted(glob.glob("/sys/class/input/event*")):
+        if "/devices/virtual/" in os.path.realpath(ev + "/device"):
+            continue
+        try:
+            with open(ev + "/device/capabilities/key") as f:
+                words = f.read().split()
+        except OSError:
+            continue
+        bits = 0
+        for i, w in enumerate(reversed(words)):
+            bits |= int(w, 16) << (64 * i)
+        if bits >> KEY_VOLUMEUP & 1 or bits >> KEY_VOLUMEDOWN & 1:
+            try:
+                fds.append(os.open("/dev/input/" + ev.rsplit("/", 1)[1], os.O_RDONLY | os.O_NONBLOCK))
+            except OSError:
+                pass
+    return fds
+
+
+def wait(fds: list[int]) -> bool:
+    down: set[int] = set()
+    both_since = None
+    end = time.monotonic() + WAIT
+    while (now := time.monotonic()) < end:
+        if both_since is not None and now - both_since >= HOLD:
+            return True
+        timeout = end - now if both_since is None else min(end - now, both_since + HOLD - now)
+        ready, _, _ = select.select(fds, [], [], max(timeout, 0))
+        for fd in ready:
+            try:
+                data = os.read(fd, EVENT.size * 64)
+            except BlockingIOError:
+                continue
+            for i in range(0, len(data) - EVENT.size + 1, EVENT.size):
+                _, _, type_, code, value = EVENT.unpack_from(data, i)
+                if type_ != EV_KEY or code not in (KEY_VOLUMEUP, KEY_VOLUMEDOWN):
+                    continue
+                if value:  # 1 pressed, 2 repeat
+                    down.add(code)
+                else:
+                    down.discard(code)
+        if down == {KEY_VOLUMEUP, KEY_VOLUMEDOWN}:
+            if both_since is None:
+                both_since = time.monotonic()
+        else:
+            both_since = None
+    return False
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print("usage: confirm-keys <what>", file=sys.stderr)
+        return 2
+    if os.geteuid() != 0:
+        print("confirm-keys: run as root", file=sys.stderr)
+        return 2
+    fds = volume_keys()
+    if not fds:
+        print("confirm-keys: no volume keys found", file=sys.stderr)
+        return 2
+    os.makedirs(os.path.dirname(STATE), mode=0o755, exist_ok=True)
+    with open(STATE + ".new", "w") as f:
+        json.dump({"what": sys.argv[1], "until": time.time() + WAIT}, f)
+    os.chmod(STATE + ".new", 0o644)
+    os.replace(STATE + ".new", STATE)
+    print(f"Hold Volume Up and Volume Down together for a second to confirm: {sys.argv[1]}", file=sys.stderr)
+    try:
+        ok = wait(fds)
+    finally:
+        try:
+            os.remove(STATE)
+        except OSError:
+            pass
+    if not ok:
+        print("confirm-keys: not confirmed", file=sys.stderr)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

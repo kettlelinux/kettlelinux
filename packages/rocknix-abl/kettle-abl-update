@@ -19,10 +19,14 @@
 #   --porcelain  also print, for programs (Device Settings' System tab): "slot <a|b> <version |
 #                test-signed | other>", "image <version>", and last "result <code>", one of
 #                no-build, no-partitions, stock, unknown, newer, up-to-date, would-update,
-#                low-battery, cancelled, updated (errors: exit 1, the message on stderr)
+#                low-battery, cancelled, not-confirmed, updated (errors: exit 1, the message
+#                on stderr)
 #
 # Device Settings runs it through pkexec (org.kettle.abl-update: allowed for Decky's plugin
-# backends, 50-kettle-abl-update.rules), with --check, then --yes to update.
+# backends, 50-kettle-abl-update.rules), with --check, then --yes to update. Through pkexec
+# (no password asked), it writes only once the device's Volume Up and Volume Down have been held
+# together (confirm-keys), which no program running as the user can do in its place, and
+# --force is refused: that takes sudo, in a terminal.
 set -euo pipefail
 
 SHARE=/usr/share/kettle/rocknix-abl
@@ -39,6 +43,9 @@ for a in "$@"; do
     *) echo "usage: kettle-abl-update [--check] [--yes] [--force] [--porcelain]" >&2; exit 2 ;;
   esac
 done
+if [ "$FORCE" = 1 ] && [ -n "${PKEXEC_UID:-}" ]; then
+  echo "kettle-abl-update: --force takes sudo, in a terminal" >&2; exit 1
+fi
 
 say() { echo "kettle-abl-update: $*"; }
 die() { echo "kettle-abl-update: $*" >&2; exit 1; }
@@ -139,6 +146,10 @@ if [ "$ac" = 0 ] && [ -n "$bat" ] && [ "$bat" -lt "$MIN_BATTERY" ]; then
   done_ low-battery "battery at ${bat}%: not updating until the charger is connected (or above ${MIN_BATTERY}%)"
 fi
 
+if [ -n "${PKEXEC_UID:-}" ] && [ "$CHECK" = 0 ]; then
+  /usr/lib/kettle/confirm-keys "Update the bootloader to ROCKNIX ABL $NEW" ||
+    done_ not-confirmed "nothing changed: hold Volume Up and Volume Down together for a second, within 30 seconds"
+fi
 if [ "$YES" = 0 ]; then
   read -r -p "Update the ROCKNIX ABL in ${todo[*]} to $NEW? Don't power off while it runs. [y/N] " r || r=""
   [[ "$r" =~ ^[yY] ]] || done_ cancelled "nothing changed"

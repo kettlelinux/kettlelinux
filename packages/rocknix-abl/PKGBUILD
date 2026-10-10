@@ -27,7 +27,7 @@ source=("rocknix-abl-v$pkgver.tar.gz::https://github.com/ROCKNIX/abl/releases/do
         50-kettle-abl-update.rules)
 sha256sums=('64034fb076ea0bb858beaa2f29dbef635e97d29f3e3d32c13bce61bd4af4cff7'
             '3d72c8ac7ef9076135f7ad84b48c29a6b6380acf95481b06f6016d2592c6ebde'
-            'cefadfd95349f94c40be868e98a3f05ecafec9c311e7b33dded36f260516c8ae'
+            '53140d58333f54a3360eef3d3ad3294a75f5f669e859901a37b83775007d624b'
             'ccb041990f5a20869fa85b551f1c207e52052adfa3962fdbd404e0399672a798'
             '7b38271af0e1aa1b143cc1ed82ba47025c2e00757ff9d33649c34091eb60cff3')
 

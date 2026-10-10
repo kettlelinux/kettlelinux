@@ -15,6 +15,10 @@
 #                             touched, and Android isn't either. Refused while /home holds a backup
 #                             of the internal storage (the Kettle Installer's) unless
 #                             --erase-android-backup is given: it is erased with /home.
+#                             Through pkexec (Game Mode's Device Settings, Steam's Factory Reset,
+#                             the desktop's Reset Kettle: no password asked), it first waits for the
+#                             device's Volume Up and Volume Down to be held together (confirm-keys),
+#                             which no program running as the user can do in its place.
 #   kettle-reset status | cancel   what's asked for on the next boot; take it back
 #   kettle-reset --gui        the desktop's Reset Kettle window (zenity), as the desktop user: it
 #                             asks, then runs one of the above through pkexec (org.kettle.reset)
@@ -61,6 +65,12 @@ do_everything() {
   if has_ufs_backup && [ "$erase_backup" != 1 ]; then
     die "$UFS_BACKUP holds a backup of the internal storage (Android), which a factory reset
 erases. Copy it somewhere else first, or give --erase-android-backup."
+  fi
+  if [ -n "${PKEXEC_UID:-}" ]; then
+    local what="Erase everything on this device"
+    [ "$erase_backup" = 1 ] && what="$what, the Android backup too"
+    /usr/lib/kettle/confirm-keys "$what" ||
+      die "not confirmed: hold Volume Up and Volume Down together for a second, within 30 seconds"
   fi
   rm -f "$RESET/request" "$RESET/home"   # /var is formatted anyway
   holo-factory-reset-config
@@ -130,7 +140,14 @@ All games, saves, screenshots, downloaded apps, your files and every setting on 
 
 The device restarts now and erases while it starts. This can't be undone."
       "${Z[@]}" --question --default-cancel --text="$text" --ok-label="Erase everything" --cancel-label=Back 2>/dev/null || exec "$0" --gui
-      exec pkexec /usr/bin/kettle-reset everything "${extra[@]}" ;;
+      # it waits for both volume keys (confirm-keys): say so while it does
+      pkexec /usr/bin/kettle-reset everything "${extra[@]}" &
+      local p=$!
+      while kill -0 "$p" 2>/dev/null; do sleep 0.5; done |
+        "${Z[@]}" --progress --pulsate --auto-close --no-cancel 2>/dev/null \
+          --text="<b>Hold Volume Up and Volume Down together for a second</b> to confirm.\n\nThe device then restarts and erases while it starts." &
+      wait "$p" || "${Z[@]}" --error --text="Nothing was erased: the volume keys weren't held within 30 seconds, or the reset was refused." 2>/dev/null
+      exit 0 ;;
   esac
 }
 

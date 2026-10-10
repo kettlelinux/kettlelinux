@@ -95,7 +95,7 @@ function RemoteAccess() {
           onChange={toggle}
           description={
             !s.active
-              ? "Lets another computer on your network log in, for copying files or a terminal. Change the password first, in the desktop."
+              ? "Lets another computer on your network log in, for copying files or a terminal. Change the password first, in the desktop. Turning it on asks you to hold Volume Up + Volume Down."
               : s.addresses.length > 0
                 ? `On. From another computer: ${s.addresses.map((a) => `ssh ${s.user}@${a}`).join(" or ")}`
                 : "On. Connect to a network to log in from another computer."
@@ -152,6 +152,7 @@ function confirm(what: What) {
     >
       {what === "settings" ? SETTINGS : EVERYTHING}
       <p>The device restarts now and {what === "settings" ? "resets" : "erases"} while it starts.{what === "everything" && " This can't be undone."}</p>
+      {what === "everything" && <p>Then hold Volume Up and Volume Down together for a second to confirm.</p>}
     </ConfirmModal>,
   );
 }
@@ -216,6 +217,8 @@ function ablText(a: Abl): string {
       return "One slot has the stock bootloader again (an Android update can do that): Kettle doesn't replace a stock bootloader. Reinstall the ROCKNIX ABL from Android if you need it.";
     case "low-battery":
       return "Connect the charger (or charge above 30%) first: the update stops if the power goes.";
+    case "not-confirmed":
+      return "Not updated: hold Volume Up and Volume Down together for a second, within 30 seconds of starting it.";
     default:
       return "";
   }
@@ -264,6 +267,7 @@ function Bootloader() {
           that doesn't check out gets its old contents back).
         </p>
         <p>Keep the device on and the charger connected until it's done: losing power while it writes can stop the device from starting.</p>
+        <p>Then hold Volume Up and Volume Down together for a second to confirm.</p>
       </ConfirmModal>,
     );
   return (
@@ -281,8 +285,8 @@ function Bootloader() {
           <ProgressBarWithInfo indeterminate nProgress={0} sOperationText="Updating the bootloader… keep the device on" />
         </PanelSectionRow>
       ) : (
-        // low-battery: again once the charger is in
-        (a.result === "would-update" || a.result === "low-battery") && (
+        // low-battery: again once the charger is in; not-confirmed: again, holding the keys
+        (a.result === "would-update" || a.result === "low-battery" || a.result === "not-confirmed") && (
           <PanelSectionRow>
             <ButtonItem layout="below" onClick={update}>
               Update to ROCKNIX ABL {a.image}…
