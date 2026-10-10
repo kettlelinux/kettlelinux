@@ -203,137 +203,128 @@
 		};
 	};
 
+	/*
+	 * Fan trips (qcs8550-ayn-fan.dtsi) are active: passive ones would make the gpuss zones
+	 * poll every 10 ms above 70 C. tsens interrupts on each crossing, so no polling-delay.
+	 */
 	thermal-zones {
 		cpuss0-thermal {
-			polling-delay = <200>;
 			trips {
-				cpuss0_fan0: trip-point2 { temperature = <50000>; hysteresis = <3000>; type = "passive"; };
-				cpuss0_fan1: trip-point3 { temperature = <55000>; hysteresis = <3000>; type = "passive"; };
-				cpuss0_fan2: trip-point4 { temperature = <60000>; hysteresis = <3000>; type = "passive"; };
-				cpuss0_fan3: trip-point5 { temperature = <65000>; hysteresis = <3000>; type = "passive"; };
-				cpuss0_fan4: trip-point6 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
-				cpuss0_fan5: trip-point7 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
-				cpuss0_fan6: trip-point8 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+				cpuss0_fan0: trip-point2 { temperature = <50000>; hysteresis = <3000>; type = "active"; };
+				cpuss0_fan1: trip-point3 { temperature = <55000>; hysteresis = <3000>; type = "active"; };
+				cpuss0_fan2: trip-point4 { temperature = <60000>; hysteresis = <3000>; type = "active"; };
+				cpuss0_fan3: trip-point5 { temperature = <65000>; hysteresis = <3000>; type = "active"; };
+				cpuss0_fan4: trip-point6 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
+				cpuss0_fan5: trip-point7 { temperature = <75000>; hysteresis = <3000>; type = "active"; };
+				cpuss0_fan6: trip-point8 { temperature = <80000>; hysteresis = <3000>; type = "active"; };
 			};
 
 		};
 		cpuss1-thermal {
-			polling-delay = <200>;
 			trips {
-				cpuss1_fan0: trip-point2 { temperature = <50000>; hysteresis = <3000>; type = "passive"; };
-				cpuss1_fan1: trip-point3 { temperature = <55000>; hysteresis = <3000>; type = "passive"; };
-				cpuss1_fan2: trip-point4 { temperature = <60000>; hysteresis = <3000>; type = "passive"; };
-				cpuss1_fan3: trip-point5 { temperature = <65000>; hysteresis = <3000>; type = "passive"; };
-				cpuss1_fan4: trip-point6 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
-				cpuss1_fan5: trip-point7 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
-				cpuss1_fan6: trip-point8 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+				cpuss1_fan0: trip-point2 { temperature = <50000>; hysteresis = <3000>; type = "active"; };
+				cpuss1_fan1: trip-point3 { temperature = <55000>; hysteresis = <3000>; type = "active"; };
+				cpuss1_fan2: trip-point4 { temperature = <60000>; hysteresis = <3000>; type = "active"; };
+				cpuss1_fan3: trip-point5 { temperature = <65000>; hysteresis = <3000>; type = "active"; };
+				cpuss1_fan4: trip-point6 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
+				cpuss1_fan5: trip-point7 { temperature = <75000>; hysteresis = <3000>; type = "active"; };
+				cpuss1_fan6: trip-point8 { temperature = <80000>; hysteresis = <3000>; type = "active"; };
 			};
 
 		};
 		cpuss2-thermal {
-			polling-delay = <200>;
 			trips {
-				cpuss2_fan0: trip-point2 { temperature = <50000>; hysteresis = <3000>; type = "passive"; };
-				cpuss2_fan1: trip-point3 { temperature = <55000>; hysteresis = <3000>; type = "passive"; };
-				cpuss2_fan2: trip-point4 { temperature = <60000>; hysteresis = <3000>; type = "passive"; };
-				cpuss2_fan3: trip-point5 { temperature = <65000>; hysteresis = <3000>; type = "passive"; };
-				cpuss2_fan4: trip-point6 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
-				cpuss2_fan5: trip-point7 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
-				cpuss2_fan6: trip-point8 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+				cpuss2_fan0: trip-point2 { temperature = <50000>; hysteresis = <3000>; type = "active"; };
+				cpuss2_fan1: trip-point3 { temperature = <55000>; hysteresis = <3000>; type = "active"; };
+				cpuss2_fan2: trip-point4 { temperature = <60000>; hysteresis = <3000>; type = "active"; };
+				cpuss2_fan3: trip-point5 { temperature = <65000>; hysteresis = <3000>; type = "active"; };
+				cpuss2_fan4: trip-point6 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
+				cpuss2_fan5: trip-point7 { temperature = <75000>; hysteresis = <3000>; type = "active"; };
+				cpuss2_fan6: trip-point8 { temperature = <80000>; hysteresis = <3000>; type = "active"; };
 			};
 
 		};
 		cpuss3-thermal {
-			polling-delay = <200>;
 			trips {
-				cpuss3_fan0: trip-point2 { temperature = <50000>; hysteresis = <3000>; type = "passive"; };
-				cpuss3_fan1: trip-point3 { temperature = <55000>; hysteresis = <3000>; type = "passive"; };
-				cpuss3_fan2: trip-point4 { temperature = <60000>; hysteresis = <3000>; type = "passive"; };
-				cpuss3_fan3: trip-point5 { temperature = <65000>; hysteresis = <3000>; type = "passive"; };
-				cpuss3_fan4: trip-point6 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
-				cpuss3_fan5: trip-point7 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
-				cpuss3_fan6: trip-point8 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+				cpuss3_fan0: trip-point2 { temperature = <50000>; hysteresis = <3000>; type = "active"; };
+				cpuss3_fan1: trip-point3 { temperature = <55000>; hysteresis = <3000>; type = "active"; };
+				cpuss3_fan2: trip-point4 { temperature = <60000>; hysteresis = <3000>; type = "active"; };
+				cpuss3_fan3: trip-point5 { temperature = <65000>; hysteresis = <3000>; type = "active"; };
+				cpuss3_fan4: trip-point6 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
+				cpuss3_fan5: trip-point7 { temperature = <75000>; hysteresis = <3000>; type = "active"; };
+				cpuss3_fan6: trip-point8 { temperature = <80000>; hysteresis = <3000>; type = "active"; };
 			};
 
 		};
 		cpu7-top-thermal {
-			polling-delay = <200>;
 			trips {
-				cpu7_top_fan0: trip-point2 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
-				cpu7_top_fan1: trip-point3 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
-				cpu7_top_fan2: trip-point4 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+				cpu7_top_fan0: trip-point2 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
+				cpu7_top_fan1: trip-point3 { temperature = <75000>; hysteresis = <3000>; type = "active"; };
+				cpu7_top_fan2: trip-point4 { temperature = <80000>; hysteresis = <3000>; type = "active"; };
 			};
 
 		};
 		gpuss-0-thermal {
-			polling-delay = <200>;
 			trips {
-				gpuss0_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
-				gpuss0_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
-				gpuss0_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+				gpuss0_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
+				gpuss0_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "active"; };
+				gpuss0_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "active"; };
 			};
 
 		};
 		gpuss-1-thermal {
-			polling-delay = <200>;
 			trips {
-				gpuss1_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
-				gpuss1_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
-				gpuss1_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+				gpuss1_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
+				gpuss1_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "active"; };
+				gpuss1_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "active"; };
 			};
 
 		};
 		gpuss-2-thermal {
-			polling-delay = <200>;
 			trips {
-				gpuss2_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
-				gpuss2_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
-				gpuss2_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+				gpuss2_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
+				gpuss2_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "active"; };
+				gpuss2_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "active"; };
 			};
 
 		};
 		gpuss-3-thermal {
-			polling-delay = <200>;
 			trips {
-				gpuss3_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
-				gpuss3_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
-				gpuss3_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+				gpuss3_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
+				gpuss3_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "active"; };
+				gpuss3_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "active"; };
 			};
 
 		};
 		gpuss-4-thermal {
-			polling-delay = <200>;
 			trips {
-				gpuss4_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
-				gpuss4_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
-				gpuss4_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+				gpuss4_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
+				gpuss4_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "active"; };
+				gpuss4_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "active"; };
 			};
 
 		};
 		gpuss-5-thermal {
-			polling-delay = <200>;
 			trips {
-				gpuss5_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
-				gpuss5_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
-				gpuss5_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+				gpuss5_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
+				gpuss5_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "active"; };
+				gpuss5_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "active"; };
 			};
 
 		};
 		gpuss-6-thermal {
-			polling-delay = <200>;
 			trips {
-				gpuss6_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
-				gpuss6_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
-				gpuss6_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+				gpuss6_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
+				gpuss6_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "active"; };
+				gpuss6_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "active"; };
 			};
 
 		};
 		gpuss-7-thermal {
-			polling-delay = <200>;
 			trips {
-				gpuss7_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
-				gpuss7_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
-				gpuss7_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+				gpuss7_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
+				gpuss7_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "active"; };
+				gpuss7_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "active"; };
 			};
 
 		};
@@ -598,10 +589,7 @@
 			regulator-min-microvolt = <2720000>;
 			regulator-max-microvolt = <3960000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-
-			regulator-state-mem {
-				regulator-off-in-suspend;
-			};
+			/* never off in suspend (s2idle honours state-mem, 1046/1047): feeds L17B, the UFS VCC */
 		};
 
 		vreg_l2b_3p0: ldo2 {
@@ -1522,7 +1510,7 @@
 		bias-pull-down;
 	};
 
-	dsi_p_te_suspend: dsi-s-te-suspend-state {
+	dsi_p_te_suspend: dsi-p-te-suspend-state {
 		pins = "gpio86";
 		function = "mdp_vsync";
 		drive-strength = <2>;

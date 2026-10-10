@@ -143,46 +143,6 @@
 		};
 	};
 
-	vbat: vbat-regulator {
-		compatible = "regulator-fixed";
-		regulator-name = "VBAT";
-		vin-supply = <&vreg_l11c_3p3>;
-		regulator-min-microvolt = <4200000>;
-		regulator-max-microvolt = <4200000>;
-		regulator-always-on;
-
-               regulator-state-mem {
-                       regulator-off-in-suspend;
-               };
-	};
-
-	vdc_3v3: vdc-3v3-regulator {
-		compatible = "regulator-fixed";
-		regulator-name = "VDC_3V3";
-		vin-supply = <&vreg_l11c_3p3>;
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
-		regulator-always-on;
-
-               regulator-state-mem {
-                       regulator-off-in-suspend;
-               };
-	};
-
-	vdc_5v: vdc-5v-regulator {
-		compatible = "regulator-fixed";
-		regulator-name = "VDC_5V";
-
-		regulator-min-microvolt = <5000000>;
-		regulator-max-microvolt = <5000000>;
-		regulator-always-on;
-		vin-supply = <&vreg_l11c_3p3>;
-
-               regulator-state-mem {
-                       regulator-off-in-suspend;
-               };
-	};
-
 	vdda_panel: vdda-panel-regulator {
 		compatible = "regulator-fixed";
 		regulator-name = "vdda_panel";

@@ -403,6 +403,8 @@
 		label = "bottom_touchscreen";
 
 		no-regmap-bulk-read;
+		/* the power-off/reset path in suspend breaks this panel (patch 1050) */
+		edt,retain-power-in-suspend;
 	};
 };
 
