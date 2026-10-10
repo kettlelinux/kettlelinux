@@ -130,16 +130,26 @@
         <li><strong>No telemetry.</strong> Kettle Linux doesn't collect usage data. It contacts Kettle's servers to
           check for and download updates (<code>updates.kettlelinux.org</code>), which, like any download, sends your
           IP address.</li>
-        <li><strong>Crash reports stay on the device</strong> unless you choose <em>Share</em> on one. Before a shared
-          report is uploaded, the device removes your user name, Steam IDs and account names, network names, MAC and
-          IP addresses and the device's name; core dumps are never uploaded. A shared report can be read by anyone
-          who has its link, and is deleted after 90 days.</li>
+        <li><strong>Crash reports stay on the device</strong> unless you choose <em>Share</em> on one. A shared report
+          contains: the system and kernel logs from before the crash and the game's output or the program's stack
+          trace (the last 256 KB of each); selected environment variables (graphics, Proton, Wine, FEX, Steam's game
+          ids, and ones such as <code>LANG</code> and <code>LD_PRELOAD</code>); the crashed program's path and command
+          line; the versions of the main installed packages (Mesa, Steam, FEX, Wine, gamescope, Decky and Kettle's
+          own); the game that crashed or was running (its name, Steam app ID and install folder name), the engine
+          it's built on and the Kettle features turned on for it; and the device model, kernel, Kettle version, build
+          and A/B slot. Before it's uploaded, the device removes your
+          user name from paths, Steam IDs and account names, MAC and IP addresses, log lines naming networks, nearby
+          devices or logins, and the device's name if you changed it from the default <code>kettle</code>; core dumps
+          are never uploaded. A shared report can be read by anyone who has its link, and is deleted after 90
+          days.</li>
         <li><strong>The game database</strong> receives something only when you share settings or answer whether they
           worked: the game, the settings, your device model and Kettle build, your rating and optional note, the
-          game's engine, and a hashed random ID for your install, so each device counts once. Shared entries are
-          public. With <em>Use verified settings automatically</em> turned on (it's off by default), your device asks
+          game's engine, and a random ID for your install, which the server stores only hashed, so each device counts
+          once. Shared entries are public. With <em>Use verified settings automatically</em> turned on (it's off by default), your device asks
           the database about your installed games by their Steam app IDs.</li>
-        <li>Kettle's servers use your IP address only to limit how often uploads can be made; they don't store it.
+        <li>Kettle's servers use your IP address only to limit how often uploads and votes can be made. They don't
+          store it: to count uploads and votes per day they keep a one-way hash of it (with the day, or the database
+          entry voted on) for at most two days.
           They run on Cloudflare, which processes requests under its own privacy policy.</li>
         <li>To have a crash report or a database entry you shared removed, <a href="#contact">get in touch</a> with
           its link or the game and date.</li>

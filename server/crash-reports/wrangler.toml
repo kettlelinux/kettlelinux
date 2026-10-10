@@ -18,3 +18,11 @@ bucket_name = "kettle-crash-reports"
 name = "UPLOADS"
 namespace_id = "1001"
 simple = { limit = 10, period = 60 }
+
+# uploads per day, per address (a hash of it) and in all (src/worker.js DAY_PER_ADDRESS, DAY_TOTAL).
+# Created with: npx wrangler kv namespace create kettle-crash-counts, which prints the id to put here
+[[kv_namespaces]]
+binding = "COUNTS"
+id = "REPLACE_WITH_THE_KV_NAMESPACE_ID"
+
+# the admin token for DELETE /v1/admin/reports/<id> is a secret: npx wrangler secret put ADMIN_TOKEN

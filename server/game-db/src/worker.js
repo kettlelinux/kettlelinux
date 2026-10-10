@@ -41,6 +41,9 @@ const RATINGS = ["great", "playable"];
 const STATUSES = ["pending", "approved", "rejected"];
 // community entries this much more often reported broken than confirmed are hidden
 const HIDE_BROKEN = 3;
+// new voters per entry from one address a day: install ids are made up by the client, so this is
+// what keeps one address from hiding an entry (or pushing an engine suggestion) on its own
+const VOTERS_PER_NET = 2;
 const PAGE = 50;
 
 const CHOICES = new Map(catalog.options.map((o) => [o.id, new Set(o.choices.map((c) => c.value))]));
@@ -74,12 +77,16 @@ export default {
       if (req.method === "OPTIONS" && p.startsWith("/v1/")) return cors(new Response(null, { status: 204 }));
       if (p === "/v1/catalog" && req.method === "GET") return cors(json(PUBLIC_CATALOG, 200, 3600));
       if (p === "/v1/games" && req.method === "GET") return cors(json({ games: await index(env) }, 200, 120));
-      if ((m = p.match(/^\/v1\/games\/(\d{1,10})$/)) && req.method === "GET")
+      if ((m = p.match(/^\/v1\/games\/(\d{1,10})$/)) && req.method === "GET") {
+        const profiles = await forGame(env, Number(m[1]));
         return cors(json({
           app_id: Number(m[1]),
+          // verified entries come first: their name over what a community entry sent
+          game: profiles[0]?.game ?? null,
           engine: await gameEngine(env, Number(m[1])),
-          profiles: await forGame(env, Number(m[1])),
+          profiles,
         }, 200, 60));
+      }
       if ((m = p.match(/^\/v1\/engines\/([a-z0-9-]{1,32})$/)) && req.method === "GET") {
         if (!ENGINES.has(m[1])) return text("No such engine", 404);
         return cors(json(await engineSuggestions(env, m[1]), 200, 3600));
@@ -107,11 +114,14 @@ class Refused extends Error {
 }
 
 function text(body, status = 200) {
-  return new Response(body + "\n", { status, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  return new Response(body + "\n", {
+    status,
+    headers: { "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff" },
+  });
 }
 
 function json(body, status = 200, maxAge = 0) {
-  const headers = { "Content-Type": "application/json" };
+  const headers = { "Content-Type": "application/json", "X-Content-Type-Options": "nosniff" };
   headers["Cache-Control"] = maxAge ? `public, max-age=${maxAge}` : "no-store";
   return new Response(JSON.stringify(body), { status, headers });
 }
@@ -132,6 +142,7 @@ function adminPage(body, type) {
         "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; " +
         "img-src https://cdn.cloudflare.steamstatic.com; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
       "X-Robots-Tag": "noindex",
+      "X-Content-Type-Options": "nosniff",
       "Referrer-Policy": "no-referrer",
       "Cache-Control": "no-cache",
     },
@@ -148,11 +159,31 @@ async function sha256(s) {
   return Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+// the request's JSON, read only up to MAX_BODY bytes
 async function body(req) {
-  const raw = await req.text();
-  if (raw.length > MAX_BODY) throw new Refused("Too big", 413);
+  if (Number(req.headers.get("Content-Length")) > MAX_BODY) throw new Refused("Too big", 413);
+  if (!req.body) throw new Refused("Not JSON");
+  const reader = req.body.getReader();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_BODY) {
+      await reader.cancel();
+      throw new Refused("Too big", 413);
+    }
+    chunks.push(value);
+  }
+  const raw = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    raw.set(c, at);
+    at += c.byteLength;
+  }
   try {
-    return JSON.parse(raw);
+    return JSON.parse(new TextDecoder().decode(raw));
   } catch {
     throw new Refused("Not JSON");
   }
@@ -232,10 +263,10 @@ const TOP_ENGINE = `top_engine AS (
       SELECT *, COUNT(*) OVER (PARTITION BY app_id, engine) AS n FROM engine_reports))
   WHERE r = 1)`;
 
-// Per engine (or just one): its games, their entries (not rejected) and, for every setting in
-// them, how many entries and games have it and how their votes went (each entry counts its
-// sharer as a works)
-async function engineStats(env, only = null) {
+// Per engine (or just one): its games, their entries (not rejected; only verified ones with
+// approvedOnly) and, for every setting in them, how many entries and games have it and how their
+// votes went (each entry counts its sharer as a works)
+async function engineStats(env, only = null, approvedOnly = false) {
   const where = only ? "WHERE engine = ?" : "";
   const bind = (stmt) => (only ? stmt.bind(only) : stmt);
   const [games, entries] = await env.DB.batch([
@@ -243,7 +274,8 @@ async function engineStats(env, only = null) {
                          SUM(arch = 'x86') AS x86, SUM(platform = 'linux') AS linux FROM top_engine ${where} GROUP BY engine`)),
     bind(env.DB.prepare(`WITH ${TOP_ENGINE} SELECT t.engine, p.app_id, p.status, p.settings, ${COUNTS}
                          FROM top_engine t JOIN profiles p ON p.app_id = t.app_id
-                         WHERE p.status != 'rejected' ${only ? "AND t.engine = ?" : ""}`)),
+                         WHERE ${approvedOnly ? "p.status = 'approved'" : "p.status != 'rejected'"}
+                         ${only ? "AND t.engine = ?" : ""}`)),
   ]);
   const out = new Map(games.results.map((g) => [g.engine, {
     ...g, entries: 0, approved: 0, works: 0, broken: 0, settings: {},
@@ -269,14 +301,15 @@ async function engineStats(env, only = null) {
   return out;
 }
 
-// what Game Settings suggests for an engine: FEX settings in entries for at least SUGGEST_GAMES
+// what Game Settings suggests for an engine: FEX settings in verified entries for at least SUGGEST_GAMES
 // of its games, confirmed SUGGEST_RATIO times as often as reported broken; one value per option
 const SUGGEST_GAMES = 3;
 const SUGGEST_RATIO = 3;
 const FEX_OPTIONS = new Set(catalog.options.filter((o) => o.section === "fex").map((o) => o.id));
 
 async function engineSuggestions(env, engine) {
-  const e = (await engineStats(env, engine)).get(engine);
+  // verified entries only: votes and community entries are too easy to make up
+  const e = (await engineStats(env, engine, true)).get(engine);
   if (!e) return { engine, games: 0, settings: [] };
   const best = new Map();
   for (const [kv, s] of Object.entries(e.settings)) {
@@ -313,7 +346,8 @@ function entry(r, admin = false) {
     game: r.game,
     status: r.status,
     rating: r.rating,
-    device: r.device,
+    // the model name is the sender's word for it: public only once the entry is verified
+    device: admin || r.status === "approved" ? r.device : r.variant,
     variant: r.variant,
     build: r.build,
     compat_tool: r.compat_tool,
@@ -330,23 +364,28 @@ function entry(r, admin = false) {
   return e;
 }
 
+// the entries the public sees: not rejected, and community ones not reported broken too often
+const SHOWN = `p.status = 'approved' OR (p.status = 'pending' AND broken < works + ${HIDE_BROKEN})`;
+
 async function forGame(env, appId) {
   const { results } = await env.DB.prepare(
-    `SELECT p.*, ${COUNTS} FROM profiles p WHERE p.app_id = ? AND p.status != 'rejected'`,
+    `SELECT * FROM (SELECT p.*, ${COUNTS} FROM profiles p WHERE p.app_id = ?) p WHERE ${SHOWN}`,
   )
     .bind(appId)
     .all();
   return results
-    .filter((r) => r.status === "approved" || r.broken < r.works + HIDE_BROKEN)
     .map((r) => entry(r))
     .sort((a, b) => (a.status === b.status ? b.works - b.broken - (a.works - a.broken) : a.status === "approved" ? -1 : 1));
 }
 
 async function index(env) {
+  // the same entries as forGame(); a verified entry's game name over a community one's
   const { results } = await env.DB.prepare(
-    `SELECT app_id, MAX(game) AS game, SUM(status = 'approved') AS approved, SUM(status = 'pending') AS pending,
+    `SELECT app_id, COALESCE(MAX(CASE WHEN status = 'approved' THEN game END), MIN(game)) AS game,
+            SUM(status = 'approved') AS approved, SUM(status = 'pending') AS pending,
             GROUP_CONCAT(DISTINCT variant) AS variants, MAX(created) AS updated
-     FROM profiles WHERE status != 'rejected' GROUP BY app_id ORDER BY game COLLATE NOCASE`,
+     FROM (SELECT p.app_id, p.game, p.status, p.variant, p.created, ${COUNTS} FROM profiles p) p
+     WHERE ${SHOWN} GROUP BY app_id ORDER BY game COLLATE NOCASE`,
   ).all();
   return results.map((r) => ({ ...r, variants: r.variants ? r.variants.split(",") : [] }));
 }
@@ -372,33 +411,49 @@ async function submit(req, env, url) {
   await saveEngine(env, b.app_id, submitter, engineReport(b.engine));
   const pageUrl = `${env.PUBLIC_URL ?? url.origin}/g/${b.app_id}`;
 
-  // the same settings for the same game and device already shared: that's a vote for them
-  const same = await env.DB.prepare("SELECT id, submitter FROM profiles WHERE app_id = ? AND variant = ? AND hash = ?")
-    .bind(b.app_id, variant, hash)
-    .first();
-  if (same) {
-    if (same.submitter !== submitter) await addVote(env, same.id, submitter, true, device, variant, build);
-    return json({ id: same.id, url: pageUrl, existing: true }, 200);
-  }
+  // a new entry, unless the same settings for the same game and device are already shared
+  // (profiles_unique): then it's a vote for those. The insert decides, so two at once can't race.
   const id = newId();
-  await env.DB.prepare(
+  const added = await env.DB.prepare(
     `INSERT INTO profiles (id, app_id, game, device, variant, build, hash, compat_tool, settings, env, dlls,
                            rating, notes, submitter, created)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (app_id, variant, hash) DO NOTHING`,
   )
     .bind(id, b.app_id, game, device, variant, build, hash, p.compat_tool, JSON.stringify(p.settings),
       JSON.stringify(p.env), JSON.stringify(p.dlls), b.rating, notes, submitter, now())
     .run();
-  return json({ id, url: pageUrl }, 201);
+  if (added.meta.changes) return json({ id, url: pageUrl }, 201);
+  const same = await env.DB.prepare("SELECT id, submitter FROM profiles WHERE app_id = ? AND variant = ? AND hash = ?")
+    .bind(b.app_id, variant, hash)
+    .first();
+  if (!same) throw new Refused("Try again", 503);
+  // the share itself went through; a vote over the address's daily allowance just isn't counted
+  if (same.submitter !== submitter) await addVote(env, req, same.id, submitter, true, device, variant, build);
+  return json({ id: same.id, url: pageUrl, existing: true }, 200);
 }
 
-function addVote(env, id, voter, works, device, variant, build) {
-  return env.DB.prepare(
+// Records a vote; false if it's a new voter for the entry and the address already brought
+// VOTERS_PER_NET of them today. Only a hash of address and entry is kept, for a day.
+async function addVote(env, req, id, voter, works, device, variant, build) {
+  const known = await env.DB.prepare("SELECT 1 FROM votes WHERE profile_id = ? AND voter = ?").bind(id, voter).first();
+  const stmts = [];
+  if (!known) {
+    const net = await sha256(`${req.headers.get("CF-Connecting-IP") || ""} ${id}`);
+    const day = now() - 86400;
+    const [, count] = await env.DB.batch([
+      env.DB.prepare("DELETE FROM vote_nets WHERE created < ?").bind(day),
+      env.DB.prepare("SELECT COUNT(*) AS n FROM vote_nets WHERE net = ?").bind(net),
+    ]);
+    if (count.results[0].n >= VOTERS_PER_NET) return false;
+    stmts.push(env.DB.prepare("INSERT INTO vote_nets (net, created) VALUES (?, ?)").bind(net, now()));
+  }
+  stmts.push(env.DB.prepare(
     `INSERT INTO votes (profile_id, voter, works, device, variant, build, created) VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (profile_id, voter) DO UPDATE SET works = excluded.works, build = excluded.build, created = excluded.created`,
-  )
-    .bind(id, voter, works ? 1 : 0, device, variant, build, now())
-    .run();
+  ).bind(id, voter, works ? 1 : 0, device, variant, build, now()));
+  await env.DB.batch(stmts);
+  return true;
 }
 
 async function vote(req, env, id) {
@@ -412,7 +467,8 @@ async function vote(req, env, id) {
   const p = await env.DB.prepare("SELECT app_id, submitter FROM profiles WHERE id = ? AND status != 'rejected'").bind(id).first();
   if (!p) throw new Refused("No such entry", 404);
   await saveEngine(env, p.app_id, voter, engineReport(b.engine));
-  if (p.submitter !== voter) await addVote(env, id, voter, b.works, clean(b.device, 64) || variant, variant, build);
+  if (p.submitter !== voter && !(await addVote(env, req, id, voter, b.works, clean(b.device, 64) || variant, variant, build)))
+    throw new Refused("Enough votes for this entry from your network today", 429);
   return json({ ok: true });
 }
 
@@ -432,7 +488,11 @@ const ADMIN_SELECT = `SELECT p.*, ${COUNTS},
   FROM profiles p`;
 
 async function admin(req, env, url) {
-  if (!(await authorized(req, env))) return text("Unauthorized", 401);
+  if (!(await authorized(req, env))) {
+    // wrong tokens count against the address (a 429 once over); right ones are never limited
+    await limited(env, "ADMIN_FAILS", req);
+    return text("Unauthorized", 401);
+  }
   const p = url.pathname;
   let m;
 

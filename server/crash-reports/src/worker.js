@@ -5,13 +5,19 @@
 //
 //   POST /v1/reports      gzipped JSON {version: 1, id, report, files}; answers {id, url}
 //   GET  /r/<id>          the report's page
-//   GET  /r/<id>.json     the report as uploaded
+//   GET  /r/<id>.json     the report as kept
+//   DELETE /v1/admin/reports/<id>   (Authorization: Bearer $ADMIN_TOKEN) a removal request
 //
-// Reports are deleted after 90 days by the bucket's lifecycle rule (docs/CRASH-REPORTS.md).
+// Reports are deleted after 90 days by the bucket's lifecycle rule (setup-lifecycle.sh,
+// docs/CRASH-REPORTS.md); older ones are never served, whatever the bucket still holds.
 
 const MAX_UPLOAD = 1 << 20; // gzipped
 const MAX_JSON = 8 << 20; // once unzipped: a bigger one is refused, not unpacked
-const MAX_FILE = 256 << 10;
+const MAX_FILE = 256 << 10; // UTF-8 bytes: the end of a longer file is kept
+const KEEP_S = 90 * 86400;
+// uploads a day (UTC), per address and in all, counted in the COUNTS KV namespace
+const DAY_PER_ADDRESS = 30;
+const DAY_TOTAL = 400;
 const FILES = ["backtrace.txt", "output.txt", "kernel.txt", "journal.txt", "environ.txt"];
 const KINDS = ["coredump", "devcoredump", "game"];
 const ISSUES = "https://github.com/kettlelinux/kettlelinux/issues/new";
@@ -22,19 +28,27 @@ export default {
     if (url.pathname === "/v1/reports") {
       return req.method === "POST" ? upload(req, env, url) : text("POST only", 405);
     }
-    const m = url.pathname.match(/^\/r\/([a-z2-7]{12})(\.json)?$/);
+    let m = url.pathname.match(/^\/r\/([a-z2-7]{12})(\.json)?$/);
     if (m && (req.method === "GET" || req.method === "HEAD")) return view(env, m[1], !!m[2]);
+    if ((m = url.pathname.match(/^\/v1\/admin\/reports\/([a-z2-7]{12})$/)))
+      return req.method === "DELETE" ? remove(req, env, m[1]) : text("DELETE only", 405);
     if (url.pathname === "/") return Response.redirect("https://kettlelinux.org/", 302);
     return text("Not found", 404);
   },
 };
 
 function text(body, status = 200) {
-  return new Response(body + "\n", { status, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  return new Response(body + "\n", {
+    status,
+    headers: { "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff" },
+  });
 }
 
-function json(body, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+function json(body, status = 200, headers = {}) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", "X-Content-Type-Options": "nosniff", ...headers },
+  });
 }
 
 // 12 base32 characters: 60 random bits, not guessable
@@ -71,15 +85,109 @@ async function gunzip(bytes, max) {
   return readCapped(stream, max);
 }
 
-// A Kettle crash report, in the shape the plugin sends, and nothing else
-function valid(b) {
-  if (!b || b.version !== 1 || typeof b.report !== "object" || typeof b.files !== "object") return false;
-  const r = b.report;
-  if (!KINDS.includes(r.kind) || r.system?.os?.name !== "Kettle Linux") return false;
-  for (const [name, body] of Object.entries(b.files)) {
-    if (!FILES.includes(name) || typeof body !== "string" || body.length > MAX_FILE) return false;
+async function gzip(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+const plain = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+
+// The end of a text, at most max UTF-8 bytes of it (cut on a character boundary)
+function tail(s, max) {
+  const bytes = new TextEncoder().encode(s);
+  if (bytes.length <= max) return s;
+  let at = bytes.length - max;
+  while (at < bytes.length && (bytes[at] & 0xc0) === 0x80) at++;
+  return new TextDecoder().decode(bytes.subarray(at));
+}
+
+// What kettle-crashd writes to report.json (packages/kettle-crash/kettle-crashd) and the plugin
+// shares: each field's type and size. Anything else is dropped, not refused, so an older or newer
+// plugin's report still goes through.
+const S = (max) => (v) => (typeof v === "string" ? v.slice(0, max) : undefined);
+const N = (v) => (Number.isFinite(v) ? v : undefined);
+const B = (v) => (typeof v === "boolean" ? v : undefined);
+const L = (item, max) => (v) => (Array.isArray(v) ? v.slice(0, max).map(item).filter((x) => x !== undefined) : undefined);
+const O = (shape) => (v) => {
+  if (!plain(v)) return undefined;
+  const out = {};
+  for (const [k, check] of Object.entries(shape)) {
+    const x = check(v[k]);
+    if (x !== undefined) out[k] = x;
   }
+  return out;
+};
+const PACKAGES = (v) =>
+  plain(v)
+    ? Object.fromEntries(Object.entries(v).filter(([k, x]) => /^[a-z0-9@._+-]{1,64}$/.test(k) && typeof x === "string")
+        .slice(0, 32).map(([k, x]) => [k, x.slice(0, 128)]))
+    : undefined;
+const REPORT = O({
+  kind: S(16),
+  time_us: N,
+  last_time_us: N,
+  count: N,
+  exe: S(1024),
+  comm: S(64),
+  cmdline: S(4096),
+  signal: S(32),
+  unit: S(256),
+  reason: S(16),
+  what: S(256),
+  line: S(1024),
+  app_id: N,
+  device: S(256),
+  driver: S(64),
+  error: S(512),
+  dump_skipped: S(64),
+  dump_bytes: N,
+  game: O({
+    app_id: N,
+    name: S(256),
+    installdir: S(256),
+    engine: O({ engine: S(32), platform: S(16), arch: S(16), exe: S(512), anticheat: L(S(32), 16) }),
+    kettle_features: L(S(32), 16),
+  }),
+  game_process: B,
+  compat_tool: S(128),
+  system: O({
+    os: O({ name: S(64), version_id: S(64), build_id: S(64), variant: S(64), variant_id: S(64) }),
+    model: S(128),
+    kernel: S(128),
+    slot: S(16),
+    uptime_s: N,
+    packages: PACKAGES,
+  }),
+});
+
+// A Kettle crash report in the shape the plugin sends, cut down to that shape; null if it isn't one
+function sanitize(b) {
+  if (!plain(b) || b.version !== 1 || !plain(b.report) || !plain(b.files)) return null;
+  if (!KINDS.includes(b.report.kind) || b.report.system?.os?.name !== "Kettle Linux") return null;
+  const files = {};
+  for (const [name, body] of Object.entries(b.files)) {
+    if (!FILES.includes(name) || typeof body !== "string") return null;
+    // the plugin keeps the last 256 KB; older ones cut by characters, so a little over is trimmed
+    files[name] = tail(body, MAX_FILE);
+  }
+  return { version: 1, id: S(64)(b.id) ?? "", report: REPORT(b.report), files };
+}
+
+// one more upload today from this address, and in all; false once either is at its cap
+async function underDailyCap(env, ip) {
+  if (!env.COUNTS) return true;
+  const day = new Date().toISOString().slice(0, 10);
+  const keys = [`ip:${await sha256(`${ip} ${day}`)}`, `all:${day}`];
+  const counts = await Promise.all(keys.map((k) => env.COUNTS.get(k).then((v) => Number(v) || 0)));
+  if (counts[0] >= DAY_PER_ADDRESS || counts[1] >= DAY_TOTAL) return false;
+  // KV is eventually consistent: a burst can go a little over, which is fine for a cap like this
+  await Promise.all(keys.map((k, i) => env.COUNTS.put(k, String(counts[i] + 1), { expirationTtl: 2 * 86400 })));
   return true;
+}
+
+async function sha256(s) {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 async function upload(req, env, url) {
@@ -98,10 +206,13 @@ async function upload(req, env, url) {
   } catch {
     return text("Not a gzipped JSON report", 400);
   }
-  if (!valid(bundle)) return text("Not a Kettle crash report", 400);
+  bundle = sanitize(bundle);
+  if (!bundle) return text("Not a Kettle crash report", 400);
+  if (!(await underDailyCap(env, ip))) return text("Too many reports today, try again tomorrow", 429);
   const id = newId();
   const r = bundle.report;
-  await env.REPORTS.put(`reports/${id}.json.gz`, gz, {
+  // what was checked is what's kept, not the upload as sent
+  await env.REPORTS.put(`reports/${id}.json.gz`, await gzip(new TextEncoder().encode(JSON.stringify(bundle))), {
     httpMetadata: { contentType: "application/json", contentEncoding: "gzip" },
     customMetadata: {
       kind: r.kind,
@@ -115,23 +226,53 @@ async function upload(req, env, url) {
 
 async function load(env, id) {
   const obj = await env.REPORTS.get(`reports/${id}.json.gz`);
-  if (!obj) return null;
+  // past its 90 days: gone, even before the lifecycle rule gets to it
+  if (!obj || Date.now() - obj.uploaded.getTime() > KEEP_S * 1000) return null;
   const raw = await gunzip(new Uint8Array(await obj.arrayBuffer()), MAX_JSON);
   return raw && JSON.parse(new TextDecoder().decode(raw));
 }
 
+// unlisted, and not kept in shared caches, so a removed report is gone at once
+const VIEW_HEADERS = {
+  "X-Robots-Tag": "noindex",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "Cache-Control": "private, max-age=300",
+};
+
 async function view(env, id, asJson) {
   const b = await load(env, id);
   if (!b) return text("No such report (reports are kept for 90 days)", 404);
-  if (asJson) return json(b);
+  if (asJson) return json(b, 200, VIEW_HEADERS);
   return new Response(page(env, id, b), {
     headers: {
+      ...VIEW_HEADERS,
       "Content-Type": "text/html; charset=utf-8",
       "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
-      "X-Robots-Tag": "noindex",
-      "Cache-Control": "public, max-age=3600",
     },
   });
+}
+
+async function authorized(req, env) {
+  const want = env.ADMIN_TOKEN;
+  const got = (req.headers.get("Authorization") || "").replace(/^Bearer /, "");
+  if (!want || !got) return false;
+  const [a, b] = await Promise.all([sha256(want), sha256(got)]);
+  return crypto.subtle.timingSafeEqual(new TextEncoder().encode(a), new TextEncoder().encode(b));
+}
+
+// a removal request (kettlelinux.org/legal.html): the report is deleted for good
+async function remove(req, env, id) {
+  if (!(await authorized(req, env))) {
+    // wrong tokens count against the address's upload limit
+    if (env.UPLOADS && !(await env.UPLOADS.limit({ key: req.headers.get("CF-Connecting-IP") || "" })).success)
+      return text("Too many requests, try again in a minute", 429);
+    return text("Unauthorized", 401);
+  }
+  const key = `reports/${id}.json.gz`;
+  if (!(await env.REPORTS.head(key))) return text("No such report", 404);
+  await env.REPORTS.delete(key);
+  return json({ ok: true });
 }
 
 const esc = (s) =>

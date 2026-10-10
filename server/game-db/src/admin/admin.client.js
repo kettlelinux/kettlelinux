@@ -135,20 +135,28 @@ function card(e) {
   const rating = el("select", {},
     el("option", { value: "great", textContent: "Great", selected: e.rating === "great" }),
     el("option", { value: "playable", textContent: "Playable", selected: e.rating === "playable" }));
-  rating.addEventListener("change", async () => {
-    await api(`/v1/admin/profiles/${e.id}`, { method: "POST", body: { rating: rating.value } });
-    toast("Rating saved");
-  });
+  rating.addEventListener("change", () =>
+    api(`/v1/admin/profiles/${e.id}`, { method: "POST", body: { rating: rating.value } })
+      .then(() => {
+        e.rating = rating.value;
+        toast("Rating saved");
+      })
+      .catch((err) => {
+        rating.value = e.rating;
+        toast(err.message);
+      }));
 
   const notes = el("textarea", { value: e.notes, maxLength: 500, placeholder: "No note" });
   const saveNotes = el("button", { textContent: "Save note", disabled: true });
   notes.addEventListener("input", () => (saveNotes.disabled = notes.value === e.notes));
-  saveNotes.addEventListener("click", async () => {
-    await api(`/v1/admin/profiles/${e.id}`, { method: "POST", body: { notes: notes.value } });
-    e.notes = notes.value;
-    saveNotes.disabled = true;
-    toast("Note saved");
-  });
+  saveNotes.addEventListener("click", () =>
+    api(`/v1/admin/profiles/${e.id}`, { method: "POST", body: { notes: notes.value } })
+      .then(() => {
+        e.notes = notes.value;
+        saveNotes.disabled = true;
+        toast("Note saved");
+      })
+      .catch((err) => toast(err.message)));
 
   const votesBox = el("div", { className: "votes hidden" });
   const button = (label, cls, fn) => {
@@ -228,12 +236,13 @@ async function loadBans() {
     bans.length
       ? el("div", {}, ...bans.map((b) => {
           const unban = el("button", { textContent: "Unban" });
-          unban.addEventListener("click", async () => {
-            await api(`/v1/admin/bans/${b.submitter}`, { method: "DELETE" });
-            toast("Unbanned (their entries stay rejected)");
-            loadStats();
-            loadBans();
-          });
+          unban.addEventListener("click", () =>
+            api(`/v1/admin/bans/${b.submitter}`, { method: "DELETE" })
+              .then(() => {
+                toast("Unbanned (their entries stay rejected)");
+                return Promise.all([loadStats(), loadBans()]);
+              })
+              .catch((err) => toast(err.message)));
           return el("div", { className: "card", style: "grid-template-columns: 1fr auto" },
             el("div", {},
               el("b", { textContent: `Device ${short(b.submitter)}` }),
@@ -249,7 +258,7 @@ async function loadBans() {
 // the starting point for FEX defaults per engine
 async function loadEngines() {
   const { engines, labels } = await api("/v1/admin/engines");
-  const opts = new Map(state.catalog.options.map((o) => [o.id, o]));
+  const opts = new Map((state.catalog?.options ?? []).map((o) => [o.id, o]));
   const setting = (kv) => {
     const [id, v] = kv.split("=");
     const o = opts.get(id);
@@ -326,13 +335,19 @@ function signOut(message = "") {
 async function start() {
   try {
     await loadStats();
-  } catch {
+  } catch (e) {
+    // a refused token already signed out; anything else, say so
+    if (getToken()) toast(e.message);
     return;
   }
   $("login").classList.add("hidden");
   $("app").classList.remove("hidden");
   $("logout").classList.remove("hidden");
-  if (!state.catalog) state.catalog = await (await fetch("/v1/catalog")).json();
+  // without the catalog, settings show as raw option=value: still usable
+  if (!state.catalog)
+    state.catalog = await fetch("/v1/catalog")
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`Catalog: HTTP ${res.status}`))))
+      .catch((e) => (toast(e.message), null));
   reload();
 }
 
@@ -344,7 +359,7 @@ $("signin").addEventListener("click", () => {
 $("token").addEventListener("keydown", (e) => e.key === "Enter" && $("signin").click());
 $("logout").addEventListener("click", () => signOut());
 $("refresh").addEventListener("click", () => {
-  loadStats();
+  loadStats().catch((e) => toast(e.message));
   reload();
 });
 $("more").addEventListener("click", () => loadList(true).catch((e) => toast(e.message)));
