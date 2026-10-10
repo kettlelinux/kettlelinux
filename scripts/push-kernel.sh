@@ -22,11 +22,16 @@ ssh -t "$HOST" "sudo bash -euc '
   holo-readonly status >/dev/null && holo-readonly disable
   cd /tmp && rm -rf spk && mkdir spk && tar -C spk -xf kettle-kernel.tar
   cp /boot/Image /boot/Image.prev
-  cp spk/boot/Image /boot/Image.new && mv /boot/Image.new /boot/Image
-  cp -r spk/boot/dtbs/. /boot/dtbs/
+  # modules and the initramfs first, the Image last: a push that fails part way leaves the
+  # slot booting the old kernel, not the new one without its modules
   rm -rf /usr/lib/modules/$REL && cp -a spk/usr/lib/modules/$REL /usr/lib/modules/
-  chown -R root:root /usr/lib/modules/$REL /boot
-  mkinitcpio -k $REL -g /boot/initramfs-linux.img
+  chown -R root:root /usr/lib/modules/$REL
+  mkinitcpio -k $REL -g /boot/initramfs-linux.img.new
+  cp spk/boot/Image /boot/Image.new
+  cp -r spk/boot/dtbs/. /boot/dtbs/
+  chown -R root:root /boot
+  sync
+  mv /boot/initramfs-linux.img.new /boot/initramfs-linux.img && mv /boot/Image.new /boot/Image
   kettle-boot-legacy \$(holo-bootconf this-image)
   sync; rm -rf spk kettle-kernel.tar
   echo \"installed $REL in slot \$(holo-bootconf this-image) (previous: /boot/Image.prev) - reboot to use it\"

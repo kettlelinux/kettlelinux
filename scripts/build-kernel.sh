@@ -79,10 +79,31 @@ config() {
   cp "$KSRC/.config" "$ROOT/kernel/config/generated.config"
 }
 
+# Re-run dtc at W=1 strength on our boards' preprocessed sources (kbuild keeps them): a warning
+# in one of our kernel/dts files fails the build; upstream dtsi noise is only counted.
+dtc_check() {
+  local qcom="$KSRC/arch/arm64/boot/dts/qcom" ours dts name out line bad=0 noise=0
+  ours="$(cd "$ROOT/kernel/dts/qcom" && ls | sed 's/[.]/[.]/g' | paste -sd'|')"
+  for dts in "$ROOT"/kernel/dts/qcom/*.dts; do
+    name="$(basename "$dts" .dts)"
+    out="$(cd "$KSRC" && scripts/dtc/dtc -o /dev/null -b 0 -i arch/arm64/boot/dts/qcom/ \
+      -i scripts/dtc/include-prefixes -Wno-unique_unit_address -Wunique_unit_address_if_enabled \
+      "$qcom/.$name.dtb.dts.tmp" 2>&1)" || die "dtc check failed: $name"
+    while IFS= read -r line; do
+      case "$line" in "" | " "*) continue ;; esac   # "  also defined at": the line above's
+      if grep -qE "(^|/)($ours):" <<<"$line"; then echo "  $name: $line"; bad=1
+      else noise=$((noise + 1)); fi
+    done <<<"$out"
+  done
+  [ "$noise" = 0 ] || log "dtc: $noise W=1 warnings from upstream dtsi files (not ours; ignored)"
+  [ "$bad" = 0 ] || die "dtc warnings in kernel/dts"
+}
+
 build() {
   [ -f "$KSRC/.config" ] || config
   log "building Image, modules, dtbs ($JOBS jobs)"
   "${KMAKE[@]}" Image modules dtbs
+  dtc_check
 
   local rel; rel="$("${KMAKE[@]}" -s kernelrelease)"
   log "staging $rel into out/kernel"
@@ -100,6 +121,7 @@ build() {
     DEPMOD=/bin/true >/dev/null
   depmod -b "$OUT/usr" "$rel"
   echo "$rel" >"$OUT/kernelrelease"
+  kernel_src_hash >"$OUT/.source-hash"   # build-image.sh warns when kernel/ changed since
   log "done: $OUT (kernelrelease $rel)"
 }
 

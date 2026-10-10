@@ -18,6 +18,11 @@
 # all). An older one's bundle and chunk store leave the tree, and the chunks only it used leave
 # store/ (scripts/upload-update.sh removes them from the server too); its manifest stays, marked
 # "skip", as Valve's tool asks: devices still running that build keep getting the newest update.
+#
+# A name already in the tree isn't published again: the server keeps bundles for good (immutable,
+# and scripts/upload-update.sh skips one it has), so devices would get the old bundle with the new
+# chunk index. KETTLE_REPUBLISH=1 replaces it anyway, and has the next upload send the bundle
+# again (caches may still serve the old one for a while: build again instead where possible).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -44,7 +49,20 @@ manifest="$(cat "$base.manifest.json")"
 variant="$(jq -r .variant <<<"$manifest")" version="$(jq -r .version <<<"$manifest")"
 [ -n "$branch" ] || branch="$(jq -r '.default_update_branch // .branch' <<<"$manifest")"
 
+# one publish (or upload) of the tree at a time; the build chroot and the repo as build-packages.sh
+lock "$TREE.lock"
+lock "$ROOT/build/pkgroot.lock"
+lock "$ROOT/out/repo.lock" -s
+
 dest="$TREE/images/$variant/$version"
+for m in "$TREE"/images/*/*/"$name.manifest.json"; do
+  [ -e "$m" ] || continue
+  [ "${KETTLE_REPUBLISH:-}" = 1 ] ||
+    die "$name is already published (${m#"$TREE"/}); build again for a new build ID, or KETTLE_REPUBLISH=1 to replace it"
+  log "replacing $name (KETTLE_REPUBLISH=1): the next upload sends its bundle again"
+  rm -rf "${m%.manifest.json}".{raucb,castr,manifest.json}   # (under another version too)
+  echo "images/$variant/$version/$name.raucb" >>"$TREE/.reupload"
+done
 # Valve's server tool refuses two releases with the same version and build ID, whatever their
 # variant: each device's builds need build IDs of their own (KETTLE_BUILD_ID)
 buildid="$(jq -r .buildid <<<"$manifest")"
@@ -81,7 +99,8 @@ if [ "$keep" -gt 0 ] 2>/dev/null; then
   done
   if [ "$removed" = 1 ]; then
     # chunks no remaining release's .castr/ has
-    used="$(mktemp)" all="$(mktemp)"
+    mkdir -p "$ROOT/build/tmp"
+    used="$(mktemp -p "$ROOT/build/tmp")" all="$(mktemp -p "$ROOT/build/tmp")"
     find "$TREE/images" -path '*.castr/*' -type f -printf '%P\n' | sed 's|^.*\.castr/||' | sort -u >"$used"
     find "$TREE/store" -type f -printf '%P\n' | sort >"$all"
     n="$(comm -23 "$all" "$used" | wc -l)"
@@ -99,7 +118,8 @@ chroot_mount "$TOOLS"
 cp /etc/resolv.conf "$TOOLS/etc/resolv.conf"
 PACMAN_CONF="$ROOT/build/pacman.pkgbuild.conf"
 build_pacman_conf "$PACMAN_CONF"
-pacman_root "$TOOLS" -Sy --needed steamos-atomupd-client python-pyinotify python-semantic-version >/dev/null
+# -u as in build-packages.sh: a partial upgrade of the chroot can break its installed packages
+pacman_root "$TOOLS" -Syu --needed steamos-atomupd-client python-pyinotify python-semantic-version >/dev/null
 mkdir -p "$TOOLS/mnt/tree" "$TREE/meta"
 mount --bind "$TREE" "$TOOLS/mnt/tree"
 # every device with releases in the tree (images/<variant>/): a variant left out gets no meta

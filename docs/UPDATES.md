@@ -162,6 +162,21 @@ curl -sI https://updates.kettlelinux.org/images/<variant>/<version>/<name>.castr
 device is pointed at a release that isn't all there. Chunks and bundles are cached for good
 (`immutable`); `meta/` for a minute.
 
+Each build is published once under its name. `build-image.sh` gives every build today's next
+build ID (`YYYYMMDD.N`, counting every device's builds in `out/` and in the update tree, as Valve's
+server tool takes a build ID once whatever the device), and `publish-update.sh` refuses a name
+already in the tree: the server would keep the old bundle (cached for good, and skipped by the
+upload) next to the new chunks. `KETTLE_REPUBLISH=1` replaces it anyway and has the next upload
+send the bundle again; caches may still serve the old one for a while, so build again instead
+where possible.
+
+The upload deletes from the server what the tree no longer has, so it checks first: it stops if
+the tree has fewer releases (manifests) than the server, which only the wrong tree has (a
+retired release keeps its manifest; `KETTLE_ALLOW_SHRINK=1` uploads it anyway), and its `meta/`
+and `images/` syncs delete at most `KETTLE_MAX_DELETE` files (default 50; `-1`: no limit).
+`publish-update.sh` and `upload-update.sh` wait for each other (a lock beside the tree), as the
+builds do for the build chroot and the local repo.
+
 **How many are kept**, per device:
 | What | Kept | Setting |
 |---|---|---|
