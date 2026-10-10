@@ -126,8 +126,10 @@ Your games, settings and files are kept. If an update fails to start, the device
 the version that worked, with U-Boot and with the ROCKNIX ABL alike.
 
 With the ROCKNIX ABL, Kettle images carry a newer ROCKNIX ABL from time to time. To install it,
-open a terminal on the desktop and run `sudo kettle-abl-update` (with the charger connected, or
-the battery above 30%). It only ever updates a ROCKNIX ABL that is already installed: it never
+open Quick Access > Device Settings > System in Game Mode: its Bootloader section says which
+release is installed and offers *Update* when this image has a newer one. Or open a terminal on
+the desktop and run `sudo kettle-abl-update`. Either way, have the charger connected (or the
+battery above 30%). It only ever updates a ROCKNIX ABL that is already installed: it never
 touches the stock bootloader, and never goes back to an older ROCKNIX ABL.
 
 You only need to write a new image to the card to start over from scratch.

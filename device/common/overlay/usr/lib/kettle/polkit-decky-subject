@@ -1,0 +1,8 @@
+#!/bin/sh
+# polkit-decky-subject PID: succeeds if PID runs in Decky Loader's own system service
+# (plugin_loader.service), i.e. it's one of Decky's plugin backends. Kettle's polkit rules
+# (50-kettle-{reset,ssh,abl-update}.rules) call it through polkit.spawn() to let Game Mode's
+# plugins do what they need without a password prompt Game Mode can't show: polkit 124 has no
+# subject.system_unit for that (newer polkit does; the rules check it too).
+case "$1" in ''|*[!0-9]*) exit 2 ;; esac
+grep -qx '0::/system.slice/plugin_loader.service' "/proc/$1/cgroup" 2>/dev/null

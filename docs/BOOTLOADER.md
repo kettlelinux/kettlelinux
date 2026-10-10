@@ -44,7 +44,10 @@ Kettle doesn't install it. `packages/rocknix-abl` ships the current release and
   (verified too) if the read-back doesn't match.
 - 1.1.9's files were deleted upstream, so a test-signed (`qtestsign`) ABL that isn't listed
   needs `--force`.
-- It isn't run automatically; users run `sudo kettle-abl-update`.
+- It isn't run automatically. In Game Mode, Device Settings' System tab shows a Bootloader
+  section where a ROCKNIX ABL is installed, and its *Update* button runs it (through pkexec:
+  `org.kettle.abl-update`, allowed for Decky's plugin backends by `50-kettle-abl-update.rules`).
+  In a terminal, `sudo kettle-abl-update` (`--check` only looks).
 
 Checked on hardware (2026-10-09, `--check` only):
 

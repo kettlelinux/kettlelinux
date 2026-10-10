@@ -3,7 +3,9 @@
 # (docs/INSTALL.md), and it starts Kettle's steamcl (\EFI\BOOT\BOOTAA64.EFI, so A/B fallback
 # works), else \KERNEL. This package only keeps an installed one up to date:
 # `sudo kettle-abl-update` replaces a recognised, older ROCKNIX ABL in abl_a/abl_b with this
-# release and never touches a stock one.
+# release and never touches a stock one. Device Settings' System tab (kettle-decky-plugins) runs it
+# too, through pkexec: org.kettle.abl-update, allowed for Decky's plugin backends by
+# 50-kettle-abl-update.rules.
 #
 # ROCKNIX publishes only signed binaries, built from its private LinuxLoader fork (Qualcomm's
 # BSD-3-Clause LinuxLoader). The repo states no licence; ROCKNIX's developers agreed to Kettle
@@ -11,19 +13,23 @@
 # (scripts/build-packages.sh) and pinned by hash. releases.tsv identifies installed releases.
 pkgname=rocknix-abl
 pkgver=1.2
-pkgrel=1
+pkgrel=2
 pkgdesc='ROCKNIX ABL builds, and kettle-abl-update to keep an installed one up to date'
 arch=(any)
 url='https://github.com/ROCKNIX/abl'
 license=(LicenseRef-ROCKNIX-ABL)
-depends=(util-linux coreutils)
+depends=(util-linux coreutils polkit)
 options=(!strip)
 source=("rocknix-abl-v$pkgver.tar.gz::https://github.com/ROCKNIX/abl/releases/download/v$pkgver/rocknix-abl-v$pkgver.tar.gz"
         releases.tsv
-        kettle-abl-update)
+        kettle-abl-update
+        org.kettle.abl-update.policy
+        50-kettle-abl-update.rules)
 sha256sums=('64034fb076ea0bb858beaa2f29dbef635e97d29f3e3d32c13bce61bd4af4cff7'
             '3d72c8ac7ef9076135f7ad84b48c29a6b6380acf95481b06f6016d2592c6ebde'
-            'a1c0b6cbd0bb0cdf0166176c165bf5f1ebaa91db6486e6536ed2a18ed9b62ad7')
+            'f609c562377d73168b058811850f8388dcba562f16ffa968256486657b3dbeb5'
+            'ccb041990f5a20869fa85b551f1c207e52052adfa3962fdbd404e0399672a798'
+            '7b38271af0e1aa1b143cc1ed82ba47025c2e00757ff9d33649c34091eb60cff3')
 
 package() {
   local d="$pkgdir/usr/share/kettle/rocknix-abl" f
@@ -35,4 +41,6 @@ package() {
   done
   install -m644 releases.tsv "$d/"
   install -Dm755 kettle-abl-update "$pkgdir/usr/bin/kettle-abl-update"
+  install -Dm644 org.kettle.abl-update.policy -t "$pkgdir/usr/share/polkit-1/actions"
+  install -Dm644 50-kettle-abl-update.rules -t "$pkgdir/usr/share/polkit-1/rules.d"
 }

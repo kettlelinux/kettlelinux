@@ -1,0 +1,28 @@
+// Kettle Linux: checking and updating an installed ROCKNIX ABL (kettle-abl-update) from Game
+// Mode's Device Settings (System tab), where no password prompt can be shown. kettle-abl-update
+// only ever replaces a ROCKNIX ABL it recognises with this image's release (never a stock
+// bootloader, never an older release), so the person holding the device may run it, as they may
+// reset it (50-kettle-reset.rules). In a terminal, sudo kettle-abl-update works as before.
+// fromDecky: one of Decky Loader's plugin backends. They run in its own system service, outside
+// the user's login session, so polkit sees them as neither local nor active. (All rule files share
+// one scope: 50-kettle-*.rules define the same function.) Newer polkit says which unit a
+// process is in (subject.system_unit); polkit 124 doesn't, so a helper reads it from /proc.
+function fromDecky(subject) {
+    if (subject.system_unit == "plugin_loader.service")
+        return true;
+    try {
+        polkit.spawn(["/usr/lib/kettle/polkit-decky-subject", String(subject.pid)]);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+// The person at the device (wheel, in the active local session), or Decky's plugin backends,
+// which run as that user but without its supplementary groups, so polkit doesn't see wheel there.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.kettle.abl-update" &&
+        ((subject.isInGroup("wheel") && subject.local && subject.active) || fromDecky(subject))) {
+        return polkit.Result.YES;
+    }
+});
