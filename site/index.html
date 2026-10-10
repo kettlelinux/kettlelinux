@@ -12,22 +12,133 @@
 </head>
 <body>
   <header class="hero">
-    <img class="logo" src="kettle.svg" alt="" width="128" height="128">
-    <h1><img src="wordmark.svg" alt="Kettle Linux" width="332" height="48"></h1>
-    <p class="tagline">A SteamOS-like Linux distro for the <strong>AYN Odin 2 Portal</strong>, <strong>AYN Thor</strong> and <strong>Retroid Pocket 5</strong>.</p>
-    <p class="sub">Valve's arm64 Steam client, a handheld Game Mode, a Plasma desktop and atomic A/B updates, on a patched mainline kernel.</p>
-    <div class="actions">
-      <a class="btn primary" href="#download">Download</a>
-      <a class="btn" href="#tour">Tour</a>
-      <a class="btn" href="games.html">Game settings</a>
-      <a class="btn" href="https://github.com/kettlelinux/kettlelinux">GitHub</a>
-      <a class="btn" href="https://github.com/kettlelinux/kettlelinux/wiki">Wiki</a>
-      <a class="btn discord-link" href="https://discord.gg/uKGartjFha">Discord</a>
+    <div class="hero-inner">
+      <div class="hero-text">
+        <div class="brand-line">
+          <img class="logo" src="kettle.svg" alt="" width="72" height="72">
+          <h1><img src="wordmark.svg" alt="Kettle Linux" width="249" height="36"></h1>
+        </div>
+        <p class="tagline">A SteamOS-like Linux for Snapdragon handhelds.</p>
+        <p class="sub">For the <strong>AYN Odin 2 Portal</strong>, <strong>AYN Thor</strong> and <strong>Retroid Pocket
+          5</strong>: Valve's arm64 Steam client and Game Mode, a Plasma desktop, atomic A/B updates, and Kettle's own
+          tools for every game.</p>
+        <div class="actions">
+          <a class="btn primary" href="#download">Download</a>
+          <a class="btn" href="#tour">Take the tour</a>
+          <a class="btn" href="https://github.com/kettlelinux/kettlelinux">GitHub</a>
+          <a class="btn discord-link" href="https://discord.gg/uKGartjFha">Discord</a>
+        </div>
+        <p class="status">Early and in active development. Check the known issues before you flash.</p>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <div class="screen"><img src="tour/stores.jpg" alt="" width="1280" height="596"></div>
+        <img class="float" src="tour/gs-perf.jpg" alt="" width="655" height="902">
+      </div>
     </div>
-    <p class="status">Early and in active development. Check the known issues below before you flash.</p>
+    <ul class="facts">
+      <li><strong>Valve's Steam</strong><span>arm64 client, Game Mode</span></li>
+      <li><strong>A/B updates</strong><span>signed, from Steam</span></li>
+      <li><strong>Linux 7.2</strong><span>mainline, patched</span></li>
+      <li><strong>Proton ARM64</strong><span>with FEX</span></li>
+    </ul>
   </header>
 
   <main>
+    <section class="intro" id="tour">
+      <p class="eyebrow">A look around Game Mode</p>
+      <h2>Everything in Quick Access</h2>
+      <p class="lead">Press <strong>…</strong> for Quick Access, then the plug icon: Kettle's tools sit right next to
+        Steam's own. The same tour opens on a new device, in Welcome.</p>
+    </section>
+
+    <section class="showcase" id="game-settings" data-tabs>
+      <div class="qam"><img class="panel-shot active" data-tab="compat" src="tour/gs-compat.jpg" alt="Game Settings, Compat tab" width="655" height="902"><img class="panel-shot" data-tab="perf" src="tour/gs-perf.jpg" alt="Game Settings, Perf tab" width="655" height="902" loading="lazy"><img class="panel-shot" data-tab="upscale" src="tour/gs-upscale.jpg" alt="Game Settings, Upscale tab" width="655" height="902" loading="lazy"><img class="panel-shot" data-tab="framegen" src="tour/gs-framegen.jpg" alt="Game Settings, Frame Gen tab" width="655" height="902" loading="lazy"><img class="panel-shot" data-tab="extras" src="tour/gs-extras.jpg" alt="Game Settings, Extras tab" width="655" height="902" loading="lazy"></div>
+      <div class="showcase-text">
+        <p class="eyebrow">Game Settings</p>
+        <h2>Every game, set up its own way</h2>
+        <p class="lead">A tab for each part of a game. It opens on the game that's running, sets up any installed game before you start it, and <em>All games</em> holds the defaults. Everything is off until you turn it on.</p>
+        <div class="tab-buttons" role="tablist"><button type="button" role="tab" data-tab="compat" aria-selected="true">Compat</button><button type="button" role="tab" data-tab="perf">Perf</button><button type="button" role="tab" data-tab="upscale">Upscale</button><button type="button" role="tab" data-tab="framegen">Frame Gen</button><button type="button" role="tab" data-tab="extras">Extras</button></div>
+        <div class="tab-panel active" data-tab="compat" role="tabpanel">
+          <h3>Compat</h3>
+          <p>How a Windows game runs: the Proton version and FEX, DXVK, vkd3d and Turnip options, presets for the engine it's built on, and <a href="games.html">known good settings</a> other players shared in Kettle's game database.</p>
+        </div>
+        <div class="tab-panel" data-tab="perf" role="tabpanel">
+          <h3>Perf</h3>
+          <p>A fan curve or fixed speed, CPU core and clock limits and the refresh rate, for one game or all. <strong>Auto TDP</strong> holds Steam's frame limit on the lowest clocks that keep it.</p>
+        </div>
+        <div class="tab-panel" data-tab="upscale" role="tabpanel">
+          <h3>Upscale</h3>
+          <p><strong>FSR 1</strong> through gamescope for any game, or <strong>Snapdragon GSR 2</strong>, Arm ASR and FSR 2.2 in place of a game's DLSS, FSR 2+ or XeSS, through OptiScaler.</p>
+        </div>
+        <div class="tab-panel" data-tab="framegen" role="tabpanel">
+          <h3>Frame Gen</h3>
+          <p>Kettle's own frame generation: 2×, 3× or the fewest frames that fill the display, with the game's base frame rate capped for you.</p>
+        </div>
+        <div class="tab-panel" data-tab="extras" role="tabpanel">
+          <h3>Extras</h3>
+          <p>GE-Proton, Proton-CachyOS and AMD FSR 3.1, each downloaded from its own project and checked before it's installed.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="wide-feature" id="stores">
+      <p class="eyebrow">Game Stores</p>
+      <h2>Your other libraries, in Steam</h2>
+      <p class="lead">Sign in once and your games install, update and land in your Steam library with Proton, sharing
+        sign-ins and installs with Heroic on the desktop.</p>
+      <ul class="chips">
+        <li>Epic Games</li><li>GOG</li><li>Amazon Games</li><li>Battle.net</li><li>Flathub</li><li>Android</li>
+      </ul>
+      <div class="screen big"><img src="tour/stores.jpg" alt="The Game Stores window, on Flathub" width="1280" height="596" loading="lazy"></div>
+      <p class="caption">Flathub's ARM64 apps by category, emulators and streaming apps among them; Android games from F-Droid or an APK file.</p>
+    </section>
+
+    <section class="showcase flip" id="device-settings" data-tabs>
+      <div class="qam"><img class="panel-shot active" data-tab="power" src="tour/ds-power.jpg" alt="Device Settings, Power tab" width="655" height="902"><img class="panel-shot" data-tab="lights" src="tour/ds-lights.jpg" alt="Device Settings, Lights tab" width="655" height="902" loading="lazy"><img class="panel-shot" data-tab="gyro" src="tour/ds-gyro.jpg" alt="Device Settings, Gyro tab" width="655" height="902" loading="lazy"></div>
+      <div class="showcase-text">
+        <p class="eyebrow">Device Settings</p>
+        <h2>The device, looked after</h2>
+        <p class="lead">The device's own settings, a tab each. A tab for something your device doesn't have, motion sensors or a second screen, isn't shown.</p>
+        <div class="tab-buttons" role="tablist"><button type="button" role="tab" data-tab="power" aria-selected="true">Power</button><button type="button" role="tab" data-tab="lights">Lights</button><button type="button" role="tab" data-tab="gyro">Gyro &amp; System</button></div>
+        <div class="tab-panel active" data-tab="power" role="tabpanel">
+          <h3>Power</h3>
+          <p>A charge limit that keeps the battery from sitting at 100%, the charge speed, and the screen's refresh rate, from 50 to 165 Hz on the Portal.</p>
+        </div>
+        <div class="tab-panel" data-tab="lights" role="tabpanel">
+          <h3>Lights</h3>
+          <p>The rings around the sticks and the power light: a color, the battery level, breathe or rainbow. Dark while the device sleeps.</p>
+        </div>
+        <div class="tab-panel" data-tab="gyro" role="tabpanel">
+          <h3>Gyro &amp; System</h3>
+          <p>Motion controls for Steam Input, on while a game runs. <strong>System</strong> holds the start-up mode, the SSH server and reset.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="wide-feature" id="diagnostics">
+      <p class="eyebrow">Diagnostics</p>
+      <h2>Everything about the device</h2>
+      <p class="lead">Power draw, temperatures and clocks, live, and the chip, battery health, storage and network, from
+        the bottom of Device Settings.</p>
+      <div class="screen big"><img src="tour/diag.jpg" alt="The Diagnostics window" width="1280" height="596" loading="lazy"></div>
+    </section>
+
+    <section id="features">
+      <p class="eyebrow">Also in Kettle</p>
+      <h2>Built for handhelds</h2>
+      <div class="grid">
+        <div class="card"><h3>Atomic A/B updates</h3><p>Signed images installed from Steam's own <em>Check for updates</em>, a read-only root, and automatic fallback if an update fails to boot.</p></div>
+        <div class="card"><h3>Mainline kernel</h3><p>Linux 7.2 with a pinned patch stack for the panel, gamepad, LEDs, haptics, microSD, Wi-Fi and suspend.</p></div>
+        <div class="card"><h3>The desktop in Game Mode</h3><p>Desktop in Steam's library opens the Plasma desktop inside Game Mode, with no switch to Desktop Mode.</p></div>
+        <div class="card"><h3>Games outside Steam</h3><p>ARM64EC Wine with FEX, DXVK and vkd3d-proton, plus Lutris and Heroic built for arm64.</p></div>
+        <div class="card"><h3>Native ARM64 games</h3><p>.NET games such as Terraria and Stardew Valley run their own code on ARM64 instead of under FEX: one switch in Game Settings.</p></div>
+        <div class="card"><h3>Android games</h3><p>Android games in Steam and Game Mode, through Lepton, the Android layer Valve made for the Steam Frame.</p></div>
+        <div class="card"><h3>Crash reports</h3><p>A report for every game or system crash, kept on the device. Share one with your details taken out, and report it from your phone.</p></div>
+        <div class="card"><h3>Two screens on the Thor</h3><p>Steam on the top screen and a touch shell on the bottom one in Game Mode, and both screens in the desktop.</p></div>
+        <div class="card"><h3>Game database</h3><p>Settings other players found working, per device, applied in one step from Game Settings: <a href="games.html">browse them</a>.</p></div>
+      </div>
+    </section>
+
     <section id="download">
       <h2>Download</h2>
       <div id="release" class="releases">
@@ -42,120 +153,6 @@
         <a href="https://github.com/kettlelinux/kettlelinux/blob/main/docs/INSTALL-RP5.md">RP5 install guide</a>.
         Once installed, updates come through Steam's own <em>Check for updates</em>.
       </p>
-    </section>
-
-    <section id="tour">
-      <h2>A look around Game Mode</h2>
-      <p class="lead">
-        Kettle's own tools sit in Steam's Quick Access menu: press <strong>…</strong>, then the plug icon. The same tour
-        opens on a new device, in Welcome.
-      </p>
-
-      <div class="tour-row">
-        <img class="shot" src="tour/plugins.jpg" alt="Quick Access listing Game Settings, Crash Reports, Game Stores, Device Settings and Welcome" width="655" height="902" loading="lazy">
-        <div>
-          <h3>Everything in Quick Access</h3>
-          <p><strong>Game Settings</strong> sets up each game, <strong>Game Stores</strong> brings in your other
-            libraries, <strong>Device Settings</strong> looks after the device itself, and <strong>Crash Reports</strong>
-            keeps what crashed. Each opens on what you need right now: Game Settings on the game that's running.</p>
-        </div>
-      </div>
-
-      <h3 class="tour-head">Game Settings: a tab for every part of a game</h3>
-      <p class="muted">It opens on the running game, sets up any installed game before you start it, and <em>All
-        games</em> holds the defaults. Everything is off until you turn it on for a game.</p>
-      <div class="shots">
-        <figure><img class="shot" src="tour/gs-compat.jpg" alt="Game Settings, Compat tab" width="655" height="902" loading="lazy">
-          <figcaption><strong>Compat</strong>: Proton version, FEX, DXVK, vkd3d and Turnip options, and known good settings from the <a href="games.html">game database</a>.</figcaption></figure>
-        <figure><img class="shot" src="tour/gs-perf.jpg" alt="Game Settings, Perf tab" width="655" height="902" loading="lazy">
-          <figcaption><strong>Perf</strong>: fan curve, CPU cores and caps, refresh rate, and Auto TDP, which holds Steam's frame limit on the lowest clocks.</figcaption></figure>
-        <figure><img class="shot" src="tour/gs-upscale.jpg" alt="Game Settings, Upscale tab" width="655" height="902" loading="lazy">
-          <figcaption><strong>Upscale</strong>: FSR 1 for any game, and Snapdragon GSR 2, Arm ASR or FSR 2.2 in place of DLSS through OptiScaler.</figcaption></figure>
-        <figure><img class="shot" src="tour/gs-framegen.jpg" alt="Game Settings, Frame Gen tab" width="655" height="902" loading="lazy">
-          <figcaption><strong>Frame Gen</strong>: Kettle's own frame generation, 2×, 3× or automatic, with the base frame rate capped for you.</figcaption></figure>
-        <figure><img class="shot" src="tour/gs-extras.jpg" alt="Game Settings, Extras tab" width="655" height="902" loading="lazy">
-          <figcaption><strong>Extras</strong>: GE-Proton, Proton-CachyOS and AMD FSR 3.1, each downloaded from its project and checked.</figcaption></figure>
-      </div>
-
-      <h3 class="tour-head">Game Stores</h3>
-      <img class="shot wide" src="tour/stores.jpg" alt="The Game Stores window on its Flathub tab" width="1280" height="596" loading="lazy">
-      <p class="muted">Epic Games, GOG, Amazon Games and Battle.net, installed and added to Steam with Proton (sign-ins
-        and installs shared with Heroic on the desktop); Flathub's ARM64 apps by category, emulators and streaming apps
-        among them; and Android games from F-Droid or an APK file.</p>
-
-      <h3 class="tour-head">Device Settings</h3>
-      <div class="shots">
-        <figure><img class="shot" src="tour/ds-power.jpg" alt="Device Settings, Power tab" width="655" height="902" loading="lazy">
-          <figcaption><strong>Power</strong>: a battery charge limit, the charge speed, and the screen's refresh rate.</figcaption></figure>
-        <figure><img class="shot" src="tour/ds-lights.jpg" alt="Device Settings, Lights tab" width="655" height="902" loading="lazy">
-          <figcaption><strong>Lights</strong>: the stick rings and the power light, in a color, the battery level, breathe or rainbow.</figcaption></figure>
-        <figure><img class="shot" src="tour/ds-gyro.jpg" alt="Device Settings, Gyro tab" width="655" height="902" loading="lazy">
-          <figcaption><strong>Gyro</strong>: motion controls for Steam Input. <strong>System</strong>: start-up mode, the SSH server and reset.</figcaption></figure>
-      </div>
-      <img class="shot wide" src="tour/diag.jpg" alt="The Diagnostics window" width="1280" height="596" loading="lazy">
-      <p class="muted">Diagnostics: power draw, temperatures, clocks and everything about the device, from the bottom of Device Settings.</p>
-    </section>
-
-    <section id="features">
-      <h2>What you get</h2>
-      <div class="grid">
-        <div class="card">
-          <h3>SteamOS experience</h3>
-          <p>Valve's arm64 Steam client with its handheld Game Mode, and switching between Game Mode and Desktop.</p>
-        </div>
-        <div class="card">
-          <h3>Atomic A/B updates</h3>
-          <p>Signed images installed from Steam, a read-only root, and automatic fallback if an update fails to boot.</p>
-        </div>
-        <div class="card">
-          <h3>Mainline kernel</h3>
-          <p>Linux 7.2 with a pinned patch stack for the panel, gamepad, LEDs, haptics, microSD, Wi-Fi and suspend.</p>
-        </div>
-        <div class="card">
-          <h3>Frame generation and upscaling</h3>
-          <p>Kettle's own frame generation, and SGSR 2, Arm ASR and FSR 2.2 upscaling, per game in Game Settings and off until you enable them.</p>
-        </div>
-        <div class="card">
-          <h3>Game Settings</h3>
-          <p>A tab each for a game's FEX, graphics and Proton options, its fan, CPU and Auto TDP, upscaling and frame generation, plus settings other players found working: <a href="games.html">browse them</a>.</p>
-        </div>
-        <div class="card">
-          <h3>Power control</h3>
-          <p>TDP, performance profiles and GPU clock from Steam's Performance panel; fan curves, CPU limits and Auto TDP per game; a battery charge limit and charge speed.</p>
-        </div>
-        <div class="card">
-          <h3>Games outside Steam</h3>
-          <p>ARM64EC Wine with FEX, DXVK and vkd3d-proton, plus Lutris and Heroic built for arm64.</p>
-        </div>
-        <div class="card">
-          <h3>Game Stores</h3>
-          <p>Your Epic Games, GOG, Amazon Games and Battle.net libraries in Game Mode, added to Steam, with cloud saves and DLC for Epic and GOG; and Flathub's ARM64 apps, by category.</p>
-        </div>
-        <div class="card">
-          <h3>The desktop in Game Mode</h3>
-          <p>Desktop in Steam's library opens the Plasma desktop inside Game Mode, with no switch to Desktop Mode. The Steam button takes you back.</p>
-        </div>
-        <div class="card">
-          <h3>Native ARM64 games</h3>
-          <p>.NET games such as Terraria and Stardew Valley can run their own code on ARM64 instead of under FEX: one switch in Game Settings.</p>
-        </div>
-        <div class="card">
-          <h3>Device Settings</h3>
-          <p>Charge limit, refresh rate, the stick lights, gyro, start-up mode, SSH and reset in one place, and a Diagnostics window with everything about the device.</p>
-        </div>
-        <div class="card">
-          <h3>Android games</h3>
-          <p>Add an Android game to Steam and play it in Game Mode, through Lepton, the Android layer Valve made for the Steam Frame.</p>
-        </div>
-        <div class="card">
-          <h3>Crash reports</h3>
-          <p>A report for every game or system crash, in Quick Access. Share one with your details taken out, and report it on GitHub from your phone.</p>
-        </div>
-        <div class="card">
-          <h3>Two screens on the Thor</h3>
-          <p>Steam on the top screen and a touch shell on the bottom one in Game Mode, and both screens in the desktop.</p>
-        </div>
-      </div>
     </section>
 
     <section id="issues">
@@ -189,5 +186,6 @@
   </footer>
 
   <script src="main.js"></script>
+  <script src="tour.js"></script>
 </body>
 </html>

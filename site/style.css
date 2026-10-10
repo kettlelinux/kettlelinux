@@ -24,17 +24,46 @@ a:hover { color: var(--copper); }
 code { font-size: 0.9em; background: var(--surface); padding: 0.1em 0.35em; border-radius: 4px; }
 
 .hero {
-  text-align: center;
-  padding: 72px 16px 56px;
-  background: radial-gradient(ellipse at 50% 0%, rgba(255, 138, 61, 0.18), transparent 65%);
+  padding: 56px 16px 0;
+  background:
+    radial-gradient(ellipse 60% 70% at 78% 30%, rgba(255, 138, 61, 0.20), transparent 70%),
+    radial-gradient(ellipse 50% 60% at 10% 0%, rgba(255, 196, 107, 0.08), transparent 70%);
   border-bottom: 1px solid var(--border);
+  overflow: hidden;
 }
-.logo { width: 128px; height: 128px; }
-.hero h1 { margin: 16px 0 8px; line-height: 0; }
-.hero h1 img { width: min(332px, 80vw); height: auto; }
-.tagline { font-size: 1.3rem; margin: 20px 0 4px; }
-.sub { color: var(--muted); max-width: 560px; margin: 0 auto; }
-.status { color: var(--muted); font-size: 0.9rem; margin-top: 24px; }
+.hero-inner {
+  max-width: 1120px; margin: 0 auto;
+  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 48px; align-items: center;
+}
+.brand-line { display: flex; align-items: center; gap: 14px; }
+.logo { width: 72px; height: 72px; }
+.hero h1 { margin: 0; line-height: 0; }
+.hero h1 img { width: min(249px, 60vw); height: auto; }
+.tagline { font-size: clamp(2rem, 4.2vw, 3.1rem); line-height: 1.1; font-weight: 750; letter-spacing: -0.02em; margin: 28px 0 14px; }
+.sub { color: var(--muted); font-size: 1.08rem; max-width: 520px; margin: 0; }
+.status { color: var(--muted); font-size: 0.88rem; margin-top: 20px; }
+.hero .actions { justify-content: flex-start; gap: 10px; }
+.hero .btn { padding: 10px 18px; }
+
+/* the hero's screenshots: the Game Stores window in a device frame, a Quick Access panel over it */
+.hero-art { position: relative; padding: 8px 0 72px; }
+.screen {
+  background: #0b0908; padding: 10px; border-radius: 22px;
+  border: 1px solid #4a3a2e;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 138, 61, 0.08), 0 0 60px rgba(255, 138, 61, 0.10);
+}
+.screen img { display: block; width: 100%; height: auto; border-radius: 12px; }
+.hero-art .float {
+  position: absolute; right: -8px; bottom: 0; width: 34%; height: auto; border-radius: 12px;
+  border: 1px solid #4a3a2e; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+}
+.facts {
+  list-style: none; max-width: 1120px; margin: 40px auto 0; padding: 22px 0 26px;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; border-top: 1px solid var(--border);
+}
+.facts li { display: flex; flex-direction: column; }
+.facts strong { font-size: 1.05rem; }
+.facts span { color: var(--muted); font-size: 0.9rem; }
 
 .actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 28px; }
 .btn {
@@ -55,7 +84,7 @@ code { font-size: 0.9em; background: var(--surface); padding: 0.1em 0.35em; bord
 }
 .btn.primary:hover { filter: brightness(1.08); color: #1a0f08; }
 
-main { max-width: 960px; margin: 0 auto; padding: 0 16px; }
+main { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
 section { padding: 48px 0 8px; }
 h2 { font-size: 1.5rem; margin: 0 0 16px; }
 h3 { font-size: 1.05rem; margin: 0 0 6px; color: var(--copper-light); }
@@ -109,7 +138,7 @@ h3 { font-size: 1.05rem; margin: 0 0 6px; color: var(--copper-light); }
 .community #discord-online { margin-top: 6px; }
 
 footer {
-  max-width: 960px;
+  max-width: 1120px;
   margin: 56px auto 0;
   padding: 24px 16px 40px;
   border-top: 1px solid var(--border);
@@ -117,27 +146,68 @@ footer {
 }
 footer p { margin: 4px 0; }
 
-/* Tour (index.html #tour): screenshots from the Welcome plugin's tour (tour/ links to its assets) */
-.lead { color: var(--muted); max-width: 680px; margin: 0 0 24px; }
-.shot { display: block; width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--border); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45); }
-.shot.wide { margin: 8px 0 12px; }
-.tour-row { display: grid; grid-template-columns: 220px 1fr; gap: 24px; align-items: center; margin-bottom: 8px; }
-.tour-row p { margin: 0; }
-.tour-head { font-size: 1.25rem; margin: 40px 0 6px; }
-.shots { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); margin: 16px 0 8px; }
-.shots figure { margin: 0; }
-.shots figcaption { font-size: 0.85rem; color: var(--muted); margin-top: 8px; line-height: 1.45; }
-.shots figcaption strong { color: var(--text); }
-@media (max-width: 640px) {
-  .tour-row { grid-template-columns: 1fr; }
-  .tour-row .shot { max-width: 260px; }
+/* The tour (index.html): showcases with tabs (tour.js) and framed screenshots, from the Welcome
+   plugin's tour (tour/ links to its assets) */
+.eyebrow { text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.78rem; font-weight: 700; color: var(--copper); margin: 0 0 8px; }
+.intro, .wide-feature, #features { padding-top: 88px; }
+.intro h2, .showcase h2, .wide-feature h2, #features h2 { font-size: clamp(1.6rem, 3vw, 2.3rem); line-height: 1.15; letter-spacing: -0.01em; margin: 0 0 12px; }
+.lead { color: var(--muted); font-size: 1.05rem; max-width: 640px; margin: 0 0 20px; }
+.intro .lead { margin-bottom: 0; }
+
+.showcase { display: grid; grid-template-columns: 330px 1fr; gap: 56px; align-items: center; padding-top: 72px; }
+.showcase.flip { grid-template-columns: 1fr 330px; }
+.showcase.flip .qam { order: 2; }
+.qam {
+  position: relative; aspect-ratio: 655 / 902; border-radius: 16px; overflow: hidden;
+  border: 1px solid #4a3a2e; background: #0e141b;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.55), 0 0 50px rgba(255, 138, 61, 0.08);
+}
+.panel-shot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top; opacity: 0; transition: opacity 0.25s; }
+.panel-shot.active { opacity: 1; }
+.tab-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 20px; }
+.tab-buttons button {
+  font: inherit; font-weight: 600; font-size: 0.92rem; color: var(--muted); cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 7px 16px;
+}
+.tab-buttons button:hover { color: var(--text); border-color: var(--copper); }
+.tab-buttons button[aria-selected="true"] { color: #1a0f08; background: linear-gradient(180deg, var(--copper-light), var(--copper)); border-color: transparent; }
+.tab-buttons button:focus-visible { outline: 2px solid var(--copper-light); outline-offset: 2px; }
+.tab-panel { display: none; background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--copper); border-radius: 10px; padding: 18px 20px; }
+.tab-panel.active { display: block; }
+.tab-panel h3 { margin: 0 0 6px; }
+.tab-panel p { margin: 0; }
+
+.chips { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 0 0 28px; }
+.chips li { border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 5px 14px; font-weight: 600; font-size: 0.92rem; }
+.screen.big { max-width: 1000px; }
+.caption { color: var(--muted); font-size: 0.92rem; margin: 14px 0 0; }
+
+#features .grid { margin-top: 24px; grid-template-columns: repeat(3, 1fr); }
+#features .card { border-top: 2px solid rgba(255, 138, 61, 0.45); }
+#download, #issues, #community { padding-top: 80px; }
+#download h2, #issues h2, #community h2 { font-size: clamp(1.4rem, 2.4vw, 1.8rem); }
+
+@media (max-width: 900px) {
+  .hero-inner { grid-template-columns: 1fr; gap: 32px; }
+  .hero-art { max-width: 620px; }
+  .facts { grid-template-columns: repeat(2, 1fr); }
+  #features .grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .showcase, .showcase.flip { grid-template-columns: 1fr; gap: 28px; }
+  .showcase.flip .qam { order: 0; }
+  .qam { max-width: 330px; }
+}
+@media (max-width: 520px) {
+  .hero { padding-top: 36px; }
+  .logo { width: 56px; height: 56px; }
+  .screen { padding: 6px; border-radius: 14px; }
+  .screen img { border-radius: 8px; }
 }
 
 /* Games page (games.html) */
 .hidden { display: none !important; }
 .topbar {
   display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px;
-  max-width: 960px; margin: 0 auto; padding: 14px 16px; border-bottom: 1px solid var(--border);
+  max-width: 1120px; margin: 0 auto; padding: 14px 16px; border-bottom: 1px solid var(--border);
 }
 .brand { display: flex; align-items: center; gap: 10px; line-height: 0; }
 .topbar .links { display: flex; gap: 18px; }
