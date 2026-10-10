@@ -174,6 +174,9 @@ footer p { margin: 4px 0; }
   border: 1px solid #4a3a2e; background: #0e141b;
   box-shadow: 0 30px 70px rgba(0, 0, 0, 0.55), 0 0 50px rgba(255, 138, 61, 0.08);
 }
+/* the Thor's bottom screen, landscape */
+.showcase.landscape { grid-template-columns: 480px 1fr; }
+.qam.landscape { aspect-ratio: 1240 / 960; }
 .panel-shot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top; opacity: 0; transition: opacity 0.25s; }
 .panel-shot.active { opacity: 1; }
 .tab-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 20px; }
@@ -207,6 +210,8 @@ footer p { margin: 4px 0; }
   .showcase, .showcase.flip { grid-template-columns: 1fr; gap: 28px; }
   .showcase.flip .qam { order: 0; }
   .qam { max-width: 330px; }
+  .showcase.landscape { grid-template-columns: 1fr; }
+  .qam.landscape { max-width: 480px; }
 }
 @media (max-width: 520px) {
   .hero { padding-top: 36px; }

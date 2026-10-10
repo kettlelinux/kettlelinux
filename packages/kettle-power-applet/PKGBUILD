@@ -5,12 +5,13 @@
 # Also the Performance app (kettle-performance, app/): readings (power, clocks, temperatures, fan,
 # memory, battery, the game's frame rate and frame times) and the same settings, in two tabs, and
 # in Game Mode two more, Trackpad and Keyboard: the bottom screen as a mouse and a keyboard for
-# Steam and the game on top.
+# Steam and the game on top. In Game Mode its Settings also has what the Decky plugins set: Auto
+# TDP, the refresh rates (all games', the running game's, the bottom screen's 30 Hz) and charging.
 # The Thor's bottom screen starts it in Game Mode, where it follows the running game and shares
 # Steam's values with Quick Access > Performance.
 pkgname=kettle-power-applet
 pkgver=1.1.0
-pkgrel=4
+pkgrel=5
 pkgdesc='Kettle Linux power, fan and clock controls: the desktop tray applet and the Performance app'
 arch=(aarch64)
 license=(BSD-3-Clause)

@@ -24,6 +24,7 @@ target_sources(kettlepowerplugin PRIVATE
     src/gamestats.cpp src/gamestats.h
     src/systemstats.cpp src/systemstats.h
     src/bottomscreen.cpp src/bottomscreen.h
+    src/refreshrate.cpp src/refreshrate.h
     src/trackpad.cpp src/trackpad.h
     src/keyboard.cpp src/keyboard.h
     src/uinputdevice.cpp src/uinputdevice.h)

@@ -11,6 +11,8 @@
 #include <KConfigGroup>
 #include <KSharedConfig>
 
+#include <algorithm>
+
 namespace
 {
 const QString service = QStringLiteral("org.kettlelinux.Power1");
@@ -316,6 +318,21 @@ void PowerBackend::resetSettings()
     // kettle-powerd keeps the all-games settings: "{}" makes them the defaults
     call(QStringLiteral("SetGame"), {key, key == allGames ? QStringLiteral("{}") : QStringLiteral("null")},
          [this](bool, const QString &) { readGame(); });
+}
+
+void PowerBackend::setChargeSpeed(const QString &name)
+{
+    call(QStringLiteral("SetChargeSpeed"), {name}, [this](bool, const QString &) { tick(); });
+}
+
+void PowerBackend::setChargeCurrent(int ua)
+{
+    call(QStringLiteral("SetChargeCurrent"), {QVariant::fromValue(uint(std::max(ua, 0)))}, [this](bool, const QString &) { tick(); });
+}
+
+void PowerBackend::setSleepFan(int pct)
+{
+    call(QStringLiteral("SetSleepFan"), {QVariant::fromValue(uint(std::clamp(pct, 0, 100)))}, [this](bool, const QString &) { tick(); });
 }
 
 void PowerBackend::setGameOnly(bool on)

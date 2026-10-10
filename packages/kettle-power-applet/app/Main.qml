@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Performance: a Stats tab (power, clocks, temperatures, fan, memory, battery and the game's
-// frame rate), a Settings tab (Steam's power values, fan and CPU, the bottom screen's
-// brightness) and, in Game Mode, Trackpad and Keyboard tabs (a mouse and a keyboard for the top
+// frame rate), a Settings tab (Steam's power values, Auto TDP, fan and CPU, charging, the
+// screens' refresh rates and the bottom screen's brightness) and, in Game Mode, Trackpad and Keyboard tabs (a mouse and a keyboard for the top
 // screen). Sized for the Thor's bottom screen (1240x1080 at 2x: 620x540).
 import QtCore
 import QtQuick
@@ -46,6 +46,7 @@ Kirigami.ApplicationWindow {
                 power: powerBackend
                 game: gameStats
                 bottomScreen: bottomScreenSetting
+                refreshRate: topRefreshRate
                 gameMode: window.gameMode
                 interval: prefs.interval
                 onIntervalPicked: ms => prefs.interval = ms
@@ -126,6 +127,11 @@ Kirigami.ApplicationWindow {
     }
     BottomScreen {
         id: bottomScreenSetting
+    }
+    // the top screen's refresh rate (Game Mode): all games', and the running game's own
+    RefreshRate {
+        id: topRefreshRate
+        activeGame: powerBackend.activeGame
     }
     // the mouse exists only while its tab is open (and the screens aren't dimmed)
     Trackpad {

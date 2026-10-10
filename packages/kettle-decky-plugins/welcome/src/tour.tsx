@@ -16,9 +16,13 @@ import dsPower from "../assets/ds-power.jpg";
 import dsLights from "../assets/ds-lights.jpg";
 import dsGyro from "../assets/ds-gyro.jpg";
 import diag from "../assets/diag.jpg";
+import thorStats from "../assets/thor-stats.jpg";
+import thorTrackpad from "../assets/thor-trackpad.jpg";
+import thorKeyboard from "../assets/thor-keyboard.jpg";
+import thorSettings from "../assets/thor-settings.jpg";
 
 // plugins: Kettle's Decky plugins on this device ("game-settings", "stores", ...)
-export type Features = { plugins: string[]; android: boolean };
+export type Features = { plugins: string[]; android: boolean; bottom_screen: boolean };
 
 export const ROUTE = "/kettle-welcome";
 export const go = (page: string) => Navigation.Navigate(`${ROUTE}/${page}`);
@@ -83,6 +87,7 @@ export const STOPS: Stop[] = [
   { id: "framegen", title: "Frame Gen", has: (f) => f.plugins.includes("game-settings") },
   { id: "stores", title: "Game Stores", has: (f) => f.plugins.includes("stores") },
   { id: "device", title: "Your device", has: (f) => f.plugins.includes("device-settings") },
+  { id: "screen", title: "Second screen", has: (f) => f.bottom_screen },
   { id: "desktop", title: "Desktop mode", has: () => true },
 ];
 
@@ -277,6 +282,48 @@ export function DevicePage({ f }: { f: Features }) {
         <Button label="Open Device Settings" onClick={() => openPanel("Device Settings")} />
         <Button label="Open Diagnostics" onClick={() => Navigation.Navigate("/kettle-device-settings/diagnostics/now")} />
         <Next from="device" f={f} />
+      </Buttons>
+    </div>
+  );
+}
+
+// The Thor's bottom screen: the Performance app's tabs, two to a row
+function ScreenTab({ img, title, children }: { img: string; title: string; children: ReactNode }) {
+  return (
+    <Focusable onActivate={() => {}} style={{ lineHeight: "22px" }}>
+      <img src={img} style={{ ...shot, width: "100%" }} />
+      <h3 style={{ margin: "10px 0 4px" }}>{title}</h3>
+      {children}
+    </Focusable>
+  );
+}
+
+export function ScreenPage({ f }: { f: Features }) {
+  return (
+    <div style={page}>
+      <Text>
+        <p>
+          In Game Mode, the bottom screen runs Kettle's <b>Performance</b> app, next to whatever runs on top. Its tabs are
+          along its bottom edge; Device Settings' <b>Screens</b> tab turns the screen off or sets its brightness.
+        </p>
+      </Text>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", margin: "16px 0" }}>
+        <ScreenTab img={thorStats} title="Stats">
+          <p>The game's frame rate and frame times, power draw, clocks, temperatures and fan, without an overlay on the game.</p>
+        </ScreenTab>
+        <ScreenTab img={thorTrackpad} title="Trackpad">
+          <p>A mouse for the top screen: one finger moves the pointer, a tap clicks, two fingers scroll.</p>
+        </ScreenTab>
+        <ScreenTab img={thorKeyboard} title="Keyboard">
+          <p>A full PC keyboard for the game or Steam. Keys stay down while touched.</p>
+        </ScreenTab>
+        <ScreenTab img={thorSettings} title="Settings">
+          <p>Quick Access's power settings, Auto TDP, both screens' refresh rates and charging, always within reach.</p>
+        </ScreenTab>
+      </div>
+      <Buttons>
+        <Button label="Open Device Settings" onClick={() => openPanel("Device Settings")} />
+        <Next from="screen" f={f} />
       </Buttons>
     </div>
   );

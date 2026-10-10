@@ -1,10 +1,10 @@
 import { ButtonItem, Navigation, PanelSection, PanelSectionRow, SidebarNavigation, staticClasses } from "@decky/ui";
 import { callable, definePlugin, routerHook } from "@decky/api";
 import { ReactElement, useEffect, useMemo, useState } from "react";
-import { FaCog, FaDesktop, FaExpandArrowsAlt, FaGamepad, FaHandSparkles, FaLayerGroup, FaMugHot, FaStore } from "react-icons/fa";
+import { FaCog, FaDesktop, FaExpandArrowsAlt, FaGamepad, FaHandSparkles, FaLayerGroup, FaMugHot, FaStore, FaTabletAlt } from "react-icons/fa";
 import { applyGameFixes } from "./fixes";
 import { addDesktop } from "./desktop";
-import { DesktopPage, DevicePage, Features, FrameGenPage, GamesPage, ROUTE, STOPS, StoresPage, UpscalingPage, WelcomePage } from "./tour";
+import { DesktopPage, DevicePage, Features, FrameGenPage, GamesPage, ROUTE, STOPS, ScreenPage, StoresPage, UpscalingPage, WelcomePage } from "./tour";
 
 const firstRun = callable<[], boolean>("first_run");
 const signedIn = callable<[], boolean>("signed_in");
@@ -23,6 +23,7 @@ const ICONS: Record<string, ReactElement> = {
   framegen: <FaLayerGroup />,
   stores: <FaStore />,
   device: <FaCog />,
+  screen: <FaTabletAlt />,
   desktop: <FaDesktop />,
 };
 const PAGES: Record<string, (p: { f: Features }) => ReactElement> = {
@@ -32,11 +33,12 @@ const PAGES: Record<string, (p: { f: Features }) => ReactElement> = {
   framegen: FrameGenPage,
   stores: StoresPage,
   device: DevicePage,
+  screen: ScreenPage,
   desktop: DesktopPage,
 };
 
 let loaded: Features | null = null; // features(), asked once
-const NONE: Features = { plugins: [], android: false };
+const NONE: Features = { plugins: [], android: false, bottom_screen: false };
 
 // SidebarNavigation reports each tab as a route under ROUTE (as Decky's own settings do), which is
 // why that route isn't exact. The pages are built once per set of features, so the sidebar isn't

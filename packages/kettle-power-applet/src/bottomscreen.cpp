@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
 #include <QSaveFile>
 
 #include <algorithm>
@@ -15,6 +16,9 @@ namespace
 // as Device Settings' Screens tab and bottom-brightness have them
 constexpr int defaultPercent = 70;
 constexpr int minPercent = 2;
+// 30: bottom-screen offers it (gamescope 0022)
+constexpr int defaultHz = 60;
+constexpr int slowHz = 30;
 }
 
 BottomScreen::BottomScreen(QObject *parent)
@@ -48,13 +52,37 @@ void BottomScreen::readDimmed()
 void BottomScreen::load()
 {
     QFile f(m_path);
-    int percent = defaultPercent;
+    QJsonObject state;
     if (f.open(QIODevice::ReadOnly))
-        percent = QJsonDocument::fromJson(f.readAll()).object().value(QStringLiteral("brightness")).toInt(defaultPercent);
-    percent = std::clamp(percent, minPercent, 100);
+        state = QJsonDocument::fromJson(f.readAll()).object();
+    const int percent = std::clamp(state.value(QStringLiteral("brightness")).toInt(defaultPercent), minPercent, 100);
     if (percent != m_brightness) {
         m_brightness = percent;
         Q_EMIT brightnessChanged();
+    }
+    const int hz = state.value(QStringLiteral("refresh_hz")).toInt(defaultHz) == slowHz ? slowHz : defaultHz;
+    if (hz != m_refreshHz) {
+        m_refreshHz = hz;
+        Q_EMIT refreshHzChanged();
+    }
+}
+
+void BottomScreen::save(const QString &key, int value)
+{
+    // the file's other settings ("enabled") stay as they are
+    QJsonObject state;
+    {
+        QFile f(m_path);
+        if (f.open(QIODevice::ReadOnly))
+            state = QJsonDocument::fromJson(f.readAll()).object();
+    }
+    state.insert(key, value);
+    QDir().mkpath(QFileInfo(m_path).absolutePath());
+    QSaveFile out(m_path);
+    if (out.open(QIODevice::WriteOnly)) {
+        out.write(QJsonDocument(state).toJson(QJsonDocument::Compact));
+        if (!out.commit())
+            qWarning("kettle-power: %s: %s", qPrintable(m_path), qPrintable(out.errorString()));
     }
 }
 
@@ -63,21 +91,32 @@ void BottomScreen::setBrightness(int percent)
     percent = std::clamp(percent, minPercent, 100);
     if (!m_available || percent == m_brightness)
         return;
-    // the file's other settings ("enabled") stay as they are
-    QJsonObject state;
-    {
-        QFile f(m_path);
-        if (f.open(QIODevice::ReadOnly))
-            state = QJsonDocument::fromJson(f.readAll()).object();
-    }
-    state.insert(QStringLiteral("brightness"), percent);
-    QDir().mkpath(QFileInfo(m_path).absolutePath());
-    QSaveFile out(m_path);
-    if (out.open(QIODevice::WriteOnly)) {
-        out.write(QJsonDocument(state).toJson(QJsonDocument::Compact));
-        if (!out.commit())
-            qWarning("kettle-power: %s: %s", qPrintable(m_path), qPrintable(out.errorString()));
-    }
+    save(QStringLiteral("brightness"), percent);
     m_brightness = percent;
     Q_EMIT brightnessChanged();
+}
+
+void BottomScreen::setRefreshHz(int hz)
+{
+    hz = hz == slowHz ? slowHz : defaultHz;
+    if (!m_available || hz == m_refreshHz)
+        return;
+    save(QStringLiteral("refresh_hz"), hz);
+    m_refreshHz = hz;
+    Q_EMIT refreshHzChanged();
+    // live, on the bottom screen's gamescope (bottom-shell names it), as Device Settings does: a
+    // fixed rate (gamescope 0023), which switches at once
+    QFile name(qEnvironmentVariable("XDG_RUNTIME_DIR") + QStringLiteral("/kettle-bottom-gamescope"));
+    if (!name.open(QIODevice::ReadOnly))
+        return;
+    const QString display = QString::fromUtf8(name.readAll()).trimmed();
+    if (display.isEmpty())
+        return;
+    auto *p = new QProcess(this);
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("GAMESCOPE_WAYLAND_DISPLAY"), display);
+    p->setProcessEnvironment(env);
+    connect(p, &QProcess::finished, p, &QObject::deleteLater);
+    connect(p, &QProcess::errorOccurred, p, &QObject::deleteLater);
+    p->start(QStringLiteral("gamescopectl"), {QStringLiteral("refresh_hz"), QString::number(hz)});
 }
