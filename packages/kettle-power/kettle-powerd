@@ -59,7 +59,6 @@ CPU_STEPS = 16  # CPU budget ladder: 100% down to 30% of each cluster's top freq
 FAN_HYST = 3  # C: the fan slows down only once the temperature is this far below a point
 CHARGE_RESUME = 5  # %: a held charge limit lets charging resume this far below the limit
 CHARGE_EVERY = 5  # s between charge limit checks (each read is a firmware round trip)
-SLEEP_MARGIN = 2  # %: going to sleep this close to the charge limit, charging stops for the sleep
 CUSTOM = "Custom"  # charge speed set as a current (charge_custom_ua)
 CUSTOM_MIN_UA = 500_000
 CUSTOM_STEP_UA = 500_000
@@ -383,7 +382,7 @@ class Daemon:
             self.state["charge_custom_ua"] = self.clamp_custom(self.state["charge_custom_ua"] or self.custom_max // 2)
         self.charge_held = False  # at the charge limit, charging stopped
         self.charge_next = 0.0  # monotonic time of the next charge limit check
-        self.sleep_hold = False  # charging stopped for a sleep begun near the charge limit
+        self.sleep_hold = False  # charging stopped for a sleep begun at the charge limit
         self.sleep_lock = -1  # logind's delay lock (fd)
         self.login = None  # the system bus, for logind
         self.active = ""  # running game's appid, from Device Settings
@@ -987,13 +986,15 @@ class Daemon:
 
     def on_sleep(self, conn, sender, path, iface, signal_name, params):
         """Asleep no tick runs, so a battery charging toward the charge limit would charge on to
-        full: one at or just below the limit stops charging for the sleep. One further below
-        keeps charging (overnight on the charger) and can still go past the limit by morning."""
+        full: one at the limit stops charging for the sleep. One below it keeps charging
+        (overnight on the charger) and can go past the limit by morning. Not from just below:
+        near full, the Portal's charger firmware doesn't start charging again once its current
+        has been 0, not until a replug, so that battery would stay a percent or two short."""
         going = params.unpack()[0]
         try:
             limit = self.state["steam"]["charge_limit"]
             level = read_int(f"{self.hw.battery}/capacity") if going and limit >= 0 else None
-            self.sleep_hold = level is not None and level >= limit - SLEEP_MARGIN
+            self.sleep_hold = level is not None and level >= limit
             if self.sleep_hold:
                 log(f"sleep at {level}% (limit {limit}%): charging held until wake")
             self.charge_tick(now=True)
