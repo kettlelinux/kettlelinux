@@ -106,19 +106,29 @@ function FrameGenSettings({ appid, name, s, onChanged }: { appid: number; name: 
 
   useEffect(() => {
     setG(null);
-    getGame(appid).then((g) => {
-      setG(g);
-      // launch options edited by hand (or from an older plugin version, or Frame Gen turned off
-      // while they couldn't be edited): make them match; a no-op when they already do
-      applyLaunchOptions(appid, g, s);
-    });
+    getGame(appid)
+      .then((g) => {
+        setG(g);
+        // launch options edited by hand (or from an older plugin version, or Frame Gen turned off
+        // while they couldn't be edited): make them match; a no-op when they already do
+        return applyLaunchOptions(appid, g, s);
+      })
+      .catch((e) => toaster.toast({ title: "Game Settings", body: `Couldn't load Frame Gen for ${name}: ${e}` }));
   }, [appid]);
   if (!g) return null;
   const ok = s.layer;
 
   const update = async (patch: Partial<Game>) => {
+    const before = g;
     setG({ ...g, ...patch });
-    const next = await setGame(appid, patch);
+    let next: Game;
+    try {
+      next = await setGame(appid, patch);
+    } catch (e) {
+      setG(before); // not stored: show what is
+      toaster.toast({ title: "Game Settings", body: `Couldn't change Frame Gen for ${name}: ${e}` });
+      return;
+    }
     setG(next);
     if (IN_LAUNCH_OPTIONS.some((k) => k in patch)) await applyLaunchOptions(appid, next, s);
     if (runningAppId() === appid && (ON_RESTART.some((k) => k in patch) || ("multiplier" in patch && next.fps_cap === "auto")))

@@ -38,7 +38,7 @@
 #   job        the one running (same fields)
 #   install_dir  where new games go (default ~/Games/Heroic, Heroic's default)
 #   cloud_saves  false: kettle-store-run doesn't sync saves (it reads this file; default on)
-import asyncio, base64, glob, html, json, os, re, shlex, shutil, subprocess, time, urllib.parse, urllib.request
+import asyncio, base64, contextlib, fcntl, glob, html, json, os, re, shlex, shutil, subprocess, time, urllib.parse, urllib.request
 
 import decky
 import cdp
@@ -67,7 +67,14 @@ if not os.path.exists(WRAPPER):
     WRAPPER = os.path.join(decky.DECKY_PLUGIN_DIR, "kettle-store-run")
 
 STORES = ("epic", "gog", "amazon")
+SOURCES = STORES + ("flathub",)
 NAMES = {"epic": "Epic Games", "gog": "GOG", "amazon": "Amazon Games"}
+# the store's game IDs (legendary's app names, GOG's product ids, Amazon's amzn1.adg.product.<uuid>):
+# they go into launch options Steam runs through a shell, and into file names
+GAME_ID = {"epic": re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"), "gog": re.compile(r"[0-9]{1,20}"),
+           "amazon": re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")}
+# what other plugins keep per game, by Steam appid (forgotten with a store game's shortcut)
+DECKY_SETTINGS = os.path.dirname(decky.DECKY_PLUGIN_SETTINGS_DIR)
 
 EPIC_LOGIN = ("https://www.epicgames.com/id/login?redirectUrl=" + urllib.parse.quote(
     "https://www.epicgames.com/id/api/redirect?clientId=34a02cf8f4414e29b15921876da36f9a&responseType=code", safe=""))
@@ -139,6 +146,39 @@ def _run(*cmd: str, timeout: int = 120, quiet: bool = False) -> subprocess.Compl
     if r.returncode != 0 and not quiet:
         decky.logger.warning("stores: %s %s failed (%d): %s", cmd[0], cmd[1], r.returncode, r.stderr[-500:])
     return r
+
+
+@contextlib.contextmanager
+def _heroic_lock(path: str):
+    """Holds a lock file next to one of Heroic's files while it's read, changed and written back
+    (kettle-store-run reads them too). Heroic itself doesn't lock them: best effort."""
+    f = None
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        f = open(path + ".kettle-lock", "a")
+        fcntl.flock(f, fcntl.LOCK_EX)
+    except OSError as e:
+        decky.logger.warning("stores: no lock for %s: %s", path, e)
+    try:
+        yield
+    finally:
+        if f:
+            f.close()  # releases the lock
+
+
+def _store(store, sources=SOURCES) -> str:
+    if store not in sources:
+        raise ValueError(f"unknown store: {store!r}")
+    return store
+
+
+def _gid(store: str, gid) -> str:
+    """The game's ID, checked for its store."""
+    if store == "flathub":
+        return _app_id(gid)
+    if not isinstance(gid, str) or not GAME_ID[store].fullmatch(gid):
+        raise ValueError(f"not a {NAMES[store]} game ID: {gid!r}")
+    return gid
 
 
 def _get(url: str, token: str | None = None, limit: int = 16 << 20) -> bytes:
@@ -243,13 +283,17 @@ def _login(store: str, amazon: dict | None, cancelled):
         if r.returncode != 0:
             raise RuntimeError("gogdl couldn't sign in with GOG's code")
         # Heroic counts GOG as signed in only with these in its own config
-        conf = _read_json(GOG_CONFIG, {})
+        user = None
         try:
-            conf["userData"] = _get_json("https://embed.gog.com/userData.json", _gog_token())
+            user = _get_json("https://embed.gog.com/userData.json", _gog_token())
         except Exception as e:
             decky.logger.warning("stores: GOG user data: %s", e)
-        conf["isLoggedIn"] = True
-        _write_json(GOG_CONFIG, conf)
+        with _heroic_lock(GOG_CONFIG):
+            conf = _read_json(GOG_CONFIG, {})
+            if user is not None:
+                conf["userData"] = user
+            conf["isLoggedIn"] = True
+            _write_json(GOG_CONFIG, conf)
     else:
         r = _run("nile", "register", "--code", code, "--client-id", amazon["client_id"], "--code-verifier",
                  amazon["code_verifier"], "--serial", amazon["serial"], quiet=True)
@@ -265,10 +309,11 @@ def _logout(store: str):
             os.remove(GOG_AUTH)
         except FileNotFoundError:
             pass
-        conf = _read_json(GOG_CONFIG, {})
-        conf["isLoggedIn"] = False
-        conf.pop("userData", None)
-        _write_json(GOG_CONFIG, conf)
+        with _heroic_lock(GOG_CONFIG):
+            conf = _read_json(GOG_CONFIG, {})
+            conf["isLoggedIn"] = False
+            conf.pop("userData", None)
+            _write_json(GOG_CONFIG, conf)
     else:
         _run("nile", "auth", "--logout")
     try:
@@ -516,7 +561,7 @@ def _size_info(store: str, gid: str) -> dict:
 # --- Flathub -----------------------------------------------------------------------------------
 
 def _app_id(app: str) -> str:
-    if not APP_ID.match(app or ""):
+    if not isinstance(app, str) or not APP_ID.fullmatch(app):
         raise ValueError(f"not a Flatpak app ID: {app!r}")
     return app
 
@@ -689,7 +734,9 @@ def _job_command(job: dict, base: str) -> list[str]:
     if store == "gog":
         auth = ["gogdl", "--auth-config-path", GOG_AUTH]
         if kind == "update":
-            g = next(g for g in _gog_installed() if g["appName"] == gid)
+            g = next((g for g in _gog_installed() if g["appName"] == gid), None)
+            if not g:
+                raise RuntimeError("GOG doesn't list the game as installed: install it again instead")
             return auth + ["update", gid, "--platform", "windows", "--path", g["install_path"], "--lang",
                            g.get("language") or "en-US", "--with-dlcs"]
         return auth + ["download", gid, "--platform", "windows", "--path", base, "--lang", "en-US", "--with-dlcs"]
@@ -780,9 +827,7 @@ def _gog_record(gid: str, base: str, kind: str):
     r = _run("gogdl", "--auth-config-path", GOG_AUTH, "info", gid, "--platform", "windows", timeout=120, quiet=True)
     line = next((l for l in reversed(r.stdout.splitlines()) if l.startswith("{")), "{}")
     info = json.loads(line)
-    data = _read_json(GOG_INSTALLED, {})
-    installed = data.get("installed", [])
-    old = next((g for g in installed if g["appName"] == gid), None)
+    old = next((g for g in _gog_installed() if g["appName"] == gid), None)
     path = old["install_path"] if old else os.path.join(base, info.get("folder_name") or gid)
     if not os.path.exists(os.path.join(path, f"goggame-{gid}.info")):
         raise RuntimeError(f"gogdl finished, but the game isn't in {path}")
@@ -799,11 +844,26 @@ def _gog_record(gid: str, base: str, kind: str):
              "installedDLCs": [str(d.get("id")) for d in info.get("dlcs") or [] if d.get("id")],
              "language": (old or {}).get("language") or "en-US", "versionEtag": info.get("versionEtag") or "",
              "buildId": info.get("buildId") or "", "pinnedVersion": False}
-    data["installed"] = [g for g in installed if g["appName"] != gid] + [entry]
-    _write_json(GOG_INSTALLED, data)
+    with _heroic_lock(GOG_INSTALLED):
+        data = _read_json(GOG_INSTALLED, {})
+        data["installed"] = [g for g in data.get("installed", []) if g["appName"] != gid] + [entry]
+        _write_json(GOG_INSTALLED, data)
 
 
-def _uninstall(store: str, gid: str):
+def _gog_folder_ok(path: str, gid: str, bases: list[str]) -> bool:
+    """Whether Heroic's install_path is the game's own folder, safe to delete: it has the game's
+    goggame-<id>.info and isn't the home folder, one above it, or where games are installed."""
+    real = os.path.realpath(path)
+    if not os.path.isfile(os.path.join(real, f"goggame-{gid}.info")):
+        return False
+    for b in [HOME, os.path.join(HOME, "Games")] + bases:
+        b = os.path.realpath(b)
+        if real == b or b.startswith(real.rstrip("/") + "/"):
+            return False
+    return True
+
+
+def _uninstall(store: str, gid: str, bases: list[str]):
     if store == "flathub":
         app = _flatpak_list().get(gid)
         if app and app["installation"] != "user":
@@ -818,12 +878,17 @@ def _uninstall(store: str, gid: str):
         if r.returncode != 0:
             raise RuntimeError("legendary couldn't uninstall the game")
     elif store == "gog":
-        data = _read_json(GOG_INSTALLED, {})
-        g = next((g for g in data.get("installed", []) if g["appName"] == gid), None)
-        if g and g.get("install_path") and os.path.isdir(g["install_path"]):
-            shutil.rmtree(g["install_path"])
-        data["installed"] = [x for x in data.get("installed", []) if x["appName"] != gid]
-        _write_json(GOG_INSTALLED, data)
+        g = next((g for g in _gog_installed() if g["appName"] == gid), None)
+        path = (g or {}).get("install_path")
+        if path and os.path.isdir(path):
+            if _gog_folder_ok(path, gid, bases):
+                shutil.rmtree(path)
+            else:  # not the game's own folder (a hand-edited or broken record): only the record goes
+                decky.logger.warning("stores: GOG %s: not deleting %s, it isn't the game's own folder", gid, path)
+        with _heroic_lock(GOG_INSTALLED):
+            data = _read_json(GOG_INSTALLED, {})
+            data["installed"] = [x for x in data.get("installed", []) if x["appName"] != gid]
+            _write_json(GOG_INSTALLED, data)
         try:  # as Heroic does: else gogdl would patch the game that isn't there next time
             os.remove(_gog_manifest(gid))
         except FileNotFoundError:
@@ -850,6 +915,27 @@ def _locations() -> list[dict]:
         except OSError:
             o["free"] = 0
     return out
+
+
+def _forget_game(appid: int):
+    """A removed store game's own settings in Game Settings: its profile, Frame Gen's settings and
+    the layer's file, and OptiScaler's parked .ini, all by appid. A shortcut made for the game
+    again can get the same appid, and would start with settings for launch options it hasn't."""
+    if not appid or not steamlib.is_shortcut(appid):
+        return
+    for path in (os.path.join(DECKY_SETTINGS, "kettle-game-settings", "games.json"),
+                 os.path.join(DECKY_SETTINGS, "kettle-framegen", "games.json")):
+        data = _read_json(path, None)
+        if isinstance(data, dict) and data.pop(str(appid), None) is not None:
+            _write_json(path, data)
+    for path in (os.path.join(HOME, ".config", "kettle-framegen", f"{appid}.conf"),
+                 os.path.join(DECKY_SETTINGS, "kettle-upscaling", "optiscaler", f"{appid}.ini"),
+                 os.path.join(DECKY_SETTINGS, "kettle-upscaling", "optiscaler", f"{appid}.json")):
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+    decky.logger.info("stores: forgot game settings of shortcut %s", appid)
 
 
 async def _android_run(command: str, arg: str):
@@ -908,6 +994,7 @@ class Plugin:
 
     async def login_start(self, store: str) -> str:
         """The store's login page (the frontend opens it in Steam's browser); a task waits for the sign-in."""
+        _store(store, STORES)
         if self.login_task and not self.login_task.done():
             self.login_cancel = True
             await asyncio.wait([self.login_task], timeout=2)
@@ -940,12 +1027,13 @@ class Plugin:
         self.login_cancel = True
 
     async def logout(self, store: str):
-        await asyncio.to_thread(_logout, store)
+        await asyncio.to_thread(_logout, _store(store, STORES))
 
     # libraries
 
     async def library(self, store: str, refresh: bool) -> dict:
         """The store's games ({"games", "fetched"}); from the cache unless refresh or it's a day old."""
+        _store(store, STORES)
         path = os.path.join(SETTINGS, f"library-{store}.json")
         cache = _read_json(path, None)
         if refresh or not cache or time.time() - cache.get("fetched", 0) > 86400:
@@ -967,11 +1055,13 @@ class Plugin:
         return {"games": games, "fetched": cache["fetched"]}
 
     async def game_info(self, store: str, gid: str) -> dict:
+        gid = _gid(_store(store, STORES), gid)
         info = await asyncio.to_thread(_size_info, store, gid)
         info["installed"] = (await asyncio.to_thread(_installed, store)).get(gid)
         return info
 
     async def details(self, store: str, gid: str) -> dict:
+        gid = _gid(_store(store, STORES), gid)
         key = f"{store}:{gid}"
         if key not in self.details_cache:
             self.details_cache[key] = await asyncio.to_thread(_details, store, gid)
@@ -1021,8 +1111,10 @@ class Plugin:
 
     async def install(self, store: str, gid: str, title: str, kind: str):
         """Queues an install or update ("install"|"update"); the main loop starts it."""
-        if store == "flathub":
-            _app_id(gid)
+        gid = _gid(_store(store), gid)
+        if kind not in ("install", "update"):
+            raise ValueError(f"unknown job kind: {kind!r}")
+        title = str(title)[:200]
         async with self.lock:
             s = self._state()
             if any(j["store"] == store and j["id"] == gid for j in s["queue"] + ([s["job"]] if s.get("job") else [])):
@@ -1033,6 +1125,7 @@ class Plugin:
 
     async def cancel(self, store: str, gid: str):
         """Takes a game off the queue, or stops its running download (it resumes if started again)."""
+        gid = _gid(_store(store), gid)
         async with self.lock:
             s = self._state()
             s["queue"] = [j for j in s["queue"] if not (j["store"] == store and j["id"] == gid)]
@@ -1048,7 +1141,10 @@ class Plugin:
 
     async def uninstall(self, store: str, gid: str) -> int | None:
         """Removes the game; returns its Steam shortcut's appid for the frontend to remove."""
-        await asyncio.to_thread(_uninstall, store, _app_id(gid) if store == "flathub" else gid)
+        gid = _gid(_store(store), gid)
+        s = self._state()
+        bases = [s.get("install_dir") or DEFAULT_DIR] + [l["path"] for l in await asyncio.to_thread(_locations)]
+        await asyncio.to_thread(_uninstall, store, gid, bases)
         async with self.lock:
             s = self._state()
             appid = s["shortcuts"].pop(f"{store}:{gid}", None)
@@ -1056,19 +1152,25 @@ class Plugin:
                 appid = await asyncio.to_thread(_flathub_shortcut, gid)
             s["pending"] = [k for k in s["pending"] if k != f"{store}:{gid}"]
             self._save(s)
+        try:
+            await asyncio.to_thread(_forget_game, appid)
+        except Exception as e:  # the game is gone either way
+            decky.logger.warning("stores: forgetting %s's settings: %s", appid, e)
         return appid
 
     # Steam shortcuts (added by the frontend)
 
     async def shortcut_info(self, store: str, gid: str) -> dict:
-        info = await asyncio.to_thread(_shortcut_info, store, _app_id(gid) if store == "flathub" else gid)
+        gid = _gid(_store(store), gid)
+        info = await asyncio.to_thread(_shortcut_info, store, gid)
         info["launch"] = f"run {gid}" if store == "flathub" else f"{WRAPPER} {store} {gid} %command%"
         return info
 
     async def artwork(self, store: str, gid: str) -> dict:
-        return await asyncio.to_thread(_art, store, gid)
+        return await asyncio.to_thread(_art, _store(store), _gid(store, gid))
 
     async def remember_shortcut(self, store: str, gid: str, appid: int):
+        gid = _gid(_store(store), gid)
         async with self.lock:
             s = self._state()
             key = f"{store}:{gid}"
@@ -1080,13 +1182,24 @@ class Plugin:
             self._save(s)
 
     async def pending(self) -> list[dict]:
-        """Installs finished without a shortcut yet (the frontend wasn't listening then)."""
+        """Installs finished without a shortcut yet (the frontend wasn't listening then), with the
+        shortcut the game had before (appid), which the frontend brings up to date."""
         out = []
-        for k in self._state().get("pending", []):
-            store, gid = k.split(":", 1)
+        s = self._state()
+        for k in s.get("pending", []):
+            store, _, gid = k.partition(":")
+            if store not in SOURCES:
+                continue
             if gid in await asyncio.to_thread(_installed, store):
-                out.append({"store": store, "id": gid})
+                out.append({"store": store, "id": gid, "appid": await self._known_appid(s, store, gid)})
         return out
+
+    async def _known_appid(self, s: dict, store: str, gid: str) -> int | None:
+        """The game's Steam shortcut as far as the plugin knows (Flathub: also one made elsewhere)."""
+        appid = s["shortcuts"].get(f"{store}:{gid}")
+        if not appid and store == "flathub":
+            appid = await asyncio.to_thread(_flathub_shortcut, gid)
+        return appid
 
     # the loop
 
@@ -1126,13 +1239,18 @@ class Plugin:
                 ok, error = False, f"couldn't record the install: {e}"
         async with self.lock:
             s = self._state()
+            cur = s.get("job")
+            if not cur or cur.get("started") != job.get("started") or cur["id"] != job["id"]:
+                return  # cancelled meanwhile (cancel cleared it; the next may have started)
             s["job"] = None
             key = f"{job['store']}:{job['id']}"
             if ok and job["kind"] == "install" and key not in s["pending"]:
                 s["pending"].append(key)
             self._save(s)
         decky.logger.info("stores: %s %s: %s", job["kind"], job["id"], "done" if ok else error)
-        await decky.emit("job", job, ok, error)
+        # with the game's shortcut, if it has one already: a reinstall brings that one up to date
+        appid = await self._known_appid(s, job["store"], job["id"]) if ok else None
+        await decky.emit("job", dict(job, appid=appid), ok, error)
         await self._next()
 
     async def battlenet_status(self) -> dict:

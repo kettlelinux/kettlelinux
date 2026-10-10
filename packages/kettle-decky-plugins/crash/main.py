@@ -31,7 +31,7 @@ _NOISE = re.compile(r"gameoverlayrenderer\.so' from LD_PRELOAD cannot be preload
 SERVER_CONF = "/usr/lib/kettle/crash.conf"  # KETTLE_CRASH_URL=https://...; none: no sharing
 SHARED = "shared.json"  # in a report's directory, once it's uploaded
 SHARE_FILES = ("backtrace.txt", "output.txt", "kernel.txt", "journal.txt", "environ.txt")
-SHARE_FILE_MAX = 256 << 10  # the end of each file
+SHARE_FILE_MAX = 256 << 10  # the end of each file, in UTF-8 bytes (the server's limit)
 # environment variables worth sharing (graphics, Proton, Wine, FEX, Steam's ids for the game);
 # everything else stays on the device
 _SHARE_ENV = re.compile(r"(PROTON_|DXVK_|VKD3D_|WINEDLLOVERRIDES|WINEDEBUG|WINE_|MESA_|TU_|FD_|"
@@ -193,7 +193,8 @@ def _bundle(rid: str, r: dict) -> dict:
             lines = [l for l in lines if _SHARE_ENV.match(l)]
         elif name == "journal.txt":
             lines = [l for l in lines if not _PRIVATE_UNITS.search(l)]
-        files[name] = redact("".join(lines))[-SHARE_FILE_MAX:]
+        # the last SHARE_FILE_MAX bytes of UTF-8, as the server counts (a cut character dropped)
+        files[name] = redact("".join(lines)).encode()[-SHARE_FILE_MAX:].decode(errors="ignore")
     return {"version": 1, "id": rid, "report": _redact_value(report, redact), "files": files}
 
 

@@ -84,21 +84,35 @@ export async function compatTools(appid: number): Promise<{ strToolName: string;
 
 // Write the profile into the game's launch options (taking out what the old one added) and
 // set its Proton version, then store it. The Proton version Steam had before the first change
-// is kept, so choosing "Steam's choice" again (or a reset) puts it back.
+// is kept, so choosing "Steam's choice" again (or a reset) puts it back. If storing it fails,
+// the launch options and Proton version go back as they were: else the stored game wouldn't
+// say which entries the plugin wrote, and it couldn't take them out again.
 export async function commit(appid: number, g: Game, next: Profile, extra: Patch = {}): Promise<Game> {
   let owned = g.owned;
+  const lo = { before: "", after: "" };
   await editLaunchOptions(appid, (o) => {
     const r = applyProfile(o, next, g.owned);
     owned = r.owned;
+    lo.before = o;
+    lo.after = r.opts;
     return r.opts;
   });
   const patch: Patch = { ...next, owned, ...extra };
+  let toolBefore: string | null = null; // the tool to put back on failure (null: unchanged)
   if (next.compat_tool !== g.compat_tool) {
     const before = g.compat_tool === null ? await currentTool(appid) : (g.compat_before ?? "");
+    toolBefore = g.compat_tool ?? before;
     SteamClient.Apps.SpecifyCompatTool(appid, next.compat_tool ?? before);
     patch.compat_before = next.compat_tool === null ? null : before;
   }
-  return setGame(appid, patch);
+  try {
+    return await setGame(appid, patch);
+  } catch (e) {
+    // only if nothing else changed them meanwhile
+    if (lo.after !== lo.before) await editLaunchOptions(appid, (o) => (o === lo.after ? lo.before : o)).catch(() => {});
+    if (toolBefore !== null) SteamClient.Apps.SpecifyCompatTool(appid, toolBefore);
+    throw e;
+  }
 }
 
 export const openDatabase = {

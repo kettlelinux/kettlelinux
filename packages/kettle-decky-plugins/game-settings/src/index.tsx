@@ -161,12 +161,18 @@ function GamePanel({ appid, name, s, onChanged }: { appid: number; name: string;
   const p = profileOf(g);
 
   const update = async (next: Profile, extra = {}) => {
-    const stored = await commit(appid, g, next, extra);
-    setG(stored);
-    setOpts(await getLaunchOptions(appid));
-    setTool(await currentTool(appid));
-    restartToast(appid, name);
-    onChanged();
+    try {
+      const stored = await commit(appid, g, next, extra);
+      setG(stored);
+      setOpts(await getLaunchOptions(appid));
+      setTool(await currentTool(appid));
+      restartToast(appid, name);
+      onChanged();
+    } catch (e) {
+      // commit put the launch options back: show what's there now
+      toaster.toast({ title: "Game Settings", body: `Couldn't change ${name}'s settings: ${e}` });
+      await reload().catch(() => {});
+    }
   };
   const toggle = (id: string) => {
     if (opened.has(id)) opened.delete(id);
@@ -367,12 +373,17 @@ function GamePanel({ appid, name, s, onChanged }: { appid: number; name: string;
                   strDescription="Takes out every launch option Game Settings added and puts the Proton version back. Your own launch options stay."
                   strOKButtonText="Reset"
                   onOK={async () => {
-                    await commit(appid, g, EMPTY);
-                    setG(await resetGame(appid));
-                    setOpts(await getLaunchOptions(appid));
-                    setTool(await currentTool(appid));
-                    restartToast(appid, name);
-                    onChanged();
+                    try {
+                      await commit(appid, g, EMPTY);
+                      setG(await resetGame(appid));
+                      setOpts(await getLaunchOptions(appid));
+                      setTool(await currentTool(appid));
+                      restartToast(appid, name);
+                      onChanged();
+                    } catch (e) {
+                      toaster.toast({ title: "Game Settings", body: `Couldn't reset ${name}: ${e}` });
+                      await reload().catch(() => {});
+                    }
                   }}
                 />,
               )

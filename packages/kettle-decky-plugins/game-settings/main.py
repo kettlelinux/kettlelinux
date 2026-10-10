@@ -85,6 +85,9 @@ GAME_DEFAULTS = {
 }
 
 _cat = None
+# games.json is read, changed and written back by several calls, some of which wait on the network
+# in between: each change happens under this lock on a fresh copy, so none undoes another's
+_games_lock = asyncio.Lock()
 _cache: dict[int, tuple[float, dict]] = {}
 _engine_cache: dict[str, tuple[float, dict]] = {}
 
@@ -397,52 +400,55 @@ class Plugin:
     async def set_game(self, appid: int, patch: dict) -> dict:
         """Store a game's profile (settings, env, dlls, compat_tool) and bookkeeping (owned,
         compat_before, source, verdict) from the frontend; anything else in patch is ignored."""
-        games = _load_games()
-        g = {**(games.get(appid) or GAME_DEFAULTS)}
-        g.update(clean_profile({**g, **{k: patch[k] for k in EMPTY if k in patch}}))
-        if isinstance(patch.get("owned"), dict):
-            g["owned"] = _clean_owned(patch["owned"])
-        if "compat_before" in patch:
-            g["compat_before"] = patch["compat_before"] if isinstance(patch["compat_before"], str) else None
-        if "source" in patch:
-            s = patch["source"]
-            g["source"] = ({"id": str(s["id"])[:32], "status": str(s.get("status", "pending"))[:16],
-                            "hash": profile_hash(g), "auto": bool(s.get("auto"))}
-                           if isinstance(s, dict) and s.get("id") else None)
-        if "verdict" in patch:
-            g["verdict"] = {"hash": profile_hash(g), "works": bool(patch["verdict"])} \
-                if patch["verdict"] is not None else None
-        games[appid] = g
-        _save_games(games)
-        return _view(appid, g)
+        async with _games_lock:
+            games = _load_games()
+            g = {**(games.get(appid) or GAME_DEFAULTS)}
+            g.update(clean_profile({**g, **{k: patch[k] for k in EMPTY if k in patch}}))
+            if isinstance(patch.get("owned"), dict):
+                g["owned"] = _clean_owned(patch["owned"])
+            if "compat_before" in patch:
+                g["compat_before"] = patch["compat_before"] if isinstance(patch["compat_before"], str) else None
+            if "source" in patch:
+                s = patch["source"]
+                g["source"] = ({"id": str(s["id"])[:32], "status": str(s.get("status", "pending"))[:16],
+                                "hash": profile_hash(g), "auto": bool(s.get("auto"))}
+                               if isinstance(s, dict) and s.get("id") else None)
+            if "verdict" in patch:
+                g["verdict"] = {"hash": profile_hash(g), "works": bool(patch["verdict"])} \
+                    if patch["verdict"] is not None else None
+            games[appid] = g
+            _save_games(games)
+            return _view(appid, g)
 
     async def reset_game(self, appid: int) -> dict:
         """Forget a game's profile; what it has learnt about sharing and votes stays."""
-        games = _load_games()
-        old = games.get(appid) or GAME_DEFAULTS
-        skip = list(old.get("auto_skip") or [])
-        src = _view(appid, old)["from_database"] if appid in games else None
-        if src and src.get("auto") and src["id"] not in skip:
-            skip.append(src["id"])  # the player didn't want it: don't put it back
-        games[appid] = {**GAME_DEFAULTS, "voted": old["voted"], "shared": old["shared"],
-                        "auto_skip": skip[-50:], "auto_checked": old.get("auto_checked") or 0}
-        _save_games(games)
-        return _view(appid, games[appid])
+        async with _games_lock:
+            games = _load_games()
+            old = games.get(appid) or GAME_DEFAULTS
+            skip = list(old.get("auto_skip") or [])
+            src = _view(appid, old)["from_database"] if appid in games else None
+            if src and src.get("auto") and src["id"] not in skip:
+                skip.append(src["id"])  # the player didn't want it: don't put it back
+            games[appid] = {**GAME_DEFAULTS, "voted": old["voted"], "shared": old["shared"],
+                            "auto_skip": skip[-50:], "auto_checked": old.get("auto_checked") or 0}
+            _save_games(games)
+            return _view(appid, games[appid])
 
     async def record_play(self, appid: int, seconds: float, compat_tool: str):
         """A session of a game ended: count its time towards the profile it ran with."""
         if seconds <= 0:
             return
-        games = _load_games()
-        g = games.get(appid) or dict(GAME_DEFAULTS)
-        h = profile_hash(g)
-        played = g["played"] if g["played"] and g["played"].get("hash") == h else {"hash": h, "seconds": 0}
-        played["seconds"] = int(played["seconds"] + seconds)
-        if isinstance(compat_tool, str) and re.fullmatch(r"[A-Za-z0-9_.-]{0,64}", compat_tool):
-            played["compat_tool"] = compat_tool
-        g["played"] = played
-        games[appid] = g
-        _save_games(games)
+        async with _games_lock:
+            games = _load_games()
+            g = games.get(appid) or dict(GAME_DEFAULTS)
+            h = profile_hash(g)
+            played = g["played"] if g["played"] and g["played"].get("hash") == h else {"hash": h, "seconds": 0}
+            played["seconds"] = int(played["seconds"] + seconds)
+            if isinstance(compat_tool, str) and re.fullmatch(r"[A-Za-z0-9_.-]{0,64}", compat_tool):
+                played["compat_tool"] = compat_tool
+            g["played"] = played
+            games[appid] = g
+            _save_games(games)
 
     # ----- verified settings automatically -----
 
@@ -467,31 +473,39 @@ class Plugin:
         games = _load_games()
         variant = _device()["variant"]
         now = time.time()
-        out = []
+        fetched = []  # (appid, name, profiles): the network first, without the lock
         for inst in steamlib.installed_games():
             appid = inst["appid"]
             if inst.get("shortcut"):  # not in the database (see _view)
                 continue
             g = games.get(appid) or {**GAME_DEFAULTS}
-            v = _view(appid, g)
-            if not v["auto_eligible"] or (not force and now - (g.get("auto_checked") or 0) < AUTO_RECHECK_S):
+            if not _view(appid, g)["auto_eligible"] or (not force and now - (g.get("auto_checked") or 0) < AUTO_RECHECK_S):
                 continue
             try:
-                profiles = (await asyncio.to_thread(_fetch, appid))["profiles"]
+                fetched.append((appid, inst["name"], (await asyncio.to_thread(_fetch, appid))["profiles"]))
             except Exception as e:
                 decky.logger.warning("verified settings: %s: %r", appid, e)
-                continue
-            g["auto_checked"] = int(now)
-            games[appid] = g
-            ok = [p for p in profiles if p["status"] == "approved" and p["variant"] == variant
-                  and p["id"] not in (g.get("auto_skip") or [])]
-            if not ok:
-                continue
-            best = max(ok, key=lambda p: p["works"] - p["broken"])
-            current = v["from_database"]["id"] if v["from_database"] else None
-            if best["id"] != current:
-                out.append({"appid": appid, "name": inst["name"], "entry": best})
-        _save_games(games)
+        if not fetched:
+            return []
+        out = []
+        async with _games_lock:
+            games = _load_games()  # as it is now: the player may have changed a game meanwhile
+            for appid, name, profiles in fetched:
+                g = games.get(appid) or {**GAME_DEFAULTS}
+                g["auto_checked"] = int(now)
+                games[appid] = g
+                v = _view(appid, g)
+                if not v["auto_eligible"]:
+                    continue
+                ok = [p for p in profiles if p["status"] == "approved" and p["variant"] == variant
+                      and p["id"] not in (g.get("auto_skip") or [])]
+                if not ok:
+                    continue
+                best = max(ok, key=lambda p: p["works"] - p["broken"])
+                current = v["from_database"]["id"] if v["from_database"] else None
+                if best["id"] != current:
+                    out.append({"appid": appid, "name": name, "entry": best})
+            _save_games(games)
         return out
 
     # ----- saved profiles -----
@@ -529,8 +543,7 @@ class Plugin:
 
     async def submit(self, appid: int, game: str, rating: str, notes: str) -> dict:
         """Share the game's profile as known good. Only what's listed here is sent."""
-        games = _load_games()
-        g = games.get(appid)
+        g = _load_games().get(appid)
         if not g or not _view(appid, g)["can_submit"]:
             raise RuntimeError(f"play the game for {PLAYED_MIN_S // 60} minutes with these settings "
                                "and mark them as working first")
@@ -552,17 +565,18 @@ class Plugin:
         except Exception as e:
             decky.logger.error("game database: sharing %s failed: %r", appid, e)
             raise RuntimeError(f"Couldn't share the settings: {e}") from e
-        g["shared"] = {"id": str(out.get("id", ""))[:32], "hash": profile_hash(g)}
-        games[appid] = g
-        _save_games(games)
+        shared = {"id": str(out.get("id", ""))[:32], "hash": profile_hash(g)}  # the profile that was sent
+        async with _games_lock:
+            games = _load_games()
+            games[appid] = {**(games.get(appid) or GAME_DEFAULTS), "shared": shared}
+            _save_games(games)
         _cache.pop(appid, None)
-        decky.logger.info("game database: shared %s as %s", appid, g["shared"]["id"])
-        return {"id": g["shared"]["id"], "url": out.get("url") or f"{_server()}/g/{appid}"}
+        decky.logger.info("game database: shared %s as %s", appid, shared["id"])
+        return {"id": shared["id"], "url": out.get("url") or f"{_server()}/g/{appid}"}
 
     async def vote(self, appid: int, works: bool) -> dict:
         """Say whether the database profile applied to this game worked here."""
-        games = _load_games()
-        g = games.get(appid)
+        g = _load_games().get(appid)
         v = _view(appid, g) if g else None
         if not v or not v["can_vote"]:
             raise RuntimeError("play the game with the database settings first")
@@ -577,10 +591,14 @@ class Plugin:
                 "engine": await asyncio.to_thread(_engine_report, appid)})
         except Exception as e:
             raise RuntimeError(f"Couldn't send it: {e}") from e
-        g["voted"] = (g["voted"] + [pid])[-200:]
-        g["verdict"] = {"hash": profile_hash(g), "works": bool(works)}
-        games[appid] = g
-        _save_games(games)
+        h = profile_hash(g)  # the profile voted on
+        async with _games_lock:
+            games = _load_games()
+            g = {**(games.get(appid) or GAME_DEFAULTS)}
+            g["voted"] = (list(g["voted"]) + [pid])[-200:]
+            g["verdict"] = {"hash": h, "works": bool(works)}
+            games[appid] = g
+            _save_games(games)
         _cache.pop(appid, None)
         return _view(appid, g)
 
