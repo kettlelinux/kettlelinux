@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // The Settings tab: the same controls as Quick Access > Performance (Steam's values, shared with
-// Steam), Game Settings (fan and CPU, per game) and Device Settings > Screens (the bottom
-// screen's brightness), all through the same settings, so each shows what the others set.
+// Steam), Game Settings > Perf (Auto TDP, fan and CPU, and a game's own refresh rate, per game),
+// Device Settings > Power (charging, the all-games refresh rate) and Device Settings > Screens
+// (the bottom screen's brightness and refresh rate), all through the same settings, so each
+// shows what the others set.
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
@@ -14,6 +16,7 @@ QQC2.ScrollView {
     required property var power // PowerBackend
     required property var game // GameStats
     required property var bottomScreen // BottomScreen
+    required property var refreshRate // RefreshRate (the top screen's, Game Mode)
     required property bool gameMode
     // how often the readings update, ms
     required property int interval
@@ -58,7 +61,23 @@ QQC2.ScrollView {
         power.setSettings({
             fan: Object.assign({}, fan, patch.fan ?? {}),
             cpu: Object.assign({}, cpu, patch.cpu ?? {}),
+            auto_tdp: patch.auto_tdp ?? power.settings.auto_tdp ?? false,
         });
+    }
+
+    function amps(ua) {
+        return (ua / 1e6).toFixed(1) + " A";
+    }
+    // charging, as Device Settings > Power has it
+    readonly property var chargeSpeeds: info.charge_speeds ?? []
+    readonly property var chargeCustom: info.charge_custom ?? null
+    readonly property int fastestCharge: Math.max(0, ...chargeSpeeds.map(sp => sp.ua))
+    readonly property int sleepFanOn: 30 // the fan's speed asleep when it's switched on, percent
+    readonly property bool hasBattery: info.charge_limit === true || chargeSpeeds.length > 0 || info.sleep_fan === true
+    // refresh rate choices: Auto (0) and the panel's rates
+    readonly property var rateChoices: [{label: "Auto", value: 0}].concat(refreshRate.rates.map(r => ({label: r + " Hz", value: r})))
+    function rateText(hz) {
+        return hz === 0 ? "Auto" : hz + " Hz";
     }
 
     // curve points stay in order: raising a point raises the ones after it, lowering lowers the ones before
@@ -75,6 +94,31 @@ QQC2.ScrollView {
             implicitHeight: Kirigami.Units.smallSpacing
         }
 
+        // --- the top screen's refresh rate (Game Mode) ---
+
+        Section {
+            visible: page.refreshRate.available
+            text: page.bottomScreen.available ? "Top screen" : "Screen"
+        }
+        ChoiceRow {
+            visible: page.refreshRate.available
+            text: "Refresh rate, all games"
+            choices: page.rateChoices
+            value: page.refreshRate.allGames
+            onPicked: v => page.refreshRate.setAllGames(v)
+        }
+        ChoiceRow {
+            visible: page.refreshRate.available && page.hasGame
+            text: page.gameName
+            choices: [{label: "All games' (" + page.rateText(page.refreshRate.allGames) + ")", value: -1}].concat(page.rateChoices)
+            value: page.refreshRate.games[page.power.activeGame] ?? -1
+            onPicked: v => page.refreshRate.setGameRate(page.power.activeGame, v)
+        }
+        Hint {
+            visible: page.refreshRate.available
+            text: "Auto: Steam's frame limit picks it, a rate it divides evenly. A game's own is held while it runs."
+        }
+
         // --- the bottom screen (Game Mode on the Thor) ---
 
         Section {
@@ -89,6 +133,16 @@ QQC2.ScrollView {
             value: page.bottomScreen.brightness
             valueText: Math.round(live) + "%"
             onPicked: v => page.bottomScreen.brightness = v
+        }
+        SwitchRow {
+            visible: page.bottomScreen.available
+            text: "30 Hz"
+            value: page.bottomScreen.refreshHz === 30
+            onPicked: on => page.bottomScreen.refreshHz = on ? 30 : 60
+        }
+        Hint {
+            visible: page.bottomScreen.available
+            text: "30 Hz instead of 60 uses about 0.1 W less; scrolling and moving readings here are less smooth."
         }
         SliderRow {
             visible: page.gameMode
@@ -183,7 +237,7 @@ QQC2.ScrollView {
             // --- fan and CPU: the running game's (Game Mode) or Desktop Mode's ---
 
             Section {
-                text: "Fan and CPU"
+                text: page.gameMode ? "Auto TDP, fan and CPU" : "Fan and CPU"
             }
             SwitchRow {
                 visible: page.hasGame
@@ -202,6 +256,19 @@ QQC2.ScrollView {
                     : page.hasGame && page.power.customSettings ? "Editing: " + page.gameName + " only"
                     : page.hasGame ? "Editing: all games (" + page.gameName + " has no settings of its own)"
                     : "Editing: all games"
+            }
+
+            SwitchRow {
+                visible: page.gameMode
+                text: "Auto TDP"
+                value: page.power.settings.auto_tdp ?? false
+                onPicked: on => page.update({auto_tdp: on})
+            }
+            Hint {
+                visible: page.gameMode
+                text: page.status.auto_tdp?.fps_limit
+                    ? "Holds Steam's frame rate limit (" + page.status.auto_tdp.fps_limit + " fps) on the lowest CPU and GPU clocks that keep it."
+                    : "Set a frame rate limit in Steam's Performance panel: Auto TDP holds it on the lowest clocks that keep it."
             }
 
             QQC2.ComboBox {
@@ -310,7 +377,7 @@ QQC2.ScrollView {
             // --- battery, where the charger firmware has a charge limit ---
 
             Section {
-                visible: page.info.charge_limit === true
+                visible: page.hasBattery
                 text: "Battery"
             }
             SliderRow {
@@ -322,6 +389,60 @@ QQC2.ScrollView {
                 value: page.steam.charge_limit == null || page.steam.charge_limit < 0 ? 100 : page.steam.charge_limit
                 valueText: live >= 100 ? "Off" : live + "%"
                 onPicked: v => page.power.setSteam("charge_limit", v >= 100 ? -1 : v)
+            }
+            Hint {
+                visible: page.info.charge_limit === true
+                text: page.steam.charge_limit == null || page.steam.charge_limit < 0 ? "Charges to full."
+                    : page.status.charge_held ? "Holding here: the charger powers the device, the battery rests."
+                    : "Stops charging here, resumes 5% below."
+            }
+            ChoiceRow {
+                Layout.topMargin: Kirigami.Units.smallSpacing
+                visible: page.chargeSpeeds.length > 0
+                text: "Charge speed"
+                choices: page.chargeSpeeds.map(sp => ({label: sp.name, value: sp.name}))
+                         .concat(page.chargeCustom ? [{label: "Custom", value: "Custom"}] : [])
+                value: page.status.charge_speed ?? ""
+                onPicked: v => page.power.setChargeSpeed(v)
+            }
+            Hint {
+                readonly property var speed: page.chargeSpeeds.find(sp => sp.name === page.status.charge_speed)
+                visible: page.chargeSpeeds.length > 0 && text !== ""
+                text: page.status.charge_speed === "Custom" ? "Set the most current that goes into the battery."
+                    : !speed ? "" : speed.ua >= page.fastestCharge ? "As fast as the charger allows."
+                    : "At most " + page.amps(speed.ua) + " into the battery: slower, and easier on it."
+            }
+            SliderRow {
+                visible: page.chargeCustom !== null && page.status.charge_speed === "Custom"
+                text: "Charge current"
+                // in mA
+                from: (page.chargeCustom?.min ?? 0) / 1000
+                to: (page.chargeCustom?.max ?? 1000) / 1000
+                stepSize: Math.max(1, (page.chargeCustom?.step ?? 1000) / 1000)
+                value: (page.status.charge_custom_ua ?? 0) / 1000
+                valueText: (live / 1000).toFixed(1) + " A"
+                onPicked: v => page.power.setChargeCurrent(Math.round(v * 1000))
+            }
+            SwitchRow {
+                Layout.topMargin: Kirigami.Units.smallSpacing
+                visible: page.info.sleep_fan === true
+                text: "Fan while charging asleep"
+                value: (page.status.sleep_fan ?? 0) > 0
+                onPicked: on => page.power.setSleepFan(on ? page.sleepFanOn : 0)
+            }
+            Hint {
+                visible: page.info.sleep_fan === true
+                text: "Keeps the fan running while the device sleeps on its charger, to carry the charging heat away."
+            }
+            SliderRow {
+                visible: page.info.sleep_fan === true && (page.status.sleep_fan ?? 0) > 0
+                text: "Fan speed asleep"
+                from: 10
+                to: 100
+                stepSize: 5
+                value: page.status.sleep_fan ?? page.sleepFanOn
+                valueText: live + "%"
+                onPicked: v => page.power.setSleepFan(v)
             }
         }
 
@@ -356,5 +477,41 @@ QQC2.ScrollView {
         Layout.fillWidth: true
         Layout.topMargin: Kirigami.Units.largeSpacing
         level: 4
+    }
+
+    // a setting's explanation, under it
+    component Hint: QQC2.Label {
+        Layout.fillWidth: true
+        wrapMode: Text.WordWrap
+        font: Kirigami.Theme.smallFont
+        opacity: 0.7
+    }
+
+    // a label and a choice of values ({label, value}), reporting the one picked; it follows
+    // `value` again afterwards
+    component ChoiceRow: RowLayout {
+        id: choiceRow
+
+        property alias text: choiceLabel.text
+        property var choices: []
+        property var value
+
+        signal picked(var value)
+
+        Layout.fillWidth: true
+
+        QQC2.Label {
+            id: choiceLabel
+            Layout.fillWidth: true
+            elide: Text.ElideRight
+        }
+        QQC2.ComboBox {
+            model: choiceRow.choices.map(c => c.label)
+            currentIndex: choiceRow.choices.findIndex(c => c.value === choiceRow.value)
+            onActivated: index => {
+                choiceRow.picked(choiceRow.choices[index].value);
+                currentIndex = Qt.binding(() => choiceRow.choices.findIndex(c => c.value === choiceRow.value));
+            }
+        }
     }
 }

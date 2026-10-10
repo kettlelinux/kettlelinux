@@ -23,6 +23,7 @@ FIXES = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "fixes.json")  # game fixe
 LOGIN_USERS = os.path.join(decky.DECKY_USER_HOME, ".local", "share", "Steam", "config", "loginusers.vdf")
 _STEAMID = re.compile(r'^\s*"7656\d{13}"\s*$', re.M)
 ANDROID = "/usr/bin/kettle-android-games"  # package kettle-lepton: Game Stores' Android tab
+BOTTOM_SCREEN = "/usr/lib/kettle/bottom-screen"  # the Thor's (device/thor/overlay)
 # the Desktop entry's artwork (package kettle-desktop-art), by SetCustomArtworkForApp asset type
 DESKTOP_ART = "/usr/share/kettle/nested-desktop/art"
 _DESKTOP_ASSETS = {0: "capsule.png", 1: "hero.png", 2: "logo.png", 3: "header.png"}
@@ -89,13 +90,14 @@ class Plugin:
         decky.logger.info("applied game fix %s", fid)
 
     async def features(self) -> dict:
-        """What this device has: Kettle's Decky plugins (by name, e.g. "stores"), and whether
-        Android games (Game Stores' Android tab) are there."""
+        """What this device has: Kettle's Decky plugins (by name, e.g. "stores"), whether
+        Android games (Game Stores' Android tab) are there, and a second screen (the Thor's)."""
         try:
             plugins = sorted(d[len("kettle-"):] for d in os.listdir(PLUGINS) if d.startswith("kettle-"))
         except OSError:
             plugins = []
-        return {"plugins": plugins, "android": os.access(ANDROID, os.X_OK)}
+        return {"plugins": plugins, "android": os.access(ANDROID, os.X_OK),
+                "bottom_screen": os.path.exists(BOTTOM_SCREEN)}
 
     async def desktop_art(self) -> dict:
         """The Desktop entry's library artwork (asset type -> PNG as base64) and icon path."""

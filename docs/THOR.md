@@ -135,10 +135,24 @@ applet's controls in a window.
   redraws, which the bottom screen's KWin and gamescope composite each time: about 0.07 W):
   `bottom-brightness` keeps `$XDG_RUNTIME_DIR/kettle-bottom-dimmed` while the dim lasts, and the
   app reads again as soon as it's gone.
-- **Settings**: the bottom screen's brightness (the Screens setting,
-  `~/.config/kettle/bottom-screen.json`); Steam's performance profile, TDP limit and GPU clock;
-  fan and CPU settings for the running game or all games, as Game Settings' Perf tab has them; the
-  charge limit where the charger has one; how often the readings update.
+- **Trackpad**: the screen as a mouse for the top screen, over Steam and the running game. One
+  finger moves the pointer, a tap clicks (two fingers: right click), two fingers scroll, and Left
+  and Right buttons along the bottom stay down while touched. Its speed is in Settings (6x by
+  default).
+- **Keyboard**: a US PC keyboard, Esc and F1-F12 to the arrows. Keys are down while touched (held
+  in games, repeating in text); Shift, Ctrl and Alt latch for the next key.
+- Each is a uinput device (Kettle Trackpad, Kettle Keyboard) that exists only while its tab is
+  open. The bottom screen's gamescope only gets that screen's touches, so Game Mode's gamescope
+  reads them as any mouse or keyboard.
+- **Settings**: the top screen's refresh rate, all games' and the running game's own (Device
+  Settings > Power and Game Settings > Perf: the same files, `~/.config/kettle/refresh-rate.conf`
+  and `~/homebrew/settings/kettle-power/refresh-rates.json`, set live with `gamescopectl
+  refresh_hz` on Game Mode's gamescope); the bottom screen's brightness and 30 Hz (the Screens
+  settings, `~/.config/kettle/bottom-screen.json`) and the trackpad's speed; Steam's performance
+  profile, TDP limit and GPU clock; Auto TDP, fan and CPU settings for the running game or all
+  games, as Game Settings' Perf tab has them; charging as Device Settings > Power has it (the
+  charge limit, the charge speed or a custom current, the fan while charging asleep), where the
+  device has each; how often the readings update.
 - **Shared with Steam and the plugins**: every setting is the same one Quick Access sets, read
   back from kettle-powerd each update, so a change made in Steam shows here. Steam's own sliders
   follow the app's changes through the Device Settings plugin (`kettle-decky-device-settings`, `steamSync.ts`): this

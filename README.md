@@ -37,6 +37,11 @@ opens the same tour in Welcome. These are from an Odin 2 Portal.
 | <img src="packages/kettle-decky-plugins/welcome/assets/ds-power.jpg" width="140" alt="Power tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/ds-lights.jpg" width="140" alt="Lights tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/ds-gyro.jpg" width="140" alt="Gyro tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/ds-screens.jpg" width="140" alt="Screens tab, on the Thor"> | <img src="packages/kettle-decky-plugins/welcome/assets/ds-system.jpg" width="140" alt="System tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/plugins.jpg" width="140" alt="Kettle's plugins in Quick Access"> |
 | **Power**: charge limit and speed, refresh rate | **Lights**: the stick lights, and the Portal's power light | **Gyro**: motion controls | **Screens**: the Thor's bottom screen | **System**: start-up mode, SSH, reset, bootloader updates | Game Settings, Crash Reports, Game Stores, Device Settings, Welcome |
 
+| The Thor's bottom screen: the Performance app | | | |
+|:-:|:-:|:-:|:-:|
+| <img src="packages/kettle-decky-plugins/welcome/assets/thor-stats.jpg" width="200" alt="Stats tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/thor-trackpad.jpg" width="200" alt="Trackpad tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/thor-keyboard.jpg" width="200" alt="Keyboard tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/thor-settings.jpg" width="200" alt="Settings tab"> |
+| **Stats**: frame rate and frame times, power, clocks, temperatures, fan | **Trackpad**: a mouse for the top screen | **Keyboard**: a full PC keyboard | **Settings**: Quick Access's settings, refresh rates, charging |
+
 <img src="packages/kettle-decky-plugins/welcome/assets/stores.jpg" width="820" alt="Game Stores, on its Flathub tab">
 
 *Game Stores: Epic Games, GOG, Amazon Games, Battle.net, Flathub's ARM64 apps and Android games.*
@@ -101,7 +106,10 @@ opens the same tour in Welcome. These are from an Odin 2 Portal.
 - **Hardware video in Firefox**: H.264, HEVC, VP9 and AV1 on the SoC's video decoder, YouTube
   included.
 - **Two screens on the Thor**: Steam on the top screen, and in Game Mode the Performance app and
-  a touch shell of its own (Plasma Mobile) on the bottom one; both screens in the desktop.
+  a touch shell of its own (Plasma Mobile) on the bottom one; both screens in the desktop. The
+  Performance app shows the game's frame rate and frame times, power, clocks and temperatures
+  without an overlay, turns the bottom screen into a trackpad or a keyboard for the top one, and
+  has Quick Access's settings, both screens' refresh rates and charging within reach.
 - **Crash reports**: a report for every game or system crash, in Quick Access > Crash Reports.
   Sharing one uploads it with the player's details taken out on the device, and gives a link to
   file it on GitHub ([docs/CRASH-REPORTS.md](docs/CRASH-REPORTS.md)).

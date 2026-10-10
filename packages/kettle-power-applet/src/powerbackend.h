@@ -80,6 +80,12 @@ public:
     // GameMode: the running game gets settings of its own (a copy of those shown), or goes back
     // to the all-games ones
     Q_INVOKABLE void setGameOnly(bool on);
+    // charging, device-wide, as Device Settings > Power sets it: a speed by name (one of
+    // info.charge_speeds, or "Custom" where info.charge_custom says the current can be set), that
+    // current in µA, and the fan's speed while the device sleeps on its charger (0: off)
+    Q_INVOKABLE void setChargeSpeed(const QString &name);
+    Q_INVOKABLE void setChargeCurrent(int ua);
+    Q_INVOKABLE void setSleepFan(int pct);
 
 Q_SIGNALS:
     void modeChanged();
