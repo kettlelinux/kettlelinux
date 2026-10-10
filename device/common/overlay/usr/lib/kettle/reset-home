@@ -20,7 +20,8 @@
 #   Decky             each plugin's settings (~/homebrew/settings), except the records of what
 #                     Kettle's plugins installed or added to Steam: Game Stores (sign-ins,
 #                     installs), Upscaling (OptiScaler files it put in game folders), Welcome's
-#                     installed extras and Steam shortcuts, Game Settings' install-id
+#                     installed extras and Steam shortcuts, Game Settings' install-id; and Decky's
+#                     own (/home/.kettle/decky/settings/loader.json: plugin order, hidden plugins)
 # Then /etc/skel's defaults are copied back where they went missing, as for a new user.
 set -euo pipefail
 
@@ -81,6 +82,11 @@ for s in homebrew/settings/*; do
   if [ -z "$keep" ] || [ ! -d "$s" ]; then reset "$s"; continue; fi
   for f in "$s"/*; do [[ " $keep " == *" ${f##*/} "* ]] || reset "$f"; done
 done
+decky=/home/.kettle/decky/settings/loader.json
+if [ -f "$decky" ]; then
+  install -d -m 0700 "$backup/decky"
+  mv "$decky" "$backup/decky/"
+fi
 # Welcome's record of the Desktop entry it added to Steam stays; that the welcome page was seen
 # and which Steam defaults it applied don't, so both happen again
 w=homebrew/settings/kettle-welcome/welcome.json

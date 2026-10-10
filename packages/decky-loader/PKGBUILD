@@ -4,10 +4,10 @@
 # in a private site dir, because deckard's python-aiohttp/watchdog/packaging are too old.
 # 0001 turns the self-updater off (it would install the x86_64 binary over this package).
 # Plugins shipped with the image live in /usr/share/decky/plugins; decky-loader-start
-# links them into ~/homebrew/plugins.
+# links them into /home/.kettle/decky/plugins.
 pkgname=decky-loader
 pkgver=3.2.10
-pkgrel=1
+pkgrel=2
 _commit=75563316f9119ee7e36be7f43885be65e877fad0  # v3.2.10
 pkgdesc='Plugin loader for the Steam Deck UI (Kettle Linux build)'
 arch=(aarch64)
