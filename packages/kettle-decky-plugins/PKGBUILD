@@ -1,5 +1,5 @@
 # Kettle Linux's own Decky plugins, preinstalled (decky-loader-start links them into
-# ~/homebrew/plugins):
+# /home/.kettle/decky/plugins):
 #   device-settings  the device's own settings, a tab each: Power: the charge limit and speed
 #              and the fan while charging asleep (kettle-powerd), and the screen's all-games
 #              refresh rate on a device that lists its rates (/usr/lib/kettle/refresh-rates): Auto

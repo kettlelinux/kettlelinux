@@ -1,6 +1,12 @@
 #!/bin/bash
 # Start Decky Loader (as root) for the Game Mode user, uid 1000.
-#  - ~/homebrew holds plugins, settings, data and logs, as on a Steam Deck
+#  - plugins (and Decky's own settings, loader.json) are in /home/.kettle/decky, owned by root:
+#    Decky runs whatever it finds there, a plugin asking for it as root, and Game Mode's polkit
+#    rules trust its backends (reset, SSH, the bootloader). In ~/homebrew, the user's (or a
+#    game's) files could add one, or swap the whole folder. /home keeps it across A/B updates.
+#    Plugins from Decky's store are unpacked there by Decky, as root, and stay root's
+#    (CHOWN_PLUGIN_PATH=0): one can't write to its own folder, only to its settings, data and logs
+#  - ~/homebrew holds each plugin's settings, data and logs, as on a Steam Deck
 #  - plugins shipped with the image (/usr/share/decky/plugins) are symlinked in; they can't
 #    be removed from the Decky UI, only by removing their package
 #  - Steam opens its CEF devtools port (localhost:8080), which Decky injects through, only
@@ -8,7 +14,36 @@
 set -eu
 IFS=: read -r user _ uid gid _ home _ < <(getent passwd 1000)
 hb="$home/homebrew"
-install -d -o "$uid" -g "$gid" "$hb" "$hb"/{plugins,plugins-aside,settings,data,logs,services}
+priv=/home/.kettle/decky
+install -d -o "$uid" -g "$gid" "$hb" "$hb"/{settings,data,logs,services}
+install -d -m 0755 -o 0 -g 0 /home/.kettle "$priv" "$priv"/{plugins,plugins-aside,settings}
+
+# Once, from images that kept plugins in ~/homebrew/plugins: Decky's settings come along, and so
+# do store plugins Decky unpacked (all root's); anything else there was put by the user and goes
+# to ~/homebrew/plugins-aside, not loaded. Links to the shipped plugins are made again below.
+if [ ! -e "$priv/.moved" ]; then
+  if [ -f "$hb/settings/loader.json" ] && [ ! -e "$priv/settings/loader.json" ]; then
+    install -m 0644 -o 0 -g 0 "$hb/settings/loader.json" "$priv/settings/loader.json"
+    rm -f "$hb/settings/loader.json"
+  fi
+  if [ -d "$hb/plugins" ] && [ ! -L "$hb/plugins" ]; then
+    for l in "$hb"/plugins/* "$hb"/plugins/.[!.]*; do
+      [ -e "$l" ] || [ -L "$l" ] || continue
+      n=${l##*/}
+      if [ -L "$l" ]; then
+        case "$(readlink "$l")" in /usr/share/decky/plugins/*) rm -f "$l"; continue;; esac
+      elif [[ $n != *.user-* ]] && [ -d "$l" ] && [ -f "$l/plugin.json" ] && [ ! -e "$priv/plugins/$n" ] &&
+           [ -z "$(find "$l" ! -user 0 -print -quit)" ]; then
+        mv -T "$l" "$priv/plugins/$n"
+        continue
+      fi
+      install -d -o "$uid" -g "$gid" "$hb/plugins-aside"
+      mv -T "$l" "$hb/plugins-aside/$n.moved-$(date +%s)"
+    done
+    rmdir "$hb/plugins" 2>/dev/null || :
+  fi
+  touch "$priv/.moved"
+fi
 
 install -d -o "$uid" -g "$gid" "$home/.local" "$home/.local/share" "$home/.local/share/Steam"
 f="$home/.local/share/Steam/.cef-enable-remote-debugging"
@@ -16,24 +51,20 @@ f="$home/.local/share/Steam/.cef-enable-remote-debugging"
 
 for p in /usr/share/decky/plugins/*/; do
   [ -f "$p/plugin.json" ] || continue
-  p="${p%/}"; l="$hb/plugins/${p##*/}"
+  p="${p%/}"; l="$priv/plugins/${p##*/}"
   [ -L "$l" ] && [ "$(readlink "$l")" = "$p" ] && continue
   # a store copy of the same plugin: keep it aside rather than delete it, outside plugins/ so
   # Decky doesn't load it next to the shipped one
-  [ -e "$l" ] || [ -L "$l" ] && mv -T "$l" "$hb/plugins-aside/${p##*/}.user-$(date +%s)"
+  [ -e "$l" ] || [ -L "$l" ] && mv -T "$l" "$priv/plugins-aside/${p##*/}.user-$(date +%s)"
   ln -s "$p" "$l"
 done
-# copies the previous version of this script kept aside inside plugins/
-for l in "$hb"/plugins/*.user-*; do
-  [ -e "$l" ] || [ -L "$l" ] && mv -T "$l" "$hb/plugins-aside/${l##*/}"
-done
 # links to plugins whose package was removed
-for l in "$hb"/plugins/*; do
+for l in "$priv"/plugins/*; do
   [ -L "$l" ] && [ ! -e "$l" ] && case "$(readlink "$l")" in /usr/share/decky/plugins/*) rm -f "$l";; esac
 done
 
-export UNPRIVILEGED_USER="$user" UNPRIVILEGED_PATH="$hb" PRIVILEGED_PATH="$hb"
-# Don't chown -R plugin dirs: the system ones are symlinks into /usr
+export UNPRIVILEGED_USER="$user" UNPRIVILEGED_PATH="$hb" PRIVILEGED_PATH="$priv"
+# Don't chown -R plugin dirs: the system ones are symlinks into /usr, and the others stay root's
 export CHOWN_PLUGIN_PATH=0 KEEP_SYSTEMD_SERVICE=1
 export PYTHONPATH=/usr/lib/decky-loader PYTHONDONTWRITEBYTECODE=1
 cd "$hb/services"
