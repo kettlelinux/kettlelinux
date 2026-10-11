@@ -85,8 +85,9 @@ def save_game_rates(game: dict):
 
 
 def framegen_rates() -> list[int]:
-    """The rates Frame Gen can hold: those whose half is at least FRAMEGEN_MIN_FPS, lowest first."""
-    return [r for r in rates() if r // 2 >= FRAMEGEN_MIN_FPS] or [2 * FRAMEGEN_MIN_FPS]
+    """The rates Frame Gen can hold: those whose half is at least FRAMEGEN_MIN_FPS, lowest first.
+    A panel with one rate has no list (the RP5's): 60 Hz."""
+    return [r for r in rates() if r // 2 >= FRAMEGEN_MIN_FPS] or [60]
 
 
 def framegen_rate(hz: int, ok: list[int]) -> int:
