@@ -12,6 +12,7 @@ Logging out, the desktop's **Return to Gaming Mode** icon, or Steam's **Exit Gam
 | Controller layout | `device/common/overlay/usr/share/kettle/nested-desktop/controller.vdf` |
 | On-screen keyboard shortcut | `usr/lib/kettle/osk-toggle`, `usr/share/applications/org.kettle.osk-toggle.desktop` |
 | Library entry, artwork and layout | Welcome plugin, `packages/kettle-decky-plugins/welcome/src/desktop.ts` |
+| Apps opened in it (Mod Manager, Flathub apps) | Game Stores plugin, `stores/src/modmanager.tsx`, `stores/src/shortcuts.ts` |
 | Artwork | `kettle-desktop-art`, `packages/kettle-branding/render-desktop-art.py` |
 
 ## How it runs
@@ -41,6 +42,19 @@ Logging out, the desktop's **Return to Gaming Mode** icon, or Steam's **Exit Gam
   so it falls back to logging out: the desktop closes and Steam comes back.
 - Valve's own version (`steamos-nested-desktop` in `steamdeck-kde-presets`, sized for the
   Deck's 1280x800 screen) is left out of the image (`NoExtract`, `image/pacman.conf`).
+
+## Opening an app in it
+`nested-desktop <command...>` starts the command once the desktop is up: an autostart of that
+session only (`$runtime/xdg/autostart`, first in `XDG_CONFIG_DIRS`), which also records the
+session's environment in `$runtime/session.env`. Game Stores uses this for its entries:
+- **Amethyst Mod Manager** (the Mod Manager tab and button): `nested-desktop amethyst-mod-manager`,
+  with the package's artwork (`/usr/share/amethyst-mod-manager/steam-art`).
+- **Flathub apps that aren't games** (no Game category in the .desktop file they export):
+  `nested-desktop /usr/bin/flatpak run <id>`. The app's page switches it either way.
+
+Both get the desktop's controller layout when the entry is added. One desktop runs at a time
+(a lock in `$XDG_RUNTIME_DIR`): starting an entry while a desktop is up starts its command in
+that desktop, with the recorded environment, and the entry itself ends at once.
 
 ## The library entry
 The Welcome plugin adds it once per device, after the first sign-in, as "Desktop":

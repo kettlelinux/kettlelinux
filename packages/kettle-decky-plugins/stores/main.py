@@ -19,13 +19,21 @@
 # Flathub: the apps Flathub builds for ARM64 (its search API, filtered to aarch64), browsed by
 # category or searched, installed for the user (flatpak --user, the installation the Welcome
 # plugin's Gaming Extras uses) through the same job queue, and added to Steam as native shortcuts
-# (`flatpak run <id>`, no Proton). Its jobs, shortcuts and pending entries use the store name
-# "flathub"; it has no sign-in.
+# (`flatpak run <id>`, no Proton). Apps that aren't games (no Game category in the .desktop file
+# they export) open in the desktop nested in Game Mode instead (nested-desktop, with the
+# desktop's controller layout), as they're made for a mouse and keyboard; the app's page can
+# switch that either way (flathub_desktop). Its jobs, shortcuts and pending entries use the
+# store name "flathub"; it has no sign-in.
 #
 # Battle.net: Blizzard's launcher, added to Steam with Proton-CachyOS and its installer started, by
 # kettle-welcome's welcome-battlenet (the desktop's Kettle Welcome uses it too, so both show the
 # same Steam entry); its status also switches the entry to the installed launcher. It was in
 # Welcome's Gaming Extras up to 1.12.0-39.
+#
+# Mod Manager: Amethyst Mod Manager (packages/amethyst-mod-manager, where it's installed), a
+# desktop app, added to Steam as "Amethyst Mod Manager": the desktop nested in Game Mode
+# (nested-desktop) with the app started in it, its artwork (the package's steam-art) and the
+# desktop's controller layout. Its appid is the state's mod_manager.
 #
 # Android games, with kettle-lepton (where it's installed): kettle-android-games adds F-Droid apps
 # and APK files to Steam, one command at a time; its download progress comes on stderr. Google
@@ -38,6 +46,8 @@
 #   job        the one running (same fields)
 #   install_dir  where new games go (default ~/Games/Heroic, Heroic's default)
 #   cloud_saves  false: kettle-store-run doesn't sync saves (it reads this file; default on)
+#   mod_manager  the Mod Manager entry's Steam appid
+#   flathub_desktop  app id -> true/false: the app's page's "Open in the desktop", where it was set
 import asyncio, base64, contextlib, fcntl, glob, html, json, os, re, shlex, shutil, subprocess, time, urllib.parse, urllib.request
 
 import decky
@@ -87,6 +97,11 @@ LOGIN_TIMEOUT = 600
 
 BATTLENET = "/usr/lib/kettle/welcome-battlenet"  # package kettle-welcome
 ANDROID = "/usr/bin/kettle-android-games"  # package kettle-lepton
+MOD_MANAGER = "/usr/bin/amethyst-mod-manager"  # package amethyst-mod-manager
+MOD_MANAGER_ART = "/usr/share/amethyst-mod-manager/steam-art"
+_MOD_MANAGER_ASSETS = {0: "capsule.png", 1: "hero.png", 2: "logo.png", 3: "header.png"}
+NESTED_DESKTOP = "/usr/lib/kettle/nested-desktop"
+DESKTOP_LAYOUT = "local:///usr/share/kettle/nested-desktop/controller.vdf"
 _ANDROID_COMMANDS = ("add", "remove", "fdroid-search", "fdroid-add")
 # the running or last kettle-android-games command: {"command", "busy", "done", "total", "result"}
 _android: dict = {"command": None, "busy": False, "done": 0, "total": 0, "result": None}
@@ -110,6 +125,8 @@ FLATHUB_CATEGORIES = {"games": [("main_categories", "game")], "emulators": [("su
 APP_ID = re.compile(r"^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$")
 FLATPAK = "/usr/bin/flatpak"
 FLATPAK_ICONS = os.path.join(HOME, ".local", "share", "flatpak", "exports", "share", "icons", "hicolor")
+FLATPAK_APPS = (os.path.join(HOME, ".local", "share", "flatpak", "exports", "share", "applications"),
+                "/var/lib/flatpak/exports/share/applications")
 
 
 # --- files and commands ------------------------------------------------------------------------
@@ -411,14 +428,74 @@ def _installed(store: str) -> dict:
     return {g["id"]: {"path": g.get("path"), "version": g.get("version", "")} for g in _amazon_installed()}
 
 
-def _shortcut_info(store: str, gid: str) -> dict:
+def _installed_titles(store: str) -> dict:
+    """id -> title from the store's own install records (the Installed tab's names when the
+    library cache doesn't have the game)."""
+    if store == "epic":
+        return {k: v.get("title") or k for k, v in _epic_installed().items()}
+    if store == "gog":
+        return {g["appName"]: g.get("title") or g["appName"] for g in _gog_installed()}
+    if store == "amazon":
+        return {(x.get("product") or {}).get("id"): (x.get("product") or {}).get("title")
+                for x in _read_json(os.path.join(NILE, "library.json"), []) if (x.get("product") or {}).get("id")}
+    return {}
+
+
+def _size_of(store: str, gid: str) -> int:
+    """Bytes the install takes on disk (a Flathub app: flatpak's own figure, without runtimes)."""
+    if store == "flathub":
+        r = _run(FLATPAK, "list", "--app", "--columns=application,size", quiet=True)
+        for line in r.stdout.splitlines():
+            f = line.split("\t")
+            if len(f) == 2 and f[0] == gid:
+                return _parse_size(f[1])
+        return 0
+    path = (_installed(store).get(gid) or {}).get("path")
+    if not path or not os.path.isdir(path):
+        return 0
+    try:
+        r = _run("du", "-sb", path, timeout=120, quiet=True)
+        return int(r.stdout.split()[0])
+    except (subprocess.TimeoutExpired, IndexError, ValueError):
+        return 0
+
+
+def _parse_size(text: str) -> int:
+    """flatpak's sizes ("1.2 GB", "540.3 MB", "12 kB") in bytes."""
+    m = re.match(r"([\d.,]+)\s*([kMGT]?)B", text.strip().replace("\xa0", " "))
+    if not m:
+        return 0
+    return int(float(m.group(1).replace(",", ".")) * 1000 ** " kMGT".index(m.group(2) or " "))
+
+
+def _flatpak_is_game(app: str) -> bool:
+    """The installed app says it's a game (or an emulator) in its .desktop file's Categories (one
+    without a .desktop file counts as a game: it starts as before)."""
+    for d in FLATPAK_APPS:
+        try:
+            with open(os.path.join(d, app + ".desktop"), encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("Categories="):
+                        return "Game" in line.strip().split("=", 1)[1].split(";")
+            return False
+        except OSError:
+            continue
+    return True
+
+
+def _shortcut_info(store: str, gid: str, desktop: bool = False) -> dict:
     """What the Steam shortcut starts: the game's .exe and the folder it starts in (Flathub: flatpak
-    itself, started natively with the app's icon)."""
+    itself, started natively with the app's icon; desktop: in the nested desktop, with the
+    desktop's controller layout)."""
     if store == "flathub":
         app = _flatpak_list().get(gid)
         if not app:
             raise RuntimeError("not installed")
-        return {"title": app["title"], "exe": FLATPAK, "dir": "", "native": True, "icon": _flatpak_icon(gid)}
+        info = {"title": app["title"], "exe": FLATPAK, "dir": "", "native": True, "icon": _flatpak_icon(gid),
+                "launch": f"run {gid}"}
+        if desktop and os.access(NESTED_DESKTOP, os.X_OK):
+            info.update(exe=NESTED_DESKTOP, launch=f"{FLATPAK} run {gid}", layout=DESKTOP_LAYOUT)
+        return info
     if store == "epic":
         g = _epic_installed().get(gid)
         if not g:
@@ -664,7 +741,8 @@ def _flathub_app(app: str) -> dict:
             "arm64": "aarch64" in (summary.get("arches") or ["aarch64"]),
             # Flathub's sizes are its x86_64 build's: near enough for ARM64's
             "download": summary.get("download_size") or 0, "disk": summary.get("installed_size") or 0,
-            "installed": installed, "update": bool(installed) and app in _flatpak_updates()}
+            "installed": installed, "update": bool(installed) and app in _flatpak_updates(),
+            "game": "Game" in (a.get("categories") or ["Game"])}
 
 
 def _flatpak_icon(app: str) -> str:
@@ -697,7 +775,7 @@ def _flathub_shortcut(app: str) -> int | None:
     """A Steam shortcut someone already made for the app (the Welcome plugin's Gaming Extras)."""
     for s in steamlib.shortcuts():
         args = s.get("launch", "").split()
-        if os.path.basename(s["exe"]) == "flatpak" and "run" in args and app in args:
+        if os.path.basename(s["exe"]) in ("flatpak", "nested-desktop") and "run" in args and app in args:
             return s["appid"]
     return None
 
@@ -1054,6 +1132,40 @@ class Plugin:
             games.append(g)
         return {"games": games, "fetched": cache["fetched"]}
 
+    async def installed_all(self) -> list[dict]:
+        """Everything installed through Game Stores, for the Installed tab: the stores' games and
+        the Flathub apps, each {"store", "id", "title", "version", "update", "appid", "busy",
+        "removable"} (removable: not a Flathub app installed for all users)."""
+        out = []
+        s = self._state()
+        busy = {(j["store"], j["id"]): j["kind"] for j in s.get("queue", []) + ([s["job"]] if s.get("job") else [])}
+        for store in STORES:
+            installed = await asyncio.to_thread(_installed, store)
+            if not installed:
+                continue
+            titles = await asyncio.to_thread(_installed_titles, store)
+            known = {}
+            try:  # the store tab's own view (titles, update flags); offline or signed out: none
+                known = {g["id"]: g for g in (await self.library(store, False))["games"]}
+            except Exception as e:
+                decky.logger.info("stores: installed: %s library: %s", store, e)
+            for gid, i in installed.items():
+                g = known.get(gid, {})
+                out.append({"store": store, "id": gid, "title": g.get("title") or titles.get(gid) or gid,
+                            "version": i.get("version") or "", "update": bool(g.get("update")),
+                            "appid": s["shortcuts"].get(f"{store}:{gid}"), "busy": busy.get((store, gid)),
+                            "removable": True})
+        apps = await asyncio.to_thread(_flatpak_list)
+        updates = await asyncio.to_thread(_flatpak_updates) if apps else set()
+        for app, a in apps.items():
+            out.append({"store": "flathub", "id": app, "title": a["title"], "version": a["version"],
+                        "update": app in updates, "appid": await self._known_appid(s, "flathub", app),
+                        "busy": busy.get(("flathub", app)), "removable": a["installation"] == "user"})
+        return sorted(out, key=lambda g: g["title"].lower())
+
+    async def installed_size(self, store: str, gid: str) -> int:
+        return await asyncio.to_thread(_size_of, _store(store), _gid(store, gid))
+
     async def game_info(self, store: str, gid: str) -> dict:
         gid = _gid(_store(store, STORES), gid)
         info = await asyncio.to_thread(_size_info, store, gid)
@@ -1089,6 +1201,12 @@ class Plugin:
         info["appid"] = s["shortcuts"].get(f"flathub:{app}") or await asyncio.to_thread(_flathub_shortcut, app)
         info["busy"] = next((j["kind"] for j in s.get("queue", []) + ([s["job"]] if s.get("job") else [])
                              if j["store"] == "flathub" and j["id"] == app), None)
+        # opens in the nested desktop: as set, else by the installed app's categories (Flathub's
+        # before it's installed)
+        chosen = s.get("flathub_desktop", {}).get(app)
+        info["desktop"] = (chosen if isinstance(chosen, bool) else await self._flathub_desktop(app)
+                           if info["installed"] else not info["game"])
+        info["can_desktop"] = os.access(NESTED_DESKTOP, os.X_OK)
         return info
 
     async def locations(self) -> dict:
@@ -1162,9 +1280,23 @@ class Plugin:
 
     async def shortcut_info(self, store: str, gid: str) -> dict:
         gid = _gid(_store(store), gid)
-        info = await asyncio.to_thread(_shortcut_info, store, gid)
-        info["launch"] = f"run {gid}" if store == "flathub" else f"{WRAPPER} {store} {gid} %command%"
+        desktop = store == "flathub" and await self._flathub_desktop(gid)
+        info = await asyncio.to_thread(_shortcut_info, store, gid, desktop)
+        if store != "flathub":
+            info["launch"] = f"{WRAPPER} {store} {gid} %command%"
         return info
+
+    async def _flathub_desktop(self, app: str) -> bool:
+        """The app opens in the nested desktop: as its page set it, else when it isn't a game."""
+        chosen = self._state().get("flathub_desktop", {}).get(app)
+        return chosen if isinstance(chosen, bool) else not await asyncio.to_thread(_flatpak_is_game, app)
+
+    async def set_flathub_desktop(self, app: str, on: bool):
+        app = _gid("flathub", app)
+        async with self.lock:
+            s = self._state()
+            s.setdefault("flathub_desktop", {})[app] = bool(on)
+            self._save(s)
 
     async def artwork(self, store: str, gid: str) -> dict:
         return await asyncio.to_thread(_art, _store(store), _gid(store, gid))
@@ -1268,6 +1400,30 @@ class Plugin:
         if r.returncode != 0:
             raise RuntimeError(r.stderr.strip() or "welcome-battlenet install failed")
         decky.logger.info("Battle.net added to Steam, installer started")
+
+    async def mod_manager_info(self) -> dict:
+        """available: Amethyst and the nested desktop are installed; appid: its Steam entry (as
+        recorded; the frontend checks it's still in the library); exe and launch: the entry's."""
+        return {"available": os.access(MOD_MANAGER, os.X_OK) and os.access(NESTED_DESKTOP, os.X_OK),
+                "appid": self._state().get("mod_manager"), "exe": NESTED_DESKTOP, "launch": MOD_MANAGER}
+
+    async def mod_manager_art(self) -> dict:
+        """The entry's library artwork (asset type -> PNG as base64) and icon path."""
+        art = {}
+        for kind, name in _MOD_MANAGER_ASSETS.items():
+            try:
+                with open(os.path.join(MOD_MANAGER_ART, name), "rb") as f:
+                    art[str(kind)] = base64.b64encode(f.read()).decode()
+            except OSError:
+                pass
+        icon = os.path.join(MOD_MANAGER_ART, "icon.png")
+        return {"art": art, "icon": icon if os.path.isfile(icon) else ""}
+
+    async def remember_mod_manager(self, appid: int):
+        async with self.lock:
+            s = self._state()
+            s["mod_manager"] = int(appid)
+            self._save(s)
 
     async def android_info(self) -> dict:
         """available: kettle-lepton is installed; files: where to look for an APK file first."""
