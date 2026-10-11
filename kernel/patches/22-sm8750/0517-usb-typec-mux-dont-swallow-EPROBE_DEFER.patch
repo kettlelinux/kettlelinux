@@ -44,18 +44,25 @@ connector reports disconnected, because nothing ever routed the lanes.
 
 Signed-off-by: Anze <aanzdev@gmail.com>
 
-[Kettle: 7.2.9 already has the typec_switch_match() EPROBE_DEFER half; only the zero-initialised sw_devs array is left]
+[Kettle: 7.2.9 already defers when no device is found, in typec_switch_match() and typec_mux_match(); what is left is the uninitialised arrays both dedup loops read, zeroed here (the mux one as Armada's 0517 does)]
 ---
-diff --git a/drivers/usb/typec/mux.c b/drivers/usb/typec/mux.c
-index afa6fc181..4f540ca06 100644
 --- a/drivers/usb/typec/mux.c
 +++ b/drivers/usb/typec/mux.c
-@@ -81,7 +81,7 @@ static void *typec_switch_match(const struct fwnode_handle *fwnode,
+@@ -81,7 +81,7 @@
   */
  struct typec_switch *fwnode_typec_switch_get(struct fwnode_handle *fwnode)
  {
 -	struct typec_switch_dev *sw_devs[TYPEC_MUX_MAX_DEVS];
 +	struct typec_switch_dev *sw_devs[TYPEC_MUX_MAX_DEVS] = {};
  	struct typec_switch *sw;
+ 	int count;
+ 	int err;
+@@ -319,7 +319,7 @@
+  */
+ struct typec_mux *fwnode_typec_mux_get(struct fwnode_handle *fwnode)
+ {
+-	struct typec_mux_dev *mux_devs[TYPEC_MUX_MAX_DEVS];
++	struct typec_mux_dev *mux_devs[TYPEC_MUX_MAX_DEVS] = {};
+ 	struct typec_mux *mux;
  	int count;
  	int err;

@@ -122,7 +122,7 @@
 			linux,code = <KEY_VOLUMEUP>;
 			gpios = <&pm8550_gpios 6 GPIO_ACTIVE_LOW>;
 			debounce-interval = <15>;
-			wakeup-source;
+			/* Kettle (from Armada): not a wakeup source, so a press in a bag can't wake it */
 		};
 		key-rc2 {
 			label = "Right-C2";
@@ -1529,6 +1529,18 @@
 			cpu { sound-dai = <&q6apmbedai TX_CODEC_DMA_TX_3>; };
 			platform { sound-dai = <&q6apm>; };
 		};
+
+		/* Kettle (from Armada): audio out over USB-C DP alt mode. The codec side is the
+		 * hdmi-codec the DP bridge registers under &mdss_dp0; this link also makes the
+		 * machine driver create the "DP0 Jack" control UCM keys the HDMI device off.
+		 * Needs the topology's DISPLAY_PORT_RX_0 graph (ROCKNIX's SM8750-KONKR-tplg.bin
+		 * has it, on MultiMedia4). */
+		dp-dai-link {
+			link-name = "DisplayPort Playback";
+			codec { sound-dai = <&mdss_dp0>; };
+			cpu { sound-dai = <&q6apmbedai DISPLAY_PORT_RX_0>; };
+			platform { sound-dai = <&q6apm>; };
+		};
 	};
 
 	wcn7860-pmu {
@@ -1633,7 +1645,8 @@
 };
 
 &pcieport0 {
-	wake-gpios = <&tlmm 104 GPIO_ACTIVE_HIGH>;
+	/* Kettle (from Armada): WAKE# is active-low */
+	wake-gpios = <&tlmm 104 GPIO_ACTIVE_LOW>;
 	reset-gpios = <&tlmm 102 GPIO_ACTIVE_LOW>;
 
 	wifi@0 {
@@ -1710,6 +1723,28 @@
 	firmware-name = "qcom/sm8750/konkr/pfe/cdsp.mbn",
 			"qcom/sm8750/konkr/pfe/cdsp_dtb.mbn";
 	status = "okay";
+};
+
+/* Kettle (from Armada): the codec keeps these rails on through s2idle; idle them in LPM */
+&vreg_l15b_1p8 {
+	regulator-state-mem {
+		regulator-on-in-suspend;
+		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
+	};
+};
+
+&vreg_bob1 {
+	regulator-state-mem {
+		regulator-on-in-suspend;
+		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
+	};
+};
+
+&vreg_l2i_1p2 {
+	regulator-state-mem {
+		regulator-on-in-suspend;
+		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
+	};
 };
 
 #include "sm8750-konkr-pf-elite-fan.dtsi"
