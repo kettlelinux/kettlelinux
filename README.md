@@ -85,7 +85,7 @@ opens the same tour in Welcome. These are from an Odin 2 Portal.
 - **Power control**: TDP budget, performance profiles and GPU clock from Steam's Performance panel,
   per-game fan curves, CPU limits and Auto TDP from Game Settings, or a Desktop Mode tray applet; a
   battery charge limit and charge speed from Device Settings; and the refresh rate: Auto, where Steam's frame limit picks a
-  rate it divides evenly, or held at 60 or 120 Hz on the Thor and 50, 60, 100, 120, 145 or 165 Hz
+  rate it divides evenly, or held at 60 or 120 Hz on the Thor and 50, 60, 120, 145 or 165 Hz
   on the Portal.
 - **Games outside Steam**: ARM64EC Wine with FEX, DXVK and vkd3d-proton, plus Lutris and Heroic
   built for arm64.

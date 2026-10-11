@@ -1,5 +1,5 @@
 From: gennro <gennro2004@gmail.com>
-Subject: [PATCH] drm/panel: icna35xx: 50, 100, 145 and 165Hz modes on the Portal
+Subject: [PATCH] drm/panel: icna35xx: 50, 145 and 165Hz modes on the Portal
 
 The Odin 2 Portal's ICNA3512 is set to 60 or 120Hz by AYN's Android DT,
 which writes register 0x48 last in each rate's setup (0x00 for 60Hz,
@@ -11,16 +11,20 @@ Portal, with the panel's real rate measured from its TE-driven vblanks:
   with the 60Hz setup:  0x00 59.9Hz, 0x10 50.7Hz, 0x30 145.5Hz
   0x20 167Hz with either setup or neither
 
-Add 50, 100, 145 and 165Hz modes: each writes its 0x48 value after the
+Add 50, 145 and 165Hz modes: each writes its 0x48 value after the
 matching Android setup (165Hz writes upstream's 0x48 0x20 alone). The
-50/100/145Hz modes keep the 60/120Hz modes' pixel clock with the frame
+50/145Hz modes keep the 60/120Hz modes' pixel clock with the frame
 stretched to the rate, and 165Hz takes upstream's timings. 120Hz stays
-the preferred mode. All four looked right on a Portal (no flicker,
+the preferred mode. All three looked right on a Portal (no flicker,
 colour or brightness shift).
+
+No 100Hz mode: 0x10 after the 120Hz setup measured 101.5Hz once, but
+switched to live from gamescope the panel's TE ran at 50Hz, from any
+other rate.
 ---
 --- a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
 +++ b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
-@@ -115,9 +115,19 @@
+@@ -115,9 +115,20 @@
      mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x0F);
      mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xCE, 0x22);
  
@@ -28,7 +32,8 @@ colour or brightness shift).
 +	/*
 +	 * The refresh rate setup from AYN's Android DT (dtbo, timing@0/@1: 60 and 120Hz), whose
 +	 * 0x48 picks the rate; the other values measured on a Portal from the panel's TE:
-+	 *   with the 120Hz setup: 0x10 101.5Hz, 0x30 119.8Hz
++	 *   with the 120Hz setup: 0x10 101.5Hz, 0x30 119.8Hz (0x10: 50Hz when switched to live,
++	 *   so no 100Hz mode)
 +	 *   with the 60Hz setup:  0x00 59.9Hz, 0x10 50.7Hz, 0x30 145.5Hz
 +	 *   0x20 167Hz with either or neither (upstream's 165Hz, panel-chipone-icna35xx)
 +	 * 120Hz is what AYN sells the panel at; the others are ours.
@@ -38,20 +43,11 @@ colour or brightness shift).
 +	if (cur_vrefresh == 165) {
 +		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x20);
 +	}
-+	else if (cur_vrefresh == 120 || cur_vrefresh == 100) {
++	else if (cur_vrefresh == 120) {
  		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3, 
                  0x00, 0xE0, 0xA0, 0x10, 0xC8, 0x00, 0x02, 0x83, 
                  0x00, 0x10, 0x14, 0x00, 0x00, 0xC3, 0x00, 0x10, 
-@@ -134,6 +144,8 @@
-                 0x01, 0x01, 0x01, 0x01, 0x04, 0x09, 0x2C);
-         mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x00);
-         mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x30);
-+		if (cur_vrefresh == 100)
-+			mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x10);
- 	}
- 	else {
-         mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3, 
-@@ -148,6 +160,10 @@
+@@ -148,6 +159,10 @@
                  0x01, 0x01, 0x01, 0x01, 0x04, 0x09, 0x2C);
          mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x30);
          mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x00);
@@ -62,7 +58,7 @@ colour or brightness shift).
  	}
  
  	drm_dsc_pps_payload_pack(&pps, &pinfo->desc->dsc);
-@@ -237,6 +253,58 @@
+@@ -237,6 +252,46 @@
  		.vsync_start = 1920 + 2760,
  		.vsync_end = 1920 + 2760 + 1,
  		.vtotal = 1920 + 2760 + 1 + 15,
@@ -82,18 +78,6 @@ colour or brightness shift).
 +		.vsync_start = 1920 + 3699,
 +		.vsync_end = 1920 + 3699 + 1,
 +		.vtotal = 1920 + 3699 + 1 + 15,
-+	},
-+	{
-+		/* 100Hz */
-+		.clock = (1080 + 156 + 1 + 23) * (1920 + 882 + 1 + 15) * 100 / 1000,
-+		.hdisplay = 1080,
-+		.hsync_start = 1080 + 156,
-+		.hsync_end = 1080 + 156 + 1,
-+		.htotal = 1080 + 156 + 1 + 23,
-+		.vdisplay = 1920,
-+		.vsync_start = 1920 + 882,
-+		.vsync_end = 1920 + 882 + 1,
-+		.vtotal = 1920 + 882 + 1 + 15,
 +	},
 +	{
 +		/* 145Hz */
