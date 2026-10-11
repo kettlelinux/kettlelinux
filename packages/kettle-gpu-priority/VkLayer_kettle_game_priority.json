@@ -1,0 +1,17 @@
+{
+  "file_format_version": "1.1.0",
+  "layer": {
+    "name": "VK_LAYER_KETTLE_game_priority",
+    "description": "Kettle Linux: games' GPU queues at low priority, below the Steam UI",
+    "implementation_version": "1",
+    "library_path": "/usr/lib/libVkLayer_kettle_game_priority.so",
+    "type": "GLOBAL",
+    "api_version": "1.4.309",
+    "enable_environment": {
+      "KETTLE_GAME_LOWPRIO": "1"
+    },
+    "disable_environment": {
+      "DISABLE_KETTLE_GAME_LOWPRIO": "1"
+    }
+  }
+}
