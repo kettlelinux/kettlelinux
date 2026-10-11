@@ -1,0 +1,79 @@
+diff --git a/src/Utils/bethesda/synthesis.py b/src/Utils/bethesda/synthesis.py
+index ec89456..6a1ca0f 100644
+--- a/src/Utils/bethesda/synthesis.py
++++ b/src/Utils/bethesda/synthesis.py
+@@ -197,7 +197,8 @@ def download_and_extract_synthesis(game: "BaseGame", reporthook=None,
+ # ===========================================================================
+ 
+ def _wine_bin(proton_script: Path) -> Path:
+-    return proton_script.parent / "files" / "bin" / "wine"
++    arm64 = proton_script.parent / "files" / "bin-arm64" / "wine"
++    return arm64 if arm64.is_file() else proton_script.parent / "files" / "bin" / "wine"
+ 
+ 
+ def _wine_command(wine: Path, *args: str) -> list[str]:
+diff --git a/src/Utils/executables/launch.py b/src/Utils/executables/launch.py
+index 0544072..72b93ad 100644
+--- a/src/Utils/executables/launch.py
++++ b/src/Utils/executables/launch.py
+@@ -2606,8 +2606,8 @@ def shutdown_prefix_wineserver(proton_script: Path, compat_data: Path,
+         else:
+             proton_dir = script.parent
+             bin_dir = next(
+-                (proton_dir / d / "bin" for d in ("files", "dist")
+-                 if (proton_dir / d / "bin" / "wineserver").is_file()),
++                (proton_dir / d for d in ("files/bin-arm64", "files/bin", "dist/bin")
++                 if (proton_dir / d / "wineserver").is_file()),
+                 None,
+             )
+         if bin_dir is None:
+@@ -3031,8 +3031,8 @@ WINEPREFIX + Proton's bin on PATH, ``wine start.exe <exe>``), with only two
+         wine_bin = script
+     else:
+         wine_bin = next(
+-            (script.parent / d / "bin" / "wine" for d in ("files", "dist")
+-             if (script.parent / d / "bin" / "wine").is_file()),
++            (script.parent / d / "wine" for d in ("files/bin-arm64", "files/bin", "dist/bin")
++             if (script.parent / d / "wine").is_file()),
+             None,
+         )
+     if wine_bin is None:
+diff --git a/src/Utils/launchers/steam.py b/src/Utils/launchers/steam.py
+index 7f99af1..345976d 100644
+--- a/src/Utils/launchers/steam.py
++++ b/src/Utils/launchers/steam.py
+@@ -1991,6 +1991,8 @@ def find_wine() -> tuple[str, Path]:
+         raise RuntimeError("No Proton/Wine installation found. Install proton via Steam.")
+     files_dir = proton_script.parent / "files"
+     wine = files_dir / "bin" / "wine64"
++    if not wine.is_file():
++        wine = files_dir / "bin-arm64" / "wine"
+     if not wine.is_file():
+         wine = files_dir / "bin" / "wine"
+         if not wine.is_file():
+diff --git a/src/Utils/wine/protontricks.py b/src/Utils/wine/protontricks.py
+index 2049f08..75584e5 100644
+--- a/src/Utils/wine/protontricks.py
++++ b/src/Utils/wine/protontricks.py
+@@ -266,7 +266,7 @@ def _get_proton_bin() -> str | None:
+     for script in list_installed_proton():
+         if _proton_script_in_steam_flatpak(script):
+             continue
+-        for sub in ("files/bin", "dist/bin"):
++        for sub in ("files/bin-arm64", "files/bin", "dist/bin"):
+             cand = script.parent / sub
+             if (cand / "wine").is_file():
+                 return str(cand)
+diff --git a/src/Utils/wine/winetricks.py b/src/Utils/wine/winetricks.py
+index 7f12936..d5219e1 100644
+--- a/src/Utils/wine/winetricks.py
++++ b/src/Utils/wine/winetricks.py
+@@ -91,7 +91,7 @@ def build_winetricks_command(prefix_path: Path, *args: str, game=None,
+             wine = script
+         else:
+             wine = next((script.parent / sub / "wine" for sub in
+-                         ("files/bin", "dist/bin")
++                         ("files/bin-arm64", "files/bin", "dist/bin")
+                          if (script.parent / sub / "wine").is_file()), None)
+             if wine is None:
+                 raise RuntimeError(f"Wine is missing from {script.parent}")

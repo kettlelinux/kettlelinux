@@ -1,0 +1,30 @@
+diff --git a/src/app_bootstrap.py b/src/app_bootstrap.py
+index 99eabfa..a13de7c 100644
+--- a/src/app_bootstrap.py
++++ b/src/app_bootstrap.py
+@@ -37,6 +37,11 @@ def setup_environment(*, capture_diagnostics: bool = True) -> list[tuple[str, fl
+     if str(src) not in sys.path:
+         sys.path.insert(0, str(src))
+ 
++    # A distribution package's private modules, beside the app (Kettle Linux).
++    vendor = src / "_vendor"
++    if vendor.is_dir() and str(vendor) not in sys.path:
++        sys.path.insert(1, str(vendor))
++
+     # When running inside the current AppImage, add the bundled _vendor dir
+     # so we can find Pillow / other deps. The launcher used to do this via
+     # PYTHONPATH, which leaked into child shells.
+diff --git a/src/gui_qt/app.py b/src/gui_qt/app.py
+index 51cfc45..cccbe3d 100644
+--- a/src/gui_qt/app.py
++++ b/src/gui_qt/app.py
+@@ -4207,6 +4207,9 @@ class MainWindow(QMainWindow):
+                     safe_emit(self._app_update_found,
+                               (__version__, latest, mode, is_pre, not newer,
+                                appimage_url))
++            elif os.environ.get("AMETHYST_DISTRO_PACKAGE"):
++                # updated with the distribution, not from GitHub or the AUR
++                return
+             else:
+                 aur_ver = _fetch_aur_version(force=force_fresh)
+                 if aur_ver is None:

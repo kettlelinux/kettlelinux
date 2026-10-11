@@ -206,6 +206,12 @@ cabextract
 lutris
 heroic-games-launcher
 
+# Mods for games (packages/amethyst-mod-manager): Amethyst Mod Manager, a desktop app the Game
+# Stores plugin also opens in the desktop nested in Game Mode, on our PySide6 6.8 for the
+# snapshot's Qt (packages/pyside6)
+amethyst-mod-manager
+pyside6
+
 # Games' GPU queues at low priority, so the Steam UI preempts them and stays smooth in game
 # (packages/kettle-gpu-priority; on for games through steam.service's gfx.txt)
 kettle-gpu-priority
