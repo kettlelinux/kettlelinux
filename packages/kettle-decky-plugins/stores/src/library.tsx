@@ -1,6 +1,6 @@
 // The Game Stores page: a tab per store with its games (search, installed only), Flathub's ARM64
-// apps (flathub.tsx), Battle.net (battlenet.tsx), Android games where kettle-lepton is installed
-// (android.tsx), the downloads
+// apps (flathub.tsx), Battle.net (battlenet.tsx), Amethyst Mod Manager (modmanager.tsx), Android
+// games where kettle-lepton is installed (android.tsx), everything installed (installed.tsx), the downloads
 // with where games go, and the store accounts.
 import {
   ButtonItem,
@@ -13,11 +13,13 @@ import {
   ToggleField,
 } from "@decky/ui";
 import { ReactNode, useEffect, useMemo, useState } from "react";
-import { FaAndroid, FaBoxOpen, FaCompactDisc, FaCubes, FaDownload, FaStore, FaUserCircle } from "react-icons/fa";
+import { FaAndroid, FaBoxOpen, FaCompactDisc, FaCubes, FaDownload, FaHdd, FaPuzzlePiece, FaStore, FaUserCircle } from "react-icons/fa";
 import { Game, NAMES, STORES, Store, cancel, library, locations, logout, setCloudSaves, setLocation, size, status } from "./api";
 import { FlathubTab } from "./flathub";
 import { AndroidInfo, AndroidTab, androidInfo } from "./android";
 import { BattleNetTab } from "./battlenet";
+import { ModManagerTab } from "./modmanager";
+import { InstalledTab } from "./installed";
 import { SiBattledotnet } from "react-icons/si";
 import { JobProgress, ROUTE, act, dim, openGame, signIn, small, usePoll } from "./ui";
 
@@ -199,10 +201,12 @@ export function Page() {
     () => [
       ...STORES.map((st) => ({ title: NAMES[st], route: `${ROUTE}/${st}`, icon: ICONS[st], content: <StoreTab store={st} /> })),
       { title: "Battle.net", route: `${ROUTE}/battlenet`, icon: <SiBattledotnet />, content: <BattleNetTab /> },
+      { title: "Mod Manager", route: `${ROUTE}/modmanager`, icon: <FaPuzzlePiece />, content: <ModManagerTab /> },
       { title: NAMES.flathub, route: `${ROUTE}/flathub`, icon: <FaCubes />, content: <FlathubTab /> },
       ...(a?.available
         ? [{ title: "Android", route: `${ROUTE}/android`, icon: <FaAndroid />, content: <AndroidTab files={a.files} /> }]
         : []),
+      { title: "Installed", route: `${ROUTE}/installed`, icon: <FaHdd />, content: <InstalledTab /> },
       { title: "Downloads", route: `${ROUTE}/downloads`, icon: <FaDownload />, content: <DownloadsTab /> },
       { title: "Accounts", route: `${ROUTE}/accounts`, icon: <FaUserCircle />, content: <AccountsTab /> },
     ],

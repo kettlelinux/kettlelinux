@@ -1,7 +1,8 @@
 // A store game in the Steam library: a shortcut to its .exe, started with Proton through
 // kettle-store-run (its launch options, from the backend), with the store's artwork. Added
 // while Steam runs, so no restart is needed. A Flathub app's shortcut runs `flatpak run <id>`
-// natively, with the app's icon.
+// natively, with the app's icon (one that isn't a game in the nested desktop, with the desktop's
+// controller layout).
 import { Source, artwork, rememberShortcut, shortcutInfo } from "./api";
 
 // The Proton a new shortcut gets: the community builds with ARM64 releases first (installed per
@@ -30,8 +31,21 @@ async function proton(appid: number): Promise<string | null> {
   return null;
 }
 
-// Adds the installed game to Steam (or brings an existing shortcut up to date); returns its appid
-export async function addShortcut(store: Source, id: string, appid: number | null = null): Promise<number> {
+// The device's own pads (not a remote or wireless one): Steam keeps a layout per controller
+const ownPads = (): any[] =>
+  ((window as any).ControllerStore?.m_controllerList ?? []).filter(
+    (c: any) => !c.bRemoteDevice && !c.bWireless && !c.bBluetooth,
+  );
+
+export function selectLayout(appid: number, layout: string) {
+  const store = (window as any).controllerConfiguratorStore;
+  if (typeof store?.SetActiveConfigForApp !== "function") return;
+  for (const c of ownPads()) store.SetActiveConfigForApp(appid, c.nControllerIndex, layout, false);
+}
+
+// Adds the installed game to Steam (or brings an existing shortcut up to date); returns its appid.
+// Its controller layout is selected for a new shortcut, or with relayout (it changed how it starts).
+export async function addShortcut(store: Source, id: string, appid: number | null = null, relayout = false): Promise<number> {
   const info = await shortcutInfo(store, id);
   const isNew = !inLibrary(appid);
   const sid = isNew ? await SteamClient.Apps.AddShortcut(info.title, info.exe, info.dir, "") : appid!;
@@ -45,6 +59,7 @@ export async function addShortcut(store: Source, id: string, appid: number | nul
   if (info.icon) SteamClient.Apps.SetShortcutIcon(sid, info.icon);
   const tool = info.native ? null : await proton(sid);
   if (tool) SteamClient.Apps.SpecifyCompatTool(sid, tool);
+  if (info.layout && (isNew || relayout)) selectLayout(sid, info.layout);
   await rememberShortcut(store, id, sid);
   if (isNew) {
     // artwork last: a missing picture shouldn't cost the shortcut
