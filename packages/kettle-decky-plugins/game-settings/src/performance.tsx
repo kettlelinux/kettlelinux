@@ -33,7 +33,8 @@ type Game = { custom: boolean; settings: Settings };
 // what the tab needs from kettle-powerd's status
 type Status = { steam: { fan_control: number }; auto_tdp: { fps_limit: number } };
 // the rates there are, the all-games one (0 Auto) and the games' own, by appid
-type Refresh = { rates: number[]; hz: number; games: Record<string, number> };
+// framegen: games with Frame Gen on, which holds their rate instead
+type Refresh = { rates: number[]; hz: number; games: Record<string, number>; framegen: Record<string, number> };
 
 const info = callable<[], Info>("perf_info");
 const status = callable<[], Status>("perf_status");
@@ -192,6 +193,19 @@ function PowerSettings({ appid, name, inf, fanControl, fpsLimit }: { appid: numb
 function GameRefresh({ appid, name, r, onChange }: { appid: number; name: string; r: Refresh; onChange: (r: Refresh) => void }) {
   const hz = r.games[String(appid)] ?? null;
   const all = r.hz === 0 ? "Auto" : `${r.hz} Hz`;
+  const fg = r.framegen[String(appid)];
+  if (fg)
+    return (
+      <PanelSectionRow>
+        <DropdownItem
+          label="Refresh rate"
+          description={`Frame Gen holds ${fg} Hz while ${name} runs (its Base FPS)`}
+          rgOptions={[{ data: fg, label: `${fg} Hz` }]}
+          selectedOption={fg}
+          disabled
+        />
+      </PanelSectionRow>
+    );
   return (
     <PanelSectionRow>
       <DropdownItem

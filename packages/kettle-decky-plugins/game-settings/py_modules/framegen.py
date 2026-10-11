@@ -4,79 +4,53 @@
 # rereads while the game runs. Each game's settings live in games.json, in the settings of the
 # Frame Generation plugin this was before (kettle-framegen), and are kept while the game is off.
 #
-# Automatic frame cap: our mangoapp build writes the focused app's displayed frame rate to
-# $XDG_RUNTIME_DIR/kettle-fps. A sampler turns that into each game's real (pre frame
-# generation) rate, and autocap picks the next session's cap from it.
-import asyncio
+# Frame generation is always 2x. The game's base frame rate is half the refresh rate held while it
+# runs (refresh.py): with FIFO pacing the display holds the game there, so no frame cap in the
+# game is needed, and the rate changes live. Turned off while the game runs, the layer (loaded at
+# launch) gets multiplier 1.
 import json
 import os
-import re
-import time
 
-import autocap
 import decky
+import refresh
 
 CONF_DIR = os.path.join(decky.DECKY_USER_HOME, ".config", "kettle-framegen")
-GAMES = os.path.join(os.path.dirname(decky.DECKY_PLUGIN_SETTINGS_DIR), "kettle-framegen", "games.json")
+GAMES = refresh.FRAMEGEN_GAMES
 LAYER = "/usr/lib/libVkLayer_kettle_framegen.so"
 
 DEFAULTS = {
     "enabled": False,
-    "multiplier": 2,            # 2, 3 or "auto": the layer picks the fewest that fill the display
     "flow_scale": 0.5,          # 0.8 costs twice the motion time on the Adreno 740, no visible gain
-    "fifo": True,               # pace generated frames with FIFO
     "preserve_images": False,   # no extra swapchain images for generated frames
-    "low_latency": False,       # latency = low: hold the game until its previous frame is shown
     "bypass_wsi": True,         # ENABLE_GAMESCOPE_WSI=0 (launch option, frontend)
-    # base frame cap via DXVK_CONFIG/VKD3D_FRAME_RATE (launch option); "auto" = autocap's
-    # measured pick (3x from a ~30 base warps visibly, so the multiplier stays the user's); with
-    # multiplier auto the layer holds the game at refresh / multiplier itself, so auto = no cap
-    "fps_cap": "auto",
+    "refresh": 0,               # Hz held while the game runs, twice its base frame rate; 0: 60 Hz
 }
-FPS_CAPS = ("auto", "off", "30", "40", "60")
-# kept alongside the settings: measurement state for the automatic cap
-STATE = ("measure", "failed_caps")
-
-FPS_FILE = f"/run/user/{os.getuid()}/kettle-fps"
-SAMPLE_S = 2
-_refresh = 120      # last display refresh mangoapp reported
-_refresh_seen = False  # mangoapp reported one since the plugin started
-_session = None     # the running game's measurement, see _Session
+MULTIPLIER = 2
 
 
 def _clamp(s: dict) -> dict:
     out = dict(DEFAULTS)
     out.update({k: s[k] for k in DEFAULTS if k in s})
-    if out["multiplier"] != "auto":
-        out["multiplier"] = max(2, min(3, int(out["multiplier"])))  # older versions went to 4
+    if "refresh" not in s and str(s.get("fps_cap", "")).isdigit():  # older versions capped the game
+        out["refresh"] = 2 * int(s["fps_cap"])
+    out["refresh"] = refresh.framegen_rate(int(out["refresh"]), refresh.framegen_rates())
     out["flow_scale"] = round(max(0.25, min(1.0, float(out["flow_scale"]))), 2)
-    for k in ("enabled", "fifo", "preserve_images", "low_latency", "bypass_wsi"):
+    for k in ("enabled", "preserve_images", "bypass_wsi"):
         out[k] = bool(out[k])
-    if out["fps_cap"] not in FPS_CAPS:
-        out["fps_cap"] = DEFAULTS["fps_cap"]
-    out.update({k: s[k] for k in STATE if k in s})
     return out
 
 
-def _view(appid: int, s: dict) -> dict:
-    """Settings plus what the frontend shows and needs for the launch options."""
-    live = _session.summary() if _session and _session.appid == appid else None
-    return {**{k: s[k] for k in DEFAULTS}, "refresh": _refresh, "live": live,
-            "measure": s.get("measure"),
-            "auto_cap": _auto_cap(s)}
-
-
-def _auto_cap(s: dict) -> int | None:
-    if s["multiplier"] == "auto":
-        return None
-    return autocap.decide(s.get("measure"), _refresh, s["multiplier"], s.get("failed_caps", []))
+def _view(s: dict) -> dict:
+    """Settings, and the rates the device has for them."""
+    return {**{k: s[k] for k in DEFAULTS}, "rates": refresh.framegen_rates()}
 
 
 # ---------- per-game store ----------
 
 def _load_games() -> dict[int, dict]:
-    """Stored games; settings older versions kept for lsfg-vk (engine, performance mode,
-    noubwc) are dropped by _clamp."""
+    """Stored games; settings older versions kept (lsfg-vk's engine, performance mode and
+    noubwc, the multiplier, fifo, low latency, the frame cap and its measurements) are dropped
+    by _clamp."""
     try:
         with open(GAMES, encoding="utf-8") as f:
             return {int(k): _clamp(v) for k, v in json.load(f).items()}
@@ -99,22 +73,18 @@ def _fmt(v) -> str:
 
 
 def _sync(games: dict[int, dict]):
-    """One settings file per enabled game; the layer rereads it while the game runs.
-    Only the Adreno 750 and newer tell the layer the display's refresh rate, so with multiplier
-    auto it gets the one mangoapp reports (without one it measures it, and can settle too low)."""
+    """A settings file per game it's been on for; the layer rereads it while the game runs, so
+    turning it off there gives multiplier 1. FIFO pacing is what holds the game at its base rate.
+    No latency line (normal): with the display full at refresh = 2 x base there's no queue to cut,
+    and latency = low only made the game stutter."""
     os.makedirs(CONF_DIR, exist_ok=True)
     for appid, s in games.items():
         path = os.path.join(CONF_DIR, f"{appid}.conf")
-        if not s["enabled"]:
-            if os.path.exists(path):
-                os.remove(path)
+        if not s["enabled"] and not os.path.exists(path):
             continue
         text = ("# Written by the Kettle Linux Game Settings plugin (Frame Gen)\n"
-                f"multiplier = {s['multiplier']}\nflow_scale = {s['flow_scale']}\n"
-                f"fifo = {_fmt(s['fifo'])}\npreserve_images = {_fmt(s['preserve_images'])}\n"
-                f"latency = {'low' if s['low_latency'] else 'normal'}\n")
-        if s["multiplier"] == "auto" and _refresh_seen:
-            text += f"refresh = {_refresh}\n"
+                f"multiplier = {MULTIPLIER if s['enabled'] else 1}\nflow_scale = {s['flow_scale']}\n"
+                f"fifo = true\npreserve_images = {_fmt(s['preserve_images'])}\n")
         try:
             with open(path, encoding="utf-8") as f:
                 if f.read() == text:
@@ -127,109 +97,6 @@ def _sync(games: dict[int, dict]):
         os.replace(tmp, path)
 
 
-# ---------- frame rate sampling ----------
-
-class _Session:
-    """One run of one game: its base frame rate samples and the cap it was launched with."""
-
-    def __init__(self, appid: int, pid: int, cap: int | None, fg: bool):
-        self.appid, self.pid, self.cap, self.fg = appid, pid, cap, fg
-        self.start = time.monotonic()
-        self.samples: list[float] = []
-
-    def add(self, fps: float, multiplier: int | str):
-        # with multiplier auto the base rate isn't known here: the layer changes it as it goes
-        if self.fg and multiplier == "auto":
-            return
-        if time.monotonic() - self.start >= autocap.WARMUP_S and fps > 1:
-            self.samples.append(fps / multiplier if self.fg else fps)
-
-    def summary(self) -> dict | None:
-        return autocap.summarize(self.samples, self.cap)
-
-
-def _read_fps() -> dict | None:
-    try:
-        with open(FPS_FILE, encoding="utf-8") as f:
-            d = dict(line.strip().split("=", 1) for line in f if "=" in line)
-        return {"pid": int(d["pid"]), "fps": float(d["fps"]), "refresh": int(d["refresh"]),
-                "steam": d.get("steam_focused") == "1", "age": time.time() - int(d["time"])}
-    except (OSError, KeyError, ValueError):
-        return None
-
-
-def _appid(env: dict) -> int | None:
-    """The game's appid as Steam's UI has it (the plugin's key). A non-Steam shortcut has
-    SteamAppId=0: its appid is the top half of its 64-bit game id (SteamGameId), else Proton's
-    STEAM_COMPAT_APP_ID."""
-    for name in (b"SteamAppId", b"SteamGameId", b"STEAM_COMPAT_APP_ID"):
-        v = env.get(name, b"").decode(errors="replace")
-        if v.isdigit() and int(v) > 0:
-            n = int(v)
-            return n >> 32 if n >= 1 << 32 else n
-    return None
-
-
-def _game_of(pid: int) -> tuple[int, int | None, bool] | None:
-    """(appid, cap it was launched with, a frame generation layer loaded) for a game process."""
-    try:
-        with open(f"/proc/{pid}/environ", "rb") as f:
-            env = dict(v.split(b"=", 1) for v in f.read().split(b"\0") if b"=" in v)
-        with open(f"/proc/{pid}/maps", "rb") as f:
-            fg = b"libVkLayer_kettle_framegen" in f.read()
-    except OSError:
-        return None
-    appid = _appid(env)
-    if not appid:
-        return None
-    m = re.search(rb"maxFrameRate\s*=\s*(\d+)", env.get(b"DXVK_CONFIG", b"")) or \
-        re.fullmatch(rb"(\d+)", env.get(b"VKD3D_FRAME_RATE", b""))
-    cap = int(m.group(1)) if m and int(m.group(1)) > 0 else None
-    return appid, cap, fg
-
-
-def _finish_session():
-    """Store the ended session's measurement; the frontend then rewrites the launch options."""
-    global _session
-    s, _session = _session, None
-    summary = s.summary() if s else None
-    if not summary:
-        return
-    games = _load_games()
-    g = games.get(s.appid) or _clamp({})
-    g["failed_caps"] = autocap.failed_after(summary, g.get("failed_caps", []))
-    g["measure"] = summary
-    games[s.appid] = g
-    _save_games(games)
-    decky.logger.info("frame rate %s: %s -> auto cap %s", s.appid, summary, _auto_cap(g))
-
-
-async def _sampler():
-    global _session, _refresh, _refresh_seen
-    while True:
-        await asyncio.sleep(SAMPLE_S)
-        try:
-            if _session and not os.path.exists(f"/proc/{_session.pid}"):
-                _finish_session()
-            d = _read_fps()
-            if not d or d["age"] > 3 * SAMPLE_S or d["steam"]:
-                continue  # no frames lately, or Steam's UI in front of the game
-            if d["refresh"] and (d["refresh"] != _refresh or not _refresh_seen):
-                _refresh, _refresh_seen = d["refresh"], True
-                _sync(_load_games())  # refresh for multiplier auto
-            if not _session or _session.pid != d["pid"]:
-                game = _game_of(d["pid"])
-                if not game:
-                    continue
-                if _session:
-                    _finish_session()
-                _session = _Session(game[0], d["pid"], game[1], game[2])
-            g = _load_games().get(_session.appid)
-            _session.add(d["fps"], g["multiplier"] if g else 1)
-        except Exception as e:  # keep sampling
-            decky.logger.warning("frame rate sampler: %s", e)
-
-
 def status() -> dict:
     return {
         "layer": os.path.isfile(LAYER),
@@ -238,33 +105,33 @@ def status() -> dict:
 
 
 def get_game(appid: int) -> dict:
-    return _view(appid, _load_games().get(appid) or _clamp({}))
+    return _view(_load_games().get(appid) or _clamp({}))
 
 
-def set_game(appid: int, settings: dict) -> dict:
+def _store(appid: int, g: dict, running: bool) -> dict:
     games = _load_games()
-    games[appid] = _clamp({**games.get(appid, DEFAULTS), **settings})
+    games[appid] = g
     _save_games(games)
     _sync(games)
-    return _view(appid, games[appid])
+    if running:
+        refresh.hold(refresh.effective(str(appid)))
+    return _view(g)
 
 
-def reset_game(appid: int) -> dict:
-    games = _load_games()
-    # measurements stay (they describe the game), failed caps get another chance
-    old = games.get(appid, DEFAULTS)
-    games[appid] = _clamp({"enabled": old["enabled"], "measure": old.get("measure")})
-    _save_games(games)
-    _sync(games)
-    return _view(appid, games[appid])
+def set_game(appid: int, settings: dict, running: bool) -> dict:
+    """running: the game is running, its refresh rate changes now."""
+    return _store(appid, _clamp({**(_load_games().get(appid) or DEFAULTS), **settings}), running)
 
 
-async def run():
-    """The plugin's lifetime: settings files up to date, then the frame rate sampler."""
+def reset_game(appid: int, running: bool) -> dict:
+    return _store(appid, _clamp({"enabled": (_load_games().get(appid) or DEFAULTS)["enabled"]}), running)
+
+
+def setup():
+    """Settings files up to date at plugin start."""
     games = _load_games()
     if games:
-        _save_games(games)  # drops settings of older versions (lsfg-vk)
+        _save_games(games)  # drops settings of older versions
     _sync(games)  # conf files for games set up by an older plugin version
     decky.logger.info("frame generation: layer %s, %d games on", os.path.isfile(LAYER),
                       sum(s["enabled"] for s in games.values()))
-    await _sampler()

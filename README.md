@@ -71,8 +71,8 @@ opens the same tour in Welcome. These are from an Odin 2 Portal.
     settings from the Kettle game database ([docs/GAME-DATABASE.md](docs/GAME-DATABASE.md)).
     **Perf**: fan curve, CPU core and clock limits, Auto TDP and the refresh rate, per game or
     for all games. **Upscale**: gamescope FSR 1, and SGSR 2, Arm ASR or FSR 2.2 through an ARM64EC
-    build of OptiScaler. **Frame Gen**: Kettle's own Vulkan layer, 2×, 3× or an automatic
-    multiplier, with automatic frame rate capping. **Extras**: GE-Proton, Proton-CachyOS and AMD
+    build of OptiScaler. **Frame Gen**: Kettle's own Vulkan layer at 2×, with the screen held at
+    twice the base frame rate you pick, changeable while the game runs. **Extras**: GE-Proton, Proton-CachyOS and AMD
     FSR 3.1, downloaded from their projects.
   - **Game Stores**: see below.
   - **Device Settings**: the device's own settings, a tab each. **Power**: charge limit and speed,

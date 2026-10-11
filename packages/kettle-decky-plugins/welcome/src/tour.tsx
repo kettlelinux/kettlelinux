@@ -203,8 +203,8 @@ export function FrameGenPage({ f }: { f: Features }) {
       </Text>
       <Feature img={gsFramegen} title="More frames on screen">
         <p>
-          Kettle's own frame generation shows extra frames between the ones the game renders: 2×, 3×, or the fewest that
-          fill the display. Its base frame rate is capped automatically, so leave Steam's frame limit off for these
+          Kettle's own frame generation shows an extra frame between each two the game renders. Pick the game's base
+          frame rate in the tab, even while it runs: the screen runs at twice it. Leave Steam's frame limit off for these
           games.
         </p>
       </Feature>

@@ -34,18 +34,13 @@ SOM = "com.steampowered.SteamOSManager1."
 _active = ""  # the running game's appid as last told to kettle-powerd, sent again with the frame rate limit
 
 
-def _effective_rate() -> int:
-    """The running game's own rate, else the all-games one."""
-    return refresh.game_rates().get(_active, refresh.all_games()["hz"])
-
-
 def _apply_refresh(hz: int):
     """The all-games rate: what gamescope-session starts at, and live unless the running game has its own."""
     os.makedirs(os.path.dirname(refresh.RATE_CONF), exist_ok=True)
     with open(refresh.RATE_CONF + ".new", "w") as f:
         f.write(f"# Device Settings' refresh rate, read by gamescope-session\nexport gamescope_refresh_hz={hz}\n")
     os.replace(refresh.RATE_CONF + ".new", refresh.RATE_CONF)
-    refresh.hold(_effective_rate())
+    refresh.hold(refresh.effective(_active))
 
 
 def _die_with_parent():
@@ -371,9 +366,9 @@ class Plugin:
         _active = str(appid) if appid else ""
         await gyro.set_game(bool(appid))
         await power("SetActiveGame", _active)
-        # a game with its own refresh rate gets it while it runs, the all-games one after
+        # a game with its own refresh rate (or Frame Gen's) gets it while it runs, the all-games one after
         if refresh.rates():
-            await asyncio.to_thread(refresh.hold, _effective_rate())
+            await asyncio.to_thread(refresh.hold, refresh.effective(_active))
 
     async def set_charge_limit(self, limit: int):
         await asyncio.to_thread(call, "org.freedesktop.DBus.Properties", "Set", "(ssv)",
