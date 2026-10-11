@@ -3,6 +3,8 @@
 # (/usr/lib/kettle/refresh-rates), gamescope holding one (refresh_hz, gamescope 0023, set live
 # through gamescopectl), and gamescope-session starting at the all-games one from
 # ~/.config/kettle/refresh-rate.conf. Installed into each plugin's py_modules/ by the PKGBUILD.
+# While a game runs, the rate held is effective(): Frame Gen's if it's on for the game, else the
+# game's own, else the all-games one.
 import json
 import os
 import re
@@ -19,6 +21,12 @@ AUTO = 0
 # games with their own refresh rate, {appid: Hz or AUTO}; the others follow the all-games one.
 # In the settings of the Power plugin (now Device Settings), where they were before Game Settings set them
 GAME_RATES = os.path.join(os.path.dirname(decky.DECKY_PLUGIN_SETTINGS_DIR), "kettle-power", "refresh-rates.json")
+# Game Settings' Frame Gen tab (framegen.py): each game's settings, in the settings of the Frame
+# Generation plugin it was before. A game with frame generation on holds the rate twice its base
+# frame rate: the layer presents each generated frame and the real one back to back with FIFO, so
+# pacing is only even at refresh = 2 x base, and the display then holds the game at that base.
+FRAMEGEN_GAMES = os.path.join(os.path.dirname(decky.DECKY_PLUGIN_SETTINGS_DIR), "kettle-framegen", "games.json")
+FRAMEGEN_MIN_FPS = 25  # lower base frame rates warp motion; 25 is the Portal's 50 Hz
 
 
 def rates() -> list[int]:
@@ -74,6 +82,39 @@ def save_game_rates(game: dict):
     with open(GAME_RATES + ".new", "w") as f:
         json.dump(game, f, indent=1, sort_keys=True)
     os.replace(GAME_RATES + ".new", GAME_RATES)
+
+
+def framegen_rates() -> list[int]:
+    """The rates Frame Gen can hold: those whose half is at least FRAMEGEN_MIN_FPS, lowest first."""
+    return [r for r in rates() if r // 2 >= FRAMEGEN_MIN_FPS] or [2 * FRAMEGEN_MIN_FPS]
+
+
+def framegen_rate(hz: int, ok: list[int]) -> int:
+    """A Frame Gen rate the panel has: hz, else the nearest below it (a rate older versions or
+    another device stored), else the lowest. 0: the default, 60 Hz (a 30 fps base)."""
+    hz = hz or 2 * 30
+    return max([r for r in ok if r <= hz] or [ok[0]])
+
+
+def framegen_games() -> dict:
+    """{appid: Hz} of the games with frame generation on."""
+    try:
+        with open(FRAMEGEN_GAMES) as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    ok = framegen_rates()
+    return {str(k): framegen_rate(v.get("refresh") if isinstance(v.get("refresh"), int) else 0, ok)
+            for k, v in saved.items() if isinstance(v, dict) and v.get("enabled")}
+
+
+def effective(appid: str) -> int:
+    """The rate to hold while this game runs ("": none runs)."""
+    if appid:
+        hz = framegen_games().get(appid) or game_rates().get(appid)
+        if hz is not None:
+            return hz
+    return all_games()["hz"]
 
 
 def session_env() -> dict:
