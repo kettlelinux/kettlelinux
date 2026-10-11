@@ -7,10 +7,12 @@ uses the same userspace and the same A/B updates. **The port was written before 
 nothing below has run on hardware yet.** How its files are kept apart from the other devices':
 [PORTING.md](PORTING.md).
 
-The reference is ROCKNIX's SM8750 device (`projects/ROCKNIX/devices/SM8750`, `next` @
+The references are ROCKNIX's SM8750 device (`projects/ROCKNIX/devices/SM8750`, `next` @
 `bac971fe`). It runs this board on 7.2 with its own dts, `sm8750-konkr-pf-elite.dts` (Patrick
 Hennig, BSD-3-Clause). The dts was written from the stock Android device tree read on a running
-unit, and its comments mark what is still unverified.
+unit, and its comments mark what is still unverified. Armada (armada-os/armada @ `2e0874d8`), which
+ships the same board in one kernel with SM8550 devices, is the second reference: its fixes on
+top of ROCKNIX's are credited below.
 
 ## Hardware, from ROCKNIX's dts
 | | |
@@ -44,16 +46,28 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
 - An install guide (like [INSTALL-RP5.md](INSTALL-RP5.md)) follows once a unit has booted.
 
 ## What is different from the other devices
-- **Kernel** (`kernel/patches/22-sm8750`): 33 of ROCKNIX's SM8750 patches. They add GPU clock and
+- **Kernel** (`kernel/patches/22-sm8750`): 33 of ROCKNIX's SM8750 patches (one of them in Armada's version) and two of Armada's. They add GPU clock and
   GPU nodes, the A830 catalog entry, WCN7860 Wi-Fi/BT, the panel, backlight, touch, both MCU
   drivers, UFS, DPU inline rotation, the HPH PCM mode and CPU cooling. Five are rebased (header
   notes say how). The Odin 3's CQ8725S, rsinput and haptics patches are left out, as are those
   already in `20-sm8550`. `40-kettle/1240` is ROCKNIX's KONKR wcd-mbhc fix, already shared.
+- **From Armada**:
+  - `22-sm8750/0509` defers for a late USB-C mode switch on SM8750 only. ROCKNIX's version
+    deferred on every SoC, which on a board with no mode switch never ends and leaves the panel
+    dark.
+  - `0521` gives PCIe an `opp-suspend` floor for `20-sm8550/1048`. Without the floor the
+    memory votes drop to 0 in s2idle, and the device resets instead of waking (seen on the
+    SM8550 devices).
+  - `0618` keeps a DisplayPort PCM prepare from failing while nothing is plugged in.
+  - In the dts: the DisplayPort audio link, PCIe WAKE# made active-low, volume-up no longer a
+    wakeup source, and three codec rails idled in LPM through s2idle.
+  - The UCM profile adds the DisplayPort device and keeps the amps at unity gain.
 - **Shared with SM8550, re-test the Portal/Thor**:
   - `22-sm8750/0048` reparents the DSI byte/pixel clocks to XO at power-off, on every
     6G v2.9 DSI.
   - `0060` turns `20-sm8550/0036`'s primary-only I2S clock into a refcounted clock for every
     MI2S port.
+  - `0618` changes DP audio on every SoC.
 - **GPU**: the A830 entry matches chip id `0x44050000`, from the dts compatible. Upstream's
   series for 7.4 uses `0x44050001`: check `dmesg` on the unit and revisit when it lands. The
   firmware (`gen80000_*`, the SM8750 zap) comes from linux-firmware-qcom.
@@ -65,6 +79,8 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   Quick Access. The extra shoulder buttons are L4/R4, and the two other front buttons L5/R5.
   The rear buttons send nothing (ROCKNIX: the MCU reports neither). The face buttons are
   Xbox-labelled. The d-pad is a hat, which the desktop controller now takes too.
+- **Steam UI scale**: Game Mode reports the Portal's panel size (`GAMESCOPE_INTERNAL_PHYSICAL_SIZE`),
+  as the RP5 and Thor do. The real 6" makes the UI far too large.
 - **Headphone jack**: `61-kettle-pocketfitelite-jack.rules` keeps the WCD9395's SoundWire buses
   runtime-active, as ROCKNIX does, because a clock-stopped bus misses the jack plug.
 - **Charging**: no charge speeds or `current` charge limit yet. It is not known whether the SM8750
@@ -81,7 +97,7 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   LED for both rings, where the AYN devices have `rgb:{l,r}N`).
 - Gyro: there is no IMU node in the dts, so it is probably the ADSP's Sensor Core as on the
   Portal and Thor (`kettle-motion` would need a `[konkr,pocket-fit-elite]` matrix).
-- Suspend (s2idle), Wi-Fi/BT, DisplayPort out, the USB-C orientation GPIO (marked TODO in the
+- Suspend (s2idle, with the PCIe suspend OPP), Wi-Fi/BT, DisplayPort out and its audio, the USB-C orientation GPIO (marked TODO in the
   dts), the charger and the charge limit, speakers and the jack.
 - `60-kettle-usb-power.rules` and `60-kettle-ath12k-iommu-fq.rules` match SM8550's USB controller
   and WCN7850 only. Extend them to SM8750/WCN7860 once tested.
