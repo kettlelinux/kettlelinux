@@ -23,6 +23,6 @@ simple = { limit = 10, period = 60 }
 # Created with: npx wrangler kv namespace create kettle-crash-counts, which prints the id to put here
 [[kv_namespaces]]
 binding = "COUNTS"
-id = "REPLACE_WITH_THE_KV_NAMESPACE_ID"
+id = "c3b8af085f1b457a9ee0b727726542a1"
 
 # the admin token for DELETE /v1/admin/reports/<id> is a secret: npx wrangler secret put ADMIN_TOKEN
