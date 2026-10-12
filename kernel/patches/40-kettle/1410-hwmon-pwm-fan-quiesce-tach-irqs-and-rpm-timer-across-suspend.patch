@@ -1,0 +1,96 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] hwmon: (pwm-fan) quiesce tach IRQs and RPM timer across suspend
+
+pwm_fan_suspend() only powers the PWM off. The tachometer IRQs requested
+in probe() and the self-rearming 1 Hz RPM sampling timer are left running
+across system sleep:
+
+ - a coasting or unpowered fan can flap the tach line while the driver
+   is suspended, and the latched edges skew the first RPM sample after
+   resume (measured: 7.8k tach IRQs on an AYN Thor and 10.3k on a
+   Retroid Pocket 6 during multi-hour s2idle windows);
+ - the RPM timer wakes the last online CPU every second, which keeps the
+   system in shallow idle. On Qualcomm SM8550/SM8750 handhelds this
+   alone blocks CPU cluster power collapse (and with it AOSD) during
+   s2idle, and it is invisible to IRQ-based wakeup attribution because
+   timers do not show up in /proc/interrupts.
+
+Delete the sampling timer and disable the tach IRQs on suspend; re-arm
+them on resume before restoring the PWM. timer_setup() runs
+unconditionally in probe(), so timer_delete_sync() is safe even on
+boards without tach inputs, and irqs are only touched when actually
+requested (tach->irq > 0), mirroring probe().
+
+Rebased onto 1300 (pwm1_sleep_charging). A suspend that fails gets no
+resume call, so the tach IRQs and timer are re-armed on that path too.
+
+[ Armada, via portareOS projects/PortareOS/devices/SM8550/patches/linux/0530, rebased ]
+---
+--- a/drivers/hwmon/pwm-fan.c
++++ b/drivers/hwmon/pwm-fan.c
+@@ -851,11 +851,45 @@
+ 	pwm_fan_cleanup(ctx);
+ }
+ 
++/*
++ * The 1 Hz RPM sampling timer wakes a CPU every second and a coasting fan can
++ * keep raising tach IRQs, so neither runs across system sleep.
++ */
++static void pwm_fan_quiesce_tachs(struct pwm_fan_ctx *ctx)
++{
++	int i;
++
++	timer_delete_sync(&ctx->rpm_timer);
++
++	for (i = 0; i < ctx->tach_count; i++)
++		if (ctx->tachs[i].irq > 0)
++			disable_irq(ctx->tachs[i].irq);
++}
++
++static void pwm_fan_rearm_tachs(struct pwm_fan_ctx *ctx)
++{
++	int i;
++
++	for (i = 0; i < ctx->tach_count; i++) {
++		if (ctx->tachs[i].irq > 0) {
++			atomic_set(&ctx->tachs[i].pulses, 0);
++			enable_irq(ctx->tachs[i].irq);
++		}
++	}
++
++	if (ctx->tach_count > 0) {
++		ctx->sample_start = ktime_get();
++		mod_timer(&ctx->rpm_timer, jiffies + HZ);
++	}
++}
++
+ static int pwm_fan_suspend(struct device *dev)
+ {
+ 	struct pwm_fan_ctx *ctx = dev_get_drvdata(dev);
+ 	int ret = 0;
+ 
++	pwm_fan_quiesce_tachs(ctx);
++
+ 	mutex_lock(&ctx->lock);
+ 	ctx->pwm_awake = ctx->pwm_value;
+ 	/* The PWM and supply providers must keep working in s2idle */
+@@ -872,6 +906,10 @@
+ 	}
+ 	mutex_unlock(&ctx->lock);
+ 
++	/* A failed suspend gets no resume call */
++	if (ret)
++		pwm_fan_rearm_tachs(ctx);
++
+ 	return ret;
+ }
+ 
+@@ -880,6 +918,8 @@
+ 	struct pwm_fan_ctx *ctx = dev_get_drvdata(dev);
+ 	int ret;
+ 
++	pwm_fan_rearm_tachs(ctx);
++
+ 	mutex_lock(&ctx->lock);
+ 	ctx->suspended = false;
+ 	ret = __set_pwm(ctx, ctx->pwm_awake);
