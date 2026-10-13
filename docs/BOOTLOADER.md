@@ -81,6 +81,12 @@ Checked on hardware (2026-10-09, `--check` only):
 
 - **Thor:** both slots stock, refused correctly.
 - **RP5:** no abl partitions visible to Linux (below).
+- **Portal** (2026-10-13, the install/restore version, `--check` only; an internal install):
+  abl_a/abl_b are 1 MiB stock ELF ABLs on sde64/sde65. `--check` said `not-installed`,
+  `--install --check` said `would-install` (both slots, saved first), and
+  `--restore-stock --check` said `is-stock`. Its `/esp` (sda18) is mounted with
+  `fmask=0077,dmask=0077`, so only root can read or write the backups there. A real install and
+  restore, and the Device Settings path (pkexec, volume keys), are still untested.
 
 **Licence.** The ROCKNIX ABL is binary-only, from a private fork of Qualcomm's BSD-licensed
 LinuxLoader, and its repo states no licence. ROCKNIX's developers agreed to Kettle
