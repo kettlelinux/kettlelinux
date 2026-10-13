@@ -68,7 +68,8 @@ the volume keys, look for the option that sets the **default boot**:
   U-Boot. Install the **ROCKNIX ABL** instead, from Android, by following ROCKNIX's guide for
   your device ([rocknix.org](https://rocknix.org/), your device's page, *Install the ROCKNIX
   ABL*). Use its backup script first: ROCKNIX's `restore_backup_abl.sh` puts the stock
-  bootloader back later. Then go on with step 4.
+  bootloader back later. Then go on with step 4. If Kettle already starts on your device some other way,
+  Kettle can install the ROCKNIX ABL itself (see *The ROCKNIX ABL from Kettle* below).
 
 **If you already have the ROCKNIX ABL** (installed for ROCKNIX, Batocera, Knulli, ...), skip
 this step: Kettle's card works with it as it is.
@@ -129,8 +130,30 @@ With the ROCKNIX ABL, Kettle images carry a newer ROCKNIX ABL from time to time.
 open Quick Access > Device Settings > System in Game Mode: its Bootloader section says which
 release is installed and offers *Update* when this image has a newer one. Or open a terminal on
 the desktop and run `sudo kettle-abl-update`. Either way, have the charger connected (or the
-battery above 30%). It only ever updates a ROCKNIX ABL that is already installed: it never
-touches the stock bootloader, and never goes back to an older ROCKNIX ABL.
+battery above 30%). An update never touches the stock bootloader, and never goes back to an
+older ROCKNIX ABL.
+
+### The ROCKNIX ABL from Kettle
+
+The same Bootloader section (or `kettle-abl-update` in a terminal) also installs and removes the
+ROCKNIX ABL. You don't need it where fastboot mode offers Loader.
+
+- **Install ROCKNIX ABL** (`sudo kettle-abl-update --install`) replaces the stock bootloader
+  in both slots. It first saves the stock one to `/var/lib/kettle/abl-backups`, with a copy in
+  `kettle-abl-backups` on the card's FAT partition. After that, fastboot mode's Loader choice is
+  gone. On the next start, hold **Vol−** and set the ROCKNIX ABL's menu as in step 4.
+- **Reinstall ROCKNIX ABL** shows up when an Android update has put the stock bootloader back in
+  one slot. It writes only that slot, and saves the stock one there first.
+- **Put the stock bootloader back** (`sudo kettle-abl-update --restore-stock`) writes the saved
+  stock bootloader back into each slot. If the backup was made with ROCKNIX's scripts in Android
+  instead, copy their `abl_a.img` to the device and run
+  `sudo kettle-abl-update --restore-stock --stock-image abl_a.img`.
+
+In Game Mode, each of these waits until you hold **Vol+** and **Vol−** together for a second.
+Keep the saved bootloader. A factory reset erases the copy in `/var/lib/kettle`, but
+*Put the stock bootloader back* still finds the one on the card. Writing a new image to the card
+erases both copies, so copy `kettle-abl-backups` off the card if you might want the stock
+bootloader back later.
 
 You only need to write a new image to the card to start over from scratch.
 

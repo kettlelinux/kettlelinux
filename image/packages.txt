@@ -129,7 +129,8 @@ inputplumber
 # atomupd (Steam's Check for updates). Valve's code, built by us for arm64 (packages/steamos-efi,
 # packages/steamos-customizations-kettle); see docs/UPDATES.md
 steamos-customizations-kettle
-# kettle-abl-update: keeps an installed ROCKNIX ABL (devices without U-Boot) up to date
+# kettle-abl-update: installs the ROCKNIX ABL (devices without U-Boot), keeps it up to date and
+# puts the stock bootloader back
 # (packages/rocknix-abl)
 rocknix-abl
 # Game Mode power button: short press = Steam's sleep, long press = Steam's power menu
