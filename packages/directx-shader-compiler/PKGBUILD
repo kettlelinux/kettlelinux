@@ -8,9 +8,9 @@
 # with the DXIL backend and SPIR-V codegen (SPIRV-Headers/Tools at the commits this dxc
 # pins). Under qemu this takes well over an hour.
 pkgname=directx-shader-compiler
-pkgver=1.9.2607
-pkgrel=3
-_commit=0d3ee6b551b8fa768fbf825300ebab81047ef6a8   # v1.9.2607
+pkgver=1.9.2609
+pkgrel=1
+_commit=01b62ad47db7dee3dd33f90e7339cf9e860b3f93   # v1.9.2609
 pkgdesc='DirectX Shader Compiler (dxc), DXIL and SPIR-V; build dependency of optiscaler-arm64ec'
 arch=(aarch64)
 url='https://github.com/microsoft/DirectXShaderCompiler'
