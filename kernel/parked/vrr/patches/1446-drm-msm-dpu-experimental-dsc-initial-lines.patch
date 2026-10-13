@@ -1,0 +1,38 @@
+From: Kettle Linux
+Subject: [PATCH] drm/msm/dpu: experimental DSC initial lines override
+
+msm.dpu_dsc_initial_lines (0644, 0: computed), for the ICNA3520 video mode
+DSC noise with a slice-height period: mainline computes 2 initial lines,
+Qualcomm downstream 3 (two merged encoders) or 4 (one encoder, two slices).
+---
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c	2026-10-12 20:33:03.856797654 -0500
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c	2026-10-12 20:33:03.867892634 -0500
+@@ -1981,6 +1981,18 @@
+ 	return 0;
+ }
+ 
++/*
++ * Experimental (Thor top ICNA3520 in video mode): the lines the DSC encoder
++ * buffers before its first output. The formula below gives 2 for 540-wide
++ * 8 bpc slices; Qualcomm's downstream formula for DSC 1.2 gives 3 with two
++ * merged encoders and 4 with one. Too few may underflow each slice in video
++ * mode, where the timing engine pulls at a fixed rate. 0: the formula. Read at
++ * every modeset, so it can be changed at runtime.
++ */
++static unsigned int dpu_dsc_initial_lines;
++module_param(dpu_dsc_initial_lines, uint, 0644);
++MODULE_PARM_DESC(dpu_dsc_initial_lines, "DSC encoder initial lines (0: computed)");
++
+ static u32
+ dpu_encoder_dsc_initial_line_calc(struct drm_dsc_config *dsc,
+ 				  u32 enc_ip_width)
+@@ -2071,7 +2083,8 @@
+ 	intf_ip_w = this_frame_slices * dsc->slice_width;
+ 
+ 	enc_ip_w = intf_ip_w / num_dsc;
+-	initial_lines = dpu_encoder_dsc_initial_line_calc(dsc, enc_ip_w);
++	initial_lines = READ_ONCE(dpu_dsc_initial_lines) ?:
++			dpu_encoder_dsc_initial_line_calc(dsc, enc_ip_w);
+ 
+ 	for (i = 0; i < num_dsc; i++)
+ 		dpu_encoder_dsc_pipe_cfg(ctl, hw_dsc[i], hw_pp[i],

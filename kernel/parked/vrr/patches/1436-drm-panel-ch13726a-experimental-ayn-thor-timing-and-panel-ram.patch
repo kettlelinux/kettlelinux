@@ -1,0 +1,111 @@
+From: Kettle Linux
+Subject: [PATCH] drm/panel: ch13726a: experimental AYN Thor timing and panel RAM
+
+AYN's Android drives the Thor's bottom CH13726A in video mode with
+12/4/12 porches both ways at 120 Hz (60 Hz at half the DSI clock), where
+this driver uses the RP Mini V2's timing at 60 Hz, and switches the panel
+between its frame RAM (F0 50, B9 01) and RAM bypass (B9 00, what this
+driver always sets). Module parameters to test both for variable refresh,
+off by default: thor_timing=1 (AYN timing, 60 Hz) or 2 (120 Hz), ram=1,
+and vrr_min_hz=N to override the device tree's floor.
+---
+diff --git a/drivers/gpu/drm/panel/panel-ddic-ch13726a.c b/drivers/gpu/drm/panel/panel-ddic-ch13726a.c
+index b2c2a3f..a6fe2c6 100644
+--- a/drivers/gpu/drm/panel/panel-ddic-ch13726a.c
++++ b/drivers/gpu/drm/panel/panel-ddic-ch13726a.c
+@@ -18,6 +18,18 @@
+ 
+ #include <video/mipi_display.h>
+ 
++static unsigned int thor_timing;
++module_param(thor_timing, uint, 0444);
++MODULE_PARM_DESC(thor_timing, "AYN Thor bottom panel: 0 RP Mini V2 timing, 1 AYN's at 60 Hz, 2 AYN's at 120 Hz");
++
++static bool ram;
++module_param(ram, bool, 0444);
++MODULE_PARM_DESC(ram, "Show frames through the panel's RAM (B9 01) instead of bypassing it");
++
++static unsigned int vrr_min_hz;
++module_param(vrr_min_hz, uint, 0444);
++MODULE_PARM_DESC(vrr_min_hz, "Variable refresh floor in Hz, overriding kettle,vrr-min-hz (0: the device tree's)");
++
+ struct ch13726a_panel {
+ 	struct drm_panel panel;
+ 	struct mipi_dsi_device *dsi;
+@@ -52,7 +64,10 @@ static int ch13726a_on(struct ch13726a_panel *ctx)
+ 	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+ 
+ 	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xf0, 0x50);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb9, 0x00);
++	if (ram)
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb9, 0x01);
++	else
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb9, 0x00);
+ 	
+ 	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
+ 	mipi_dsi_msleep(&dsi_ctx, 120);
+@@ -122,6 +137,42 @@ static int ch13726a_unprepare(struct drm_panel *panel)
+ 	return 0;
+ }
+ 
++/*
++ * Experiments for variable refresh on the AYN Thor's bottom panel, all off
++ * by default. AYN's Android drives it in video mode with 12/4/12 porches both
++ * ways at 120 Hz (60 Hz at half the clock), not this driver's RP Mini V2
++ * timing, and switches the panel between its frame RAM (B9 01) and RAM
++ * bypass (B9 00, what this driver always sets).
++ */
++
++static const struct drm_display_mode thor_ayn_60_mode = {
++	.clock = (1080 + 12 + 4 + 12) * (1240 + 12 + 4 + 12) * 60 / 1000,
++	.hdisplay = 1080,
++	.hsync_start = 1080 + 12,
++	.hsync_end = 1080 + 12 + 4,
++	.htotal = 1080 + 12 + 4 + 12,
++	.vdisplay = 1240,
++	.vsync_start = 1240 + 12,
++	.vsync_end = 1240 + 12 + 4,
++	.vtotal = 1240 + 12 + 4 + 12,
++	.width_mm = 65,
++	.height_mm = 75,
++};
++
++static const struct drm_display_mode thor_ayn_120_mode = {
++	.clock = (1080 + 12 + 4 + 12) * (1240 + 12 + 4 + 12) * 120 / 1000,
++	.hdisplay = 1080,
++	.hsync_start = 1080 + 12,
++	.hsync_end = 1080 + 12 + 4,
++	.htotal = 1080 + 12 + 4 + 12,
++	.vdisplay = 1240,
++	.vsync_start = 1240 + 12,
++	.vsync_end = 1240 + 12 + 4,
++	.vtotal = 1240 + 12 + 4 + 12,
++	.width_mm = 65,
++	.height_mm = 75,
++};
++
+ static const struct drm_display_mode rp5_display_mode = {
+ 	.clock = (1080 + 12 + 4 + 12) * (1920 + 12 + 4 + 12) * 60 / 1000,
+ 	.hdisplay = 1080,
+@@ -260,6 +311,12 @@ static int ch13726a_probe(struct mipi_dsi_device *dsi)
+ 		return PTR_ERR(ctx);
+ 
+ 	ctx->display_mode = of_device_get_match_data(dev);
++	if (of_device_is_compatible(dev->of_node, "ch13726a,thor") && thor_timing) {
++		ctx->display_mode = thor_timing == 2 ? &thor_ayn_120_mode : &thor_ayn_60_mode;
++		dev_info(dev, "AYN timing, %u Hz (experimental)\n", thor_timing == 2 ? 120 : 60);
++	}
++	if (ram)
++		dev_info(dev, "frames through the panel RAM (experimental)\n");
+ 
+ 	ctx->supplies[0].supply = "vdd1v2";
+ 	ctx->supplies[1].supply = "vddio";
+@@ -277,6 +334,8 @@ static int ch13726a_probe(struct mipi_dsi_device *dsi)
+ 				     "Failed to get reset-gpios\n");
+ 
+ 	of_property_read_u32(dev->of_node, "kettle,vrr-min-hz", &ctx->vrr_min_hz);
++	if (vrr_min_hz)
++		ctx->vrr_min_hz = vrr_min_hz;
+ 
+ 	ret = of_drm_get_panel_orientation(dev->of_node, &ctx->orientation);
+ 	if (ret < 0) {

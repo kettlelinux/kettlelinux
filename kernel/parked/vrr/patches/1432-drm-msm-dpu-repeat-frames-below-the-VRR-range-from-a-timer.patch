@@ -1,0 +1,550 @@
+From: PortareOS <hello@portare.org>
+Subject: [PATCH] drm/msm/dpu: repeat frames below the VRR range from a timer (LFC)
+
+AVR holds the front porch until the next commit, up to the range's
+longest frame. A frame slower than twice the fastest refresh has to be
+shown again, or the panel refreshes on its own at the floor, at a time
+unrelated to the next frame, which then waits out a whole refresh.
+Mesa's wsi_display did it for applications that time their presents,
+by committing the same buffer again (PortareOS mesa-005, dropped with
+this).
+
+Do it in the encoder, for every client and without a commit. Kickoffs
+of a steady source fall on a grid, the content's clock: one near its
+place pulls the grid and its period a little towards itself, a late or
+dropped one moves neither, and two distances alike are a new rate when
+they are off the period or both missed the grid. A frame is shown
+period / refresh times; after each of its refreshes an hrtimer writes
+AVR_TRIGGER at the next place on the grid, once per refresh. A kickoff
+cancels what is left of the frame before, and a mode set or AVR going
+on or off starts the cadence afresh.
+
+Measured on the Retroid Pocket Nova (SM8550, continuous AVR):
+AVR_TRIGGER alone starts a refresh, and one written while the INTF still
+scans the refresh before is kept for its end, as a flush is. So the
+trigger goes at its place on the grid, and the hardware waits for the
+shortest frame where the panel is behind. Timing it from the vsync
+interrupt instead does not work: the interrupt ran 0.68 ms after the
+vsync, and repeats timed from it came 9.0 ms apart instead of 8.33.
+A period smoothed from the distances between kickoffs does not either:
+at 40 Hz the distance after a frame 6 ms late was short enough to count,
+and three refreshes a frame became two for seven frames.
+
+Two more found on the device: the vsync that takes a frame can come
+before the kickoff has put it on the grid (Tekken 3, 35 times in 10
+minutes), and arming then timed the first repeat from the frame before,
+already past, so its trigger added a refresh; and the encoder drops the
+vsync interrupt 58 ms after a frame when nothing else holds it, which
+stopped a 12 Hz frame's repeats after 6 to 8 of 9. The kickoff now arms
+the first repeat when its vsync came first, and the encoder holds the
+interrupt while AVR is on with LFC. A trigger never goes before the due
+time armed last, which a frame's vsync clears, so a callback that fired
+while a kickoff or a vsync held the lock does nothing.
+
+Against mesa-005 on the same device, frames on time were shown the same,
+a panel behind after a late frame was back on the content's clock three
+times sooner, and at 30 Hz the device drew about 0.1 W less. On by
+default; msm.dpu_lfc=0 turns it off.
+dpu_enc_lfc_frame traces the grid at every kickoff, dpu_enc_lfc_repeat
+every trigger.
+---
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_trace.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_trace.h
+@@ -606,6 +606,56 @@
+ 	TP_printk("id=%u, intf_idx=%d", __entry->drm_id, __entry->intf_idx)
+ );
+ 
++TRACE_EVENT(dpu_enc_lfc_frame,
++	TP_PROTO(uint32_t drm_id, enum dpu_intf intf_idx, u64 interval,
++		 u64 period, s64 phase_err, unsigned int count),
++	TP_ARGS(drm_id, intf_idx, interval, period, phase_err, count),
++	TP_STRUCT__entry(
++		__field(	uint32_t,	drm_id		)
++		__field(	enum dpu_intf,	intf_idx	)
++		__field(	u64,		interval	)
++		__field(	u64,		period		)
++		__field(	s64,		phase_err	)
++		__field(	unsigned int,	count		)
++	),
++	TP_fast_assign(
++		__entry->drm_id = drm_id;
++		__entry->intf_idx = intf_idx;
++		__entry->interval = interval;
++		__entry->period = period;
++		__entry->phase_err = phase_err;
++		__entry->count = count;
++	),
++	TP_printk("id=%u, intf_idx=%d, interval=%llu, period=%llu, phase_err=%lld, count=%u",
++		  __entry->drm_id, __entry->intf_idx, __entry->interval,
++		  __entry->period, __entry->phase_err, __entry->count)
++);
++
++TRACE_EVENT(dpu_enc_lfc_repeat,
++	TP_PROTO(uint32_t drm_id, enum dpu_intf intf_idx, unsigned int n,
++		 unsigned int count, s64 due, bool kicked),
++	TP_ARGS(drm_id, intf_idx, n, count, due, kicked),
++	TP_STRUCT__entry(
++		__field(	uint32_t,	drm_id		)
++		__field(	enum dpu_intf,	intf_idx	)
++		__field(	unsigned int,	n		)
++		__field(	unsigned int,	count		)
++		__field(	s64,		due		)
++		__field(	bool,		kicked		)
++	),
++	TP_fast_assign(
++		__entry->drm_id = drm_id;
++		__entry->intf_idx = intf_idx;
++		__entry->n = n;
++		__entry->count = count;
++		__entry->due = due;
++		__entry->kicked = kicked;
++	),
++	TP_printk("id=%u, intf_idx=%d, repeat=%u/%u, due=%lld, kicked=%d",
++		  __entry->drm_id, __entry->intf_idx, __entry->n,
++		  __entry->count, __entry->due, __entry->kicked)
++);
++
+ TRACE_EVENT(dpu_enc_phys_vid_irq_enable,
+ 	TP_PROTO(uint32_t drm_id, enum dpu_intf intf_idx,
+ 		 int refcnt),
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys.h
+@@ -8,6 +8,7 @@
+ #define __DPU_ENCODER_PHYS_H__
+ 
+ #include <drm/drm_writeback.h>
++#include <linux/hrtimer.h>
+ #include <linux/jiffies.h>
+ 
+ #include "dpu_kms.h"
+@@ -139,6 +140,41 @@
+ };
+ 
+ /**
++ * struct dpu_encoder_lfc - low framerate compensation on a video mode INTF
++ *	with AVR: a frame slower than twice the fastest refresh is refreshed
++ *	again from a timer, @count times evenly over its period. All fields
++ *	but @timer are under the encoder's spinlock.
++ * @timer:		Starts the next repeat
++ * @refresh_ns:		The mode's frame, the shortest refresh
++ * @last_commit:	When the last frame was kicked off
++ * @last_interval:	The distance of that kickoff from the one before
++ * @period:		The frame period, 0 until two kickoffs agree on one
++ * @phase:		Where the last frame's kickoff belongs on the grid
++ * @misses:		Kickoffs off the grid in a row
++ * @due:		Where the armed repeat belongs on the period
++ * @count:		Refreshes per frame, 0 for no repeats
++ * @shown:		Refreshes of the frame on screen so far, 0 before its first
++ * @kicked:		@shown when the last trigger was written, one per refresh
++ * @waiting:		A kickoff on the grid waits for its vsync
++ * @irq_held:		This holds the vsync interrupt while AVR is on
++ */
++struct dpu_encoder_lfc {
++	struct hrtimer timer;
++	u64 refresh_ns;
++	ktime_t last_commit;
++	u64 last_interval;
++	u64 period;
++	ktime_t phase;
++	unsigned int misses;
++	ktime_t due;
++	unsigned int count;
++	unsigned int shown;
++	unsigned int kicked;
++	bool waiting;
++	bool irq_held;
++};
++
++/**
+  * struct dpu_encoder_phys - physical encoder that drives a single INTF block
+  *	tied to a specific panel / sub-panel. Abstract type, sub-classed by
+  *	phys_vid or phys_cmd for video mode or command mode encs respectively.
+@@ -172,6 +208,7 @@
+  * @pending_kickoff_wq:		Wait queue for blocking until kickoff completes
+  * @irq:			IRQ indices
+  * @has_intf_te:		Interface TE configuration support
++ * @lfc:			Low framerate compensation, video mode with AVR
+  */
+ struct dpu_encoder_phys {
+ 	struct drm_encoder *parent;
+@@ -200,6 +237,7 @@
+ 	bool has_intf_te;
+ 	bool avr_capable;
+ 	bool avr_enabled;
++	struct dpu_encoder_lfc lfc;
+ };
+ 
+ static inline int dpu_encoder_phys_inc_pending(struct dpu_encoder_phys *phys)
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
+@@ -255,6 +255,27 @@
+ }
+ 
+ /*
++ * Forget the cadence the low framerate compensation below has learnt, at a
++ * mode set and whenever AVR goes on or off, so a new session does not start
++ * on the last one's period. Under the encoder's spinlock, with AVR's state
++ * changed in the same section; the caller cancels the timer once it is out
++ * of it, when nothing can arm it any more.
++ */
++static void dpu_encoder_phys_vid_lfc_reset(struct dpu_encoder_lfc *lfc)
++{
++	lfc->last_commit = 0;
++	lfc->last_interval = 0;
++	lfc->period = 0;
++	lfc->phase = 0;
++	lfc->misses = 0;
++	lfc->due = 0;
++	lfc->count = 0;
++	lfc->shown = 0;
++	lfc->kicked = 0;
++	lfc->waiting = false;
++}
++
++/*
+  * Variable refresh from the INTF's AVR, for a DSI panel that declares a
+  * refresh range: the mode's frame is the shortest, the range's minimum
+  * gives the longest. The CRTC's VRR_ENABLED switches it per commit.
+@@ -281,17 +302,44 @@
+ 
+ 	spin_lock_irqsave(phys_enc->enc_spinlock, lock_flags);
+ 	intf->ops.enable_avr(intf, false);
+-	if (lines > vtotal) {
++	dpu_encoder_phys_vid_lfc_reset(&phys_enc->lfc);
++	phys_enc->lfc.refresh_ns = 0;
++	if (lines > vtotal && clock_khz) {
+ 		intf->ops.setup_avr(intf, (u32)(lines * htotal));
+ 		phys_enc->avr_capable = true;
++		phys_enc->lfc.refresh_ns = div_u64((u64)vtotal * htotal * 1000000,
++						   clock_khz);
+ 	}
+ 	spin_unlock_irqrestore(phys_enc->enc_spinlock, lock_flags);
++	hrtimer_cancel(&phys_enc->lfc.timer);
+ 
+ 	if (phys_enc->avr_capable)
+ 		DRM_DEBUG_KMS("intf%d: variable refresh available, %u to %llu lines a frame\n",
+ 			      intf->idx - INTF_0, vtotal, lines);
+ }
+ 
++static int dpu_encoder_phys_vid_control_vblank_irq(struct dpu_encoder_phys *phys_enc,
++						    bool enable);
++static bool dpu_lfc = true;
++
++/*
++ * The low framerate compensation below arms each repeat from the vsync
++ * interrupt, which the encoder drops 58 ms after a frame when nothing else
++ * holds it: below 17 Hz the repeats stopped partway through each frame
++ * (12 Hz: 6 to 8 of 9). Hold it while AVR is on with LFC, from process
++ * context.
++ */
++static void dpu_encoder_phys_vid_lfc_hold_irq(struct dpu_encoder_phys *phys_enc,
++					      bool hold)
++{
++	if (hold == phys_enc->lfc.irq_held)
++		return;
++	if (hold && !READ_ONCE(dpu_lfc))
++		return;
++	if (!dpu_encoder_phys_vid_control_vblank_irq(phys_enc, hold))
++		phys_enc->lfc.irq_held = hold;
++}
++
+ /*
+  * Follows VRR_ENABLED in a commit while the timing engine runs, with the
+  * INTF in that commit's flush, as Qualcomm's driver switches Qsync. The DSI
+@@ -309,19 +357,232 @@
+ 
+ 	if (want)
+ 		dpu_encoder_set_dsi_avr(phys_enc->parent, true);
++	/*
++	 * AVR and the low framerate compensation's view of it change together,
++	 * so no vsync can arm a repeat between; the timer is cancelled after,
++	 * when nothing can arm it again before the next frame.
++	 */
+ 	spin_lock_irqsave(phys_enc->enc_spinlock, lock_flags);
+ 	phys_enc->hw_intf->ops.enable_avr(phys_enc->hw_intf, want);
++	phys_enc->avr_enabled = want;
++	dpu_encoder_phys_vid_lfc_reset(&phys_enc->lfc);
+ 	spin_unlock_irqrestore(phys_enc->enc_spinlock, lock_flags);
++	hrtimer_cancel(&phys_enc->lfc.timer);
++	dpu_encoder_phys_vid_lfc_hold_irq(phys_enc, want);
+ 	phys_enc->hw_ctl->ops.update_pending_flush_intf(phys_enc->hw_ctl,
+ 							phys_enc->hw_intf->idx);
+ 	if (!want)
+ 		dpu_encoder_set_dsi_avr(phys_enc->parent, false);
+-	phys_enc->avr_enabled = want;
+ 
+ 	DRM_INFO("intf%d: variable refresh %s\n",
+ 		 phys_enc->hw_intf->idx - INTF_0, want ? "on" : "off");
+ }
+ 
++/*
++ * Low framerate compensation. AVR holds the front porch until a frame is
++ * committed, up to the range's longest frame; a frame slower than twice the
++ * fastest refresh would then be refreshed by the panel on its own, at a time
++ * unrelated to the next frame, which waits out a whole refresh. Instead it
++ * is shown count = period / refresh times, evenly: after each of its
++ * refreshes a timer writes AVR_TRIGGER at the frame's kickoff plus
++ * shown * period / count. A trigger written while the INTF still scans the
++ * refresh before is kept for that refresh's end, so a repeat the panel is
++ * behind on starts there and the panel catches up. The period comes from
++ * the kickoffs, so this covers every client and costs no commit.
++ * msm.dpu_lfc=0 turns it off, which leaves such a frame to the panel's own
++ * refresh. Change it between clients: the vsync interrupt is held from
++ * when AVR goes on.
++ */
++module_param(dpu_lfc, bool, 0644);
++MODULE_PARM_DESC(dpu_lfc, "Repeat frames below the variable refresh range from a timer (LFC)");
++
++/* Frames slower than 10 Hz are a pause, not a frame rate. */
++#define DPU_LFC_MAX_PERIOD_NS	(100 * NSEC_PER_MSEC)
++
++/* Under the encoder's spinlock. */
++static bool dpu_encoder_phys_vid_lfc_on(struct dpu_encoder_phys *phys_enc)
++{
++	return READ_ONCE(dpu_lfc) && phys_enc->avr_enabled &&
++	       phys_enc->lfc.refresh_ns;
++}
++
++/*
++ * Arm the next repeat of the frame on screen. Nothing while a kickoff
++ * waits for its vsync: that vsync arms its frame's first repeat. Under
++ * the encoder's spinlock.
++ */
++static void dpu_encoder_phys_vid_lfc_arm(struct dpu_encoder_phys *phys_enc)
++{
++	struct dpu_encoder_lfc *lfc = &phys_enc->lfc;
++
++	if (!dpu_encoder_phys_vid_lfc_on(phys_enc) || !lfc->shown ||
++	    lfc->shown >= lfc->count ||
++	    atomic_read(&phys_enc->pending_kickoff_cnt))
++		return;
++
++	lfc->due = ktime_add_ns(lfc->phase,
++				div_u64(lfc->period * lfc->shown, lfc->count));
++	hrtimer_start(&lfc->timer, lfc->due, HRTIMER_MODE_ABS_HARD);
++}
++
++static enum hrtimer_restart dpu_encoder_phys_vid_lfc_timer(struct hrtimer *timer)
++{
++	struct dpu_encoder_lfc *lfc = container_of(timer, struct dpu_encoder_lfc, timer);
++	struct dpu_encoder_phys *phys_enc =
++		container_of(lfc, struct dpu_encoder_phys, lfc);
++	unsigned long lock_flags;
++	bool kick;
++
++	spin_lock_irqsave(phys_enc->enc_spinlock, lock_flags);
++	if (dpu_encoder_phys_vid_lfc_on(phys_enc) && lfc->shown &&
++	    lfc->shown < lfc->count) {
++		/*
++		 * A callback that had fired as a kickoff or a frame's vsync
++		 * re-armed or invalidated the repeat finds itself before the
++		 * due time it was waiting for the lock to see.
++		 */
++		if (lfc->kicked == lfc->shown ||
++		    ktime_before(ktime_get(), lfc->due))
++			goto out;
++		/* A frame kicked off since goes first. */
++		kick = !atomic_read(&phys_enc->pending_kickoff_cnt);
++		if (kick) {
++			phys_enc->hw_intf->ops.avr_trigger(phys_enc->hw_intf);
++			lfc->kicked = lfc->shown;
++		}
++		trace_dpu_enc_lfc_repeat(DRMID(phys_enc->parent),
++					 phys_enc->hw_intf->idx - INTF_0,
++					 lfc->shown, lfc->count,
++					 ktime_to_ns(lfc->due), kick);
++	}
++out:
++	spin_unlock_irqrestore(phys_enc->enc_spinlock, lock_flags);
++
++	return HRTIMER_NORESTART;
++}
++
++/*
++ * A vsync: a refresh started, the first of a frame when it takes a
++ * kickoff. A refresh the panel made on its own, at the floor, counts like
++ * a repeat. Under the encoder's spinlock, from the vsync irq.
++ */
++static void dpu_encoder_phys_vid_lfc_vsync(struct dpu_encoder_phys *phys_enc,
++					   bool frame)
++{
++	struct dpu_encoder_lfc *lfc = &phys_enc->lfc;
++
++	if (frame) {
++		lfc->shown = 1;
++		lfc->kicked = 0;
++		lfc->due = KTIME_MAX;
++		/*
++		 * The vsync can come before the kickoff has put the frame on
++		 * the grid, when the panel took it at once: arming then would
++		 * time the repeat from the frame before, already past, and the
++		 * trigger, kept for this refresh's end, added a refresh. The
++		 * kickoff arms it instead.
++		 */
++		if (!lfc->waiting)
++			return;
++		lfc->waiting = false;
++	} else if (lfc->shown && lfc->shown < lfc->count) {
++		lfc->shown++;
++	}
++	dpu_encoder_phys_vid_lfc_arm(phys_enc);
++}
++
++/*
++ * A frame was kicked off. The kickoffs of a steady source fall on a grid,
++ * the content's own clock, which stands in for a timed client's targets. A
++ * kickoff within an eighth of a period of its place on the grid pulls the
++ * grid and its period a little towards itself. One off it, a late or a
++ * dropped frame, moves neither: the late frame's repeats keep their places,
++ * so the panel catches up on them, and the next frame finds the grid where
++ * it was. Taking the distances between kickoffs instead, a frame 6 ms late
++ * at 40 Hz was left out but the short distance after it was not, and the
++ * period dropped below three refreshes for seven frames. Two distances
++ * alike are a new rate, and the grid starts again from them, as it starts
++ * from the first two, when both kickoffs missed the grid or the distance
++ * is more than an eighth off the period: a doubled rate puts every second
++ * frame back on the old grid, and the misses alone never add up. A fiftieth of a
++ * refresh of slack keeps a frame of exactly two refreshes, the SNES on the
++ * 120.198 Hz mode, from rounding down to one.
++ */
++static void dpu_encoder_phys_vid_lfc_kickoff(struct dpu_encoder_phys *phys_enc)
++{
++	struct dpu_encoder_lfc *lfc = &phys_enc->lfc;
++	ktime_t now = ktime_get();
++	unsigned long lock_flags;
++	u64 seen = 0, prev;
++	s64 err = 0;
++
++	spin_lock_irqsave(phys_enc->enc_spinlock, lock_flags);
++	if (!dpu_encoder_phys_vid_lfc_on(phys_enc)) {
++		dpu_encoder_phys_vid_lfc_reset(lfc);
++		goto out;
++	}
++
++	if (lfc->last_commit && ktime_after(now, lfc->last_commit))
++		seen = ktime_to_ns(ktime_sub(now, lfc->last_commit));
++	prev = lfc->last_interval;
++	lfc->last_commit = now;
++	lfc->last_interval = seen;
++
++	if (lfc->period) {
++		s64 d = ktime_to_ns(ktime_sub(now, lfc->phase));
++		u64 n = 0;
++
++		if (d > -(s64)(lfc->period / 8))
++			n = div64_u64((u64)d + lfc->period / 8, lfc->period);
++		err = d - (s64)(n * lfc->period);
++		if (n == 1 && abs(err) < lfc->period / 8) {
++			lfc->phase = ktime_add(lfc->phase,
++					       ns_to_ktime(lfc->period + err / 8));
++			lfc->period = (s64)lfc->period + err / 32;
++			lfc->misses = 0;
++		} else {
++			if (n)
++				lfc->phase = ktime_add_ns(lfc->phase, n * lfc->period);
++			lfc->misses++;
++		}
++	}
++	if (seen && prev && seen > prev - prev / 16 && seen < prev + prev / 16 &&
++	    (!lfc->period || lfc->misses >= 2 ||
++	     seen > lfc->period + lfc->period / 8 ||
++	     seen + lfc->period / 8 < lfc->period)) {
++		lfc->period = seen;
++		lfc->phase = now;
++		lfc->misses = 0;
++	}
++
++	lfc->count = 0;
++	if (lfc->period && lfc->period <= DPU_LFC_MAX_PERIOD_NS)
++		lfc->count = div64_u64(lfc->period + lfc->refresh_ns / 50,
++				       lfc->refresh_ns);
++	if (lfc->count < 2)
++		lfc->count = 0;
++	trace_dpu_enc_lfc_frame(DRMID(phys_enc->parent),
++				phys_enc->hw_intf->idx - INTF_0,
++				seen, lfc->period, err, lfc->count);
++
++	/*
++	 * The last frame's repeats are over. The vsync that takes this one
++	 * arms its first, or this does if it came already.
++	 */
++	lfc->waiting = atomic_read(&phys_enc->pending_kickoff_cnt) != 0;
++	hrtimer_try_to_cancel(&lfc->timer);
++	dpu_encoder_phys_vid_lfc_arm(phys_enc);
++out:
++	spin_unlock_irqrestore(phys_enc->enc_spinlock, lock_flags);
++}
++
++static void dpu_encoder_phys_vid_lfc_fini(struct drm_device *dev, void *arg)
++{
++	struct dpu_encoder_phys *phys_enc = arg;
++
++	hrtimer_cancel(&phys_enc->lfc.timer);
++}
++
+ static void dpu_encoder_phys_vid_setup_timing_engine(
+ 		struct dpu_encoder_phys *phys_enc)
+ {
+@@ -407,6 +668,7 @@
+ 	struct dpu_hw_ctl *hw_ctl;
+ 	unsigned long lock_flags;
+ 	u32 flush_register = 0;
++	bool taken = false;
+ 
+ 	hw_ctl = phys_enc->hw_ctl;
+ 
+@@ -426,7 +688,9 @@
+ 		flush_register = hw_ctl->ops.get_flush_register(hw_ctl);
+ 
+ 	if (!(flush_register & hw_ctl->ops.get_pending_flush(hw_ctl)))
+-		atomic_add_unless(&phys_enc->pending_kickoff_cnt, -1, 0);
++		taken = atomic_add_unless(&phys_enc->pending_kickoff_cnt, -1, 0);
++	dpu_encoder_phys_vid_lfc_vsync(phys_enc, taken &&
++			!atomic_read(&phys_enc->pending_kickoff_cnt));
+ 	spin_unlock_irqrestore(phys_enc->enc_spinlock, lock_flags);
+ 
+ 	/* Signal any waiting atomic commit thread */
+@@ -688,10 +952,13 @@
+ 		phys_enc->hw_intf->ops.enable_avr(phys_enc->hw_intf, false);
+ 	phys_enc->avr_capable = false;
+ 	phys_enc->avr_enabled = false;
++	dpu_encoder_phys_vid_lfc_reset(&phys_enc->lfc);
+ 	phys_enc->hw_intf->ops.enable_timing(phys_enc->hw_intf, 0);
+ 	if (dpu_encoder_phys_vid_is_master(phys_enc))
+ 		dpu_encoder_phys_inc_pending(phys_enc);
+ 	spin_unlock_irqrestore(phys_enc->enc_spinlock, lock_flags);
++	hrtimer_cancel(&phys_enc->lfc.timer);
++	dpu_encoder_phys_vid_lfc_hold_irq(phys_enc, false);
+ 
+ 	/*
+ 	 * Wait for a vsync so we know the ENABLE=0 latched before
+@@ -759,6 +1026,8 @@
+ 		phys_enc->hw_intf->ops.avr_trigger(phys_enc->hw_intf);
+ 		spin_unlock_irqrestore(phys_enc->enc_spinlock, lock_flags);
+ 	}
++
++	dpu_encoder_phys_vid_lfc_kickoff(phys_enc);
+ }
+ 
+ static void dpu_encoder_phys_vid_irq_enable(struct dpu_encoder_phys *phys_enc)
+@@ -857,6 +1126,7 @@
+ 		struct dpu_enc_phys_init_params *p)
+ {
+ 	struct dpu_encoder_phys *phys_enc = NULL;
++	int ret;
+ 
+ 	if (!p) {
+ 		DPU_ERROR("failed to create encoder due to invalid parameter\n");
+@@ -878,6 +1148,12 @@
+ 	dpu_encoder_phys_vid_init_ops(&phys_enc->ops);
+ 	phys_enc->intf_mode = INTF_MODE_VIDEO;
+ 
++	hrtimer_setup(&phys_enc->lfc.timer, dpu_encoder_phys_vid_lfc_timer,
++		      CLOCK_MONOTONIC, HRTIMER_MODE_ABS_HARD);
++	ret = drmm_add_action_or_reset(dev, dpu_encoder_phys_vid_lfc_fini, phys_enc);
++	if (ret)
++		return ERR_PTR(ret);
++
+ 	DPU_DEBUG_VIDENC(phys_enc, "created intf idx:%d\n", p->hw_intf->idx);
+ 
+ 	return phys_enc;

@@ -1,0 +1,121 @@
+From: Kettle Linux
+Subject: [PATCH] drm/msm/dpu: no TE wait for a variable refresh command-mode panel
+
+A vrr_capable command-mode panel (the ICNA35xx's MSYNC, 1444) holds its TE
+and refreshes when a frame comes. msm starts a transfer only within 4 lines
+of the tear check's start position on a counter that wraps at twice
+vtotal, so with no TE frames went out only as the counter wrapped. As
+Qualcomm's downstream driver does for Qsync, count to 0xfff0 and open the
+start window to nearly all of it for such a panel; 1443's parameters still
+override both. Nothing then keeps a transfer off the refresh the panel is
+still scanning, and with DSC that showed as rainbow lines when gamescope
+committed in bursts (opening the QAM): kickoffs go at least the mode's
+frame time apart (msm.dpu_te_min_gap_us, writable, overrides it).
+---
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys.h	2026-10-12 18:10:12.770237935 -0500
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys.h	2026-10-12 18:10:12.781699820 -0500
+@@ -286,6 +286,10 @@
+ 	int pp_timeout_report_cnt;
+ 	atomic_t pending_vblank_cnt;
+ 	wait_queue_head_t pending_vblank_wq;
++	/* a vrr_capable panel holds TE: kickoffs at least a frame apart */
++	bool te_held;
++	u64 frame_ns;
++	ktime_t last_kickoff;
+ };
+ 
+ /**
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_cmd.c	2026-10-12 17:53:00.405939300 -0500
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_cmd.c	2026-10-12 18:46:32.604480576 -0500
+@@ -359,6 +359,35 @@
+ 	dpu_core_irq_unregister_callback(phys_enc->dpu_kms, phys_enc->irq[INTR_IDX_PINGPONG]);
+ }
+ 
++/*
++ * A vrr_capable command-mode panel (the ICNA35xx's MSYNC) holds its TE and
++ * refreshes when a frame comes, so the tear check must not wait for TE:
++ * Qualcomm's downstream driver widens the start window for Qsync and counts
++ * to 0xfff0; with the 4-line window and twice-vtotal height of fixed
++ * refresh, frames went out only as the counter wrapped.
++ */
++/*
++ * The least time between kickoffs to such a panel, in us; 0: the mode's frame
++ * time. Writable at runtime, to find what the panel needs to finish the
++ * refresh it is scanning before the next frame comes into its RAM.
++ */
++static unsigned int dpu_te_min_gap_us;
++module_param(dpu_te_min_gap_us, uint, 0644);
++MODULE_PARM_DESC(dpu_te_min_gap_us, "Least time between frames to a TE-holding panel, us (0: the mode's frame time)");
++
++static bool dpu_encoder_phys_cmd_vrr_panel(struct dpu_encoder_phys *phys_enc)
++{
++	struct drm_connector *conn = dpu_encoder_get_connector(phys_enc->parent);
++	uint64_t capable = 0;
++
++	if (!conn || !conn->vrr_capable_property)
++		return false;
++	if (drm_object_property_get_value(&conn->base, conn->vrr_capable_property,
++					  &capable))
++		return false;
++	return capable;
++}
++
+ static void dpu_encoder_phys_cmd_tearcheck_config(
+ 		struct dpu_encoder_phys *phys_enc)
+ {
+@@ -367,6 +396,7 @@
+ 	struct dpu_hw_tear_check tc_cfg = { 0 };
+ 	struct drm_display_mode *mode;
+ 	bool tc_enable = true;
++	bool te_held;
+ 	unsigned long vsync_hz;
+ 	struct dpu_kms *dpu_kms;
+ 
+@@ -412,9 +442,17 @@
+ 	 * TE event coming from the display TE pin we won't stall immediately
+ 	 */
+ 	tc_cfg.hw_vsync_mode = 1;
+-	tc_cfg.sync_cfg_height = dpu_te_sync_height ?: mode->vtotal * 2;
++	te_held = dpu_encoder_phys_cmd_vrr_panel(phys_enc);
++	cmd_enc->te_held = te_held;
++	cmd_enc->frame_ns = mode->clock ?
++		div_u64((u64)mode->htotal * mode->vtotal * 1000000ULL, mode->clock) : 0;
++	cmd_enc->last_kickoff = 0;
++	tc_cfg.sync_cfg_height = dpu_te_sync_height ?:
++				 te_held ? 0xfff0 : mode->vtotal * 2;
+ 	tc_cfg.vsync_init_val = mode->vdisplay;
+-	tc_cfg.sync_threshold_start = dpu_te_sync_thresh ?: DEFAULT_TEARCHECK_SYNC_THRESH_START;
++	tc_cfg.sync_threshold_start = dpu_te_sync_thresh ?:
++				      te_held ? 0xfff0 - mode->vdisplay - 16 :
++				      DEFAULT_TEARCHECK_SYNC_THRESH_START;
+ 	tc_cfg.sync_threshold_continue = DEFAULT_TEARCHECK_SYNC_THRESH_CONTINUE;
+ 	tc_cfg.start_pos = mode->vdisplay;
+ 	tc_cfg.rd_ptr_irq = mode->vdisplay + 1;
+@@ -618,6 +656,27 @@
+ 			  phys_enc->hw_pp->idx - PINGPONG_0);
+ 	}
+ 
++	/*
++	 * With TE held nothing keeps a transfer off the refresh the panel is
++	 * still scanning, and with DSC a frame overwritten in the panel's RAM
++	 * mid-scan showed as rainbow lines (gamescope committing in bursts as
++	 * the QAM opened). Start frames at least the mode's frame time apart,
++	 * the panel's fastest refresh.
++	 */
++	if (cmd_enc->te_held && cmd_enc->frame_ns) {
++		u64 gap_ns = READ_ONCE(dpu_te_min_gap_us) ?
++			     (u64)READ_ONCE(dpu_te_min_gap_us) * 1000 :
++			     cmd_enc->frame_ns + 100000;
++		s64 since = ktime_to_ns(ktime_sub(ktime_get(), cmd_enc->last_kickoff));
++
++		if (since >= 0 && since < (s64)gap_ns) {
++			u64 wait_us = div_u64(gap_ns - since, 1000);
++
++			usleep_range(wait_us, wait_us + 50);
++		}
++		cmd_enc->last_kickoff = ktime_get();
++	}
++
+ 	dpu_encoder_phys_cmd_enable_te(phys_enc);
+ 
+ 	DPU_DEBUG_CMDENC(cmd_enc, "pp:%d pending_cnt %d\n",

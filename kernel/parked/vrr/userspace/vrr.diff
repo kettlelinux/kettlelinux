@@ -1,0 +1,91 @@
+diff --git a/device/common/overlay/usr/lib/kettle/gamescope-session b/device/common/overlay/usr/lib/kettle/gamescope-session
+index fdb4c7d..c27b303 100755
+--- a/device/common/overlay/usr/lib/kettle/gamescope-session
++++ b/device/common/overlay/usr/lib/kettle/gamescope-session
+@@ -45,9 +45,10 @@ export QT_IM_MODULE=xim GTK_IM_MODULE=xim QT_QPA_PLATFORMTHEME=kde
+ #                          (kettle-bottom-screen.service) while Game Mode runs
+ #   GAMESCOPE_LEASE_TOUCH  that screen's touchscreen, whose input goes to it, never to Steam
+ #   GAMESCOPE_BOTTOM_SCREEN=0  leave the second screen off in Game Mode
+-# and last the refresh rate picked in Quick Access > Power (gamescope_refresh_hz, which it writes)
++# and last the refresh rate and variable refresh picked in Quick Access > Power
++# (gamescope_refresh_hz and gamescope_adaptive_sync, which it writes)
+ for f in /usr/lib/kettle/gamescope.conf /etc/kettle/gamescope.conf "$HOME/.config/kettle/gamescope.conf" \
+-    "$HOME/.config/kettle/refresh-rate.conf"; do
++    "$HOME/.config/kettle/refresh-rate.conf" "$HOME/.config/kettle/vrr.conf"; do
+   [ -r "$f" ] && . "$f"
+ done
+ [ "${GAMESCOPE_BOTTOM_SCREEN:-1}" = 0 ] && GAMESCOPE_LEASE_OUTPUT=
+diff --git a/kernel/dts/qcom/qcs8550-ayn-odin2portal.dts b/kernel/dts/qcom/qcs8550-ayn-odin2portal.dts
+index 672f47d..c95f9c8 100644
+--- a/kernel/dts/qcom/qcs8550-ayn-odin2portal.dts
++++ b/kernel/dts/qcom/qcs8550-ayn-odin2portal.dts
+@@ -95,6 +95,9 @@
+ 
+ &display_panel {
+ 	compatible = "chipone,icna3512";
++	/* variable refresh: the panel's MSYNC (69h), refreshing when a frame
++	 * comes (40-kettle/1444, 1445) */
++	kettle,msync;
+ 
+ 	pinctrl-0 = <&dsi_p_rst_active>, <&dsi_p_te_active>;
+ 	pinctrl-1 = <&dsi_p_rst_suspend>, <&dsi_p_te_suspend>;
+diff --git a/kernel/dts/qcom/qcs8550-ayn-thor.dts b/kernel/dts/qcom/qcs8550-ayn-thor.dts
+index 16ff980..9be7330 100644
+--- a/kernel/dts/qcom/qcs8550-ayn-thor.dts
++++ b/kernel/dts/qcom/qcs8550-ayn-thor.dts
+@@ -418,6 +418,10 @@
+ 		/* its backlight's name (40-kettle/1130): sorts after the top panel's
+ 		 * ae96000.dsi.0, so Steam's brightness slider drives the top screen */
+ 		label = "bottom-panel";
++		/* variable refresh 52-60 Hz through the DPU's AVR (40-kettle/1430,
++		 * 1434): this panel drops rows once the front porch passes about
++		 * 3.2 ms (50 Hz and below), and 51 Hz was the slowest clean rate */
++		kettle,vrr-min-hz = <52>;
+ 
+ 		pinctrl-0 = <&dsi_p_rst_active>, <&dsi_p_te_active>;
+ 		pinctrl-1 = <&dsi_p_rst_suspend>, <&dsi_p_te_suspend>;
+diff --git a/packages/kettle-decky-plugins/device-settings/src/index.tsx b/packages/kettle-decky-plugins/device-settings/src/index.tsx
+index cda71a1..b3aa6d8 100644
+--- a/packages/kettle-decky-plugins/device-settings/src/index.tsx
++++ b/packages/kettle-decky-plugins/device-settings/src/index.tsx
+@@ -62,6 +62,9 @@ const setChargeCurrent = callable<[ua: number], void>("set_charge_current");
+ const setSleepFan = callable<[pct: number], void>("set_sleep_fan");
+ const getRefresh = callable<[], Refresh>("get_refresh");
+ const setRefresh = callable<[hz: number], Refresh>("set_refresh");
++type Vrr = { capable: boolean; enabled: boolean };
++const getVrr = callable<[], Vrr>("get_vrr");
++const setVrr = callable<[on: boolean], Vrr>("set_vrr");
+ const small = { fontSize: "12px", lineHeight: "16px" };
+ // Tell kettle-powerd and kettle-motiond which game runs: its settings follow it, the gyro streams
+ function syncActive(stopped?: number) {
+@@ -277,6 +280,10 @@ function Battery({ s, inf }: { s: Status; inf: Info }) {
+ // The panel's refresh rate: Auto (0, Steam's frame limit picks it) or one held whatever the game
+ // or Steam asks for
+ function Screen({ r, onChange }: { r: Refresh; onChange: (r: Refresh) => void }) {
++  const [vrr, setVrrState] = useState<Vrr | null>(null);
++  useEffect(() => {
++    getVrr().then(setVrrState).catch(() => {});
++  }, []);
+   const pick = async (hz: number) => {
+     onChange({ ...r, hz });
+     try {
+@@ -300,6 +307,19 @@ function Screen({ r, onChange }: { r: Refresh; onChange: (r: Refresh) => void })
+           onChange={(o) => pick(o.data)}
+         />
+       </PanelSectionRow>
++      {vrr?.capable && (
++        <PanelSectionRow>
++          <ToggleField
++            label="Variable refresh rate"
++            description="The screen refreshes when a new frame is ready instead of on a fixed beat, so frame rates between the refresh rates stay smooth"
++            checked={vrr.enabled}
++            onChange={(on) => {
++              setVrrState({ ...vrr, enabled: on });
++              setVrr(on).then(setVrrState).catch(() => setVrrState(vrr));
++            }}
++          />
++        </PanelSectionRow>
++      )}
+     </PanelSection>
+   );
+ }

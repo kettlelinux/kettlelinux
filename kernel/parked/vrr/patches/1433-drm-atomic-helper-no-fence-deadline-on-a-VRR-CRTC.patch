@@ -1,0 +1,34 @@
+From: PortareOS <hello@portare.org>
+Subject: [PATCH] drm/atomic-helper: no fence deadline on a VRR CRTC
+
+set_fence_deadline() gives each plane fence the start of the next
+vblank at the mode's rate. With variable refresh the panel waits in its
+front porch until the commit triggers it, so a frame starts about
+0.4 ms after its commit and that vblank is always in the past or within
+msm's 3 ms boost margin. Any commit whose last blit is still running
+then doubles the GPU clock for 50 ms.
+
+On the Nova, NFSU under VRR (ARMSX2, 60 fps, 110 s) took 1755 such
+boosts in the intro and 867 in a race; with this none, and the mean GPU
+clock fell from 647 to 401 MHz and from 522 to 455, fixed refresh's,
+for the same cycles per frame. A late frame on a VRR panel is shown
+late, not dropped at a vblank, so leave the clock to devfreq's load.
+---
+--- a/drivers/gpu/drm/drm_atomic_helper.c
++++ b/drivers/gpu/drm/drm_atomic_helper.c
+@@ -1792,6 +1792,15 @@
+ 		if (!new_crtc_state->active)
+ 			continue;
+ 
++		/*
++		 * With variable refresh the panel waits for the commit, so there
++		 * is no vblank at the mode's rate for a fence to miss. Measured
++		 * against one, every commit is late by the time the panel takes
++		 * it, and a final blit still running then boosts the GPU.
++		 */
++		if (new_crtc_state->vrr_enabled)
++			continue;
++
+ 		if (drm_crtc_next_vblank_start(crtc, &v))
+ 			continue;
+ 

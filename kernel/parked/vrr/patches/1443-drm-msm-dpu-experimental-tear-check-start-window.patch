@@ -1,0 +1,53 @@
+From: Kettle Linux
+Subject: [PATCH] drm/msm/dpu: experimental tear check start window
+
+The Portal's ICNA3512 takes Qsync (6Bh): with it on, the panel holds its TE
+until a frame comes (measured: TE fell from 120 to 60 Hz with no frames).
+But msm starts a command-mode transfer only within 4 lines of the tear
+check's start position, so it waits for that TE while the panel waits for
+the frame, and every frame took the panel's timeout, 16.6 ms. Qualcomm's
+downstream driver widens the window under Qsync. msm.dpu_te_sync_thresh=N,
+off by default, sets it in lines, and msm.dpu_te_sync_height=N the
+counter's height, which mainline sets to twice vtotal (downstream 0xfff0).
+---
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_cmd.c	2026-10-12 16:55:33.928295177 -0500
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_cmd.c	2026-10-12 17:14:02.548657226 -0500
+@@ -39,6 +39,26 @@
+ #define DEFAULT_TEARCHECK_SYNC_THRESH_START	4
+ #define DEFAULT_TEARCHECK_SYNC_THRESH_CONTINUE	4
+ 
++/*
++ * Experimental: the tear check's start window in lines (0: the default 4).
++ * A panel in Qsync (ICNA3512 6Bh) holds its TE until a frame comes; with a
++ * 4-line window the DPU waits for that TE and both wait out the panel's
++ * timeout. Qualcomm's downstream driver widens the window under Qsync by the
++ * lines between the mode's rate and the Qsync floor.
++ */
++static unsigned int dpu_te_sync_thresh;
++module_param(dpu_te_sync_thresh, uint, 0444);
++MODULE_PARM_DESC(dpu_te_sync_thresh, "Command mode tear check start window in lines (experimental, 0: default)");
++
++/*
++ * The tear check counter wraps at sync_cfg_height, twice the mode's vtotal:
++ * a frame committed more than that after a TE that Qsync delayed finds the
++ * counter wrapped below the window. Qualcomm's downstream driver uses 0xfff0.
++ */
++static unsigned int dpu_te_sync_height;
++module_param(dpu_te_sync_height, uint, 0444);
++MODULE_PARM_DESC(dpu_te_sync_height, "Command mode tear check counter height in lines (experimental, 0: twice vtotal)");
++
+ static void dpu_encoder_phys_cmd_enable_te(struct dpu_encoder_phys *phys_enc);
+ 
+ static bool dpu_encoder_phys_cmd_is_master(struct dpu_encoder_phys *phys_enc)
+@@ -392,9 +412,9 @@
+ 	 * TE event coming from the display TE pin we won't stall immediately
+ 	 */
+ 	tc_cfg.hw_vsync_mode = 1;
+-	tc_cfg.sync_cfg_height = mode->vtotal * 2;
++	tc_cfg.sync_cfg_height = dpu_te_sync_height ?: mode->vtotal * 2;
+ 	tc_cfg.vsync_init_val = mode->vdisplay;
+-	tc_cfg.sync_threshold_start = DEFAULT_TEARCHECK_SYNC_THRESH_START;
++	tc_cfg.sync_threshold_start = dpu_te_sync_thresh ?: DEFAULT_TEARCHECK_SYNC_THRESH_START;
+ 	tc_cfg.sync_threshold_continue = DEFAULT_TEARCHECK_SYNC_THRESH_CONTINUE;
+ 	tc_cfg.start_pos = mode->vdisplay;
+ 	tc_cfg.rd_ptr_irq = mode->vdisplay + 1;
