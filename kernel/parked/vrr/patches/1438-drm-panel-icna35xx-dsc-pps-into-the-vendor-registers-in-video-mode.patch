@@ -1,0 +1,69 @@
+From: Kettle Linux
+Subject: [PATCH] drm/panel: icna35xx: DSC PPS into the vendor registers in video mode
+
+These DDICs ignore the standard PPS packet; their DSC decoder reads the
+packed PPS from vendor registers in group 1 (upstream "drm/panel:
+chipone-icna35xx: Fix ..." by Aaron Kling, and AYN's Android init: ICNA3520
+C0 1A 71 then C1-C3, ICNA3512 C6 11 88 then C7-C9). Command mode works on
+the panel's defaults. In video mode (1435) the Thor's top panel showed the
+picture's shapes in wrong, rainbow colours, so write our PPS there, in
+video mode only.
+---
+--- a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c	2026-10-11 21:26:14.645356216 -0500
++++ b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c	2026-10-11 21:26:14.655949256 -0500
+@@ -88,6 +88,37 @@
+ 	mipi_dsi_generic_write_multi(dsi_ctx, buf, sizeof(buf));
+ }
+ 
++/*
++ * These DDICs ignore the standard PPS packet: their DSC decoder takes the
++ * packed PPS from vendor registers in group 1 (upstream "drm/panel:
++ * chipone-icna35xx: Fix ..." by Aaron Kling; AYN's Android writes them).
++ * Command mode works on the panel's defaults; video mode decoded the
++ * geometry and got the colours wrong, so write ours there.
++ */
++static void icna35xx_write_pps_regs(struct mipi_dsi_multi_context *dsi_ctx,
++				    const struct drm_dsc_config *dsc, u8 cfg_reg,
++				    u8 cfg0, u8 cfg1, size_t last_len)
++{
++	struct drm_dsc_picture_parameter_set pps;
++	const u8 *payload = (const u8 *)&pps;
++	u8 cfg[3] = { cfg_reg, cfg0, cfg1 };
++	u8 buf[1 + 32];
++	int i;
++
++	if (!video_mode)
++		return;
++
++	drm_dsc_pps_payload_pack(&pps, dsc);
++	mipi_dsi_generic_write_multi(dsi_ctx, cfg, sizeof(cfg));
++	for (i = 0; i < 3; i++) {
++		size_t len = i < 2 ? 32 : last_len;
++
++		buf[0] = cfg_reg + 1 + i;
++		memcpy(buf + 1, payload + 32 * i, len);
++		mipi_dsi_generic_write_multi(dsi_ctx, buf, len + 1);
++	}
++}
++
+ static const struct regulator_bulk_data panel_supplies[] = {
+ 	{ .supply = "vdd" },
+ 	{ .supply = "vddio" },
+@@ -160,6 +191,8 @@
+ 	 * 120Hz is what AYN sells the panel at; the others are ours.
+ 	 */
+ 	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x01);
++	/* AYN: C6 11 88 (DSC CFG), C7-C9 the PPS */
++	icna35xx_write_pps_regs(&dsi_ctx, &pinfo->desc->dsc, 0xC6, 0x11, 0x88, 30);
+ 	if (cur_vrefresh == 165) {
+ 		icna35xx_write_dsim(&dsi_ctx, 0x20);
+ 	}
+@@ -248,6 +281,8 @@
+ 	}
+ 
+ 	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x01);
++	/* AYN: C0 1A 71, C1-C3 the PPS */
++	icna35xx_write_pps_regs(&dsi_ctx, &pinfo->desc->dsc, 0xC0, 0x1A, 0x71, 24);
+ 	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB2, 0x00);
+ 
+ 	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x0D);

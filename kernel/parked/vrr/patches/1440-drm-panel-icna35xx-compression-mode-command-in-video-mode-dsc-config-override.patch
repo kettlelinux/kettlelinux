@@ -1,0 +1,79 @@
+From: Kettle Linux
+Subject: [PATCH] drm/panel: icna35xx: compression mode command in video mode, DSC config override
+
+A video mode peripheral applies a PPS with the compression mode short
+packet (ICNA3512 datasheet, "PPS Update by Setting the Compression Mode
+Short Packet"); the driver never sent it, and with DSC video mode (1435)
+the Thor's top panel decoded each 12-row slice into noise. Send it after
+the PPS in video mode. Uncompressed video mode (1439) showed the panel still
+decoding two DSC slices, so dsc_cfg=0xNNNN overrides the vendor DSC config
+register (ICNA3520 C0, ICNA3512 C6: "2decoder slice width=540" in the
+vendor's code) in any video mode, to find its DSC-off setting.
+---
+--- a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c	2026-10-12 06:49:46.060792236 -0500
++++ b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c	2026-10-12 06:49:46.074264451 -0500
+@@ -66,6 +66,15 @@
+ module_param(video_mode, uint, 0444);
+ MODULE_PARM_DESC(video_mode, "DSI video mode (experimental): 0 command mode, 1 video bypassing the panel's GRAM, 2 video through GRAM, 3 video bypassing GRAM without DSC");
+ 
++/*
++ * Overrides the vendor DSC config register (ICNA3520 C0, ICNA3512 C6) with
++ * these two bytes, high byte first, written in any video mode, 0 to keep
++ * AYN's: for finding the panel's DSC-off setting for uncompressed video.
++ */
++static unsigned int dsc_cfg;
++module_param(dsc_cfg, uint, 0444);
++MODULE_PARM_DESC(dsc_cfg, "Vendor DSC config bytes (experimental), e.g. 0x1a71");
++
+ static unsigned int vrr_min_hz;
+ module_param(vrr_min_hz, uint, 0444);
+ MODULE_PARM_DESC(vrr_min_hz, "Variable refresh floor in Hz, video mode only (0: none)");
+@@ -105,8 +114,17 @@
+ 	u8 buf[1 + 32];
+ 	int i;
+ 
+-	if (!video_mode || video_mode == 3)
++	if (!video_mode)
+ 		return;
++	if (dsc_cfg) {
++		cfg[1] = dsc_cfg >> 8;
++		cfg[2] = dsc_cfg & 0xff;
++	}
++	if (video_mode == 3) {
++		if (dsc_cfg)
++			mipi_dsi_generic_write_multi(dsi_ctx, cfg, sizeof(cfg));
++		return;
++	}
+ 
+ 	drm_dsc_pps_payload_pack(&pps, dsc);
+ 	mipi_dsi_generic_write_multi(dsi_ctx, cfg, sizeof(cfg));
+@@ -239,6 +257,14 @@
+ 	} else {
+ 		drm_dsc_pps_payload_pack(&pps, &pinfo->desc->dsc);
+ 		mipi_dsi_picture_parameter_set_multi(&dsi_ctx, &pps);
++		/*
++		 * A video mode peripheral takes a PPS change with the
++		 * compression mode short packet, from the next vsync
++		 * (ICNA3512 datasheet, "PPS Update by Setting the Compression
++		 * Mode Short Packet"). Command mode runs on the panel's own.
++		 */
++		if (video_mode)
++			mipi_dsi_compression_mode_multi(&dsi_ctx, true);
+ 	}
+ 
+ 	mipi_dsi_msleep(&dsi_ctx, 20);
+@@ -302,6 +328,14 @@
+ 	} else {
+ 		drm_dsc_pps_payload_pack(&pps, &pinfo->desc->dsc);
+ 		mipi_dsi_picture_parameter_set_multi(&dsi_ctx, &pps);
++		/*
++		 * A video mode peripheral takes a PPS change with the
++		 * compression mode short packet, from the next vsync
++		 * (ICNA3512 datasheet, "PPS Update by Setting the Compression
++		 * Mode Short Packet"). Command mode runs on the panel's own.
++		 */
++		if (video_mode)
++			mipi_dsi_compression_mode_multi(&dsi_ctx, true);
+ 	}
+ 	
+ 	mipi_dsi_msleep(&dsi_ctx, 20);

@@ -1,0 +1,93 @@
+From: Kettle Linux
+Subject: [PATCH] drm/panel: icna35xx: MSYNC variable refresh
+
+The ICNA3512's 69h (WRMSYNC) turns the panel's own refresh and TE off; it
+then refreshes when a frame arrives. Measured on the AYN Odin 2 Portal in
+its usual command mode with DSC: frames at 120, 80 and 60 Hz, alternating
+and random, and fixed 60 down to 5 Hz shown on time, without flicker or
+brightness change; a still picture held 15 s steady. (Qsync, 6Bh, froze
+the picture instead; 91h VR and 63h LTPO changed nothing.)
+
+kettle,msync on the panel node writes it at power on and declares the
+connector vrr_capable, 20 Hz up to the fastest mode. The DPU then sends
+frames without waiting for TE (1445).
+---
+--- a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c	2026-10-12 17:52:34.691963278 -0500
++++ b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c	2026-10-12 17:52:34.704963266 -0500
+@@ -36,6 +36,9 @@
+ 
+ 	/* debugfs icna35xx_regs: the last command's result */
+ 	struct mutex dbg_lock;
++
++	/* MSYNC variable refresh, from the device tree (kettle,msync) */
++	bool msync;
+ 	char dbg_result[160];
+ };
+ 
+@@ -274,6 +277,18 @@
+ 
+ 	mipi_dsi_msleep(&dsi_ctx, 20);
+ 
++	/*
++	 * MSYNC (69h WRMSYNC, "Write MSYNC Value" in the ICNA3512
++	 * datasheet): the panel drops its own refresh and TE and refreshes
++	 * when a frame arrives. Measured on the Portal: frames from 120 Hz
++	 * down to 5 Hz shown on time without flicker or brightness change,
++	 * a still picture held 15 s steady. The DPU sends frames without
++	 * waiting for TE (its tear check window is held open for a
++	 * vrr_capable command-mode panel).
++	 */
++	if (pinfo->msync)
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x69, 0x01);
++
+ 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
+ 
+ 	return dsi_ctx.accum_err;
+@@ -345,6 +360,18 @@
+ 	
+ 	mipi_dsi_msleep(&dsi_ctx, 20);
+ 
++	/*
++	 * MSYNC (69h WRMSYNC, "Write MSYNC Value" in the ICNA3512
++	 * datasheet): the panel drops its own refresh and TE and refreshes
++	 * when a frame arrives. Measured on the Portal: frames from 120 Hz
++	 * down to 5 Hz shown on time without flicker or brightness change,
++	 * a still picture held 15 s steady. The DPU sends frames without
++	 * waiting for TE (its tear check window is held open for a
++	 * vrr_capable command-mode panel).
++	 */
++	if (pinfo->msync)
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x69, 0x01);
++
+ 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
+ 
+ 	return dsi_ctx.accum_err;
+@@ -622,7 +649,7 @@
+ 	connector->display_info.width_mm = pinfo->desc->width_mm;
+ 	connector->display_info.height_mm = pinfo->desc->height_mm;
+ 	connector->display_info.bpc = pinfo->desc->bpc;
+-	if (video_mode && vrr_min_hz) {
++	if ((video_mode && vrr_min_hz) || pinfo->msync) {
+ 		unsigned int max_hz = 0;
+ 
+ 		/* Rounded up, so the fastest mode reads as inside the range. */
+@@ -632,7 +659,9 @@
+ 			max_hz = max_t(unsigned int, max_hz,
+ 				       DIV_ROUND_UP(m->clock * 1000, m->htotal * m->vtotal));
+ 		}
+-		connector->display_info.monitor_range.min_vfreq = vrr_min_hz;
++		/* MSYNC held a frame steady at 5 Hz; declare a margin above it. */
++		connector->display_info.monitor_range.min_vfreq =
++			pinfo->msync ? 20 : vrr_min_hz;
+ 		connector->display_info.monitor_range.max_vfreq = max_hz;
+ 		drm_connector_set_vrr_capable_property(connector, true);
+ 	}
+@@ -855,6 +884,8 @@
+ 	mutex_init(&pinfo->dbg_lock);
+ 	mipi_dsi_set_drvdata(dsi, pinfo);
+ 
++	pinfo->msync = of_property_read_bool(dev->of_node, "kettle,msync");
++
+ 	ret = of_drm_get_panel_orientation(dev->of_node, &pinfo->orientation);
+ 	if (ret < 0) {
+ 		dev_err(dev, "%pOF: failed to get orientation %d\n", dev->of_node, ret);

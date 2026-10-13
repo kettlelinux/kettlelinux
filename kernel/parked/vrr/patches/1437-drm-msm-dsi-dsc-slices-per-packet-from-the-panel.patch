@@ -1,0 +1,101 @@
+From: Kettle Linux
+Subject: [PATCH] drm/msm/dsi: DSC slices per packet from the panel
+
+The MSM DSI host always sent one DSC slice per packet. AYN's Android
+drives the Thor's ICNA3520 (and the Portal's ICNA3512) with both slices of
+a line in one packet (qcom,mdss-dsc-slice-per-pkt = 2). In command mode the
+panel takes either; in video mode (1435) it showed noise. mipi_dsi_device
+gets dsc_slice_per_pkt (0 or unset means 1, so other panels are
+unchanged), the host's packet size, packets per line and command-mode word
+count follow it, and the ICNA35xx driver sets 2 in video mode only.
+---
+
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c	2026-10-11 21:06:11.193051688 -0500
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c	2026-10-11 21:06:24.203658145 -0500
+@@ -166,6 +166,7 @@
+ 
+ 	struct drm_display_mode *mode;
+ 	struct drm_dsc_config *dsc;
++	unsigned int dsc_slice_per_pkt;
+ 
+ 	/* connected device info */
+ 	unsigned int channel;
+@@ -975,17 +976,12 @@
+ 	slice_per_intf = dsc->slice_count;
+ 
+ 	total_bytes_per_intf = dsc->slice_chunk_size * slice_per_intf;
+-	bytes_per_pkt = dsc->slice_chunk_size; /* * slice_per_pkt; */
++	bytes_per_pkt = dsc->slice_chunk_size * msm_host->dsc_slice_per_pkt;
+ 
+ 	eol_byte_num = total_bytes_per_intf % 3;
+ 
+-	/*
+-	 * Typically, pkt_per_line = slice_per_intf * slice_per_pkt.
+-	 *
+-	 * Since the current driver only supports slice_per_pkt = 1,
+-	 * pkt_per_line will be equal to slice per intf for now.
+-	 */
+-	pkt_per_line = slice_per_intf;
++	/* A panel can take several slices in one packet (dsc_slice_per_pkt). */
++	pkt_per_line = slice_per_intf / msm_host->dsc_slice_per_pkt;
+ 
+ 	if (is_cmd_mode) /* packet data type */
+ 		reg = DSI_COMMAND_COMPRESSION_MODE_CTRL_STREAM0_DATATYPE(MIPI_DSI_DCS_LONG_WRITE);
+@@ -1139,14 +1135,8 @@
+ 		if (!msm_host->dsc)
+ 			wc = hdisplay * mipi_dsi_pixel_format_to_bpp(msm_host->format) / 8 + 1;
+ 		else
+-			/*
+-			 * When DSC is enabled, WC = slice_chunk_size * slice_per_pkt + 1.
+-			 * Currently, the driver only supports default value of slice_per_pkt = 1
+-			 *
+-			 * TODO: Expand mipi_dsi_device struct to hold slice_per_pkt info
+-			 *       and adjust DSC math to account for slice_per_pkt.
+-			 */
+-			wc = msm_host->dsc->slice_chunk_size + 1;
++			/* When DSC is enabled, WC = slice_chunk_size * slice_per_pkt + 1. */
++			wc = msm_host->dsc->slice_chunk_size * msm_host->dsc_slice_per_pkt + 1;
+ 
+ 		dsi_write(msm_host, REG_DSI_CMD_MDP_STREAM0_CTRL,
+ 			DSI_CMD_MDP_STREAM0_CTRL_WORD_COUNT(wc) |
+@@ -1757,6 +1747,12 @@
+ 	msm_host->mode_flags = dsi->mode_flags;
+ 	if (dsi->dsc)
+ 		msm_host->dsc = dsi->dsc;
++	msm_host->dsc_slice_per_pkt = dsi->dsc_slice_per_pkt ?: 1;
++	if (msm_host->dsc && msm_host->dsc->slice_count % msm_host->dsc_slice_per_pkt) {
++		DRM_DEV_ERROR(&msm_host->pdev->dev, "%u DSC slices do not fit %u a packet\n",
++			      msm_host->dsc->slice_count, msm_host->dsc_slice_per_pkt);
++		msm_host->dsc_slice_per_pkt = 1;
++	}
+ 
+ 	if (msm_host->format == MIPI_DSI_FMT_RGB101010) {
+ 		if (!msm_dsi_host_version_geq(msm_host, MSM_DSI_VER_MAJOR_6G,
+
+--- a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c	2026-10-11 21:06:11.197051684 -0500
++++ b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c	2026-10-11 21:06:24.204037086 -0500
+@@ -643,6 +643,12 @@
+     pinfo->dsi->mode_flags = pinfo->desc->mode_flags;
+ 	if (video_mode) {
+ 		pinfo->dsi->mode_flags |= MIPI_DSI_MODE_VIDEO;
++		/*
++		 * AYN's Android sends both slices of a line in one packet
++		 * (qcom,mdss-dsc-slice-per-pkt = 2); in video mode the panel
++		 * shows noise with one packet a slice.
++		 */
++		pinfo->dsi->dsc_slice_per_pkt = 2;
+ 		dev_info(dev, "video mode (experimental)\n");
+ 	}
+     pinfo->dsi->dsc = &pinfo->desc->dsc;
+
+--- a/include/drm/drm_mipi_dsi.h	2026-10-11 21:06:11.189051693 -0500
++++ b/include/drm/drm_mipi_dsi.h	2026-10-11 21:06:24.202692936 -0500
+@@ -195,6 +195,8 @@
+ 	unsigned long hs_rate;
+ 	unsigned long lp_rate;
+ 	struct drm_dsc_config *dsc;
++	/* DSC slices sent in one packet; 0 means 1 */
++	unsigned int dsc_slice_per_pkt;
+ };
+ 
+ /**

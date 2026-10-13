@@ -1,0 +1,55 @@
+From: Kettle Linux
+Subject: [PATCH] drm/panel: ch13726a: variable refresh range from the device tree
+
+kettle,vrr-min-hz on the panel node declares a refresh range from that
+floor up to the mode's rate in display_info.monitor_range and sets the
+connector's vrr_capable, which the DPU's AVR (1430) runs on in video
+mode. Panels without the property are unchanged.
+---
+diff --git a/drivers/gpu/drm/panel/panel-ddic-ch13726a.c b/drivers/gpu/drm/panel/panel-ddic-ch13726a.c
+index 34a7cd2..b2c2a3f 100644
+--- a/drivers/gpu/drm/panel/panel-ddic-ch13726a.c
++++ b/drivers/gpu/drm/panel/panel-ddic-ch13726a.c
+@@ -11,6 +11,7 @@
+ #include <linux/of.h>
+ #include <linux/regulator/consumer.h>
+ 
++#include <drm/drm_connector.h>
+ #include <drm/drm_mipi_dsi.h>
+ #include <drm/drm_modes.h>
+ #include <drm/drm_panel.h>
+@@ -25,6 +26,8 @@ struct ch13726a_panel {
+ 	const struct drm_display_mode *display_mode;
+ 	enum drm_panel_orientation orientation;
+ 	bool prepared;
++	/* Variable refresh floor from the device tree, 0 for none. */
++	u32 vrr_min_hz;
+ };
+ 
+ static inline struct ch13726a_panel *to_ch13726a_panel(struct drm_panel *panel)
+@@ -176,6 +179,16 @@ static int ch13726a_get_modes(struct drm_panel *panel,
+ 	mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
+ 	connector->display_info.width_mm = mode->width_mm;
+ 	connector->display_info.height_mm = mode->height_mm;
++	if (ctx->vrr_min_hz) {
++		/*
++		 * The mode is the shortest frame AVR runs, the floor the
++		 * longest. Rounded up, so the mode reads as inside the range.
++		 */
++		connector->display_info.monitor_range.min_vfreq = ctx->vrr_min_hz;
++		connector->display_info.monitor_range.max_vfreq =
++			DIV_ROUND_UP(mode->clock * 1000, mode->htotal * mode->vtotal);
++		drm_connector_set_vrr_capable_property(connector, true);
++	}
+ 	drm_mode_probed_add(connector, mode);
+ 
+ 	return 1;
+@@ -263,6 +276,8 @@ static int ch13726a_probe(struct mipi_dsi_device *dsi)
+ 		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
+ 				     "Failed to get reset-gpios\n");
+ 
++	of_property_read_u32(dev->of_node, "kettle,vrr-min-hz", &ctx->vrr_min_hz);
++
+ 	ret = of_drm_get_panel_orientation(dev->of_node, &ctx->orientation);
+ 	if (ret < 0) {
+ 		dev_err(dev, "%pOF: failed to get orientation %d\n", dev->of_node, ret);
