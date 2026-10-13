@@ -442,8 +442,8 @@ class Plugin:
     async def abl_status(self) -> dict:
         return await asyncio.to_thread(system.abl_status)
 
-    async def abl_update(self) -> dict:
-        return await asyncio.to_thread(system.abl_update)
+    async def abl_update(self, mode: str = "update") -> dict:
+        return await asyncio.to_thread(system.abl_update, mode)
 
     async def tabs(self) -> dict:
         """Which tabs this device has: lights and gyro only where their service answers, screens

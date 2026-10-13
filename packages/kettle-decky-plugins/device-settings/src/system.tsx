@@ -1,5 +1,5 @@
 // The System tab: what the device starts up in, the SSH server, resetting the device, and the
-// bootloader where it's the ROCKNIX ABL (system.py in the backend). The first three were the
+// bootloader: installing, updating or removing the ROCKNIX ABL (system.py in the backend). The first three were the
 // Welcome window's up to 1.12.0-38.
 import { ButtonItem, ConfirmModal, DropdownItem, Field, PanelSection, PanelSectionRow, ProgressBarWithInfo, ToggleField, showModal } from "@decky/ui";
 import { callable, toaster } from "@decky/api";
@@ -17,10 +17,21 @@ const setSsh = callable<[on: boolean], void>("set_ssh");
 const resetStatus = callable<[], ResetStatus>("reset_status");
 const reset = callable<[what: What], void>("reset");
 // kettle-abl-update's view: each abl slot's ROCKNIX release ("test-signed": one it can't
-// identify, "other": stock), the image's release, and what it did or would do
-type Abl = { installed: boolean; busy?: boolean; slots?: Record<string, string>; image?: string | null; result?: string | null };
+// identify, "other": stock), the image's release, whether a stock bootloader is saved to put
+// back, what can be done (check) and what was just done or would be (result)
+type AblMode = "update" | "install" | "restore";
+type Abl = {
+  available: boolean;
+  installed: boolean;
+  busy?: AblMode | null;
+  slots?: Record<string, string>;
+  image?: string | null;
+  backup?: boolean;
+  check?: string | null;
+  result?: string | null;
+};
 const ablStatus = callable<[], Abl>("abl_status");
-const ablUpdate = callable<[], Abl>("abl_update");
+const ablUpdate = callable<[mode: AblMode], Abl>("abl_update");
 
 const small = { fontSize: "12px", lineHeight: "16px" };
 const red = { color: "#ff6b6b" };
@@ -209,38 +220,72 @@ function ablText(a: Abl): string {
       return `ROCKNIX ABL ${a.image} is in this Kettle update. Updating takes a few seconds; keep the device on.`;
     case "updated":
       return `Updated to ROCKNIX ABL ${a.image}. It's used from the next start.`;
+    case "installed":
+      return `ROCKNIX ABL ${a.image} is installed, and the stock bootloader is saved. On the next start, hold Volume Down for its menu and set Device model, Boot source and Boot mode: Linux.`;
+    case "restored":
+      return "The stock bootloader is back. From the next start the device starts as it did before the ROCKNIX ABL.";
     case "newer":
       return `Newer than this image's (${a.image}): left as it is.`;
     case "unknown":
-      return "A test-signed ABL Kettle can't identify (1.1.9?). If you're sure it's ROCKNIX's, update it from a desktop terminal: sudo kettle-abl-update --force.";
+      return "A bootloader Kettle can't identify (a test-signed ABL, 1.1.9?, or no ABL at all). If you're sure it's safe to replace, do it from a desktop terminal: sudo kettle-abl-update --install --force.";
+    case "not-installed":
+      return "The device's own bootloader, which starts Kettle through U-Boot (fastboot mode's Loader). The ROCKNIX ABL is only needed where there's no Loader choice.";
     case "stock":
-      return "One slot has the stock bootloader again (an Android update can do that): Kettle doesn't replace a stock bootloader. Reinstall the ROCKNIX ABL from Android if you need it.";
+      return "One slot has the stock bootloader again (an Android update can do that). Reinstall the ROCKNIX ABL to put it back in that slot; the stock one there is saved first.";
+    case "is-stock":
+      return "Both slots already have the stock bootloader.";
+    case "no-backup":
+      return "No saved stock bootloader to put back. With one saved elsewhere (such as ROCKNIX's backup), use a desktop terminal: sudo kettle-abl-update --restore-stock --stock-image FILE.";
     case "low-battery":
-      return "Connect the charger (or charge above 30%) first: the update stops if the power goes.";
+      return "Connect the charger (or charge above 30%) first: losing power while it writes can stop the device from starting.";
     case "not-confirmed":
-      return "Not updated: hold Volume Up and Volume Down together for a second, within 30 seconds of starting it.";
+      return "Nothing was changed: hold Volume Up and Volume Down together for a second, within 30 seconds of starting it.";
     default:
       return "";
   }
 }
 
 const slotText = (v: string) => (v === "other" ? "stock" : v === "test-signed" ? "unidentified" : v);
+const BUSY_TEXT: Record<AblMode, string> = {
+  update: "Updating the bootloader… keep the device on",
+  install: "Installing the ROCKNIX ABL… keep the device on",
+  restore: "Putting the stock bootloader back… keep the device on",
+};
 
-// Only where a ROCKNIX ABL is installed; most devices start Kettle through U-Boot and keep their
-// stock bootloader, which this never touches
+// Where Kettle has a ROCKNIX ABL build for the device and can see its abl partitions. Most devices
+// start Kettle through U-Boot and keep their stock bootloader: installing over it is offered, but
+// isn't needed there.
 function Bootloader() {
   const [a, setA] = useState<Abl | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<AblMode | null>(null);
   useEffect(() => {
     ablStatus().then(setA).catch(() => {});
   }, []);
-  // an update started before the tab was reopened: follow it until it's done
+  // a write started before the tab was reopened: follow it until it's done
   useEffect(() => {
     if (!a?.busy || busy) return;
     const t = setInterval(() => ablStatus().then(setA).catch(() => {}), 3000);
     return () => clearInterval(t);
   }, [a?.busy, busy]);
-  if (!a?.installed) return null;
+  if (!a?.available) return null;
+
+  const run = (mode: AblMode, fail: string) => async () => {
+    setBusy(mode);
+    try {
+      const r = await ablUpdate(mode);
+      setA(r);
+      toaster.toast({ title: "Device Settings", body: ablText(r) });
+    } catch (e) {
+      toaster.toast({ title: "Device Settings", body: `${fail}: ${e}` });
+      ablStatus().then(setA).catch(() => {});
+    } finally {
+      setBusy(null);
+    }
+  };
+  const keys = <p>Then hold Volume Up and Volume Down together for a second to confirm.</p>;
+  const power = (
+    <p>Keep the device on and the charger connected until it's done: losing power while it writes can stop the device from starting.</p>
+  );
   const update = () =>
     showModal(
       <ConfirmModal
@@ -248,51 +293,97 @@ function Bootloader() {
         strOKButtonText="Update"
         strCancelButtonText="Not now"
         bDestructiveWarning
-        onOK={async () => {
-          setBusy(true);
-          try {
-            const r = await ablUpdate();
-            setA(r);
-            toaster.toast({ title: "Device Settings", body: ablText(r) });
-          } catch (e) {
-            toaster.toast({ title: "Device Settings", body: `The bootloader wasn't updated: ${e}` });
-            ablStatus().then(setA).catch(() => {});
-          } finally {
-            setBusy(false);
-          }
-        }}
+        onOK={run("update", "The bootloader wasn't updated")}
       >
         <p>
           Both bootloader slots get ROCKNIX's {a.image} release, one at a time, each checked after it's written (a slot
           that doesn't check out gets its old contents back).
         </p>
-        <p>Keep the device on and the charger connected until it's done: losing power while it writes can stop the device from starting.</p>
-        <p>Then hold Volume Up and Volume Down together for a second to confirm.</p>
+        {power}
+        {keys}
       </ConfirmModal>,
     );
+  const install = () =>
+    showModal(
+      <ConfirmModal
+        strTitle={`Install ROCKNIX ABL ${a.image} as the bootloader?`}
+        strOKButtonText="Install"
+        strCancelButtonText="Not now"
+        bDestructiveWarning
+        onOK={run("install", "The ROCKNIX ABL wasn't installed")}
+      >
+        {a.check === "stock" ? (
+          <p>
+            The slot that has the stock bootloader again gets ROCKNIX's {a.image} release. The stock one there is saved on
+            this device first, so it can be put back.
+          </p>
+        ) : (
+          <p>
+            This replaces the device's own bootloader. The stock one is saved on this device first (and on the SD card),
+            so <i>Put the stock bootloader back</i> can undo it. With the ROCKNIX ABL, fastboot mode's Loader choice is
+            gone: hold Volume Down while powering on for its menu, Volume Up for Android.
+          </p>
+        )}
+        <p>
+          {a.check === "stock" ? "If it starts nothing afterwards, hold Volume Down while powering on and set" : "On the next start, set"}{" "}
+          its <b>Device model</b>, <b>Boot source</b> (SD, or Internal for an internal install) and{" "}
+          <b>Boot mode: Linux</b>: it starts nothing until the device model is set.
+        </p>
+        {power}
+        {keys}
+      </ConfirmModal>,
+    );
+  const restore = () =>
+    showModal(
+      <ConfirmModal
+        strTitle="Put the stock bootloader back?"
+        strOKButtonText="Put it back"
+        strCancelButtonText="Not now"
+        bDestructiveWarning
+        onOK={run("restore", "The stock bootloader wasn't put back")}
+      >
+        <p>
+          Each slot gets the stock bootloader saved when the ROCKNIX ABL was installed, checked after it's written. Then
+          the device starts as it did before.
+        </p>
+        <p>
+          To keep starting Kettle, set fastboot mode's default boot to <b>Loader</b>. If your device has no Loader
+          choice, it then starts only Android, until the ROCKNIX ABL is installed again from Android.
+        </p>
+        {power}
+        {keys}
+      </ConfirmModal>,
+    );
+
+  const writing = busy || a.busy;
+  // low-battery and not-confirmed: the check still says what can be done, so the button stays
+  const buttons: [string, () => void][] = [];
+  if (a.check === "would-update") buttons.push([`Update to ROCKNIX ABL ${a.image}…`, update]);
+  if (a.check === "not-installed") buttons.push([`Install ROCKNIX ABL ${a.image}…`, install]);
+  if (a.check === "stock") buttons.push([`Reinstall ROCKNIX ABL ${a.image}…`, install]);
+  if (a.installed && a.backup) buttons.push(["Put the stock bootloader back…", restore]);
   return (
     <PanelSection title="Bootloader">
       <PanelSectionRow>
-        <Field label="ROCKNIX ABL" bottomSeparator="none">
+        <Field label={a.installed ? "ROCKNIX ABL" : "Stock bootloader"} bottomSeparator="none">
           {Object.entries(a.slots ?? {}).map(([s, v]) => `${s.toUpperCase()}: ${slotText(v)}`).join(" · ")}
         </Field>
       </PanelSectionRow>
       <PanelSectionRow>
         <div style={small}>{ablText(a)}</div>
       </PanelSectionRow>
-      {busy || a.busy ? (
+      {writing ? (
         <PanelSectionRow>
-          <ProgressBarWithInfo indeterminate nProgress={0} sOperationText="Updating the bootloader… keep the device on" />
+          <ProgressBarWithInfo indeterminate nProgress={0} sOperationText={BUSY_TEXT[writing]} />
         </PanelSectionRow>
       ) : (
-        // low-battery: again once the charger is in; not-confirmed: again, holding the keys
-        (a.result === "would-update" || a.result === "low-battery" || a.result === "not-confirmed") && (
-          <PanelSectionRow>
-            <ButtonItem layout="below" onClick={update}>
-              Update to ROCKNIX ABL {a.image}…
+        buttons.map(([label, onClick]) => (
+          <PanelSectionRow key={label}>
+            <ButtonItem layout="below" onClick={onClick}>
+              {label}
             </ButtonItem>
           </PanelSectionRow>
-        )
+        ))
       )}
     </PanelSection>
   );

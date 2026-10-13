@@ -19,7 +19,8 @@ The steps before U-Boot (the ABL, the partition layout, slot bits, fastboot) are
   (Retroid's source, plus one patch for a fixed SD-then-internal boot order). Loader mode needs
   an unlocked bootloader (BOOT.md).
 - **No Loader choice:** install the ROCKNIX ABL from Android, with ROCKNIX's scripts
-  (docs/INSTALL.md).
+  (docs/INSTALL.md), or with `kettle-abl-update --install` from a Kettle that already starts
+  (below).
 
 Both start steamcl, so both get A/B fallback after a failed update.
 
@@ -32,22 +33,49 @@ ROCKNIX's developers confirmed that it starts steamcl. v1.2 tries `\EFI\BOOT\BOO
 first, and only falls back to `\KERNEL` when that file is missing. Its menu's *Device model*
 must be set, or it starts nothing.
 
-Kettle doesn't install it. `packages/rocknix-abl` ships the current release and
-`kettle-abl-update`, which updates one that is already installed. It works like Armada's
-`armada-abl-update`:
+`packages/rocknix-abl` ships the current release and `kettle-abl-update`, which installs,
+updates and removes it. Updating works like Armada's `armada-abl-update`:
 
 - It recognises releases by the hash of the partition's first bytes (`releases.tsv`;
   1.1–1.1.8 from Armada's catalogue).
-- It refuses a stock ABL and never installs an older release than the one there.
+- It never writes an older release than the one there, and a plain update leaves a stock slot
+  alone.
 - Before writing, it needs the charger or 30% battery.
 - It writes one slot at a time, reads it back from the device, and puts the old contents back
   (verified too) if the read-back doesn't match.
 - 1.1.9's files were deleted upstream, so a test-signed (`qtestsign`) ABL that isn't listed
   needs `--force`.
-- It isn't run automatically. In Game Mode, Device Settings' System tab shows a Bootloader
-  section where a ROCKNIX ABL is installed, and its *Update* button runs it (through pkexec:
-  `org.kettle.abl-update`, allowed for Decky's plugin backends by `50-kettle-abl-update.rules`).
-  In a terminal, `sudo kettle-abl-update` (`--check` only looks).
+
+Installing and removing:
+
+- `--install` also replaces a stock slot. Each stock slot must hold an ELF file, unless you pass
+  `--force`. The whole slot is saved first, as `/var/lib/kettle/abl-backups/stock-abl_<slot>-<date>.img`,
+  with `.sha256` and `.info` (SoC, slot, device.conf's `MODEL`) files next to it. A copy goes to
+  `/esp/kettle-abl-backups`. The saved file is checked against a second read of the slot, and
+  nothing is written until that check passes. This also covers the case where an Android update
+  rewrote one slot's ABL with the stock one: only that slot is written.
+- `--restore-stock` writes the stock image back into every slot that isn't stock. It uses that
+  slot's newest saved copy, or the other slot's if that one is missing or bad. It looks in both
+  `/var/lib/kettle/abl-backups` and `/esp/kettle-abl-backups`. Only root can read or write
+  `/esp`, because it's mounted with `umask=0077`. A factory reset formats `/var`, so after one
+  only the esp's copies are left. A saved copy is
+  used only if:
+  - its hash matches,
+  - it's the size of the whole partition,
+  - it's from the same SoC and the same Kettle device (the Portal and Thor share an SoC, not a
+    stock ABL),
+  - it's an ELF file, and not a ROCKNIX or test-signed ABL.
+
+  `--stock-image FILE` writes a given stock ABL instead (for example ROCKNIX's
+  `backup_abl.sh` output), with the same ELF and not-ROCKNIX checks.
+- It isn't run automatically. In Game Mode, Device Settings' System tab has a Bootloader section
+  wherever the device has a ROCKNIX build and visible abl partitions. It offers *Update*,
+  *Install* (on a stock bootloader), *Reinstall* (one slot stock again) and *Put the stock
+  bootloader back* (when a saved copy exists). These run through pkexec as
+  `org.kettle.abl-update`, which `50-kettle-abl-update.rules` allows for Decky's plugin backends.
+  Through pkexec, every write waits for the volume keys (`confirm-keys`), and `--force` and
+  `--stock-image` are refused. In a terminal, use `sudo kettle-abl-update [--install |
+  --restore-stock]`; add `--check` to only look.
 
 Checked on hardware (2026-10-09, `--check` only):
 
