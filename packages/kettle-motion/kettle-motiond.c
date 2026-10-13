@@ -203,6 +203,9 @@ static void sensors_stop(void)
 	ssc_sensor_accelerometer_close_sync(accel, NULL, NULL);
 	streaming = FALSE;
 	gyro_dps = 0;
+	// Readers keep the last sample: leave them at rest, not turning at the last
+	// rate forever. (The last gravity direction is right as it is.)
+	report(ABS_RX, 0, 0, 0, 0);
 	g_print("Stopped\n");
 }
 
