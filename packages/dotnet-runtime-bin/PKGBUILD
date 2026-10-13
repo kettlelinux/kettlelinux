@@ -7,7 +7,7 @@
 # (source-build) needs a .NET SDK to bootstrap and hours per build, and no deckard snapshot has
 # .NET. Laid out like Arch's dotnet-host/dotnet-runtime: /usr/share/dotnet, /usr/bin/dotnet.
 pkgname=dotnet-runtime-bin
-pkgver=10.0.12
+pkgver=10.0.13
 pkgrel=1
 pkgdesc='The .NET runtime (Microsoft.NETCore.App), upstream arm64 release'
 arch=(aarch64)
@@ -20,7 +20,7 @@ provides=(dotnet-host "dotnet-runtime=$pkgver" "dotnet-runtime-${pkgver%.*}=$pkg
 conflicts=(dotnet-host dotnet-runtime "dotnet-runtime-${pkgver%.*}")
 options=(!strip)  # upstream's binaries come stripped
 source=("https://builds.dotnet.microsoft.com/dotnet/Runtime/$pkgver/dotnet-runtime-$pkgver-linux-arm64.tar.gz")
-sha256sums=('faa0a5d136fd9d582db4e6b3b9faf81715dc1c879c9072efc08122fba1623727')
+sha256sums=('e1274f06c9f891737afc32dc9e0e1cbc62d4a1e4b1eac27df50ffb7c00dd87f6')
 
 package() {
   install -d "$pkgdir/usr/share/dotnet" "$pkgdir/usr/bin"

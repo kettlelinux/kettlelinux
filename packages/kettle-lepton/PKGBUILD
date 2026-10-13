@@ -25,7 +25,7 @@
 # locked crates need a newer compiler than the snapshot's 1.78.
 pkgname=kettle-lepton
 pkgver=3.0.5
-pkgrel=2
+pkgrel=3
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Android games in Steam through Valve Lepton (Kettle Linux compatibility tool)'
@@ -41,7 +41,7 @@ depends=(bash python libnotify podman passt crun conmon catatonit containers-com
          apkeep)
 makedepends=(git)
 options=(!lto)  # makepkg's GCC LTO objects in zstd-sys don't link into the Rust binary
-_commit=8be10c8a86ed2a6de1c6a2d6587994e957a35515  # tag v3.0.5
+_commit=0d0924e69dedac90e8114fd6aa691d1eeb050685  # v3.0.5 + kill_container no longer loops forever
 source=("lepton::git+https://gitlab.steamos.cloud/frame-public/lepton.git#commit=$_commit"
         "https://static.rust-lang.org/dist/$_rustdate/rust-$_rust-aarch64-unknown-linux-gnu.tar.xz"
         0001-compat_tool-show-the-2D-window-by-default.patch
