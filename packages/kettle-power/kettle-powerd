@@ -643,7 +643,7 @@ class Daemon:
         if level is None:
             level = kernel_fan_level(self.hw.fan_temp(), read_int(f"{self.hw.fan_cdev}/max_state", 7))
         self.set_zone_policy("step_wise", self.hw.fan_zones)  # every one: an older kettle-powerd took them all
-        write(f"{self.hw.fan_cdev}/cur_state", level)
+        set_fan_level(self.hw.fan_cdev, level)
         self.fan_saved_cdev = None
         self.fan_pct = None
 
@@ -1289,6 +1289,16 @@ def kernel_fan_level(temp, max_state):
     return max(0, min(max_state, int((temp - 50) // 5) + 1)) if temp >= 50 else 0
 
 
+def set_fan_level(cdev, level):
+    """The fan at a cooling level of the device tree curve. pwm-fan skips a write of the level it
+    holds, and a speed set here through pwm1 counts as a level too (any speed above the curve's
+    top is its top level): a full speed custom fan stayed at full speed after it was given back,
+    until the temperature changed level. A step through another level makes the write take."""
+    if read_int(f"{cdev}/cur_state", -1) == level:
+        write(f"{cdev}/cur_state", level - 1 if level else 1)
+    write(f"{cdev}/cur_state", level)
+
+
 def restore(hw, daemon=None):
     """The fan back to the kernel's curve, every CPU online, no caps."""
     if daemon:
@@ -1297,8 +1307,7 @@ def restore(hw, daemon=None):
         for z in hw.fan_zones:
             write(f"{z}/policy", "step_wise")
         if hw.fan_cdev:
-            write(f"{hw.fan_cdev}/cur_state",
-                  kernel_fan_level(hw.fan_temp(), read_int(f"{hw.fan_cdev}/max_state", 7)))
+            set_fan_level(hw.fan_cdev, kernel_fan_level(hw.fan_temp(), read_int(f"{hw.fan_cdev}/max_state", 7)))
     for c in hw.cfg["cpu"]["clusters"]:
         for cpu_id in c["cpus"]:
             if cpu_id != 0 and read_int(f"/sys/devices/system/cpu/cpu{cpu_id}/online") == 0:
