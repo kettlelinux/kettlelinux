@@ -23,7 +23,8 @@ Steam's frame rate limit (gamescope's GAMESCOPE_FPS_LIMIT, which Device Settings
 SetFpsLimit), or at the display's refresh rate without one. The frame rate comes from our
 mangoapp build's $XDG_RUNTIME_DIR/kettle-fps (packages/mangohud 0005). It walks the caps down
 while the game holds the target, back up as soon as it falls short on a unit at its limit, and keeps off a
-step that failed for a while. Steam's TDP limit still applies on top.
+step that failed for a while. A game held back by the GPU at its full clock holds all it can: only
+the CPU is lowered then, until the GPU stops being the limit. Steam's TDP limit still applies on top.
 
   kettle-powerd            run the daemon (system bus, root)
   kettle-powerd --restore  hand the fan back to the kernel and lift every cap, the GPU's to
@@ -751,6 +752,8 @@ class Daemon:
         self.auto_block = {}  # unit -> (step it fell short at, tick it may be tried again)
         self.auto_fails = {}  # (unit, step) -> times the game fell short there
         self.auto_peak = {"cpu": 0.0, "gpu": 0}  # highest CPU share / GPU clock while holding
+        self.auto_from = {}  # unit -> its step before it was lowered last, where a failure goes back to
+        self.auto_gpu_prev = None  # the GPU's load a tick before
         self.auto_fps = None  # the frame rate and target judged last (Device Settings' Diagnostics readout)
         self.auto_target = None
 
@@ -786,15 +789,23 @@ class Daemon:
         # does at any clock) dips a frame or two in one second
         fps = f["fps"] if self.auto_prev is None else (f["fps"] + self.auto_prev) / 2
         self.auto_prev = f["fps"]
-        short = fps < target * AUTO_UNDER
+        gpu_busy = self.hw.gpu_busy()
+        under = fps < target * AUTO_UNDER
+        # below the target with the GPU at its full clock and busy in this reading and the one
+        # before (each is the GPU's last 50 ms): the frame rate is the GPU's, and no CPU clock
+        # raises it. The game holds all it can, and a CPU cap that starts to hold it back shows
+        # as the GPU idling.
+        gpu_bound = (under and gpu_busy is not None and self.auto_gpu == 0
+                     and min(gpu_busy, self.auto_gpu_prev if self.auto_gpu_prev is not None else gpu_busy) >= AUTO_GPU_BUSY)
+        self.auto_gpu_prev = gpu_busy
+        if gpu_busy is None:
+            gpu_busy = 1.0
+        short = under and not gpu_bound
         self.auto_short = self.auto_short + 1 if short else 0
         # a cap just lowered that makes the game fall short goes back at once
         if self.auto_wait and not (short and self.auto_last):
             self.auto_wait -= 1
             return False
-        gpu_busy = self.hw.gpu_busy()
-        if gpu_busy is None:
-            gpu_busy = 1.0
         before = (self.auto_cpu, self.auto_gpu)
         if short:
             self.auto_steady = 0
@@ -808,13 +819,15 @@ class Daemon:
                          (read_int(f"{c['path']}/scaling_cur_freq") or 0) >= cpu_caps[c["name"]] for c in self.hw.clusters)}
             stuck = self.auto_short >= AUTO_STUCK or fps < target * 0.85
             if self.auto_last and (limit[self.auto_last] or stuck):
-                # the last cap lowered did it: back up, and keep off that step for a while,
-                # longer each time it fails again
+                # the last cap lowered did it: back up to where it was lowered from (a lowering
+                # may skip steps), and keep off the step below that for a while, longer each
+                # time it fails again
                 unit = self.auto_last
                 step = getattr(self, f"auto_{unit}")
-                fails = self.auto_fails[(unit, step)] = self.auto_fails.get((unit, step), 0) + 1
-                self.auto_block[unit] = (step, self.ticks + AUTO_BACKOFF * min(AUTO_BACKOFF_MAX, 2 ** (fails - 1)))
-                setattr(self, f"auto_{unit}", step - 1)
+                back = max(0, min(step - 1, self.auto_from.get(unit, step - 1)))
+                fails = self.auto_fails[(unit, back + 1)] = self.auto_fails.get((unit, back + 1), 0) + 1
+                self.auto_block[unit] = (back + 1, self.ticks + AUTO_BACKOFF * min(AUTO_BACKOFF_MAX, 2 ** (fails - 1)))
+                setattr(self, f"auto_{unit}", back)
                 self.auto_last = None
             elif limit["gpu"] or limit["cpu"] or stuck:
                 # the game got heavier: give a unit at its limit its clock back (the GPU first),
@@ -834,15 +847,16 @@ class Daemon:
                 if cur:
                     self.auto_peak["cpu"] = max(self.auto_peak["cpu"], cur / c["base_max"])
             if self.auto_steady >= AUTO_SETTLE:
-                self.auto_lower(gpu_busy)
+                self.auto_lower(gpu_busy, gpu_bound)
         if (self.auto_cpu, self.auto_gpu) != before:
             self.auto_wait = AUTO_DWELL
             return True
         return False
 
-    def auto_lower(self, gpu_busy):
-        """One cap lower, on the less busy unit not kept off its next step. A cap above what the
-        unit ran at lately changes nothing, so it goes straight to the first one below that."""
+    def auto_lower(self, gpu_busy, gpu_bound=False):
+        """One cap lower, on the less busy unit not kept off its next step (the CPU only while the
+        GPU is the limit). A cap above what the unit ran at lately changes nothing, so it goes
+        straight to the first one below that."""
         self.auto_steady = 0
         gf = self.gpu_steps()
         # first step whose cap is below the peak: GPU caps run down the table, CPU shares down
@@ -855,7 +869,7 @@ class Daemon:
         busy = {"gpu": gpu_busy, "cpu": self.cpu_load}
         self.auto_peak = {"cpu": 0.0, "gpu": 0}
         options = {}
-        for unit in ("gpu", "cpu"):
+        for unit in ("cpu",) if gpu_bound else ("gpu", "cpu"):
             limit = top[unit]
             block = self.auto_block.get(unit)
             if block and self.ticks < block[1]:
@@ -865,6 +879,7 @@ class Daemon:
                 options[unit] = min(limit, max(step + 1, bind[unit]))
         if options:
             unit = min(options, key=lambda u: busy[u])  # a tie goes to the GPU
+            self.auto_from[unit] = getattr(self, f"auto_{unit}")
             setattr(self, f"auto_{unit}", options[unit])
             self.auto_last = unit
 
