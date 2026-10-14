@@ -12,8 +12,10 @@
 # refresh rate is held while it runs.
 # The refresh rate on a device whose panel has more than one (refresh.py): Auto (0) holds none:
 # Steam's frame limit picks the rate, up to auto_refresh_max_hz when there's no limit (0024).
-# Auto TDP holds a game at Steam's frame rate limit, which Steam sets on gamescope's Xwayland
-# root window (GAMESCOPE_FPS_LIMIT): the plugin watches it with xprop and passes it on.
+# Auto TDP holds a game at Steam's frame rate limit, which gamescope publishes on its Xwayland root
+# window (GAMESCOPE_FPS_LIMIT_FEEDBACK, gamescope 0025): the plugin watches it with xprop and passes
+# it on. Steam sets the limit through gamescope_control, which leaves GAMESCOPE_FPS_LIMIT at whatever
+# was written to it last (60); that one is read only from a gamescope without the feedback.
 import asyncio
 import ctypes
 import os
@@ -49,7 +51,8 @@ def _die_with_parent():
     ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG
 
 
-FPS_LIMIT = re.compile(rb"GAMESCOPE_FPS_LIMIT\(CARDINAL\) = (\d+)")
+# a property's value, or "not found"
+FPS_LIMIT = re.compile(rb"^(GAMESCOPE_FPS_LIMIT(?:_FEEDBACK)?)(?:\(CARDINAL\) = (\d+)|:\s+not found)")
 FPS_LIMIT_RESEND = 30  # s: sent again this often (with the running game), for a kettle-powerd that restarted
 
 
@@ -64,10 +67,11 @@ async def _watch_fps_limit():
             if "DISPLAY" in env:
                 # line buffered: xprop's own output to a pipe waits for a full buffer
                 proc = await asyncio.create_subprocess_exec(
-                    "stdbuf", "-oL", "xprop", "-display", env["DISPLAY"], "-root", "-spy", "GAMESCOPE_FPS_LIMIT",
+                    "stdbuf", "-oL", "xprop", "-display", env["DISPLAY"], "-root", "-spy",
+                    "GAMESCOPE_FPS_LIMIT_FEEDBACK", "GAMESCOPE_FPS_LIMIT",
                     env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
                     preexec_fn=_die_with_parent)
-                limit = 0
+                limit, values = 0, {}
                 while True:
                     try:
                         line = await asyncio.wait_for(proc.stdout.readline(), FPS_LIMIT_RESEND)
@@ -77,7 +81,12 @@ async def _watch_fps_limit():
                         break
                     if line is not None:
                         m = FPS_LIMIT.search(line)
-                        limit = int(m.group(1)) if m else 0  # "not found": Steam set none
+                        if m:
+                            values[m.group(1)] = int(m.group(2)) if m.group(2) else None
+                        # the limit in effect; "not found": a gamescope without it, whose
+                        # GAMESCOPE_FPS_LIMIT is all there is ("not found" there too: none)
+                        feedback = values.get(b"GAMESCOPE_FPS_LIMIT_FEEDBACK")
+                        limit = feedback if feedback is not None else values.get(b"GAMESCOPE_FPS_LIMIT") or 0
                     if line is None:
                         await power("SetActiveGame", _active)
                     if line is None or limit != sent:
