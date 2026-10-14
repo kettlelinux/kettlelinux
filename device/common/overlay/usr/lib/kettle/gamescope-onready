@@ -5,13 +5,18 @@
 # With --unset (gamescope-session.service ExecStopPost) it withdraws the same variables, so
 # they don't leak into the desktop session: the user manager outlives Game Mode, and Plasma
 # would otherwise start with Steam's cursor theme/size, the xim input method, gamescope's DISPLAY...
+# ENABLE_GAMESCOPE_WSI is gamescope's own, set for the children it starts (this script): Steam runs
+# as steam.service instead, and without it no game loads the gamescope WSI layer. Its frames go
+# through Xwayland then, and Steam's frame rate limit doesn't hold them (gamescope paces a game
+# through the layer).
 vars=(DISPLAY GAMESCOPE_WAYLAND_DISPLAY XDG_SESSION_TYPE XCURSOR_THEME XCURSOR_SIZE
       SRT_URLOPEN_PREFER_STEAM STEAM_MULTIPLE_XWAYLANDS STEAM_USE_MANGOAPP
       STEAM_MANGOAPP_PRESETS_SUPPORTED STEAM_MANGOAPP_HORIZONTAL_SUPPORTED
       STEAM_DISABLE_MANGOAPP_ATOM_WORKAROUND STEAM_GAMESCOPE_FANCY_SCALING_SUPPORT
       STEAM_GAMESCOPE_DYNAMIC_FPSLIMITER STEAM_GAMESCOPE_HAS_TEARING_SUPPORT
       STEAM_GAMESCOPE_TEARING_SUPPORTED STEAM_GAMESCOPE_NIS_SUPPORTED STEAM_ENABLE_VOLUME_HANDLER
-      GAMESCOPE_STATS MANGOHUD_CONFIGFILE vk_xwayland_wait_ready QT_IM_MODULE GTK_IM_MODULE QT_QPA_PLATFORMTHEME)
+      GAMESCOPE_STATS MANGOHUD_CONFIGFILE vk_xwayland_wait_ready QT_IM_MODULE GTK_IM_MODULE QT_QPA_PLATFORMTHEME
+      ENABLE_GAMESCOPE_WSI)
 if [ "${1:-}" = --unset ]; then
   exec systemctl --user unset-environment "${vars[@]}"
 fi
