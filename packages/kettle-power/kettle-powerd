@@ -709,6 +709,7 @@ class Daemon:
             gpu_busy = 1.0
         cpu_room = len(self.cpu_ladder) - 1 - self.tdp_cpu
         gpu_room = len(self.gpu_steps()) - 1 - self.tdp_gpu
+        limit = self.state["steam"]["tdp"]
         err = self.power - limit
         steps = 2 if abs(err) > 3 else 1
         before = (self.tdp_cpu, self.tdp_gpu)
