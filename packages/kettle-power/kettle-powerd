@@ -24,7 +24,9 @@ SetFpsLimit), or at the display's refresh rate without one. The frame rate comes
 mangoapp build's $XDG_RUNTIME_DIR/kettle-fps (packages/mangohud 0005). It walks the caps down
 while the game holds the target, back up as soon as it falls short on a unit at its limit, and keeps off a
 step that failed for a while. A game held back by the GPU at its full clock holds all it can: only
-the CPU is lowered then, until the GPU stops being the limit. Steam's TDP limit still applies on top.
+the CPU is lowered then, until the GPU stops being the limit. A game that stays below the target
+without any of Auto TDP's caps (its own frame cap, its CPU) is held at the frame rate it reaches
+there instead. Steam's TDP limit still applies on top.
 
   kettle-powerd            run the daemon (system bus, root)
   kettle-powerd --restore  hand the fan back to the kernel and lift every cap, the GPU's to
@@ -74,6 +76,8 @@ AUTO_BACKOFF_MAX = 4  # each time that step fails again, up to this many times a
 AUTO_UNDER = 0.95  # below this share of the target (over two seconds) the game falls short
 AUTO_GPU_BUSY = 0.9  # a capped GPU this busy is at its limit
 AUTO_STUCK = 3  # ticks falling short with neither unit at its limit before raising anyway
+AUTO_REACH = 10  # ticks of frame rates without Auto TDP's caps that tell what a game reaches
+AUTO_PROBE = 30  # ticks holding a reached rate below the target before checking it without the caps
 MAX_GAMES = 500  # games with settings of their own kept, the least recently set go first
 
 
@@ -754,6 +758,9 @@ class Daemon:
         self.auto_peak = {"cpu": 0.0, "gpu": 0}  # highest CPU share / GPU clock while holding
         self.auto_from = {}  # unit -> its step before it was lowered last, where a failure goes back to
         self.auto_gpu_prev = None  # the GPU's load a tick before
+        self.auto_reach = []  # frame rates below the target without Auto TDP's caps, the latest last
+        self.auto_probe = 0  # ticks holding a reached rate below the target under the caps
+        self.auto_probe_back = None  # (cpu step, gpu step, rate held) while the caps are off to check it
         self.auto_fps = None  # the frame rate and target judged last (Device Settings' Diagnostics readout)
         self.auto_target = None
 
@@ -784,7 +791,6 @@ class Daemon:
         if target <= 0:
             return False
         self.auto_idle = 0
-        self.auto_fps, self.auto_target = f["fps"], target
         # over two seconds: a game whose frames miss a refresh now and then (Skyrim at 60 fps
         # does at any clock) dips a frame or two in one second
         fps = f["fps"] if self.auto_prev is None else (f["fps"] + self.auto_prev) / 2
@@ -800,7 +806,51 @@ class Daemon:
         self.auto_gpu_prev = gpu_busy
         if gpu_busy is None:
             gpu_busy = 1.0
-        short = under and not gpu_bound
+        # what the game reaches without Auto TDP's caps, when that is below the target (its own
+        # frame cap, or its CPU or GPU at full clock): held instead of the target, which it would
+        # fall short of whatever the caps. A rate well above it under the caps (a lighter scene)
+        # is held from then on.
+        reach = self.auto_reach
+        if not (self.auto_cpu or self.auto_gpu):
+            if under:
+                reach.append(fps)
+                del reach[:-AUTO_REACH]
+            else:
+                reach.clear()
+        elif reach and fps * AUTO_UNDER > max(reach):
+            reach[:] = [fps]
+        goal = target
+        if len(reach) >= AUTO_SETTLE or (reach and (self.auto_cpu or self.auto_gpu)):
+            goal = min(target, sorted(reach)[len(reach) // 2])
+        self.auto_fps, self.auto_target = f["fps"], round(goal)
+        # a lighter scene that the caps keep at the rate held looks just like a game at its own
+        # cap: now and then the caps come off for a few ticks, to see what the game reaches now.
+        # The same rate: straight back to the caps. More: held from there, and lowered again.
+        if self.auto_probe_back is not None:
+            if not under:
+                self.auto_probe_back = None  # it reaches the target now
+            elif len(reach) >= AUTO_SETTLE:
+                cpu, gpu, held = self.auto_probe_back
+                self.auto_probe_back = None
+                if goal * AUTO_UNDER <= held:
+                    self.auto_cpu, self.auto_gpu = cpu, gpu
+                    self.auto_wait = AUTO_DWELL
+                    return True
+            else:
+                return False
+        elif goal < target and (self.auto_cpu or self.auto_gpu) and not gpu_bound:
+            # (not with the GPU at its limit: no CPU cap holds the game back then, and the GPU
+            # idling shows when one starts to)
+            self.auto_probe += 1
+            if self.auto_probe >= AUTO_PROBE:
+                self.auto_probe = 0
+                self.auto_probe_back = (self.auto_cpu, self.auto_gpu, goal)
+                self.auto_cpu = self.auto_gpu = 0
+                self.auto_last = None
+                self.auto_prev = None  # the frame rates measured from here are the uncapped ones
+                reach.clear()
+                return True
+        short = fps < goal * AUTO_UNDER and not gpu_bound
         self.auto_short = self.auto_short + 1 if short else 0
         # a cap just lowered that makes the game fall short goes back at once
         if self.auto_wait and not (short and self.auto_last):
@@ -817,7 +867,7 @@ class Daemon:
             limit = {"gpu": self.auto_gpu > 0 and gpu_busy >= AUTO_GPU_BUSY,
                      "cpu": self.auto_cpu > 0 and any(
                          (read_int(f"{c['path']}/scaling_cur_freq") or 0) >= cpu_caps[c["name"]] for c in self.hw.clusters)}
-            stuck = self.auto_short >= AUTO_STUCK or fps < target * 0.85
+            stuck = self.auto_short >= AUTO_STUCK or fps < goal * 0.85
             if self.auto_last and (limit[self.auto_last] or stuck):
                 # the last cap lowered did it: back up to where it was lowered from (a lowering
                 # may skip steps), and keep off the step below that for a while, longer each
@@ -832,7 +882,7 @@ class Daemon:
             elif limit["gpu"] or limit["cpu"] or stuck:
                 # the game got heavier: give a unit at its limit its clock back (the GPU first),
                 # else the busier one; faster when far short
-                for _ in range(2 if fps < target * 0.85 else 1):
+                for _ in range(2 if fps < goal * 0.85 else 1):
                     gpu_first = limit["gpu"] if limit["gpu"] != limit["cpu"] else gpu_busy >= self.cpu_load
                     if (gpu_first or not self.auto_cpu) and self.auto_gpu:
                         self.auto_gpu -= 1
