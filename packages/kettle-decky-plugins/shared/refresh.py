@@ -38,11 +38,11 @@ def rates() -> list[int]:
 
 
 def _default_rate(have: list[int]) -> int:
-    # the device's own, not the highest: the Portal lists 165 Hz, but starts at 120
+    # the device's own, not the highest: the Portal lists 165 Hz, but starts at Auto
     try:
         with open(GAMESCOPE_CONF) as f:
             m = re.search(r"^export gamescope_refresh_hz=(\d+)", f.read(), re.M)
-        if m and int(m.group(1)) in have:
+        if m and (int(m.group(1)) in have or int(m.group(1)) == AUTO):
             return int(m.group(1))
     except OSError:
         pass
