@@ -1,0 +1,19 @@
+#!/bin/bash
+# Print this device's GPU as turnip reports it to Vulkan, vendorID:deviceID (0x5143:0x43050a01).
+# Turnip's deviceID is the kernel's chip ID, which comes from the GPU node's compatible string:
+# "qcom,adreno-43050a01" (hex chip ID) or the older "qcom,adreno-650.2" (core/major/minor.patch).
+# Prints nothing when no Adreno node is found.
+for f in /proc/device-tree/soc@0/gpu@*/compatible /proc/device-tree/soc/gpu@*/compatible; do
+	[[ -r $f ]] || continue
+	while IFS= read -r -d '' c; do
+		if [[ $c =~ ^qcom,adreno-([0-9a-f]{8})$ ]]; then
+			echo "0x5143:0x${BASH_REMATCH[1]}"
+			exit 0
+		elif [[ $c =~ ^qcom,adreno-([0-9])([0-9])([0-9])\.([0-9]+)$ ]]; then
+			printf '0x5143:0x%02x%02x%02x%02x\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" \
+				"${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"
+			exit 0
+		fi
+	done <"$f"
+done
+exit 1
