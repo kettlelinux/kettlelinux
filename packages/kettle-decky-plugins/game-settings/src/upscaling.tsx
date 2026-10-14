@@ -1,4 +1,4 @@
-// The Upscaling tab: gamescope FSR 1 through Steam's own per-game settings, and OptiScaler
+// The Upscaling tab: a lower render resolution through Steam's own per-game settings, and OptiScaler
 // (upscaling.py in the backend) in place of a game's DLSS, FSR 2+ or XeSS
 import { ButtonItem, DropdownItem, PanelSection, PanelSectionRow, SliderField, ToggleField } from "@decky/ui";
 import { callable, toaster } from "@decky/api";
@@ -9,9 +9,11 @@ import { runningAppId } from "../../shared/GamePicker";
 const small = { fontSize: "12px", lineHeight: "16px" };
 
 
-// gamescope FSR 1: the game renders at a lower resolution, gamescope upscales it with
-// Steam's "Sharp" scaling filter. FSR 1 modes for the 1920x1080 panel (Steam accepts
-// "Default", "Native" or "WxH").
+// A lower render resolution: the game renders smaller, and the frame is scaled up to the panel
+// (Steam accepts "Default", "Native" or "WxH"). With Steam's Linear filter the display hardware
+// scales it on the way out (gamescope keeps direct scanout); Nearest and Sharp (SGSR, or FSR 1)
+// are a GPU pass that composites every frame. Borderlands 2 on the Portal, GPU-bound at 1280x720:
+// 144 fps with Linear, 83 with FSR, and 113 at native 1920x1080 (2026-10-14).
 const RESOLUTIONS = [
   { data: "Default", label: "Default (Steam setting)" },
   { data: "Native", label: "Native 1920×1080" },
@@ -22,9 +24,9 @@ const RESOLUTIONS = [
 ];
 // Steam's split scaling filter enum (Quick Access › Performance › Scaling filter)
 const FILTERS = [
-  { data: 1, label: "Linear" },
-  { data: 2, label: "Nearest" },
-  { data: 3, label: "FSR (Sharp)" },
+  { data: 1, label: "Linear (fastest)" },
+  { data: 2, label: "Nearest (GPU pass)" },
+  { data: 3, label: "Sharp (GPU pass, slower)" },
 ];
 
 function GamescopeFsr({ appid }: { appid: number }) {
@@ -39,11 +41,11 @@ function GamescopeFsr({ appid }: { appid: number }) {
   const [sharp, setSharp] = useState<number>(perf?.msgSettingsPerApp?.fsr_sharpness ?? 2);
 
   return (
-    <PanelSection title="FSR 1 (gamescope)">
+    <PanelSection title="Render resolution">
       <PanelSectionRow>
         <DropdownItem
           label="Render resolution"
-          description="The game renders at this size; gamescope upscales it. Applies on next launch."
+          description="The game renders at this size and is scaled up to the screen. With the Linear filter that costs nothing. Applies on next launch."
           rgOptions={RESOLUTIONS}
           selectedOption={res}
           onChange={async (o) => {
@@ -61,6 +63,9 @@ function GamescopeFsr({ appid }: { appid: number }) {
           <PanelSectionRow>
             <DropdownItem
               label="Scaling filter"
+              description={filter === 1
+                ? "The display scales the frame up, at no cost."
+                : "A GPU pass on every frame: sharper, but it can cost more than the lower resolution saves (Borderlands 2: 144 fps Linear, 83 Sharp)."}
               rgOptions={FILTERS}
               selectedOption={filter}
               onChange={(o) => {
@@ -91,8 +96,8 @@ function GamescopeFsr({ appid }: { appid: number }) {
         <PanelSectionRow>
           <div style={small}>
             {running
-              ? 'Set the filter to "Sharp" in Quick Access › Performance.'
-              : "Scaling filter and sharpness: start the game (Steam keeps them per game)."}
+              ? 'Set the filter in Quick Access › Performance: Linear is the fastest.'
+              : "Scaling filter and sharpness: start the game (Steam keeps them per game). Linear is the fastest."}
           </div>
         </PanelSectionRow>
       )}
