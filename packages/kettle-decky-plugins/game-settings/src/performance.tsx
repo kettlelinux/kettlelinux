@@ -180,7 +180,7 @@ function PowerSettings({ appid, name, inf, fanControl, fpsLimit }: { appid: numb
       <PanelSectionRow>
         <ButtonItem
           layout="below"
-          onClick={async () => setG(own(await setGame(target, target === null ? { fan: { mode: "auto", curve: inf.default_curve, fixed: 50 }, cpu: { little: null, mid: null, prime: null, mid_cores: midCount, prime_core: true }, auto_tdp: false } : null)))}
+          onClick={async () => setG(own(await setGame(target, target === null ? { fan: { mode: "auto", curve: inf.default_curve, fixed: 50 }, cpu: { little: null, mid: null, prime: null, mid_cores: midCount, prime_core: true }, auto_tdp: true } : null)))}
         >
           {target === null ? "Reset all-games settings" : `Reset ${name} to all-games settings`}
         </ButtonItem>

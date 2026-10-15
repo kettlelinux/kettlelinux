@@ -18,7 +18,7 @@ parking; and the charge speed (a preset, or a current of its own) and the fan wh
 asleep (pwm-fan's pwm1_sleep_charging, kernel 40-kettle/1300), for every game. Every cap source is combined here, the lowest wins, so no two writers fight over
 scaling_max_freq or devfreq max_freq.
 
-Auto TDP (per game, off by default): the lowest CPU/GPU caps that still hold the game at
+Auto TDP (per game, on by default since 2026-10-15): the lowest CPU/GPU caps that still hold the game at
 Steam's frame rate limit (gamescope's GAMESCOPE_FPS_LIMIT, which Device Settings passes on with
 SetFpsLimit), or at the display's refresh rate without one. The frame rate comes from our
 mangoapp build's $XDG_RUNTIME_DIR/kettle-fps (packages/mangohud 0005). It walks the caps down
@@ -367,6 +367,8 @@ class Daemon:
             "charge_speed": "",
             "charge_custom_ua": 0,
             "sleep_fan": 0,  # fan percent while charging asleep, 0: off
+            # Auto TDP became on by default; an older state.json gets that once (see load)
+            "auto_tdp_default_on": True,
         }
         self.saved = None  # state.json as last written, so an unchanged state isn't written again
         self.load()
@@ -432,7 +434,7 @@ class Daemon:
         out = {"fan": {"mode": mode, "curve": curve, "fixed": to_int(fan.get("fixed"), 50, 0, 100)},
                "cpu": {"mid_cores": to_int(cpu.get("mid_cores"), 4, 1, 4),
                        "prime_core": bool(cpu.get("prime_core", True))},
-               "auto_tdp": bool(g.get("auto_tdp", False))}
+               "auto_tdp": bool(g.get("auto_tdp", True))}
         for c in self.cfg["cpu"]["clusters"]:
             out["cpu"][c["name"]] = to_int(cpu.get(c["name"]), None, 0, 1 << 31) or None
         return out
@@ -503,6 +505,15 @@ class Daemon:
                 self.state["games"][k] = self.normalize(v)
             except Exception as e:  # whatever is in it, the rest still loads
                 log(f"{STATE}: dropped the settings of {k!r}: {e!r}")
+        # Auto TDP was off by default until 2026-10-15, and every save wrote auto_tdp: false
+        # with the rest of a game's settings, so a saved false rarely meant a choice: once, on
+        # the first start with this version, every game's (and all games') is turned on. The
+        # desktop's stays as it was.
+        if not saved.get("auto_tdp_default_on"):
+            for k, v in self.state["games"].items():
+                if k != "desktop":
+                    v["auto_tdp"] = True
+            log("Auto TDP is on by default now: turned on for every game's saved settings")
         self.trim_games()
         if self.state["steam"]["profile"] not in self.profiles:
             self.state["steam"]["profile"] = next(iter(self.profiles), "")
