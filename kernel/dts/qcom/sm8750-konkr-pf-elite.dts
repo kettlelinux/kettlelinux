@@ -1768,7 +1768,9 @@
  * binds it, and with fw_devlink.strict=1 (boot.conf) PCIe ended up waiting on one of its
  * endpoints forever ("1c00000.pcie: deferred probe pending: wait for supplier
  * /soc@0/tn@109ab000/in-ports/port@1e/endpoint"): no PCIe, so no Wi-Fi. fw_devlink skips
- * disabled suppliers. (ROCKNIX builds CORESIGHT_TNOC and doesn't boot strict.) */
+ * disabled suppliers. (ROCKNIX builds CORESIGHT_TNOC and doesn't boot strict.) The cause was
+ * fw_devlink misreading the PCIe iommu-map, fixed by kernel 40-kettle/1430; this stays as a
+ * second guard. */
 &{/soc@0/tn@109ab000} {
 	status = "disabled";
 };
