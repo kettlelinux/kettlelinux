@@ -1,0 +1,386 @@
+From fe0c1764518b6cc7f7b865875641d6c76cf22073 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Tue, 13 Oct 2026 19:10:11 -0500
+Subject: [PATCH] source: sleep on the device while idle instead of polling
+ every 2.5 ms
+
+Each source device thread polled its device, then slept out the rest of
+its 2.5 ms interval: 400 wakeups a second per source, whether or not any
+input came. A handheld with a gamepad, a paddle keyboard and a motion
+sensor source woke about 1,200 times a second for as long as InputPlumber
+ran, spread across all cores, and input waited up to 2.5 ms before it was
+read.
+
+A source implementation can now give the driver a file descriptor that
+becomes readable on input (SourceInputDevice::wait_fd). The evdev gamepad,
+keyboard and motion sensor sources give their event device. Between polls
+the driver then waits in poll(2) on it and on an eventfd that the
+SourceDeviceClient signals for each command it sends (force feedback,
+event filters, stop), so commands still reach the device thread at once.
+The wait ends after 1 s at most. The 2.5 ms interval still paces the
+reads while input keeps coming. A source with translator events scheduled
+for later (SourceInputDevice::has_pending) keeps polling at its interval
+until they are sent. Sources without a file descriptor poll as before.
+---
+ Cargo.toml                          |  2 +-
+ src/input/event/evdev/translator.rs |  5 +++
+ src/input/source/client.rs          | 34 ++++++++++++++-
+ src/input/source/evdev/gamepad.rs   | 10 ++++-
+ src/input/source/evdev/imu.rs       |  6 ++-
+ src/input/source/evdev/keyboard.rs  | 10 ++++-
+ src/input/source/mod.rs             | 67 ++++++++++++++++++++++++++++-
+ 7 files changed, 127 insertions(+), 7 deletions(-)
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 9e41931..e182fa2 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -128,7 +128,7 @@ log = { version = "0.4.29", features = [
+   "release_max_level_debug",
+ ] }
+ mio = { version = "1.1.1", features = ["os-poll", "os-ext", "net"] }
+-nix = { version = "0.30.1", features = ["fs"] }
++nix = { version = "0.30.1", features = ["event", "fs", "poll"] }
+ packed_struct = "0.10.1"
+ procfs = "0.18.0"
+ ratatui = "0.30.0"
+diff --git a/src/input/event/evdev/translator.rs b/src/input/event/evdev/translator.rs
+index dc70e6b..6b8599b 100644
+--- a/src/input/event/evdev/translator.rs
++++ b/src/input/event/evdev/translator.rs
+@@ -154,6 +154,11 @@ impl EventTranslator {
+         self.translatable_events.contains(&event_signature)
+     }
+ 
++    /// Whether events are scheduled for later
++    pub fn has_scheduled(&self) -> bool {
++        !self.scheduled_events.is_empty()
++    }
++
+     /// Poll for scheduled events
+     pub fn poll(&mut self) -> Vec<NativeEvent> {
+         let mut ready_events = vec![];
+diff --git a/src/input/source/client.rs b/src/input/source/client.rs
+index f75c31e..c2a86c0 100644
+--- a/src/input/source/client.rs
++++ b/src/input/source/client.rs
+@@ -1,6 +1,10 @@
+-use std::{sync::mpsc::channel, time::Duration};
++use std::{
++    sync::{mpsc::channel, Arc},
++    time::Duration,
++};
+ 
+ use evdev::FFEffectData;
++use nix::sys::eventfd::EventFd;
+ use thiserror::Error;
+ use tokio::sync::mpsc::{
+     error::{SendError, SendTimeoutError, TrySendError},
+@@ -44,6 +48,9 @@ impl From<TrySendError<SourceCommand>> for ClientError {
+ #[derive(Debug, Clone)]
+ pub struct SourceDeviceClient {
+     tx: Sender<SourceCommand>,
++    /// Wakes the source device's thread for each command while it sleeps
++    /// waiting for input (see [super::SourceInputDevice::wait_fd])
++    wake: Option<Arc<EventFd>>,
+ }
+ 
+ impl From<Sender<SourceCommand>> for SourceDeviceClient {
+@@ -54,7 +61,23 @@ impl From<Sender<SourceCommand>> for SourceDeviceClient {
+ 
+ impl SourceDeviceClient {
+     pub fn new(tx: Sender<SourceCommand>) -> Self {
+-        Self { tx }
++        Self { tx, wake: None }
++    }
++
++    /// A client that also wakes the source device's thread for each command
++    pub fn with_wake(tx: Sender<SourceCommand>, wake: Arc<EventFd>) -> Self {
++        Self {
++            tx,
++            wake: Some(wake),
++        }
++    }
++
++    /// Wake the source device's thread to read the command just sent
++    fn wake(&self) {
++        if let Some(wake) = self.wake.as_ref() {
++            // EAGAIN: the counter is already set, the thread wakes anyway
++            let _ = wake.write(1);
++        }
+     }
+ 
+     /// Send the given command to the source device. This method uses a timeout
+@@ -62,6 +85,7 @@ impl SourceDeviceClient {
+     async fn send(&self, cmd: SourceCommand) -> Result<(), ClientError> {
+         let result = self.tx.send_timeout(cmd, DEFAULT_TIMEOUT).await;
+         let Err(err) = result else {
++            self.wake();
+             return Ok(());
+         };
+         match err {
+@@ -86,6 +110,7 @@ impl SourceDeviceClient {
+     pub async fn upload_effect(&self, effect: FFEffectData) -> Result<i16, ClientError> {
+         let (tx, rx) = channel();
+         self.tx.try_send(SourceCommand::UploadEffect(effect, tx))?;
++        self.wake();
+         match rx.recv_timeout(Duration::from_millis(200)) {
+             Ok(result) => match result {
+                 Ok(id) => Ok(id),
+@@ -104,6 +129,7 @@ impl SourceDeviceClient {
+         self.tx
+             .send(SourceCommand::UpdateEffect(effect_id, effect))
+             .await?;
++        self.wake();
+         Ok(())
+     }
+ 
+@@ -112,6 +138,7 @@ impl SourceDeviceClient {
+         let (tx, rx) = channel();
+         self.tx
+             .try_send(SourceCommand::EraseEffect(effect_id, tx))?;
++        self.wake();
+         match rx.recv_timeout(Duration::from_secs(1)) {
+             Ok(result) => match result {
+                 Ok(_) => Ok(()),
+@@ -125,6 +152,7 @@ impl SourceDeviceClient {
+     pub async fn get_filtered_events(&self) -> Result<Vec<Capability>, ClientError> {
+         let (tx, rx) = channel();
+         self.tx.send(SourceCommand::GetEventFilter(tx)).await?;
++        self.wake();
+         match rx.recv_timeout(Duration::from_secs(1)) {
+             Ok(result) => Ok(result),
+             Err(_err) => Err(ClientError::ChannelClosed),
+@@ -134,12 +162,14 @@ impl SourceDeviceClient {
+     /// Update the event filter for this source device.
+     pub async fn set_filtered_events(&self, events: Vec<Capability>) -> Result<(), ClientError> {
+         self.tx.send(SourceCommand::SetEventFilter(events)).await?;
++        self.wake();
+         Ok(())
+     }
+ 
+     /// Stop the source device.
+     pub async fn stop(&self) -> Result<(), ClientError> {
+         self.tx.send(SourceCommand::Stop).await?;
++        self.wake();
+         Ok(())
+     }
+ }
+diff --git a/src/input/source/evdev/gamepad.rs b/src/input/source/evdev/gamepad.rs
+index 5f5b0e6..56eb261 100644
+--- a/src/input/source/evdev/gamepad.rs
++++ b/src/input/source/evdev/gamepad.rs
+@@ -1,5 +1,5 @@
+ use std::fmt::Debug;
+-use std::os::fd::AsFd;
++use std::os::fd::{AsFd, AsRawFd, RawFd};
+ use std::{collections::HashMap, error::Error};
+ 
+ use evdev::{
+@@ -488,6 +488,14 @@ impl GamepadEventDevice {
+ }
+ 
+ impl SourceInputDevice for GamepadEventDevice {
++    fn wait_fd(&self) -> Option<RawFd> {
++        Some(self.device.as_raw_fd())
++    }
++
++    fn has_pending(&self) -> bool {
++        self.translator.as_ref().is_some_and(|t| t.has_scheduled())
++    }
++
+     /// Poll the given input device for input events
+     fn poll(&mut self) -> Result<Vec<NativeEvent>, InputError> {
+         let mut native_events = vec![];
+diff --git a/src/input/source/evdev/imu.rs b/src/input/source/evdev/imu.rs
+index 309098e..3364da2 100644
+--- a/src/input/source/evdev/imu.rs
++++ b/src/input/source/evdev/imu.rs
+@@ -1,4 +1,4 @@
+-use std::os::fd::AsFd;
++use std::os::fd::{AsFd, AsRawFd, RawFd};
+ use std::{error::Error, fmt::Debug};
+ 
+ use evdev::{AbsoluteAxisCode, Device, EventSummary};
+@@ -85,6 +85,10 @@ impl ImuEventDevice {
+ }
+ 
+ impl SourceInputDevice for ImuEventDevice {
++    fn wait_fd(&self) -> Option<RawFd> {
++        Some(self.device.as_raw_fd())
++    }
++
+     /// Poll the given input device for input events
+     fn poll(&mut self) -> Result<Vec<NativeEvent>, InputError> {
+         let events = match self.device.fetch_events() {
+diff --git a/src/input/source/evdev/keyboard.rs b/src/input/source/evdev/keyboard.rs
+index abf9de5..ccedfb6 100644
+--- a/src/input/source/evdev/keyboard.rs
++++ b/src/input/source/evdev/keyboard.rs
+@@ -1,5 +1,5 @@
+ use std::fmt::Debug;
+-use std::os::fd::AsFd;
++use std::os::fd::{AsFd, AsRawFd, RawFd};
+ use std::{collections::HashMap, error::Error};
+ 
+ use evdev::{Device, EventType, InputEvent};
+@@ -72,6 +72,14 @@ impl KeyboardEventDevice {
+ }
+ 
+ impl SourceInputDevice for KeyboardEventDevice {
++    fn wait_fd(&self) -> Option<RawFd> {
++        Some(self.device.as_raw_fd())
++    }
++
++    fn has_pending(&self) -> bool {
++        self.translator.as_ref().is_some_and(|t| t.has_scheduled())
++    }
++
+     /// Poll the given input device for input events
+     fn poll(&mut self) -> Result<Vec<NativeEvent>, InputError> {
+         let mut native_events = vec![];
+diff --git a/src/input/source/mod.rs b/src/input/source/mod.rs
+index 5844fce..e9fd44f 100644
+--- a/src/input/source/mod.rs
++++ b/src/input/source/mod.rs
+@@ -2,6 +2,7 @@ use std::{
+     collections::HashSet,
+     env,
+     error::Error,
++    os::fd::{AsFd, BorrowedFd, RawFd},
+     str::FromStr,
+     sync::{Arc, Mutex, MutexGuard},
+     thread,
+@@ -10,6 +11,10 @@ use std::{
+ 
+ use ::evdev::FFEffectData;
+ use led::LedDevice;
++use nix::{
++    poll::{PollFd, PollFlags, PollTimeout},
++    sys::eventfd::{EfdFlags, EventFd},
++};
+ use thiserror::Error;
+ use tokio::sync::mpsc::{self, error::TryRecvError};
+ 
+@@ -41,6 +46,8 @@ pub mod tty;
+ const BUFFER_SIZE: usize = 2048;
+ /// Default poll rate (2.5ms/400Hz)
+ const POLL_RATE: Duration = Duration::from_micros(2500);
++/// Longest sleep waiting for input on a device with a [SourceInputDevice::wait_fd]
++const WAIT_TIMEOUT_MS: u16 = 1000;
+ 
+ /// Possible errors for a source device client
+ #[derive(Error, Debug)]
+@@ -126,6 +133,19 @@ pub trait SourceInputDevice {
+     fn get_default_event_filter(&self) -> Result<HashSet<Capability>, InputError> {
+         Ok(HashSet::new())
+     }
++
++    /// A file descriptor that becomes readable when the device has input. With
++    /// one, the [SourceDriver] sleeps in poll(2) on it (and on its command
++    /// wakeup) while the device is idle, instead of waking every poll interval.
++    fn wait_fd(&self) -> Option<RawFd> {
++        None
++    }
++
++    /// Whether [SourceInputDevice::poll] has events due later (scheduled
++    /// events): the [SourceDriver] keeps polling at its interval until then.
++    fn has_pending(&self) -> bool {
++        false
++    }
+ }
+ 
+ /// A [SourceOutputDevice] is a device implementation that can handle output events
+@@ -204,6 +224,8 @@ pub struct SourceDriver<T: SourceInputDevice + SourceOutputDevice> {
+     composite_device: CompositeDeviceClient,
+     tx: mpsc::Sender<SourceCommand>,
+     rx: mpsc::Receiver<SourceCommand>,
++    /// Signalled by clients for each command, to wake a thread waiting for input
++    wake: Option<Arc<EventFd>>,
+ }
+ 
+ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T> {
+@@ -227,6 +249,13 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+         config: Option<config::SourceDevice>,
+     ) -> Self {
+         let (tx, rx) = mpsc::channel(options.buffer_size);
++        let wake = match EventFd::from_flags(EfdFlags::EFD_CLOEXEC | EfdFlags::EFD_NONBLOCK) {
++            Ok(fd) => Some(Arc::new(fd)),
++            Err(e) => {
++                log::warn!("No command wakeup for source device, polling it instead: {e}");
++                None
++            }
++        };
+ 
+         // Check to see if the device configuration calls for event filtering
+         let mut events_exclude_all = false;
+@@ -279,6 +308,7 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+             composite_device,
+             tx,
+             rx,
++            wake,
+         }
+     }
+ 
+@@ -354,7 +384,32 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+ 
+     /// Returns a transmitter channel that can be used to send events to this device
+     pub fn client(&self) -> SourceDeviceClient {
+-        self.tx.clone().into()
++        match self.wake.as_ref() {
++            Some(wake) => SourceDeviceClient::with_wake(self.tx.clone(), wake.clone()),
++            None => self.tx.clone().into(),
++        }
++    }
++
++    /// Sleep until the device has input, a client sent a command, or
++    /// [WAIT_TIMEOUT_MS] passed.
++    fn wait_for_input(fd: RawFd, wake: &EventFd) {
++        // SAFETY: the fd belongs to the device implementation, which stays
++        // locked and alive for as long as the source device thread runs.
++        let fd = unsafe { BorrowedFd::borrow_raw(fd) };
++        let mut fds = [
++            PollFd::new(fd, PollFlags::POLLIN),
++            PollFd::new(wake.as_fd(), PollFlags::POLLIN),
++        ];
++        if let Err(e) = nix::poll::poll(&mut fds, PollTimeout::from(WAIT_TIMEOUT_MS)) {
++            log::trace!("poll: {e}");
++        }
++        let woken = fds[1]
++            .revents()
++            .is_some_and(|r| r.contains(PollFlags::POLLIN));
++        if woken {
++            // Reset the counter: the commands are read right after this
++            let _ = wake.read();
++        }
+     }
+ 
+     /// Returns udev device information about the device as a reference
+@@ -376,7 +431,10 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+         let task =
+             tokio::task::spawn_blocking(move || -> Result<(), Box<dyn Error + Send + Sync>> {
+                 let mut rx = self.rx;
++                let wake = self.wake;
+                 let mut implementation = self.implementation.lock().unwrap();
++                // Devices with a file descriptor to wait on sleep while idle
++                let wait_fd = wake.as_ref().and(implementation.wait_fd());
+                 let mut event_filter = implementation
+                     .get_default_event_filter()
+                     .unwrap_or_default();
+@@ -465,6 +523,13 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+                     } else {
+                         log::trace!("{:?}: Total poll time: {poll_time:?} ", device_id);
+                     }
++
++                    // With nothing due later, sleep until there is input or a command
++                    if let (Some(fd), Some(wake)) = (wait_fd, wake.as_ref()) {
++                        if !implementation.has_pending() {
++                            SourceDriver::<T>::wait_for_input(fd, wake);
++                        }
++                    }
+                 }
+ 
+                 Ok(())
+-- 
+2.56.0
+
