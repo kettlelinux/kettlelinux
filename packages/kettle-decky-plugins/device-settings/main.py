@@ -25,6 +25,7 @@ import subprocess
 
 import decky
 import gyro
+import inotify
 import lights
 import refresh
 import screens
@@ -104,19 +105,48 @@ async def _watch_fps_limit():
         await asyncio.sleep(5)
 
 
+async def _watch_steam_values():
+    """kettle-powerd's PropertiesChanged (a value of Steam's power controls changed) to the frontend,
+    whose steamSync then looks: it had looked once a second. gdbus monitor ends with the bus; started again."""
+    while True:
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "stdbuf", "-oL", "gdbus", "monitor", "--system", "--dest", BUS_NAME,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                preexec_fn=_die_with_parent)
+            while line := await proc.stdout.readline():
+                if b".PropertiesChanged " in line:
+                    await decky.emit("steam_values")
+        except OSError as e:
+            decky.logger.warning("power: watching kettle-powerd: %s", e)
+        finally:
+            if proc and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+        await asyncio.sleep(5)
+
+
 async def _watch_confirm():
     """What confirm-keys waits for (Device Settings' own SSH switch, reset and bootloader update,
     and Steam's Factory Reset alike), to the frontend, which says to hold the volume keys."""
     shown = None
+    confirm_dir = os.path.dirname(system.CONFIRM)
     while True:
-        pending = system.confirm_pending()
-        if pending != shown:
-            if pending:
-                await decky.emit("confirm", pending.get("what", ""), pending.get("until", 0))
-            else:
-                await decky.emit("confirm_done")
-            shown = pending
-        await asyncio.sleep(0.5)
+        # confirm-keys renames the file into /run/kettle (which it makes), and removes it after
+        try:
+            watch = inotify.Watch(confirm_dir)
+        except OSError:
+            watch = inotify.Watch(os.path.dirname(confirm_dir), inotify.CREATE | inotify.MOVED_TO)
+        with watch:
+            pending = system.confirm_pending()
+            if pending != shown:
+                if pending:
+                    await decky.emit("confirm", pending.get("what", ""), pending.get("until", 0))
+                else:
+                    await decky.emit("confirm_done")
+                shown = pending
+            await watch.wait(60)
 
 
 def _read(path: str) -> str | None:
@@ -474,8 +504,9 @@ class Plugin:
         decky.logger.info("gyro: service %s, sensors %s, mode %s", motion["service"], motion.get("available"), motion.get("mode"))
         self._fps_limit = asyncio.create_task(_watch_fps_limit())
         self._confirm = asyncio.create_task(_watch_confirm())
+        self._steam_values = asyncio.create_task(_watch_steam_values())
 
     async def _unload(self):
-        for t in ("_fps_limit", "_confirm"):
+        for t in ("_fps_limit", "_confirm", "_steam_values"):
             if getattr(self, t, None):
                 getattr(self, t).cancel()

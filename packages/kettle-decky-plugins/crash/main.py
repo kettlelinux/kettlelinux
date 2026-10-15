@@ -18,6 +18,7 @@ import socket
 import urllib.request
 
 import decky
+import inotify
 
 DIR = "/var/log/kettle-crash"
 SEEN = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "seen.json")
@@ -271,17 +272,27 @@ class Plugin:
 
     async def _main(self):
         # reports appearing from now on; one appears when its report.json is written (last)
+        # kettle-crashd makes the report's directory in DIR, which wakes the watch; report.json is
+        # renamed into it last, so an unfinished one is looked at again every POLL_S
         known = {s["id"] for s in await asyncio.to_thread(_list)}
         while True:
-            await asyncio.sleep(POLL_S)
-            for rid in _ids():
-                if rid in known:
-                    continue
-                r = _load(rid)
-                if r is None:
-                    continue
-                known.add(rid)
-                await decky.emit("crash", _summary(rid, r))
+            try:
+                watch = inotify.Watch(DIR)
+            except OSError:
+                await asyncio.sleep(POLL_S)  # no reports yet: kettle-crashd makes DIR
+                continue
+            with watch:
+                unfinished = False
+                for rid in _ids():
+                    if rid in known:
+                        continue
+                    r = _load(rid)
+                    if r is None:
+                        unfinished = True
+                        continue
+                    known.add(rid)
+                    await decky.emit("crash", _summary(rid, r))
+                await watch.wait(POLL_S if unfinished else 600)
 
     async def _unload(self):
         pass
