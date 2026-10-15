@@ -1,0 +1,63 @@
+# Turnip (Mesa's Adreno Vulkan driver) built from upstream Mesa, as a second driver next to Valve's
+# deckard-mesa: a per-game choice in the game settings plugin, never the default. Valve's build
+# is a private fork whose upstream base predates 2026-09-14; this one has upstream's later fixes
+# (descriptor speculation reading past a set, inline uniform offsets, ir3 scheduling and 16-bit
+# abs, LRZ with stencil tagging, fewer GMEM invalidates) and options Valve's binary lacks (RDR2's
+# DEVICE_LOCAL-only memory type, tu_independent_icache_miss).
+#
+# Kept apart from Valve's driver: the library, its ICD manifest and its drirc.d live under
+# /usr/lib/kettle-turnip, outside the loader's search path, so no game sees two GPUs; a game
+# picks it with VK_DRIVER_FILES. With datadir there, the driver reads its own drirc.d (upstream's
+# 00-turnip-defaults.conf and 10-kettle-turnip.conf), not Valve's; /etc/drirc and ~/.drirc are
+# still shared. Native aarch64 only: Proton's ARM64EC games and native arm64 programs. x86 games
+# under FEX load the x86 Turnip from deckard-mesa-linux-x86_64 and keep Valve's.
+#
+# Pinned to Mesa main 68772a4e (2026-10-13); move to the 26.3 branch once it exists.
+pkgname=kettle-turnip
+pkgver=26.3.0_devel.20261013.g68772a4
+pkgrel=1
+_commit=68772a4e1c7b30119bb60469dbe274caf39bf17b
+pkgdesc='Turnip Vulkan driver from upstream Mesa, a per-game alternative to Valve'"'"'s'
+arch=(aarch64)
+url='https://www.mesa3d.org/'
+license=(MIT)
+options=(!lto)  # upstream Mesa refuses to build with LTO
+depends=(glibc gcc-libs libdrm wayland libx11 libxcb libxshmfence libxrandr libdisplay-info
+         expat zstd zlib vulkan-icd-loader)
+makedepends=(meson ninja python-mako python-packaging python-yaml glslang wayland-protocols
+             xorgproto libxext libxxf86vm)
+source=("https://gitlab.freedesktop.org/mesa/mesa/-/archive/$_commit/mesa-$_commit.tar.gz"
+        10-kettle-turnip.conf)
+sha256sums=('85bf0e3bc531a9e488619b952f9ecf71861264d2c6658483785ddab39d14472d'
+            'SKIP')
+
+build() {
+  # the tarball has no .git: name the commit in driverInfo, as Valve's "(git-e07916b45f)"
+  export MESA_GIT_SHA1_OVERRIDE=$_commit
+  # plain meson, not arch-meson: its --auto-features enabled would pull in what Turnip doesn't use
+  meson setup "mesa-$_commit" build --prefix /usr --buildtype release --wrap-mode nodownload \
+    --libdir lib/kettle-turnip --datadir lib/kettle-turnip/share \
+    -D b_ndebug=true \
+    -D vulkan-drivers=freedreno \
+    -D freedreno-kmds=msm \
+    -D gallium-drivers= \
+    -D platforms=x11,wayland \
+    -D opengl=false -D gles1=disabled -D gles2=disabled -D egl=disabled -D glx=disabled \
+    -D gbm=disabled \
+    -D llvm=disabled \
+    -D vulkan-layers= \
+    -D tools= \
+    -D video-codecs= \
+    -D xmlconfig=enabled \
+    -D valgrind=disabled -D libunwind=disabled -D lmsensors=disabled \
+    -D build-tests=false
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir" --no-rebuild
+  # the gallium/zink drirc files have no driver here to read them
+  rm -f "$pkgdir"/usr/lib/kettle-turnip/share/drirc.d/00-{mesa,zink}-defaults.conf
+  install -Dm644 10-kettle-turnip.conf -t "$pkgdir/usr/lib/kettle-turnip/share/drirc.d"
+  install -Dm644 "mesa-$_commit/docs/license.rst" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

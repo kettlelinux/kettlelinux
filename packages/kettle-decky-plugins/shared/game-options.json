@@ -240,6 +240,14 @@
       "choices": [{ "value": "1", "label": "On" }]
     },
     {
+      "id": "tu_upstream",
+      "section": "graphics",
+      "label": "Turnip: upstream Mesa driver",
+      "help": "Uses Turnip built from upstream Mesa instead of Valve's. Newer fixes; try it when a game glitches or crashes with Valve's. x86 Linux games keep Valve's.",
+      "target": { "env": "VK_DRIVER_FILES" },
+      "choices": [{ "value": "/usr/lib/kettle-turnip/share/vulkan/icd.d/freedreno_icd.aarch64.json:/usr/share/vulkan/icd.d/freedreno_icd.x86_64.json:/usr/share/vulkan/icd.d/freedreno_icd.x86.json", "label": "On" }]
+    },
+    {
       "id": "proton_wined3d",
       "section": "proton",
       "label": "Use WineD3D",

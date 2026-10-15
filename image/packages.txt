@@ -221,6 +221,10 @@ kettle-gpu-priority
 # kettle-affinity; Game Settings adds its wrapper to Baldur's Gate 3's launch options)
 kettle-affinity
 
+# Turnip from upstream Mesa, a per-game choice next to Valve's (Game Settings > Graphics >
+# Turnip: upstream Mesa driver; packages/kettle-turnip), off the loader's default path
+kettle-turnip
+
 # Steam games run natively on ARM64 (Game Settings > Run natively; packages/kettle-native): a
 # game's own .NET code on Mono (with ARM64 FNA libraries) or .NET instead of its x86-64 build
 # under FEX, and our pass-through Steam API for it (packages/kettle-steam-api)
