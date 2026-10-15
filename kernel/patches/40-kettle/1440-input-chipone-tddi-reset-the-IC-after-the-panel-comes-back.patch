@@ -1,0 +1,94 @@
+From: Kettle Linux
+Subject: [PATCH] Input: chipone-tddi: reset the IC after the panel comes back
+
+The touch IC is part of the display driver IC and loses its state with
+the panel's power. The PM notifier resets it at PM_POST_SUSPEND, but the
+panel is powered again only when the compositor turns the display back on,
+later: the reset hits an unpowered IC, and after the panel comes up the IC
+raises one INT glitch (a failed touch-info read) and then reports nothing.
+Seen on a KONKR Pocket FIT Elite after every resume (touch dead until the
+driver was rebound); the same happens when the display is blanked and
+woken without a suspend.
+
+On a failed read, schedule a reset 300 ms later (the panel is up by then:
+its power-up raised the glitch), at most once a second, masking the IRQ
+around it as the PM notifier does. Suspend cancels a pending one first.
+---
+diff --git a/drivers/input/touchscreen/chipone-tddi.c b/drivers/input/touchscreen/chipone-tddi.c
+index 1827467..bfb7de5 100644
+--- a/drivers/input/touchscreen/chipone-tddi.c
++++ b/drivers/input/touchscreen/chipone-tddi.c
+@@ -37,6 +37,9 @@
+ #include <linux/module.h>
+ #include <linux/property.h>
+ #include <linux/suspend.h>
++#include <linux/devm-helpers.h>
++#include <linux/jiffies.h>
++#include <linux/workqueue.h>
+ #include <linux/unaligned.h>
+ 
+ #define CTS_TCS_CMD_TOUCH_INFO		0x4103
+@@ -69,6 +72,8 @@ struct chipone_tddi {
+ 	struct gpio_desc *reset_gpio;
+ 	struct touchscreen_properties props;
+ 	struct notifier_block pm_nb;
++	struct delayed_work recover;	/* reset after the panel came back */
++	unsigned long last_recover;	/* jiffies of the last recovery reset */
+ };
+ 
+ /*
+@@ -177,6 +182,14 @@ static irqreturn_t chipone_tddi_irq(int irq, void *dev_id)
+ 	if (ret) {
+ 		dev_err_ratelimited(&cts->client->dev,
+ 				    "touch-info read failed: %d\n", ret);
++		/*
++		 * The IC lost its state with the panel's power (a resume, or the
++		 * display blanked and woken): the INT glitch at power-up lands
++		 * here. Reset it once the panel is up, at most once a second.
++		 */
++		if (!delayed_work_pending(&cts->recover) &&
++		    time_after(jiffies, cts->last_recover + HZ))
++			schedule_delayed_work(&cts->recover, msecs_to_jiffies(300));
+ 		return IRQ_HANDLED;
+ 	}
+ 
+@@ -196,6 +209,18 @@ static void chipone_tddi_reset(struct chipone_tddi *cts)
+ 	msleep(50);
+ }
+ 
++static void chipone_tddi_recover(struct work_struct *work)
++{
++	struct chipone_tddi *cts = container_of(to_delayed_work(work),
++						struct chipone_tddi, recover);
++
++	disable_irq(cts->client->irq);
++	chipone_tddi_reset(cts);
++	cts->last_recover = jiffies;
++	enable_irq(cts->client->irq);
++	dev_dbg(&cts->client->dev, "reset after a failed read\n");
++}
++
+ /*
+  * TDDI: the touch IC is part of the display driver IC and powers down with
+  * the panel. Once the DRM side suspends, the INT line glitches and any I2C
+@@ -214,6 +239,7 @@ static int chipone_pm_notify(struct notifier_block *nb, unsigned long action,
+ 
+ 	switch (action) {
+ 	case PM_SUSPEND_PREPARE:
++		cancel_delayed_work_sync(&cts->recover);
+ 		disable_irq(cts->client->irq);
+ 		break;
+ 	case PM_POST_SUSPEND:
+@@ -288,6 +314,12 @@ static int chipone_tddi_probe(struct i2c_client *client)
+ 	if (ret)
+ 		return dev_err_probe(dev, ret, "failed to init MT slots\n");
+ 
++	/* before the IRQ: devm frees the IRQ first, so nothing reschedules it */
++	ret = devm_delayed_work_autocancel(dev, &cts->recover,
++					   chipone_tddi_recover);
++	if (ret)
++		return ret;
++
+ 	ret = devm_request_threaded_irq(dev, client->irq, NULL,
+ 					chipone_tddi_irq, IRQF_ONESHOT,
+ 					dev_name(dev), cts);
