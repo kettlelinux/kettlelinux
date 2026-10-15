@@ -19,7 +19,8 @@
 //   SetGame(b)             whether a game is running
 //
 // Usage: kettle-motiond [--rate HZ] [--accel-rate HZ] [--matrix x1,x2,x3,y1,y2,y3,z1,z2,z3]
-//   --rate        sample rate requested from the gyroscope (default 400)
+//   --rate        sample rate requested from the gyroscope (default 250; it was 400, which woke the
+//                 daemon and InputPlumber for more samples than gyro aiming needs)
 //   --accel-rate  and from the accelerometer (default 100): it only gives Steam the direction
 //                 of gravity, which InputPlumber holds between its reports
 //   --matrix  rotates the Sensor Core's axes into the layout above (default: the device's
@@ -72,7 +73,7 @@ static const gchar introspection_xml[] =
 static GMainLoop *loop;
 static GDBusConnection *system_bus;
 static double matrix[3][3] = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
-static gdouble rate = 400;
+static gdouble rate = 250;
 static gdouble accel_rate = 100;
 static int exit_status;
 
@@ -457,7 +458,7 @@ int main(int argc, char **argv)
 	g_autoptr(GDBusNodeInfo) node = NULL;
 	gchar *matrix_str = NULL;
 	GOptionEntry options[] = {
-		{ "rate", 0, 0, G_OPTION_ARG_DOUBLE, &rate, "Gyroscope sample rate in Hz (default 400)", "HZ" },
+		{ "rate", 0, 0, G_OPTION_ARG_DOUBLE, &rate, "Gyroscope sample rate in Hz (default 250)", "HZ" },
 		{ "accel-rate", 0, 0, G_OPTION_ARG_DOUBLE, &accel_rate, "Accelerometer sample rate in Hz (default 100)", "HZ" },
 		{ "matrix", 0, 0, G_OPTION_ARG_STRING, &matrix_str, "Axis rotation, 9 values by rows", "M" },
 		{ NULL }
