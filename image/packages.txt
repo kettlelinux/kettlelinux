@@ -217,6 +217,10 @@ pyside6
 # (packages/kettle-gpu-priority; on for games through steam.service's gfx.txt)
 kettle-gpu-priority
 
+# Games that pin threads to the little cores get them moved to the fast ones (packages/
+# kettle-affinity; Game Settings adds its wrapper to Baldur's Gate 3's launch options)
+kettle-affinity
+
 # Steam games run natively on ARM64 (Game Settings > Run natively; packages/kettle-native): a
 # game's own .NET code on Mono (with ARM64 FNA libraries) or .NET instead of its x86-64 build
 # under FEX, and our pass-through Steam API for it (packages/kettle-steam-api)
