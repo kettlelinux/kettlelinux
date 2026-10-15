@@ -1,0 +1,66 @@
+# kettle-powerd's description of the Retroid Pocket Nova (QCS8550). Written before the device
+# arrived: the SoC is the Portal's and the Thor's, so the sysfs paths, the CPU clusters and the
+# GPU table are theirs; the TDP range is a placeholder until measured on a unit. Caps between
+# steps round down.
+
+[cpu]
+# cpufreq policies, smallest cluster first. cpu0 can't be taken offline.
+clusters = [
+  { name = "little", policy = 0, cpus = [0, 1, 2] },
+  { name = "mid", policy = 3, cpus = [3, 4, 5, 6] },
+  { name = "prime", policy = 7, cpus = [7] },
+]
+
+[gpu]
+devfreq = "/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu"
+# busy percentage (kernel patch 40-kettle/1110). By device name, not dri/0: under an EFI boot
+# simpledrm can take minor 0 for the boot framebuffer (as on the RP5)
+load = "/sys/kernel/debug/dri/ae01000.display-controller/perf_now"
+# lowest clock offered for a fixed (manual) GPU clock, MHz
+manual_min_mhz = 220
+
+[fan]
+hwmon = "pwmfan"
+cooling_device = "pwm-fan"
+# Custom curves always run the fan at full speed from here, whatever the curve says (C)
+full_speed_temp = 90
+# The device tree curve (the AYN common dtsi's pwm-fan, cooling-levels 0 30 45 60 70 90 120 150
+# of 255, bound one level per 5 C from 50 C by qcs8550-ayn-fan.dtsi), as percent: the starting
+# point for a custom curve. The Nova's smaller fan may want another curve: listen on a unit
+default_curve = [[45, 0], [50, 12], [60, 24], [70, 35], [80, 59], [90, 100]]
+
+[power]
+battery = "battery"
+charger = "qcom-battmgr-usb"
+# Share of the charger's input power that reaches the system and battery
+charger_efficiency = 0.9
+# Steam's TDP slider: whole-device draw in watts (screen included); max means no limit.
+# Placeholder: the Portal's and Thor's range; the Nova's smaller body and fan may need a lower top
+tdp_min = 4
+tdp_max = 18
+# Charging: the Nova's ADSP image is the Odin 2's (packages/kettle-firmware-ayn), whose battery
+# manager takes constant_charge_current (40-kettle/1190) on the Portal and Thor. Its battery
+# profile is the Odin 2's, though, and the Nova's own charge current is not known: until a unit
+# shows what the firmware does, Steam's charge limit is the charger's end threshold (the default)
+# and there are no charge speeds. remotes.d/kettle-power-charge.toml (device overlay) is left
+# out for the same reason.
+charge_limit_min = 55
+
+# Steam's performance profiles (Quick Access > Performance). Caps in kHz / MHz; a cluster
+# left out runs up to its highest frequency. The Portal's and Thor's.
+[[profile]]
+name = "Performance"
+
+[[profile]]
+name = "Balanced"
+little = 1785600
+mid = 2323200
+prime = 2476800
+gpu_mhz = 615
+
+[[profile]]
+name = "Powersave"
+little = 1459200
+mid = 1785600
+prime = 1843200
+gpu_mhz = 475
