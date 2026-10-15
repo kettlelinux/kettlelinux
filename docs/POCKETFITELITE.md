@@ -98,6 +98,13 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   gamepad and system buttons as one Deck controller in Steam, speakers, Wi-Fi (WCN7860) and
   Bluetooth, fan, battery reading, Steam login.
 - s2idle: RTC wake, `systemctl suspend` and the power key (sleep and wake), Wi-Fi back after.
+- Internal install (build 20261015.3): `kettle-install-internal` with a full backup (941 GiB
+  LUN 0 at ~400 MB/s, 6.5 GB compressed), Android kept 64 GiB; the ROCKNIX ABL v1.2 starts
+  `\KERNEL` from `kettle-esp` (*Boot source: Internal*) and the system runs from UFS. The UFS
+  tools needed `ufs-lib.sh` to find the LUNs by SCSI host (the SM8750 node is `ufs@`, not
+  `ufshc@`). The install's `efi-A`/`efi-B` (64 MiB on 4K-sector UFS) come out as FAT32 with
+  16316 clusters, under FAT32's minimum: not read on this boot path, but a strict FAT driver
+  (UEFI) would take them for FAT16.
 - CPU tables: six cores 384 MHz-3.53 GHz, two prime cores 1.02-4.09 GHz (this unit's bin).
 - Fixed in the dts after the first boots: the SD bus at SDR104 read the card with I/O errors
   every few seconds (`max-frequency` 100 MHz); the CDSP firmware crashed at every start and the
