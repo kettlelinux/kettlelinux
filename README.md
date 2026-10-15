@@ -22,6 +22,9 @@ own *Check for updates*.
 > **KONKR Pocket FIT Elite** (Snapdragon 8 Elite, SM8750): port in progress, not yet run on
 > hardware. See [docs/POCKETFITELITE.md](docs/POCKETFITELITE.md).
 >
+> **Retroid Pocket Nova** (QCS8550, the Portal's SoC, 4:3 screen): port in progress, not yet run
+> on hardware. See [docs/RPNOVA.md](docs/RPNOVA.md).
+>
 > Each device gets its own image and its own updates;
 > [docs/PORTING.md](docs/PORTING.md) has how devices are kept apart and how to add one.
 

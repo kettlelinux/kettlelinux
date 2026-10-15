@@ -33,3 +33,46 @@
 	trigger-left-deadzone = <100>;
 	trigger-right-deadzone = <100>;
 };
+
+/*
+ * Kettle Linux: the back paddles as a gpio-keys device of their own, as on the Portal
+ * (qcs8550-ayn-odin2portal.dts). The RP6 dts adds them to /gpio-keys, next to Volume Up, so
+ * InputPlumber taking the paddles in Game Mode would take Volume Up with them. The node name is
+ * the input device name InputPlumber matches ("gpio-keys-paddles"); its rsinput1 map turns
+ * BTN_Z/BTN_C into the left/right back paddles. Same TLMM GPIOs 57/58 and pinctrl as the RP6's.
+ */
+&{/gpio-keys} {
+	pinctrl-0 = <&volume_up_n>;
+
+	/delete-node/ key-paddle-left;
+	/delete-node/ key-paddle-right;
+};
+
+/ {
+	gpio-keys-paddles {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&paddle_keys_default>;
+
+		key-paddle-left {
+			label = "Back Paddle Left";
+			linux,code = <BTN_Z>;
+			gpios = <&tlmm 57 GPIO_ACTIVE_LOW>;
+			debounce-interval = <15>;
+		};
+
+		key-paddle-right {
+			label = "Back Paddle Right";
+			linux,code = <BTN_C>;
+			gpios = <&tlmm 58 GPIO_ACTIVE_LOW>;
+			debounce-interval = <15>;
+		};
+	};
+};
+
+/*
+ * Kettle Linux: the fan curve in the kernel, as on the AYN boards. The RP6 dts has the common
+ * dtsi's pwm-fan and its trip points but no cooling-maps (ROCKNIX drives the fan from
+ * userspace), so without this the fan would sit at its boot duty cycle.
+ */
+#include "qcs8550-ayn-fan.dtsi"

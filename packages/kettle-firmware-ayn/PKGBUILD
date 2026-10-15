@@ -1,5 +1,7 @@
 # Firmware for AYN's SM8550 handhelds, one package per device, only the files its drivers and
-# device tree ask for:
+# device tree ask for. The Retroid Pocket Nova's is here too: ROCKNIX's device tree for it (an
+# overlay on its RP6 dts) takes the Odin 2's ADSP and amplifier files, and its board is AYN's
+# reference design otherwise (the same audio topology, Wi-Fi and Bluetooth):
 #  - ROCKNIX extra-firmware (pinned commit): ADSP/CDSP, the amplifier and audio topology,
 #    WCN7850 Wi-Fi board data (ath12k board-2.bin, regdb.bin), the video decoder
 #  - upstream linux-firmware (pinned tag): WCN7850 Wi-Fi firmware (ath12k amss.bin, m3.bin).
@@ -11,12 +13,12 @@
 #    Bluetooth (HMT)
 # Valve's own linux-firmware-deckard is ignored (image/pacman.conf); these files are ours alone.
 pkgbase=kettle-firmware-ayn
-pkgname=(kettle-firmware-odin2portal kettle-firmware-thor)
+pkgname=(kettle-firmware-odin2portal kettle-firmware-thor kettle-firmware-rpnova)
 _extra_rev=e1eb71af80427aa1fec1659d2967f7ba8bef83b5
 _linux_fw=20260221-1
 _ath12k_fw=20260916
 pkgver=${_linux_fw%-*}.${_extra_rev:0:8}.$_ath12k_fw
-pkgrel=2
+pkgrel=3
 pkgdesc='Firmware for AYN SM8550 handhelds (DSPs, audio, GPU, Wi-Fi, Bluetooth)'
 arch=(any)
 url='https://github.com/ROCKNIX/extra-firmware'
@@ -75,12 +77,21 @@ _package() {
 
 package_kettle-firmware-odin2portal() {
   pkgdesc='Firmware for the AYN Odin 2 Portal (DSPs, audio, GPU, Wi-Fi, Bluetooth)'
-  conflicts=(kettle-firmware-thor)
+  conflicts=(kettle-firmware-thor kettle-firmware-rpnova)
   _package odin2portal AYN-Odin2
 }
 
 package_kettle-firmware-thor() {
   pkgdesc='Firmware for the AYN Thor (DSPs, audio, GPU, Wi-Fi, Bluetooth)'
-  conflicts=(kettle-firmware-odin2portal)
+  conflicts=(kettle-firmware-odin2portal kettle-firmware-rpnova)
   _package thor AYN-Thor
+}
+
+# The Odin 2's ADSP image carries its battery manager (battmgr.jsn, and the battery profiles in
+# adsp_dtb.mbn) for the Odin 2's battery, not the Nova's 5000 mAh one: ROCKNIX ships it this
+# way, but a unit's own Android ADSP files may suit it better (docs/RPNOVA.md)
+package_kettle-firmware-rpnova() {
+  pkgdesc='Firmware for the Retroid Pocket Nova (DSPs, audio, GPU, Wi-Fi, Bluetooth)'
+  conflicts=(kettle-firmware-odin2portal kettle-firmware-thor)
+  _package odin2 AYN-Odin2
 }

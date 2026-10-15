@@ -4,7 +4,9 @@ Kettle Linux builds one image per device from the same sources. Most of an image
 kernel, the packages, and `device/common/overlay`. What a device adds is kept in
 `device/<name>/`, so a new device is a new directory, not changes to shared scripts. The Odin 2
 Portal (`odin2portal`) and the AYN Thor (`thor`) are the examples to copy; the Retroid Pocket 5
-(`rp5`, [RP5.md](RP5.md)) is the example of a device on another SoC (SM8250).
+(`rp5`, [RP5.md](RP5.md)) is the example of a device on another SoC (SM8250), and the Retroid
+Pocket Nova (`rpnova`, [RPNOVA.md](RPNOVA.md)) of another maker's board on an SoC Kettle already
+runs, which adds split packages to the existing firmware and UCM packages.
 
 ## Shared or per-device?
 - **Shared** is anything that works the same, or better, on every device: a bug fix, a newer

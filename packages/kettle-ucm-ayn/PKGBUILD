@@ -1,10 +1,12 @@
 # ALSA UCM profiles for AYN's SM8550 handhelds, one package per device, from ROCKNIX's
 # alsa-ucm-conf patches (distribution @ 5607f6e1): card "AYN-Odin2" (Odin 2 family, the Portal)
-# and card "AYN-Thor". Only new files: Valve's alsa-ucm-conf stays untouched.
+# and card "AYN-Thor". The Retroid Pocket Nova's device tree (ROCKNIX's, over its RP6 dts) names
+# its card "AYN-Odin2" too, with the same amplifiers, so it takes the Odin 2 profile. Only new
+# files: Valve's alsa-ucm-conf stays untouched.
 pkgbase=kettle-ucm-ayn
-pkgname=(kettle-ucm-odin2portal kettle-ucm-thor)
+pkgname=(kettle-ucm-odin2portal kettle-ucm-thor kettle-ucm-rpnova)
 pkgver=1.0.0
-pkgrel=4
+pkgrel=5
 pkgdesc='ALSA UCM profiles for AYN SM8550 handhelds'
 arch=(any)
 license=(BSD-3-Clause)
@@ -40,16 +42,24 @@ _package() {
 
 package_kettle-ucm-odin2portal() {
   pkgdesc='ALSA UCM profile for the AYN Odin 2 Portal'
-  conflicts=(kettle-ucm-thor)  # both have conf.d/sm8550/ayn-AYNOdin2.conf
+  conflicts=(kettle-ucm-thor kettle-ucm-rpnova)  # all have conf.d/sm8550/ayn-AYNOdin2.conf
   _package Odin2 AYN-Odin2 ayn-AYNOdin2- ayn-AYNOdin2
 }
 
 package_kettle-ucm-thor() {
   pkgdesc='ALSA UCM profile for the AYN Thor'
-  conflicts=(kettle-ucm-odin2portal)
+  conflicts=(kettle-ucm-odin2portal kettle-ucm-rpnova)
   _package Thor AYN-Thor ayn-AYNThor- ayn-AYNThor
   # The U-Boot on Thors reports the same SMBIOS product as the Odin 2's ("AYN Odin 2"), so
   # booted through EFI the Thor's card is "ayn-AYNOdin2" too (seen on a Thor): the Portal's
   # alias, pointing at the Thor's profile here (the two packages conflict)
   ln -s ../../AYN/Thor/AYN-Thor.conf "$pkgdir/usr/share/alsa/ucm2/conf.d/sm8550/ayn-AYNOdin2.conf"
+}
+
+package_kettle-ucm-rpnova() {
+  pkgdesc='ALSA UCM profile for the Retroid Pocket Nova'
+  conflicts=(kettle-ucm-odin2portal kettle-ucm-thor)
+  # the card's longname is "AYN-Odin2" without SMBIOS; what the ROCKNIX ABL's EFI reports is not
+  # known yet, so the Odin 2's EFI aliases come along too
+  _package Odin2 AYN-Odin2 ayn-AYNOdin2- ayn-AYNOdin2
 }
