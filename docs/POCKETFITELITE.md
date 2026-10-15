@@ -3,8 +3,8 @@
 The Pocket FIT Elite (KONKR is AYANEO's sub-brand) is the first Kettle device on the Snapdragon 8
 Elite (SM8750, Adreno 830). This is the 24 GB / 1 TB model. It uses the same kernel build: SM8750
 support is a patch directory and a config fragment next to the SM8550 and SM8250 ones. It also
-uses the same userspace and the same A/B updates. **The port was written before a unit arrived:
-nothing below has run on hardware yet.** How its files are kept apart from the other devices':
+uses the same userspace and the same A/B updates. The port was written before a unit arrived;
+it first booted on one on 2026-10-15 (build 20261015.2), see [Verified on a unit](#verified-on-a-unit). How its files are kept apart from the other devices':
 [PORTING.md](PORTING.md).
 
 The references are ROCKNIX's SM8750 device (`projects/ROCKNIX/devices/SM8750`, `next` @
@@ -33,17 +33,22 @@ scripts/build-packages.sh kettle-firmware-konkr kettle-ucm-konkr kettle-power in
 KETTLE_DEVICE=pocketfitelite scripts/build-image.sh    # -> out/kettle-<build>-pocketfitelite.img
 ```
 
-## Booting (planned)
+## Booting
 There is no U-Boot for SM8750 (mainline U-Boot has no SM8750 clock driver, [BOOTLOADER.md](BOOTLOADER.md)).
 The image boots through ROCKNIX's ABL, as ROCKNIX does:
-- ROCKNIX's SM8750 ABL build (`abl_signed-SM8750.elf`, already in `packages/rocknix-abl`) replaces
-  the stock ABL. ROCKNIX flashes it from rooted Android (`backup_abl.sh`, `flash_abl.sh`).
-- With the ABL in place, holding Volume Down at power-on opens its menu. From there it boots
-  `\KERNEL` from the SD card: our kernel with the `sm8750-*` dtbs appended (`ABL_DTBS`). It
-  picks the dtb by `qcom,msm-id` and `qcom,board-id`.
-- Still to find out on the unit: whether the bootloader must be unlocked (rooting Android needs
-  it), how to reach EDL, and whether KONKR's firmware offers a UEFI path like the Odin 3's.
-- An install guide (like [INSTALL-RP5.md](INSTALL-RP5.md)) follows once a unit has booted.
+- ROCKNIX's SM8750 ABL build (`abl_signed-SM8750.elf`, in `packages/rocknix-abl`) replaces the
+  stock ABL in `abl_a` and `abl_b`. The unit came with its bootloader unlocked
+  (`ro.boot.verifiedbootstate=orange`), and stock Android ships AYANEO's pre-root helper
+  `/product/bin/xsu`, which runs a command as root from `adb shell` without Magisk:
+  `xsu dd if=… of=/dev/block/by-name/abl_a`. Run it detached (`(nohup /product/bin/xsu … &)`):
+  in the foreground `adb` loses the device. Some invocations silently don't run and its output
+  loses lines, so back up both slots first and read every write back (after
+  `echo 3 > /proc/sys/vm/drop_caches`) before rebooting. The two stock slots held different ABL
+  versions.
+- With the ABL in place, holding Volume Down at power-on opens its menu (Boot mode Linux). It
+  starts Kettle's steamcl (`\EFI\BOOT\BOOTAA64.EFI`), then GRUB with `DTB`.
+- Still to find out: how to reach EDL, and whether KONKR's firmware offers a UEFI path like the
+  Odin 3's. An install guide (like [INSTALL-RP5.md](INSTALL-RP5.md)) is still to write.
 
 ## What is different from the other devices
 - **Kernel** (`kernel/patches/22-sm8750`): 33 of ROCKNIX's SM8750 patches (one of them in Armada's version) and two of Armada's. They add GPU clock and
@@ -86,18 +91,33 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
 - **Charging**: no charge speeds or `current` charge limit yet. It is not known whether the SM8750
   battery manager takes `constant_charge_current` (`40-kettle/1190`) as the Portal's does.
 
+## Verified on a unit
+2026-10-15, build 20261015.2 with the dts fixes below (24 GB / 1 TB unit):
+- Boots from the SD card through the ROCKNIX ABL; panel (`DSI-1`, 1080x1920, 144/120 Hz),
+  rotation and Steam UI scale, touch, Adreno 830 (Turnip Vulkan, all 14 OPPs 160-1100 MHz),
+  gamepad and system buttons as one Deck controller in Steam, speakers, Wi-Fi (WCN7860) and
+  Bluetooth, fan, battery reading, Steam login.
+- s2idle: RTC wake, `systemctl suspend` and the power key (sleep and wake), Wi-Fi back after.
+- CPU tables: six cores 384 MHz-3.53 GHz, two prime cores 1.02-4.09 GHz (this unit's bin).
+- Fixed in the dts after the first boots: the SD bus at SDR104 read the card with I/O errors
+  every few seconds (`max-frequency` 100 MHz); the CDSP firmware crashed at every start and the
+  recovery loop restarted it ~5 times a second (CDSP disabled); PCIe waited forever on the
+  CoreSight TNOC under `fw_devlink.strict=1` (TNOC disabled), so there was no Wi-Fi.
+- Open: the WCN7860 twice stopped answering (ath12k `-108`, no firmware crash logged), once
+  22 s into a boot and once after a resume, and iwd crashed with it; other boots and resumes
+  were fine. Haptics (no node in the dts). One early power-key suspend didn't wake (during a
+  boot with that failure; not seen since).
+
 ## Still to check, by hand
-- Boot: the ABL flash, the dtb pick, panel rotation (`GAMESCOPE_ORIENTATION=right`,
-  KWin `Rotated270`; if upside down, swap to `left`/`Rotated90`), the refresh rates.
-- GPU chip id and Vulkan (Turnip on A830), the zap shader, GPU frequency table and speed bin.
-- CPU frequency tables (SCMI) for the profiles in `packages/kettle-power/pocket-fit-elite.toml`,
-  and measured TDP limits (the 4-22 W range there is a placeholder).
+- Desktop Mode rotation (KWin `Rotated270`), the refresh rates in use, a game under load.
+- Measured TDP limits (the 4-22 W range in `packages/kettle-power/pocket-fit-elite.toml` is a
+  placeholder) and the profiles' power draw.
 - Fan trips and noise; the fan's tach (`fan1_input`).
 - The button map against the physical buttons; the stick RGB in `kettle-leds` (one multicolor
   LED for both rings, where the AYN devices have `rgb:{l,r}N`).
 - Gyro: there is no IMU node in the dts, so it is probably the ADSP's Sensor Core as on the
   Portal and Thor (`kettle-motion` would need a `[konkr,pocket-fit-elite]` matrix).
-- Suspend (s2idle, with the PCIe suspend OPP), Wi-Fi/BT, DisplayPort out and its audio, the USB-C orientation GPIO (marked TODO in the
-  dts), the charger and the charge limit, speakers and the jack.
+- The intermittent WCN7860 loss above; suspend over many cycles; DisplayPort out and its audio, the USB-C orientation GPIO (marked TODO in the
+  dts), the charger and the charge limit, the headphone jack.
 - `60-kettle-usb-power.rules` and `60-kettle-ath12k-iommu-fq.rules` match SM8550's USB controller
   and WCN7850 only. Extend them to SM8750/WCN7860 once tested.
