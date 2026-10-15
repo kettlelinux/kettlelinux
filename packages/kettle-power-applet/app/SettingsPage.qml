@@ -258,7 +258,7 @@ QQC2.ScrollView {
             SwitchRow {
                 visible: page.gameMode
                 text: "Auto TDP"
-                value: page.power.settings.auto_tdp ?? false
+                value: page.power.settings.auto_tdp ?? true
                 onPicked: on => page.update({auto_tdp: on})
             }
             Hint {

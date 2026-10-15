@@ -88,6 +88,8 @@ _cat = None
 # games.json is read, changed and written back by several calls, some of which wait on the network
 # in between: each change happens under this lock on a fresh copy, so none undoes another's
 _games_lock = asyncio.Lock()
+# Frame Gen's games.json, changed in a thread (holding the refresh rate takes a while)
+_fg_lock = asyncio.Lock()
 _cache: dict[int, tuple[float, dict]] = {}
 _engine_cache: dict[str, tuple[float, dict]] = {}
 
@@ -620,8 +622,9 @@ class Plugin:
         return await self.perf_get_game(appid)
 
     async def get_refresh(self) -> dict:
-        """The rates there are, the all-games one (set in Device Settings), and the games' own."""
-        return {**refresh.all_games(), "games": refresh.game_rates()}
+        """The rates there are, the all-games one (set in Device Settings), the games' own, and
+        Frame Gen's (which wins while it's on for a game)."""
+        return {**refresh.all_games(), "games": refresh.game_rates(), "framegen": refresh.framegen_games()}
 
     async def set_game_refresh(self, appid: int, hz: int | None, running: bool) -> dict:
         """hz None: the game follows the all-games rate; running: held now, the game is running."""
@@ -632,7 +635,7 @@ class Plugin:
             rates[str(appid)] = int(hz)
         await asyncio.to_thread(refresh.save_game_rates, rates)
         if running:
-            await asyncio.to_thread(refresh.hold, rates.get(str(appid), refresh.all_games()["hz"]))
+            await asyncio.to_thread(refresh.hold, refresh.effective(str(appid)))
         decky.logger.info("game settings: game %s refresh %s", appid, "all games'" if hz is None else hz)
         return await self.get_refresh()
 
@@ -664,11 +667,14 @@ class Plugin:
     async def fg_get_game(self, appid: int) -> dict:
         return framegen.get_game(appid)
 
-    async def fg_set_game(self, appid: int, settings: dict) -> dict:
-        return framegen.set_game(appid, settings)
+    async def fg_set_game(self, appid: int, settings: dict, running: bool) -> dict:
+        """running: the game is running, its refresh rate changes now."""
+        async with _fg_lock:
+            return await asyncio.to_thread(framegen.set_game, appid, settings, running)
 
-    async def fg_reset_game(self, appid: int) -> dict:
-        return framegen.reset_game(appid)
+    async def fg_reset_game(self, appid: int, running: bool) -> dict:
+        async with _fg_lock:
+            return await asyncio.to_thread(framegen.reset_game, appid, running)
 
     # ---------- Extras: community Protons and optional components ----------
 
@@ -698,7 +704,7 @@ class Plugin:
         decky.logger.info("game settings: %d games with a profile, database %s", n, _server() or "off")
         decky.logger.info("upscaling: OptiScaler %s", upscaling._version() or "not installed")
         decky.logger.info("extras: %d optional components offered", len(extras._manifest(log=True)))
-        self._framegen = asyncio.create_task(framegen.run())
+        framegen.setup()
         try:
             info = await self.perf_info()
             decky.logger.info("performance: kettle-powerd up, fan control %s", info["fan"])
@@ -708,5 +714,4 @@ class Plugin:
             decky.logger.error("performance: kettle-powerd's info: %s", e)
 
     async def _unload(self):
-        if getattr(self, "_framegen", None):
-            self._framegen.cancel()
+        pass

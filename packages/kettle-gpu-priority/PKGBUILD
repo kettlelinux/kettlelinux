@@ -1,0 +1,24 @@
+# Kettle Linux's game GPU priority: an implicit Vulkan layer (VK_LAYER_KETTLE_game_priority,
+# game_priority.c) that gives a game's queues LOW global priority, so the Steam UI preempts the
+# game's GPU work instead of waiting behind its frames. On when KETTLE_GAME_LOWPRIO=1, which
+# steam.service puts in the games' environment (gfx.txt). Proton ARM64 and native arm64 games
+# use the native aarch64 Vulkan loader, so this one layer covers them.
+pkgname=kettle-gpu-priority
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Kettle Linux: games run at low GPU priority, below the Steam UI'
+arch=(aarch64)
+license=(BSD-3-Clause)
+depends=(glibc vulkan-icd-loader)
+makedepends=(vulkan-headers)
+
+build() {
+  cc $CFLAGS $LDFLAGS -shared -fPIC -fvisibility=hidden -o libVkLayer_kettle_game_priority.so \
+    "$startdir/game_priority.c" -lpthread
+}
+
+package() {
+  install -Dm755 libVkLayer_kettle_game_priority.so -t "$pkgdir/usr/lib"
+  install -Dm644 "$startdir/VkLayer_kettle_game_priority.json" -t "$pkgdir/usr/share/vulkan/implicit_layer.d"
+  install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}

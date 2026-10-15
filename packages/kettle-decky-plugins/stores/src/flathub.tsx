@@ -1,10 +1,11 @@
 // Flathub in Game Stores: the apps Flathub builds for ARM64, by category or searched (the tab), and
 // an app's page: installing it for the user (the same Flatpak installation as the Welcome plugin's
-// Gaming Extras), playing, updating and uninstalling it. Installs go through the backend's job
+// Gaming Extras), playing, updating and uninstalling it, and whether it opens in the nested desktop
+// (apps that aren't games do, unless switched off). Installs go through the backend's job
 // queue like the stores' games, and index.tsx adds a finished one to Steam (shortcuts.ts).
-import { ButtonItem, ConfirmModal, Dropdown, Field, Focusable, Navigation, TextField, showModal } from "@decky/ui";
+import { ButtonItem, ConfirmModal, Dropdown, Field, Focusable, Navigation, TextField, ToggleField, showModal } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
-import { FlathubApp, FlathubCategory, FlathubDetails, cancel, flathubApp, flathubBrowse, install, size, status, uninstall } from "./api";
+import { FlathubApp, FlathubCategory, FlathubDetails, cancel, flathubApp, flathubBrowse, install, setFlathubDesktop, size, status, uninstall } from "./api";
 import { addShortcut, inLibrary, play, removeShortcut } from "./shortcuts";
 import { JobProgress, act, dim, openGame, small, usePoll } from "./ui";
 
@@ -267,12 +268,28 @@ export function FlathubPage({ id }: { id: string }) {
               Uninstall
             </ButtonItem>
           )}
+          {a.can_desktop && (installed || a.arm64) && (
+            <ToggleField
+              label="Open in the desktop"
+              description="Starts it in the desktop inside Game Mode, with the mouse controls: for apps made for a mouse and keyboard. Games start on their own."
+              checked={a.desktop}
+              onChange={(on) =>
+                act(async () => {
+                  await setFlathubDesktop(id, on);
+                  if (shortcut) await addShortcut("flathub", id, shortcut, true);
+                  reload();
+                }, "Changing how it opens failed")
+              }
+            />
+          )}
           <ButtonItem layout="below" onClick={() => Navigation.NavigateBack()}>
             Back
           </ButtonItem>
         </Focusable>
         {installed && shortcut && (
-          <p style={{ ...small, ...dim }}>In your Steam library as {a.installed!.title}, started with flatpak run.</p>
+          <p style={{ ...small, ...dim }}>
+            In your Steam library as {a.installed!.title}, {a.desktop ? "opened in the desktop" : "started with flatpak run"}.
+          </p>
         )}
         <About a={a} />
       </div>

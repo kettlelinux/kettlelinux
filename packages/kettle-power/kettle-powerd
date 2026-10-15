@@ -18,12 +18,15 @@ parking; and the charge speed (a preset, or a current of its own) and the fan wh
 asleep (pwm-fan's pwm1_sleep_charging, kernel 40-kettle/1300), for every game. Every cap source is combined here, the lowest wins, so no two writers fight over
 scaling_max_freq or devfreq max_freq.
 
-Auto TDP (per game, off by default): the lowest CPU/GPU caps that still hold the game at
+Auto TDP (per game, on by default since 2026-10-15): the lowest CPU/GPU caps that still hold the game at
 Steam's frame rate limit (gamescope's GAMESCOPE_FPS_LIMIT, which Device Settings passes on with
 SetFpsLimit), or at the display's refresh rate without one. The frame rate comes from our
 mangoapp build's $XDG_RUNTIME_DIR/kettle-fps (packages/mangohud 0005). It walks the caps down
 while the game holds the target, back up as soon as it falls short on a unit at its limit, and keeps off a
-step that failed for a while. Steam's TDP limit still applies on top.
+step that failed for a while. A game held back by the GPU at its full clock holds all it can: only
+the CPU is lowered then, until the GPU stops being the limit. A game that stays below the target
+without any of Auto TDP's caps (its own frame cap, its CPU) is held at the frame rate it reaches
+there instead. Steam's TDP limit still applies on top.
 
   kettle-powerd            run the daemon (system bus, root)
   kettle-powerd --restore  hand the fan back to the kernel and lift every cap, the GPU's to
@@ -73,6 +76,8 @@ AUTO_BACKOFF_MAX = 4  # each time that step fails again, up to this many times a
 AUTO_UNDER = 0.95  # below this share of the target (over two seconds) the game falls short
 AUTO_GPU_BUSY = 0.9  # a capped GPU this busy is at its limit
 AUTO_STUCK = 3  # ticks falling short with neither unit at its limit before raising anyway
+AUTO_REACH = 10  # ticks of frame rates without Auto TDP's caps that tell what a game reaches
+AUTO_PROBE = 30  # ticks holding a reached rate below the target before checking it without the caps
 MAX_GAMES = 500  # games with settings of their own kept, the least recently set go first
 
 
@@ -362,6 +367,8 @@ class Daemon:
             "charge_speed": "",
             "charge_custom_ua": 0,
             "sleep_fan": 0,  # fan percent while charging asleep, 0: off
+            # Auto TDP became on by default; an older state.json gets that once (see load)
+            "auto_tdp_default_on": True,
         }
         self.saved = None  # state.json as last written, so an unchanged state isn't written again
         self.load()
@@ -427,7 +434,7 @@ class Daemon:
         out = {"fan": {"mode": mode, "curve": curve, "fixed": to_int(fan.get("fixed"), 50, 0, 100)},
                "cpu": {"mid_cores": to_int(cpu.get("mid_cores"), 4, 1, 4),
                        "prime_core": bool(cpu.get("prime_core", True))},
-               "auto_tdp": bool(g.get("auto_tdp", False))}
+               "auto_tdp": bool(g.get("auto_tdp", True))}
         for c in self.cfg["cpu"]["clusters"]:
             out["cpu"][c["name"]] = to_int(cpu.get(c["name"]), None, 0, 1 << 31) or None
         return out
@@ -498,6 +505,15 @@ class Daemon:
                 self.state["games"][k] = self.normalize(v)
             except Exception as e:  # whatever is in it, the rest still loads
                 log(f"{STATE}: dropped the settings of {k!r}: {e!r}")
+        # Auto TDP was off by default until 2026-10-15, and every save wrote auto_tdp: false
+        # with the rest of a game's settings, so a saved false rarely meant a choice: once, on
+        # the first start with this version, every game's (and all games') is turned on. The
+        # desktop's stays as it was.
+        if not saved.get("auto_tdp_default_on"):
+            for k, v in self.state["games"].items():
+                if k != "desktop":
+                    v["auto_tdp"] = True
+            log("Auto TDP is on by default now: turned on for every game's saved settings")
         self.trim_games()
         if self.state["steam"]["profile"] not in self.profiles:
             self.state["steam"]["profile"] = next(iter(self.profiles), "")
@@ -643,7 +659,7 @@ class Daemon:
         if level is None:
             level = kernel_fan_level(self.hw.fan_temp(), read_int(f"{self.hw.fan_cdev}/max_state", 7))
         self.set_zone_policy("step_wise", self.hw.fan_zones)  # every one: an older kettle-powerd took them all
-        write(f"{self.hw.fan_cdev}/cur_state", level)
+        set_fan_level(self.hw.fan_cdev, level)
         self.fan_saved_cdev = None
         self.fan_pct = None
 
@@ -709,6 +725,7 @@ class Daemon:
             gpu_busy = 1.0
         cpu_room = len(self.cpu_ladder) - 1 - self.tdp_cpu
         gpu_room = len(self.gpu_steps()) - 1 - self.tdp_gpu
+        limit = self.state["steam"]["tdp"]
         err = self.power - limit
         steps = 2 if abs(err) > 3 else 1
         before = (self.tdp_cpu, self.tdp_gpu)
@@ -750,6 +767,11 @@ class Daemon:
         self.auto_block = {}  # unit -> (step it fell short at, tick it may be tried again)
         self.auto_fails = {}  # (unit, step) -> times the game fell short there
         self.auto_peak = {"cpu": 0.0, "gpu": 0}  # highest CPU share / GPU clock while holding
+        self.auto_from = {}  # unit -> its step before it was lowered last, where a failure goes back to
+        self.auto_gpu_prev = None  # the GPU's load a tick before
+        self.auto_reach = []  # frame rates below the target without Auto TDP's caps, the latest last
+        self.auto_probe = 0  # ticks holding a reached rate below the target under the caps
+        self.auto_probe_back = None  # (cpu step, gpu step, rate held) while the caps are off to check it
         self.auto_fps = None  # the frame rate and target judged last (Device Settings' Diagnostics readout)
         self.auto_target = None
 
@@ -780,20 +802,71 @@ class Daemon:
         if target <= 0:
             return False
         self.auto_idle = 0
-        self.auto_fps, self.auto_target = f["fps"], target
         # over two seconds: a game whose frames miss a refresh now and then (Skyrim at 60 fps
         # does at any clock) dips a frame or two in one second
         fps = f["fps"] if self.auto_prev is None else (f["fps"] + self.auto_prev) / 2
         self.auto_prev = f["fps"]
-        short = fps < target * AUTO_UNDER
+        gpu_busy = self.hw.gpu_busy()
+        under = fps < target * AUTO_UNDER
+        # below the target with the GPU at its full clock and busy in this reading and the one
+        # before (each is the GPU's last 50 ms): the frame rate is the GPU's, and no CPU clock
+        # raises it. The game holds all it can, and a CPU cap that starts to hold it back shows
+        # as the GPU idling.
+        gpu_bound = (under and gpu_busy is not None and self.auto_gpu == 0
+                     and min(gpu_busy, self.auto_gpu_prev if self.auto_gpu_prev is not None else gpu_busy) >= AUTO_GPU_BUSY)
+        self.auto_gpu_prev = gpu_busy
+        if gpu_busy is None:
+            gpu_busy = 1.0
+        # what the game reaches without Auto TDP's caps, when that is below the target (its own
+        # frame cap, or its CPU or GPU at full clock): held instead of the target, which it would
+        # fall short of whatever the caps. A rate well above it under the caps (a lighter scene)
+        # is held from then on.
+        reach = self.auto_reach
+        if not (self.auto_cpu or self.auto_gpu):
+            if under:
+                reach.append(fps)
+                del reach[:-AUTO_REACH]
+            else:
+                reach.clear()
+        elif reach and fps * AUTO_UNDER > max(reach):
+            reach[:] = [fps]
+        goal = target
+        if len(reach) >= AUTO_SETTLE or (reach and (self.auto_cpu or self.auto_gpu)):
+            goal = min(target, sorted(reach)[len(reach) // 2])
+        self.auto_fps, self.auto_target = f["fps"], round(goal)
+        # a lighter scene that the caps keep at the rate held looks just like a game at its own
+        # cap: now and then the caps come off for a few ticks, to see what the game reaches now.
+        # The same rate: straight back to the caps. More: held from there, and lowered again.
+        if self.auto_probe_back is not None:
+            if not under:
+                self.auto_probe_back = None  # it reaches the target now
+            elif len(reach) >= AUTO_SETTLE:
+                cpu, gpu, held = self.auto_probe_back
+                self.auto_probe_back = None
+                if goal * AUTO_UNDER <= held:
+                    self.auto_cpu, self.auto_gpu = cpu, gpu
+                    self.auto_wait = AUTO_DWELL
+                    return True
+            else:
+                return False
+        elif goal < target and (self.auto_cpu or self.auto_gpu) and not gpu_bound:
+            # (not with the GPU at its limit: no CPU cap holds the game back then, and the GPU
+            # idling shows when one starts to)
+            self.auto_probe += 1
+            if self.auto_probe >= AUTO_PROBE:
+                self.auto_probe = 0
+                self.auto_probe_back = (self.auto_cpu, self.auto_gpu, goal)
+                self.auto_cpu = self.auto_gpu = 0
+                self.auto_last = None
+                self.auto_prev = None  # the frame rates measured from here are the uncapped ones
+                reach.clear()
+                return True
+        short = fps < goal * AUTO_UNDER and not gpu_bound
         self.auto_short = self.auto_short + 1 if short else 0
         # a cap just lowered that makes the game fall short goes back at once
         if self.auto_wait and not (short and self.auto_last):
             self.auto_wait -= 1
             return False
-        gpu_busy = self.hw.gpu_busy()
-        if gpu_busy is None:
-            gpu_busy = 1.0
         before = (self.auto_cpu, self.auto_gpu)
         if short:
             self.auto_steady = 0
@@ -805,20 +878,22 @@ class Daemon:
             limit = {"gpu": self.auto_gpu > 0 and gpu_busy >= AUTO_GPU_BUSY,
                      "cpu": self.auto_cpu > 0 and any(
                          (read_int(f"{c['path']}/scaling_cur_freq") or 0) >= cpu_caps[c["name"]] for c in self.hw.clusters)}
-            stuck = self.auto_short >= AUTO_STUCK or fps < target * 0.85
+            stuck = self.auto_short >= AUTO_STUCK or fps < goal * 0.85
             if self.auto_last and (limit[self.auto_last] or stuck):
-                # the last cap lowered did it: back up, and keep off that step for a while,
-                # longer each time it fails again
+                # the last cap lowered did it: back up to where it was lowered from (a lowering
+                # may skip steps), and keep off the step below that for a while, longer each
+                # time it fails again
                 unit = self.auto_last
                 step = getattr(self, f"auto_{unit}")
-                fails = self.auto_fails[(unit, step)] = self.auto_fails.get((unit, step), 0) + 1
-                self.auto_block[unit] = (step, self.ticks + AUTO_BACKOFF * min(AUTO_BACKOFF_MAX, 2 ** (fails - 1)))
-                setattr(self, f"auto_{unit}", step - 1)
+                back = max(0, min(step - 1, self.auto_from.get(unit, step - 1)))
+                fails = self.auto_fails[(unit, back + 1)] = self.auto_fails.get((unit, back + 1), 0) + 1
+                self.auto_block[unit] = (back + 1, self.ticks + AUTO_BACKOFF * min(AUTO_BACKOFF_MAX, 2 ** (fails - 1)))
+                setattr(self, f"auto_{unit}", back)
                 self.auto_last = None
             elif limit["gpu"] or limit["cpu"] or stuck:
                 # the game got heavier: give a unit at its limit its clock back (the GPU first),
                 # else the busier one; faster when far short
-                for _ in range(2 if fps < target * 0.85 else 1):
+                for _ in range(2 if fps < goal * 0.85 else 1):
                     gpu_first = limit["gpu"] if limit["gpu"] != limit["cpu"] else gpu_busy >= self.cpu_load
                     if (gpu_first or not self.auto_cpu) and self.auto_gpu:
                         self.auto_gpu -= 1
@@ -833,15 +908,16 @@ class Daemon:
                 if cur:
                     self.auto_peak["cpu"] = max(self.auto_peak["cpu"], cur / c["base_max"])
             if self.auto_steady >= AUTO_SETTLE:
-                self.auto_lower(gpu_busy)
+                self.auto_lower(gpu_busy, gpu_bound)
         if (self.auto_cpu, self.auto_gpu) != before:
             self.auto_wait = AUTO_DWELL
             return True
         return False
 
-    def auto_lower(self, gpu_busy):
-        """One cap lower, on the less busy unit not kept off its next step. A cap above what the
-        unit ran at lately changes nothing, so it goes straight to the first one below that."""
+    def auto_lower(self, gpu_busy, gpu_bound=False):
+        """One cap lower, on the less busy unit not kept off its next step (the CPU only while the
+        GPU is the limit). A cap above what the unit ran at lately changes nothing, so it goes
+        straight to the first one below that."""
         self.auto_steady = 0
         gf = self.gpu_steps()
         # first step whose cap is below the peak: GPU caps run down the table, CPU shares down
@@ -854,7 +930,7 @@ class Daemon:
         busy = {"gpu": gpu_busy, "cpu": self.cpu_load}
         self.auto_peak = {"cpu": 0.0, "gpu": 0}
         options = {}
-        for unit in ("gpu", "cpu"):
+        for unit in ("cpu",) if gpu_bound else ("gpu", "cpu"):
             limit = top[unit]
             block = self.auto_block.get(unit)
             if block and self.ticks < block[1]:
@@ -864,6 +940,7 @@ class Daemon:
                 options[unit] = min(limit, max(step + 1, bind[unit]))
         if options:
             unit = min(options, key=lambda u: busy[u])  # a tie goes to the GPU
+            self.auto_from[unit] = getattr(self, f"auto_{unit}")
             setattr(self, f"auto_{unit}", options[unit])
             self.auto_last = unit
 
@@ -1288,6 +1365,16 @@ def kernel_fan_level(temp, max_state):
     return max(0, min(max_state, int((temp - 50) // 5) + 1)) if temp >= 50 else 0
 
 
+def set_fan_level(cdev, level):
+    """The fan at a cooling level of the device tree curve. pwm-fan skips a write of the level it
+    holds, and a speed set here through pwm1 counts as a level too (any speed above the curve's
+    top is its top level): a full speed custom fan stayed at full speed after it was given back,
+    until the temperature changed level. A step through another level makes the write take."""
+    if read_int(f"{cdev}/cur_state", -1) == level:
+        write(f"{cdev}/cur_state", level - 1 if level else 1)
+    write(f"{cdev}/cur_state", level)
+
+
 def restore(hw, daemon=None):
     """The fan back to the kernel's curve, every CPU online, no caps."""
     if daemon:
@@ -1296,8 +1383,7 @@ def restore(hw, daemon=None):
         for z in hw.fan_zones:
             write(f"{z}/policy", "step_wise")
         if hw.fan_cdev:
-            write(f"{hw.fan_cdev}/cur_state",
-                  kernel_fan_level(hw.fan_temp(), read_int(f"{hw.fan_cdev}/max_state", 7)))
+            set_fan_level(hw.fan_cdev, kernel_fan_level(hw.fan_temp(), read_int(f"{hw.fan_cdev}/max_state", 7)))
     for c in hw.cfg["cpu"]["clusters"]:
         for cpu_id in c["cpus"]:
             if cpu_id != 0 and read_int(f"/sys/devices/system/cpu/cpu{cpu_id}/online") == 0:

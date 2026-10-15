@@ -1,0 +1,655 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] Input: rsinput: wait for the params ack, reset on a retry, init off the resume path
+
+The MCU init sent the parameter command (which selects framed reports)
+and returned success without waiting for its acknowledgement, so a lost
+params command left a dead or free-running pad that nothing retried.
+Wait for the DATA_COMMOD_SET_PAR reply (or the first status report:
+the reports are what the params are for) as the version request
+already is, and start over when either is missing. The wait window is
+now under a spinlock, so a late reply to one request cannot complete
+the next, and a CMD_COMMOD frame without a payload is not read as one.
+
+A retry did not reset anything: the AYN boards have no reset line and
+the power-on sequence only ever raised enable. Drop enable for the
+100 ms settle so each attempt power-cycles the MCU.
+
+A handshake failure at probe failed probe for good, while resume
+retried from a work; probe now hands a slow MCU to the same retries.
+Resume no longer powers the MCU up synchronously (100 ms plus its
+boot, up to ~3 s): the work does it.
+
+The boot/enable/reset GPIO lookups only warned on error, leaving an
+ERR_PTR that every later gpiod call ignored; an error (a deferral above
+all) now fails probe.
+
+Status reports: every report holds the whole button state, so report
+all of it and let the input core pass on the changes, instead of a
+function-static previous state that went stale when the core released
+the keys across suspend (a button held through sleep never showed as
+pressed again). The triggers are clamped to the range reported for
+them; a reading past the rest position is 0, not a negative value.
+
+A rumble stop goes through while rumble_enable is off, so turning it off
+mid-effect cannot leave the motor running; the never-created sysfs
+attribute is gone (the module parameter remains). rsinput_rx() already
+checks each frame, so it dispatches directly instead of reparsing it,
+and the ABS ranges are set by one helper.
+---
+diff --git a/drivers/input/joystick/rsinput.c b/drivers/input/joystick/rsinput.c
+index abba787..82ae9a1 100644
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/completion.h>
++#include <linux/delay.h>
+ #include <linux/workqueue.h>
+ #include <linux/errno.h>
+ #include <linux/gpio/consumer.h>
+@@ -20,6 +21,7 @@
+ #include <linux/regulator/consumer.h>
+ #include <linux/serdev.h>
+ #include <linux/slab.h>
++#include <linux/spinlock.h>
+ #include <linux/platform_device.h>
+ #include <uapi/linux/sched/types.h>
+ 
+@@ -132,11 +134,11 @@ module_param(axis_righty_antideadzone,int,0660);
+  * firmware needs a variable amount of time to boot before it can parse
+  * commands. Rather than blindly sleeping, we send a version request and wait
+  * for the asynchronous version reply before sending the parameter command that
+- * selects framed-report mode. Each attempt waits up to MCU_VERSION_ACK_TIMEOUT
+- * for the reply; if the MCU is slow to boot or missed the request we redo the
+- * reset/power/version sequence up to MCU_INIT_MAX_ATTEMPTS times.
++ * selects framed-report mode, and for that command's acknowledgement. Each
++ * reply is waited for up to MCU_ACK_TIMEOUT_MS; if one does not come we redo
++ * the power-cycle/version/params sequence up to MCU_INIT_MAX_ATTEMPTS times.
+  */
+-#define MCU_VERSION_ACK_TIMEOUT_MS  500
++#define MCU_ACK_TIMEOUT_MS          500
+ #define MCU_INIT_MAX_ATTEMPTS       3
+ 
+ /* A failed resume init is retried from a work this often, this many times. */
+@@ -159,15 +161,18 @@ struct rsinput_driver {
+     uint8_t rx_buf[1024];
+     size_t rx_len;
+     uint8_t sequence_number;
+-    struct completion version_ack;
++    struct completion ack;
+     /*
+-     * Flag marking the window during which a version reply should satisfy
+-     * version_ack. It is written only from the single-threaded init path
+-     * (probe/resume), published before the request is sent, and read from the
+-     * serdev rx callback so that an unsolicited version frame arriving outside a
+-     * handshake cannot falsely complete the wait.
++     * The CMD_COMMOD reply the init path is waiting for (DATA_COMMOD_VERSION or
++     * DATA_COMMOD_SET_PAR), 0 for none. Set by the init path (probe, resume
++     * work) before it sends the request; the rx callback completes ack only for
++     * that reply. ack_lock makes the check and the complete() one step against
++     * the init path rearming for its next request, so a late reply to one
++     * request cannot complete the next, and one outside a handshake completes
++     * nothing.
+      */
+-    bool version_ack_pending;
++    spinlock_t ack_lock;
++    uint8_t ack_pending;
+     struct delayed_work resume_work;
+     unsigned int resume_retries;
+ };
+@@ -223,15 +228,19 @@ static int rsinput_send_command(struct rsinput_driver *drv, uint8_t cmd, const u
+ }
+ 
+ /*
+- * Drive the reset/enable GPIOs to power-cycle the MCU and bring it out of
+- * reset. The fixed delays here only bound the GPIO/rail settling, not the MCU
+- * firmware boot time -- readiness is established afterwards by the version
+- * handshake, not by a blind sleep.
++ * Power-cycle the MCU: hold it off (enable low, in reset) for a moment, then
++ * bring it up. The AYN boards have no reset line, so dropping enable is what
++ * actually resets a wedged MCU on a retry. The fixed delay only bounds the
++ * GPIO/rail settling, not the MCU firmware boot time -- readiness is
++ * established afterwards by the version handshake, not by a blind sleep.
+  */
+ static void rsinput_power_on_mcu(struct rsinput_driver *drv) {
+     if (drv->boot_gpio)
+         gpiod_set_value_cansleep(drv->boot_gpio, 0);
+ 
++    if (drv->enable_gpio)
++        gpiod_set_value_cansleep(drv->enable_gpio, 0);
++
+     if (drv->reset_gpio)
+         gpiod_set_value_cansleep(drv->reset_gpio, 0);
+ 
+@@ -244,6 +253,47 @@ static void rsinput_power_on_mcu(struct rsinput_driver *drv) {
+         gpiod_set_value_cansleep(drv->reset_gpio, 1);
+ }
+ 
++static void rsinput_set_ack_pending(struct rsinput_driver *drv, uint8_t sub) {
++    unsigned long flags;
++
++    spin_lock_irqsave(&drv->ack_lock, flags);
++    reinit_completion(&drv->ack);
++    drv->ack_pending = sub;
++    spin_unlock_irqrestore(&drv->ack_lock, flags);
++}
++
++/* From the rx callback: sub is a reply the MCU sent. */
++static void rsinput_ack(struct rsinput_driver *drv, uint8_t sub) {
++    unsigned long flags;
++
++    spin_lock_irqsave(&drv->ack_lock, flags);
++    if (drv->ack_pending == sub)
++        complete(&drv->ack);
++    spin_unlock_irqrestore(&drv->ack_lock, flags);
++}
++
++/*
++ * Send a CMD_COMMOD request and wait for the MCU's reply to it. The window is
++ * armed before the write so a fast reply landing between the write and the
++ * wait is not missed. The MCU does not echo the request's sequence byte, so
++ * any reply of the awaited kind inside the window counts.
++ */
++static int rsinput_request(struct rsinput_driver *drv, const uint8_t *data, size_t len) {
++    int error;
++
++    rsinput_set_ack_pending(drv, data[0]);
++
++    error = rsinput_send_command(drv, CMD_COMMOD, data, len);
++    if (error >= 0 && error < len + MCU_PKT_SIZE_MIN)
++        error = -EIO;
++    if (error >= 0 &&
++        !wait_for_completion_timeout(&drv->ack, msecs_to_jiffies(MCU_ACK_TIMEOUT_MS)))
++        error = -ETIMEDOUT;
++
++    rsinput_set_ack_pending(drv, 0);
++    return error < 0 ? error : 0;
++}
++
+ static int rsinput_init_commands(struct rsinput_driver *drv) {
+     static const uint8_t version_request[] = {DATA_COMMOD_VERSION};
+     static const uint8_t mcu_params[] = {
+@@ -252,90 +302,50 @@ static int rsinput_init_commands(struct rsinput_driver *drv) {
+         0x00, 0x00, 0x00, 0x28,
+         0x00, 0x00, 0x00, 0x07
+     };
+-    unsigned long timeout = msecs_to_jiffies(MCU_VERSION_ACK_TIMEOUT_MS);
+     int attempt;
+-    int error;
++    int error = 0;
+ 
+     /*
+      * The MCU's post-power boot time varies. Power it up, ask for its version,
+-     * and only proceed to the parameter command (which selects framed-report
+-     * mode) once *this attempt's* version reply has actually arrived. If the
+-     * reply does not come in time the MCU may still be booting or may have
+-     * missed the request, so power-cycle and try again. Without this handshake
+-     * a blind sleep can lose the params command on an unlucky boot, leaving the
+-     * MCU in its default free-running stream and overflowing the RX buffer.
+-     *
+-     * version_ack_pending marks the window in which a version reply counts as
+-     * the ack. The MCU answers a version request once and quickly (well within
+-     * the wait), and an attempt only retries when the MCU is genuinely
+-     * unresponsive -- in which case there is no reply to be stale -- so any
+-     * version reply seen while the window is open proves the MCU is up, which is
+-     * exactly the readiness we need before sending params. We therefore accept
+-     * any in-window reply rather than matching its sequence byte: the MCU does
+-     * not echo the request's sequence in its version reply, so a seq match would
+-     * reject every valid reply.
++     * and only send the parameter command (which selects framed-report mode)
++     * once the version reply has arrived; then wait for the parameters to be
++     * acknowledged too. A params command lost on an unlucky boot leaves the MCU
++     * in its default free-running stream with no usable reports, so either
++     * reply missing means power-cycle and start over. A status report counts
++     * as the params' acknowledgement too: the reports are what the params are
++     * for, so once one arrives the pad works, whatever an MCU firmware that
++     * does not ack them would have answered.
+      */
+     for (attempt = 1; attempt <= MCU_INIT_MAX_ATTEMPTS; attempt++) {
+         rsinput_power_on_mcu(drv);
+ 
+-        /*
+-         * Arm the ack window before sending the request so a fast reply that
+-         * lands between the write and the wait is not missed:
+-         *  1. reinit_completion() clears any leftover completion from an
+-         *     earlier attempt or a stray complete().
+-         *  2. Mark the window open so the rx callback knows a version reply is
+-         *     now expected.
+-         *  3. Order the store ahead of the write (and thus ahead of any reply
+-         *     the rx callback could observe) with smp_wmb(); the rx callback
+-         *     pairs this with smp_rmb() before reading the flag.
+-         * The MCU cannot emit a reply until it has received the request, which
+-         * is strictly after the write below, so the open window is always
+-         * visible by the time a reply can exist.
+-         */
+-        reinit_completion(&drv->version_ack);
+-        drv->version_ack_pending = true;
+-        smp_wmb();
+-
+-        error = rsinput_send_command(drv, CMD_COMMOD, version_request,
+-                                     sizeof(version_request));
+-        if (error < 0) {
+-            drv->version_ack_pending = false;
+-            dev_err(&drv->serdev->dev,
+-                    "Failed to request MCU version: %d\n", error);
+-            return error;
+-        }
++        error = rsinput_request(drv, version_request, sizeof(version_request));
++        if (!error)
++            error = rsinput_request(drv, mcu_params, sizeof(mcu_params));
++        if (!error)
++            return 0;
+ 
+-        if (wait_for_completion_timeout(&drv->version_ack, timeout)) {
+-            drv->version_ack_pending = false;
+-            break;
+-        }
+-
+-        /* Close the window so a now-stale reply is rejected before the retry. */
+-        drv->version_ack_pending = false;
+-        dev_warn(&drv->serdev->dev,
+-                 "MCU version handshake timed out (attempt %d/%d)\n",
+-                 attempt, MCU_INIT_MAX_ATTEMPTS);
++        dev_warn(&drv->serdev->dev, "MCU init attempt %d/%d failed: %d\n",
++                 attempt, MCU_INIT_MAX_ATTEMPTS, error);
+     }
+ 
+-    if (attempt > MCU_INIT_MAX_ATTEMPTS) {
+-        dev_err(&drv->serdev->dev,
+-                "MCU did not acknowledge version request; not sending params\n");
+-        return -ETIMEDOUT;
+-    }
+-
+-    error = rsinput_send_command(drv, CMD_COMMOD, mcu_params, sizeof(mcu_params));
+-    if (error < 0) {
+-        dev_err(&drv->serdev->dev, "Failed to set MCU parameters: %d\n", error);
+-        return error;
+-    }
+-
+-    return 0;
++    dev_err(&drv->serdev->dev, "MCU init failed: %d\n", error);
++    return error;
+ }
+ 
+ static void handle_cmd_commod(struct rsinput_driver *drv, const uint8_t *data, size_t payload_length) {
+-    switch (data[FRAME_POS_DATA_1]) {
++    uint8_t sub;
++
++    /* Without a payload, the byte after the length is the checksum. */
++    if (payload_length < 1) {
++        dev_warn_ratelimited(&drv->serdev->dev, "Empty CMD_COMMOD frame\n");
++        return;
++    }
++    sub = data[FRAME_POS_DATA_1];
++
++    switch (sub) {
+         case DATA_COMMOD_VERSION:
+-            if (payload_length >= 1) {
++            {
+                 char mcu_version[MCU_VERSION_MAX_LEN] = {0};
+                 size_t version_length = payload_length;
+                 if (version_length > MCU_VERSION_MAX_LEN - 1) {
+@@ -344,82 +354,79 @@ static void handle_cmd_commod(struct rsinput_driver *drv, const uint8_t *data, s
+                 memcpy(mcu_version, &data[FRAME_POS_DATA_1], version_length);
+                 mcu_version[version_length] = '\0';
+                 dev_info(&drv->serdev->dev, "MCU Version: %s\n", mcu_version);
+-            } else {
+-                dev_err(&drv->serdev->dev, "Invalid MCU version response length\n");
+-            }
+-            /*
+-             * Complete version_ack only if the init path currently has the ack
+-             * window open. The MCU does not echo the request's sequence byte in
+-             * its version reply, so we cannot match on it; instead the window
+-             * guard alone rejects an unsolicited version frame that arrives
+-             * outside a handshake. Any version reply seen while the window is
+-             * open proves the MCU is up, which is exactly what the init path
+-             * needs before sending params. smp_rmb() pairs with the smp_wmb() in
+-             * rsinput_init_commands() so the pending flag is observed
+-             * consistently. complete() is irq-safe, and a spurious extra
+-             * completion is harmless because reinit_completion() resets the
+-             * count before each request.
+-             */
+-            smp_rmb();
+-            if (READ_ONCE(drv->version_ack_pending)) {
+-                complete(&drv->version_ack);
+-            } else {
+-                dev_dbg(&drv->serdev->dev,
+-                        "Ignoring unsolicited MCU version reply (seq 0x%02x)\n",
+-                        data[FRAME_POS_SEQ]);
+             }
+             break;
+         case DATA_COMMOD_SET_PAR:
+             dev_info(&drv->serdev->dev, "MCU parameters set successfully\n");
+             break;
+         default:
+-            dev_warn(&drv->serdev->dev, "Unhandled CMD_COMMOD sub-command: 0x%02x\n", data[FRAME_POS_DATA_1]);
+-            break;
++            dev_warn(&drv->serdev->dev, "Unhandled CMD_COMMOD sub-command: 0x%02x\n", sub);
++            return;
+     }
++
++    rsinput_ack(drv, sub);
++}
++
++static void rsinput_set_abs_ranges(struct input_dev *input) {
++    input_set_abs_params(input, ABS_X,
++        INT_SIGN(axis_leftx_min) * ( abs(axis_leftx_min) - axis_leftx_antideadzone ),
++        INT_SIGN(axis_leftx_max) * ( abs(axis_leftx_max) - axis_leftx_antideadzone ),
++        0, 0);
++    input_set_abs_params(input, ABS_Y,
++        INT_SIGN(axis_lefty_min) * ( abs(axis_lefty_min) - axis_lefty_antideadzone ),
++        INT_SIGN(axis_lefty_max) * ( abs(axis_lefty_max) - axis_lefty_antideadzone ),
++        0, 0);
++    input_set_abs_params(input, ABS_RX,
++        INT_SIGN(axis_rightx_min) * ( abs(axis_rightx_min) - axis_rightx_antideadzone ),
++        INT_SIGN(axis_rightx_max) * ( abs(axis_rightx_max) - axis_rightx_antideadzone ),
++        0, 0);
++    input_set_abs_params(input, ABS_RY,
++        INT_SIGN(axis_righty_min) * ( abs(axis_righty_min) - axis_righty_antideadzone ),
++        INT_SIGN(axis_righty_max) * ( abs(axis_righty_max) - axis_righty_antideadzone ),
++        0, 0);
++    input_set_abs_params(input, ABS_Z, 0, trigger_left_max - trigger_left_antideadzone, 0, 30);
++    input_set_abs_params(input, ABS_RZ, 0, trigger_right_max - trigger_right_antideadzone, 0, 30);
++}
++
++/* A trigger's travel from its rest reading, within the range reported for it. */
++static int rsinput_trigger(const uint8_t *raw, int max, int deadzone, int antideadzone) {
++    int value = max - (raw[0] | (raw[1] << 8));
++
++    if (value < deadzone)
++        return 0;
++    return clamp(value - antideadzone, 0, max - antideadzone);
+ }
+ 
+ static void handle_cmd_status(struct rsinput_driver *drv, const uint8_t *data, size_t payload_length) {
+-    if (payload_length >= 14) {
+-    static unsigned long prev_states;
+-    unsigned long keys = data[FRAME_POS_DATA_1] | (data[FRAME_POS_DATA_2] << 8);
+-    unsigned long current_states = keys, changes;
++    unsigned long keys;
+     int i;
+ 
+-    if (update_params) {
+-        input_set_abs_params(drv->input, ABS_X,
+-            INT_SIGN(axis_leftx_min) * ( abs(axis_leftx_min) - axis_leftx_antideadzone ),
+-            INT_SIGN(axis_leftx_max) * ( abs(axis_leftx_max) - axis_leftx_antideadzone ),
+-            0, 0);
+-        input_set_abs_params(drv->input, ABS_Y,
+-            INT_SIGN(axis_lefty_min) * ( abs(axis_lefty_min) - axis_lefty_antideadzone ),
+-            INT_SIGN(axis_lefty_max) * ( abs(axis_lefty_max) - axis_lefty_antideadzone ),
+-             0, 0);
+-        input_set_abs_params(drv->input, ABS_RX,
+-            INT_SIGN(axis_rightx_min) * ( abs(axis_rightx_min) - axis_rightx_antideadzone ),
+-            INT_SIGN(axis_rightx_max) * ( abs(axis_rightx_max) - axis_rightx_antideadzone ),
+-            0, 0);
+-        input_set_abs_params(drv->input, ABS_RY,
+-            INT_SIGN(axis_righty_min) * ( abs(axis_righty_min) - axis_righty_antideadzone ),
+-            INT_SIGN(axis_righty_max) * ( abs(axis_righty_max) - axis_righty_antideadzone ),
+-             0, 0);
+-        input_set_abs_params(drv->input, ABS_Z, 0, trigger_left_max - trigger_left_antideadzone, 0, 30);
+-        input_set_abs_params(drv->input, ABS_RZ, 0, trigger_right_max - trigger_right_antideadzone, 0, 30);
+-        update_params = 0;
++    if (payload_length < 14) {
++        dev_warn_ratelimited(&drv->serdev->dev, "Invalid CMD_STATUS response length\n");
++        return;
+     }
+ 
+-    bitmap_xor(&changes, &current_states, &prev_states, ARRAY_SIZE(keymap));
++    /* A report: the params took (see init). */
++    rsinput_ack(drv, DATA_COMMOD_SET_PAR);
+ 
+-    for_each_set_bit(i, &changes, ARRAY_SIZE(keymap)) {
+-        input_report_key(drv->input, keymap[i], (current_states & BIT(i)));
++    if (update_params) {
++        rsinput_set_abs_ranges(drv->input);
++        update_params = 0;
+     }
+ 
+-    int16_t raw_trig_l = (data[FRAME_POS_DATA_3] | (data[FRAME_POS_DATA_4] << 8));
+-    int16_t z = trigger_left_max - raw_trig_l;
+-    z = ( z < trigger_left_deadzone ) ? 0 : z - trigger_left_antideadzone;
++    /*
++     * Every report holds the whole button state: report all of it, and let
++     * the input core pass on only the changes. No state of our own to go stale
++     * when the core releases the keys across suspend.
++     */
++    keys = data[FRAME_POS_DATA_1] | (data[FRAME_POS_DATA_2] << 8);
++    for (i = 0; i < ARRAY_SIZE(keymap); i++)
++        input_report_key(drv->input, keymap[i], keys & BIT(i));
+ 
+-    int16_t raw_trig_r = (data[FRAME_POS_DATA_5] | (data[FRAME_POS_DATA_6] << 8));
+-    int16_t rz = trigger_right_max - raw_trig_r;
+-    rz = ( rz < trigger_right_deadzone ) ? 0 : rz - trigger_right_antideadzone;
++    int z = rsinput_trigger(&data[FRAME_POS_DATA_3], trigger_left_max,
++                            trigger_left_deadzone, trigger_left_antideadzone);
++    int rz = rsinput_trigger(&data[FRAME_POS_DATA_5], trigger_right_max,
++                             trigger_right_deadzone, trigger_right_antideadzone);
+ 
+     int16_t raw_x = -(int16_t)(data[FRAME_POS_DATA_7] | (data[FRAME_POS_DATA_8] << 8));
+     int16_t x = raw_x + axis_leftx_center;
+@@ -445,48 +452,20 @@ static void handle_cmd_status(struct rsinput_driver *drv, const uint8_t *data, s
+     input_report_abs(drv->input, ABS_RY, drv->invert_ry ? ry * (-1) : ry);
+ 
+     input_sync(drv->input);
+-    prev_states = keys;
+-
+-    } else {
+-        dev_warn(&drv->serdev->dev, "Invalid CMD_STATUS response length\n");
+-    }
+ }
+ 
+-static void rsinput_process_data(struct rsinput_driver *drv, const uint8_t *data, size_t len) {
+-    while (len >= MCU_PKT_SIZE_MIN) {
+-        uint16_t payload_length = data[FRAME_POS_LEN_L] | (data[FRAME_POS_LEN_H] << 8);
+-        size_t frame_length = MCU_PKT_SIZE_MIN + payload_length;
+-
+-        if (len < frame_length) {
+-            return;
+-        }
+-
+-        uint8_t received_checksum = data[frame_length - 1];
+-        uint8_t computed_checksum = compute_checksum(data, frame_length);
+-        if (computed_checksum != received_checksum) {
+-            data += frame_length;
+-            len -= frame_length;
+-            continue;
+-        }
+-
+-        switch (data[FRAME_POS_CMD]) {
+-            case CMD_COMMOD:
+-                handle_cmd_commod(drv, data, payload_length);
+-                break;
+-            case CMD_STATUS:
+-                handle_cmd_status(drv, data, payload_length);
+-                break;
+-            default:
+-                dev_warn(&drv->serdev->dev, "Unhandled command: 0x%02X\n", data[FRAME_POS_CMD]);
+-                break;
+-        }
+-
+-        data += frame_length;
+-        len -= frame_length;
+-    }
+-
+-    if (len > 0) {
+-        dev_warn(&drv->serdev->dev, "Trailing bytes after processing: %zu\n", len);
++/* A whole frame whose header, length and checksum rsinput_rx() has checked. */
++static void rsinput_handle_frame(struct rsinput_driver *drv, const uint8_t *frame, size_t payload_length) {
++    switch (frame[FRAME_POS_CMD]) {
++        case CMD_COMMOD:
++            handle_cmd_commod(drv, frame, payload_length);
++            break;
++        case CMD_STATUS:
++            handle_cmd_status(drv, frame, payload_length);
++            break;
++        default:
++            dev_warn_ratelimited(&drv->serdev->dev, "Unhandled command: 0x%02X\n", frame[FRAME_POS_CMD]);
++            break;
+     }
+ }
+ 
+@@ -555,7 +534,7 @@ static size_t rsinput_rx(struct serdev_device *serdev, const u8 *data, size_t co
+             continue;
+         }
+ 
+-        rsinput_process_data(drv, frame, frame_length);
++        rsinput_handle_frame(drv, frame, payload_length);
+         consumed += frame_length;
+         avail -= frame_length;
+     }
+@@ -582,35 +561,13 @@ static int rsinput_rumble_upload(struct input_dev *dev, struct ff_effect *effect
+ 	return qcom_spmi_haptics_global_upload(effect);
+ }
+ static int rsinput_rumble_play(struct input_dev *dev, int effect_id, int val) {
+-	if (!rumble_enable)
++	/* A stop always goes through: rumble may have been disabled mid-effect. */
++	if (!rumble_enable && val)
+ 		return 0;
+ 
+ 	return qcom_spmi_haptics_global_playback(effect_id, val);
+ }
+ 
+-//Show and store for rumble_enable
+-static ssize_t rumble_enable_show(struct device *dev, struct device_attribute *attr,
+-				  char *buf)
+-{
+-	return sprintf(buf, "%d\n", rumble_enable);
+-}
+-
+-static ssize_t rumble_enable_store(struct device *dev, struct device_attribute *attr,
+-				   const char *buf, size_t count)
+-{
+-	int ret;
+-	bool val;
+-
+-	ret = kstrtobool(buf, &val);
+-	if (ret)
+-		return ret;
+-
+-	rumble_enable = val;
+-	return count;
+-}
+-
+-static DEVICE_ATTR_RW(rumble_enable);
+-
+ static void rsinput_vdd_disable(void *data)
+ {
+     struct rsinput_driver *drv = data;
+@@ -634,7 +591,8 @@ static int rsinput_probe(struct serdev_device *serdev) {
+     if (!drv)
+     return -ENOMEM;
+ 
+-    init_completion(&drv->version_ack);
++    init_completion(&drv->ack);
++    spin_lock_init(&drv->ack_lock);
+ 
+     drv->invert_x = device_property_present(&serdev->dev, "invert-x");
+     drv->invert_y = device_property_present(&serdev->dev, "invert-y");
+@@ -690,24 +648,21 @@ static int rsinput_probe(struct serdev_device *serdev) {
+ 
+     drv->boot_gpio =
+         devm_gpiod_get_optional(&serdev->dev, "boot", GPIOD_OUT_HIGH);
+-    if (IS_ERR(drv->boot_gpio)) {
+-        error = PTR_ERR(drv->boot_gpio);
+-        dev_warn(&serdev->dev, "Unable to get boot gpio: %d\n", error);
+-    }
++    if (IS_ERR(drv->boot_gpio))
++        return dev_err_probe(&serdev->dev, PTR_ERR(drv->boot_gpio),
++                             "Unable to get boot gpio\n");
+ 
+     drv->enable_gpio =
+         devm_gpiod_get_optional(&serdev->dev, "enable", GPIOD_OUT_HIGH);
+-    if (IS_ERR(drv->enable_gpio)) {
+-        error = PTR_ERR(drv->enable_gpio);
+-        dev_warn(&serdev->dev, "Unable to get enable gpio: %d\n", error);
+-    }
++    if (IS_ERR(drv->enable_gpio))
++        return dev_err_probe(&serdev->dev, PTR_ERR(drv->enable_gpio),
++                             "Unable to get enable gpio\n");
+ 
+     drv->reset_gpio =
+         devm_gpiod_get_optional(&serdev->dev, "reset", GPIOD_OUT_HIGH);
+-    if (IS_ERR(drv->reset_gpio)) {
+-        error = PTR_ERR(drv->reset_gpio);
+-        dev_warn(&serdev->dev, "Unable to get reset gpio: %d\n", error);
+-    }
++    if (IS_ERR(drv->reset_gpio))
++        return dev_err_probe(&serdev->dev, PTR_ERR(drv->reset_gpio),
++                             "Unable to get reset gpio\n");
+ 
+     drv->serdev = serdev;
+     drv->sequence_number = 0;
+@@ -738,25 +693,7 @@ static int rsinput_probe(struct serdev_device *serdev) {
+         input_set_capability(drv->input, EV_KEY, keymap[i]);
+ 
+     __set_bit(EV_ABS, drv->input->evbit);
+-    input_set_abs_params(drv->input, ABS_X,
+-        INT_SIGN(axis_leftx_min) * ( abs(axis_leftx_min) - axis_leftx_antideadzone ),
+-        INT_SIGN(axis_leftx_max) * ( abs(axis_leftx_max) - axis_leftx_antideadzone ),
+-        0, 0);
+-    input_set_abs_params(drv->input, ABS_Y,
+-        INT_SIGN(axis_lefty_min) * ( abs(axis_lefty_min) - axis_lefty_antideadzone ),
+-        INT_SIGN(axis_lefty_max) * ( abs(axis_lefty_max) - axis_lefty_antideadzone ),
+-        0, 0);
+-    input_set_abs_params(drv->input, ABS_RX,
+-        INT_SIGN(axis_rightx_min) * ( abs(axis_rightx_min) - axis_rightx_antideadzone ),
+-        INT_SIGN(axis_rightx_max) * ( abs(axis_rightx_max) - axis_rightx_antideadzone ),
+-        0, 0);
+-    input_set_abs_params(drv->input, ABS_RY,
+-        INT_SIGN(axis_righty_min) * ( abs(axis_righty_min) - axis_righty_antideadzone ),
+-        INT_SIGN(axis_righty_max) * ( abs(axis_righty_max) - axis_righty_antideadzone ),
+-        0, 0);
+-
+-    input_set_abs_params(drv->input, ABS_Z, 0, trigger_left_max - trigger_left_antideadzone, 0, 30);
+-    input_set_abs_params(drv->input, ABS_RZ, 0, trigger_right_max - trigger_right_antideadzone, 0, 30);
++    rsinput_set_abs_ranges(drv->input);
+ 
+     input_set_capability(drv->input, EV_FF, FF_PERIODIC);
+ 
+@@ -789,9 +726,12 @@ static int rsinput_probe(struct serdev_device *serdev) {
+ 
+     serdev_device_set_flow_control(serdev, false);
+ 
+-    error = rsinput_init_commands(drv);
+-    if (error < 0)
+-        goto err_close;
++    /* An MCU slow to come up gets the resume path's retries, not a dead pad. */
++    if (rsinput_init_commands(drv) < 0) {
++        drv->resume_retries = 0;
++        schedule_delayed_work(&drv->resume_work,
++                              msecs_to_jiffies(MCU_RESUME_RETRY_MS));
++    }
+ 
+     return 0;
+ 
+@@ -882,7 +822,7 @@ static void rsinput_resume_work(struct work_struct *work)
+         schedule_delayed_work(&drv->resume_work,
+                               msecs_to_jiffies(MCU_RESUME_RETRY_MS));
+     else
+-        dev_err(&drv->serdev->dev, "MCU init failed after resume, giving up\n");
++        dev_err(&drv->serdev->dev, "MCU init failed, giving up\n");
+ }
+ 
+ static int rsinput_resume(struct device *dev)
+@@ -891,13 +831,13 @@ static int rsinput_resume(struct device *dev)
+ 
+     drv->rx_len = 0;
+ 
+-    /* A pad left dead until the next suspend is worse than a late one. */
+-    if (rsinput_power_up(drv)) {
+-        dev_warn(dev, "MCU init failed, retrying\n");
+-        drv->resume_retries = 0;
+-        schedule_delayed_work(&drv->resume_work,
+-                              msecs_to_jiffies(MCU_RESUME_RETRY_MS));
+-    }
++    /*
++     * Powering the MCU up takes 100 ms and its boot at the least: do it from
++     * the work, which retries a failure (a pad left dead until the next
++     * suspend is worse than a late one), instead of holding up resume.
++     */
++    drv->resume_retries = 0;
++    schedule_delayed_work(&drv->resume_work, 0);
+ 
+     return 0;
+ }

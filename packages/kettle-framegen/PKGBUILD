@@ -4,7 +4,7 @@
 # Proton ARM64 games (x86 code via FEX inside Wine) use the native aarch64 Vulkan loader, so
 # this one layer covers them and native arm64 games.
 pkgname=kettle-framegen
-pkgver=0.2.0.r28.gd1a17f1
+pkgver=0.2.0.r55.g4e736d0
 pkgrel=1
 pkgdesc='Kettle Linux frame generation Vulkan layer'
 arch=(aarch64)
@@ -13,8 +13,11 @@ license=(BSD-3-Clause)
 depends=(glibc vulkan-icd-loader)
 makedepends=(git gcc make glslang vulkan-headers)
 # v0.2.0 plus main since (no tag yet): the halo fixes around swords, faster on Adreno, softer
-# where no motion fits, min_fps, recording. Pinned by commit
-_commit=d1a17f1c87ca1a1299de1a85a1405352f03be9e7
+# where no motion fits, min_fps, recording; then (2026-10-11) the HUD held where the scene shows
+# through it and sliding HUD content and compass markers following their own motion, latency=low
+# with VK_KHR_present_wait2, multiplier=auto from Steam's frame limit, and swapchain, present and
+# fence fixes. Pinned by commit
+_commit=4e736d007e188661e695ddf58693dea56d0f9e3c
 source=("$pkgname::git+$url.git#commit=$_commit")
 sha256sums=('SKIP')
 

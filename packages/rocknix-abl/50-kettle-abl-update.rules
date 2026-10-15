@@ -1,8 +1,9 @@
-// Kettle Linux: checking and updating an installed ROCKNIX ABL (kettle-abl-update) from Game
+// Kettle Linux: installing, updating and removing the ROCKNIX ABL (kettle-abl-update) from Game
 // Mode's Device Settings (System tab), where no password prompt can be shown. kettle-abl-update
-// only ever replaces a ROCKNIX ABL it recognises with this image's release (never a stock
-// bootloader, never an older release), so the person holding the device may run it, as they may
-// reset it (50-kettle-reset.rules). In a terminal, sudo kettle-abl-update works as before.
+// writes only this image's release or a stock bootloader it saved itself (never an older ROCKNIX
+// release, never a file it's handed: --stock-image and --force are refused through pkexec), only
+// after the device's own volume keys confirm it, so the person holding the device may run it, as
+// they may reset it (50-kettle-reset.rules). In a terminal, sudo kettle-abl-update works as before.
 // fromDecky: one of Decky Loader's plugin backends. They run in its own system service, outside
 // the user's login session, so polkit sees them as neither local nor active. (All rule files share
 // one scope: 50-kettle-*.rules define the same function.) Newer polkit says which unit a

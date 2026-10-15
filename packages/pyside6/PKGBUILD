@@ -1,0 +1,54 @@
+# PySide6 (with its shiboken6 runtime) for Amethyst Mod Manager, built for the snapshot's Qt 6.8.0
+# (the hotfix repo's) instead of the snapshot's own 6.7.0 package, whose shiboken6 needs clang 17:
+# that conflicts with the hotfix repo's LLVM 19, and would put a compiler in the image to run a
+# Python app. Here clang is only a build tool (shiboken6's generator): the package carries the
+# runtime, not the generator.
+# Only the Qt modules Amethyst uses (and what their bindings need) are built.
+# Based on Arch's pyside6 6.8.0-1 (fix-build.patch is theirs).
+pkgname=pyside6
+pkgver=6.8.0
+pkgrel=1
+pkgdesc='Enables the use of Qt6 APIs in Python applications (Core, Gui, Widgets, Network, Multimedia, OpenGL)'
+arch=(aarch64)
+url='https://www.qt.io'
+license=(LGPL-3.0-only)
+depends=(gcc-libs glibc python qt6-base qt6-multimedia)
+makedepends=(clang cmake libxml2 libxslt llvm ninja python-setuptools)
+provides=("shiboken6=$pkgver" qt6-python-bindings)
+conflicts=(shiboken6)
+replaces=(shiboken6)
+_modules='Core;Gui;Widgets;Network;Multimedia;MultimediaWidgets;OpenGL;OpenGLWidgets'
+# the tag from Qt's GitHub mirror: download.qt.io's source zip has CRLF line endings
+source=("pyside-setup-$pkgver.tar.gz::https://github.com/qtproject/pyside-pyside-setup/archive/refs/tags/v$pkgver.tar.gz"
+        fix-build.patch)
+sha256sums=('ca5846dce536aa66af354492bcb804485261380b01022e4bdf6cba24e5071815'
+            '77b83cb164ea87d826259864f6a81fb33199510e1948d6daaf5c8d5ab55735a7')
+
+_src="pyside-pyside-setup-$pkgver"
+
+prepare() {
+  patch -d "$_src" -Np1 -i ../fix-build.patch
+}
+
+build() {
+  CLANG_INSTALL_DIR=/usr \
+  cmake -B build -S "$_src" -G Ninja \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_BUILD_TYPE=None \
+    -DSHIBOKEN_PYTHON_LIBRARIES="$(pkgconf python3-embed --libs)" \
+    -DBUILD_TESTS=OFF \
+    -DFORCE_LIMITED_API=no \
+    -DNO_QT_TOOLS=yes \
+    -DMODULES="$_modules"
+  PYTHONPATH="$PWD/build/sources" cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build/sources/shiboken6
+  DESTDIR="$pkgdir" cmake --install build/sources/pyside6
+  # the generator (and its libclang) is a build tool
+  rm -f "$pkgdir"/usr/bin/shiboken6*
+  rm -rf "$pkgdir"/usr/lib/cmake/Shiboken6Tools
+  # QML support needs the Qml module, which isn't built
+  rm -rf "$pkgdir"/usr/lib/libpyside6qml.* "$pkgdir"/usr/lib/cmake/PySide6Qml
+}

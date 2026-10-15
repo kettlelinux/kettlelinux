@@ -1,0 +1,110 @@
+# Amethyst Mod Manager: an MO2-style mod manager (Nexus Collections, Wabbajack lists, LOOT
+# sorting, ~100 games) that finds games in Steam, Heroic and Lutris. A desktop-mode app.
+#
+# Built from source for the snapshot's Python 3.11 and PySide6, laid out like upstream's own
+# PKGBUILD (src/appimage): the app in /usr/share/amethyst-mod-manager, a launcher in /usr/bin.
+#   0001  Python 3.11: shutil.rmtree's onerror (onexc is 3.12), and the filegraph extension
+#         built for the 3.11 stable ABI
+#   0002  modules the snapshot lacks (py7zr and its compressors, bsdiff4) in _vendor beside the
+#         app; no update banner from GitHub or the AUR (AMETHYST_DISTRO_PACKAGE, set by the
+#         launcher), since Kettle's images update it
+#   0003  Valve's ARM64 Proton keeps wine and wineserver in files/bin-arm64, not files/bin: the
+#         places that run Proton's wine directly (not through the proton script) look there too
+# Native parts: amethyst_filegraph (Rust, pyo3) and the libloot Python module for LOOT sorting.
+# Left out: wrappers/ucrtbase.dll (a prebuilt, patched x86-64 Wine DLL for the ParallaxGen
+# wrapper; wrong architecture for our ARM64EC Wine) and vgmstream (only for XWM audio previews).
+# steam-art/: library artwork from Amethyst's banner and icon (render-steam-art.py) for the Game
+# Stores plugin's Mod Manager entry, which opens it in the desktop nested in Game Mode.
+#
+# Built with upstream Rust (build time only): both crates need a newer compiler than the
+# snapshot's 1.78.
+pkgname=amethyst-mod-manager
+pkgver=2.5.4
+pkgrel=2
+_commit=edde06e518c0a3ca5ba47a8bbf065c4ecc4a8f92
+_libloot=0.29.6
+_rust=1.98.1
+_rustdate=2026-09-03
+pkgdesc='Linux-native mod manager for a variety of games'
+arch=(aarch64)
+url='https://github.com/ChrisDKN/Amethyst-Mod-Manager'
+license=(GPL-3.0-or-later)
+depends=(7zip bubblewrap cabextract pyside6 python python-certifi python-cryptography
+         python-jeepney python-keyring python-lz4 python-msgpack python-pillow python-psutil
+         python-requests python-secretstorage python-xxhash python-zstandard qt6-multimedia
+         qt6-multimedia-ffmpeg qt6-wayland zenity)
+makedepends=(python-pip python-pillow)
+options=(!lto)  # the crates' release profiles do their own (Rust) LTO
+source=("Amethyst-Mod-Manager-$_commit.tar.gz::https://github.com/ChrisDKN/Amethyst-Mod-Manager/archive/$_commit.tar.gz"
+        "libloot-$_libloot.tar.gz::https://github.com/loot/libloot/archive/refs/tags/$_libloot.tar.gz"
+        "https://static.rust-lang.org/dist/$_rustdate/rust-$_rust-aarch64-unknown-linux-gnu.tar.xz"
+        vendor-requirements.txt
+        amethyst-mod-manager.sh
+        render-steam-art.py
+        0001-python-3.11.patch
+        0002-system-package.patch
+        0003-arm64-proton.patch)
+noextract=("rust-$_rust-aarch64-unknown-linux-gnu.tar.xz")
+sha256sums=('44a5031480c4f8c80f4749429f91d33b3c0c7524ad983390a5937de3953cab86'
+            'ffc89682b0d362ac8569efff8ad6392cd670203f34aeb7e3a0cbebab1700a840'
+            '0b514a8cc1cbcd939bff0f151661fe58b6ea5c7a7f645a5098c69e32e8c1e0a2'
+            'cef0afa9f5dfb57ea6e2aadb2fae74ffad3a2cb5423969a85f86c83236f507a6'
+            '41c7251ea0f8a076e7ce76940df0268d9474f3c9efcd63f890a9f8c0d81a5bc2'
+            '552f5268a0e0c55376b70579c8d1d9ec8452a6ff03c395884996d004c7c77312'
+            '7ffd019a0cee133d24672e9bc7d82728ab6ad27d462e397f4bb083381c4e4774'
+            '6a0427301f509c6a4cbf60297626f36e9e6e463a968156ae5ad2745df54ddf3c'
+            'b87e9eaa4a1c6d6a34a3a2d305111331120103b5dc93f00c08f5a4412cfe8f9b')
+
+_src="Amethyst-Mod-Manager-$_commit"
+
+prepare() {
+  patch -d "$_src" -Np1 -i ../0001-python-3.11.patch
+  patch -d "$_src" -Np1 -i ../0002-system-package.patch
+  patch -d "$_src" -Np1 -i ../0003-arm64-proton.patch
+  rm -rf rust-dist rust && mkdir rust-dist
+  bsdtar -xf "rust-$_rust-aarch64-unknown-linux-gnu.tar.xz" -C rust-dist --strip-components 1
+  rust-dist/install.sh --prefix="$srcdir/rust" --disable-ldconfig \
+    --components=rustc,cargo,rust-std-aarch64-unknown-linux-gnu >/dev/null
+}
+
+build() {
+  export PATH="$srcdir/rust/bin:$PATH" CARGO_HOME="$srcdir/cargo-home" PYO3_PYTHON=/usr/bin/python3
+  cargo build --release --locked --manifest-path "$_src/native/amethyst_filegraph/Cargo.toml"
+  cargo build --release --locked --manifest-path "libloot-$_libloot/Cargo.toml" \
+    -p libloot-python --features pyo3/extension-module
+
+  # from source, like everything else in the image
+  rm -rf _vendor
+  python3 -m pip install --no-cache-dir --no-binary :all: --no-deps --target _vendor \
+    -r vendor-requirements.txt
+  rm -rf _vendor/bin
+}
+
+package() {
+  local app="$pkgdir/usr/share/$pkgname" d
+  install -d "$app"
+  cd "$_src/src"
+  install -Dm644 run_qt.py cli.py app_bootstrap.py version.py -t "$app"
+  install -Dm644 ../Changelog.txt -t "$app"
+  for d in gui_qt wizards_qt Utils themes Games LOOT Nexus Thunderstore icons translations wrappers; do
+    cp -r "$d" "$app/$d"
+  done
+  find "$app" -type f \( -name '*.sh' -o -name 'requirements*.txt' -o -name 'meson.build' \) -delete
+  rm -f "$app/wrappers/ucrtbase.dll"
+
+  install -Dm755 "$srcdir/$_src/native/amethyst_filegraph/target/release/libamethyst_filegraph.so" \
+    "$app/amethyst_filegraph.abi3.so"
+  install -Dm755 "$srcdir/libloot-$_libloot/target/release/libloot.so" \
+    "$app/loot.cpython-$(python3 -c 'import sys; print(f"{sys.version_info[0]}{sys.version_info[1]}")')-aarch64-linux-gnu.so"
+  cp -r "$srcdir/_vendor" "$app/_vendor"
+  python3 -m compileall -q -d "/usr/share/$pkgname" "$app"
+  python3 -O -m compileall -q -d "/usr/share/$pkgname" "$app"
+
+  install -Dm755 "$srcdir/amethyst-mod-manager.sh" "$pkgdir/usr/bin/amethyst-mod-manager"
+  install -Dm644 ../flatpak/io.github.Amethyst.ModManager.desktop -t "$pkgdir/usr/share/applications"
+  install -Dm644 appimage/mod-manager.png \
+    "$pkgdir/usr/share/icons/hicolor/256x256/apps/io.github.Amethyst.ModManager.png"
+  python3 "$srcdir/render-steam-art.py" icons/AmethystBanner.png appimage/mod-manager.png "$app/steam-art"
+  install -Dm644 ../LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+  install -Dm644 "$srcdir/libloot-$_libloot/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/libloot-LICENSE"
+}

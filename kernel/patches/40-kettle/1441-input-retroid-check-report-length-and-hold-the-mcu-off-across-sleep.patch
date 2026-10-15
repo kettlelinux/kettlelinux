@@ -1,0 +1,489 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] Input: retroid: check report length, hold the MCU off across sleep, retry its init
+
+The status handler read 14 data bytes from any command-0x02 frame; a
+short one that passed the checksum read its missing bytes as zeros,
+which is a fully pulled trigger. Reports shorter than 14 bytes are now
+dropped.
+
+The driver had no PM ops: the MCU kept streaming across suspend, the
+case rsinput's 1004/1311 fix for the same protocol (a geni RX interrupt
+storm while the port stops, the IRQ disabled, a dead pad after resume),
+and drew power all night. Hold it off (enable low, in reset) while
+asleep and bring it back up from a work on resume.
+
+The init sequence returned early on a failed or short write while probe
+still succeeded, leaving a registered pad that never reported, and
+nothing noticed an MCU that missed the sequence while still booting.
+The sequence now fails on a failed write or when no report follows it
+within a second, and the power-cycle plus sequence is retried from the
+work, at probe as on resume. GPIO lookup errors fail (defer) probe
+instead of leaving an ERR_PTR.
+
+Buttons are reported whole from every report (no function-static
+previous state to go stale across suspend), the triggers are clamped to
+their range, and the ABS ranges are set by one helper. The axis layout
+is unchanged: the triggers stay on ABS_HAT2X/ABS_HAT2Y, which ROCKNIX and
+InputPlumber's Retroid maps expect, and the never-reported ABS_Z/ABS_RZ
+stay advertised so SDL mappings and emulator configs keep their axis
+numbers.
+---
+diff --git a/drivers/input/joystick/retroid.c b/drivers/input/joystick/retroid.c
+index 148655e..dc8bf51 100644
+--- a/drivers/input/joystick/retroid.c
++++ b/drivers/input/joystick/retroid.c
+@@ -9,7 +9,9 @@
+  *
+  */
+ 
++#include <linux/completion.h>
+ #include <linux/delay.h>
++#include <linux/devm-helpers.h>
+ #include <linux/errno.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/init.h>
+@@ -20,6 +22,7 @@
+ #include <linux/of.h>
+ #include <linux/serdev.h>
+ #include <linux/slab.h>
++#include <linux/workqueue.h>
+ #include <linux/platform_device.h>
+ #include <uapi/linux/sched/types.h>
+ 
+@@ -28,6 +31,13 @@
+ /* header (4), frame number, command, length (2), data, checksum */
+ #define FRAME_MIN_LEN 9
+ #define RX_BUF_LEN 512
++/* buttons (2), triggers (2 x 2), sticks (4 x 2) */
++#define STATUS_DATA_LEN 14
++/* Bringing the MCU up is tried this many times, this far apart. */
++#define MCU_INIT_MAX_ATTEMPTS 5
++#define MCU_INIT_RETRY_MS 2000
++/* The MCU streams reports once set up; none this long after means it was not. */
++#define MCU_REPORT_TIMEOUT_MS 1000
+ #define INT_SIGN(X) ((X > 0) - (X < 0))
+ 
+ #define gamepad_serdev_write_seq(serdev, seq...)                      \
+@@ -37,9 +47,9 @@
+ 		int ret;                                                      \
+ 		ret = serdev_device_write_buf(serdev, d, ARRAY_SIZE(d));      \
+ 		if (ret < 0 || ret < ARRAY_SIZE(d)) {                         \
+-			dev_warn_ratelimited(dev, "Unable to write data: %d",     \
++			dev_warn_ratelimited(dev, "Unable to write data: %d\n",   \
+ 					     ret);                                        \
+-			return;                                                   \
++			return ret < 0 ? ret : -EIO;                              \
+ 		}                                                             \
+ 	} while (0)
+ 
+@@ -63,6 +73,10 @@ struct gamepad_device {
+ 	struct gpio_desc *boot_gpio;
+ 	struct gpio_desc *enable_gpio;
+ 	struct gpio_desc *reset_gpio;
++	struct serdev_device *serdev;
++	struct delayed_work init_work;
++	unsigned int init_attempts;
++	struct completion report_seen;
+ 	struct input_dev *dev_input;
+ 	struct platform_device *platform_dev;
+ 	u8 rx_buf[RX_BUF_LEN];
+@@ -150,6 +164,7 @@ module_param(axis_leftz_max,int,0660);
+ module_param(axis_leftz_deadzone,int,0660);
+ module_param(axis_leftz_antideadzone,int,0660);
+ 
++
+ module_param(axis_rightx_min,int,0660);
+ module_param(axis_rightx_center,int,0660);
+ module_param(axis_rightx_max,int,0660);
+@@ -169,6 +184,7 @@ module_param(axis_rightz_deadzone,int,0660);
+ module_param(axis_rightz_antideadzone,int,0660);
+ 
+ 
++
+ static u8 gamepad_data_checksum(const u8 *data, size_t count)
+ {
+ 	const u8 *ptr = data;
+@@ -180,7 +196,7 @@ static u8 gamepad_data_checksum(const u8 *data, size_t count)
+ 	return ret;
+ }
+ 
+-static void gamepad_send_init_sequence(struct serdev_device *serdev)
++static int gamepad_send_init_sequence(struct serdev_device *serdev)
+ {
+ 	gamepad_serdev_write_seq(serdev, 0xA5, 0xD3, 0x5A, 0x3D, 0x0, 0x1, 0x2,
+ 				 0x0, 0x7, 0x1, 0x5);
+@@ -200,14 +216,126 @@ static void gamepad_send_init_sequence(struct serdev_device *serdev)
+ 	gamepad_serdev_write_seq(serdev, 0xA5, 0xD3, 0x5A, 0x3D, 0x5, 0x1, 0x1,
+ 				 0x0, 0x2, 0x7);
+ 	msleep(100);
++
++	return 0;
++}
++
++/*
++ * Power-cycle the MCU (off for a moment, then out of reset) and set it up.
++ * The writes landing proves nothing about an MCU still booting: it is up once
++ * it streams reports.
++ */
++static int gamepad_power_on(struct gamepad_device *dev)
++{
++	int ret;
++
++	reinit_completion(&dev->report_seen);
++
++	if (dev->boot_gpio)
++		gpiod_set_value_cansleep(dev->boot_gpio, 0);
++
++	if (dev->enable_gpio)
++		gpiod_set_value_cansleep(dev->enable_gpio, 0);
++
++	if (dev->reset_gpio)
++		gpiod_set_value_cansleep(dev->reset_gpio, 0);
++
++	msleep(100);
++
++	if (dev->enable_gpio)
++		gpiod_set_value_cansleep(dev->enable_gpio, 1);
++
++	if (dev->reset_gpio)
++		gpiod_set_value_cansleep(dev->reset_gpio, 1);
++
++	msleep(100);
++
++	ret = gamepad_send_init_sequence(dev->serdev);
++	if (ret)
++		return ret;
++
++	if (!wait_for_completion_timeout(&dev->report_seen,
++					 msecs_to_jiffies(MCU_REPORT_TIMEOUT_MS)))
++		return -ETIMEDOUT;
++
++	return 0;
++}
++
++/*
++ * Bring the MCU up from probe and resume: off the system resume path (it takes
++ * the better part of a second), and again later if it fails -- a pad left dead
++ * until the next suspend or reboot is worse than a late one.
++ */
++static void gamepad_init_work(struct work_struct *work)
++{
++	struct gamepad_device *dev = container_of(to_delayed_work(work),
++						  struct gamepad_device, init_work);
++	int ret;
++
++	ret = gamepad_power_on(dev);
++	if (!ret)
++		return;
++
++	if (++dev->init_attempts < MCU_INIT_MAX_ATTEMPTS)
++		schedule_delayed_work(&dev->init_work, msecs_to_jiffies(MCU_INIT_RETRY_MS));
++	else
++		dev_err(dev->dev, "MCU init failed, giving up: %d\n", ret);
++}
++
++static void gamepad_set_abs_ranges(struct input_dev *indev)
++{
++	input_set_abs_params(indev, ABS_X,
++		INT_SIGN(axis_leftx_min) * ( abs(axis_leftx_min) - axis_leftx_antideadzone ),
++		INT_SIGN(axis_leftx_max) * ( abs(axis_leftx_max) - axis_leftx_antideadzone ),
++		0, 0);
++	input_set_abs_params(indev, ABS_Y,
++		INT_SIGN(axis_lefty_min) * ( abs(axis_lefty_min) - axis_lefty_antideadzone ),
++		INT_SIGN(axis_lefty_max) * ( abs(axis_lefty_max) - axis_lefty_antideadzone ),
++		0, 0);
++	/*
++	 * Never reported, but advertised from the start: dropping them would
++	 * renumber the axes after them for SDL mappings and emulator configs.
++	 */
++	input_set_abs_params(indev, ABS_Z,
++		INT_SIGN(axis_leftz_min) * ( abs(axis_leftz_min) - axis_leftz_antideadzone ),
++		INT_SIGN(axis_leftz_max) * ( abs(axis_leftz_max) - axis_leftz_antideadzone ),
++		0, 0);
++	input_set_abs_params(indev, ABS_RX,
++		INT_SIGN(axis_rightx_min) * ( abs(axis_rightx_min) - axis_rightx_antideadzone ),
++		INT_SIGN(axis_rightx_max) * ( abs(axis_rightx_max) - axis_rightx_antideadzone ),
++		0, 0);
++	input_set_abs_params(indev, ABS_RY,
++		INT_SIGN(axis_righty_min) * ( abs(axis_righty_min) - axis_righty_antideadzone ),
++		INT_SIGN(axis_righty_max) * ( abs(axis_righty_max) - axis_righty_antideadzone ),
++		0, 0);
++	input_set_abs_params(indev, ABS_RZ,
++		INT_SIGN(axis_rightz_min) * ( abs(axis_rightz_min) - axis_rightz_antideadzone ),
++		INT_SIGN(axis_rightz_max) * ( abs(axis_rightz_max) - axis_rightz_antideadzone ),
++		0, 0);
++	/*
++	 * The triggers stay on HAT2X (left) and HAT2Y (right), the reverse of
++	 * Documentation/input/gamepad.rst: ROCKNIX, InputPlumber's Retroid maps
++	 * and Kettle's own (kettle-rp5, the desktop controller) all expect it.
++	 */
++	input_set_abs_params(indev, ABS_HAT2X, 0, trigger_left_max - trigger_left_antideadzone, 0, 30);
++	input_set_abs_params(indev, ABS_HAT2Y, 0, trigger_right_max - trigger_right_antideadzone, 0, 30);
++}
++
++/* A trigger's travel from its rest reading, within the range reported for it. */
++static int gamepad_trigger(const u8 *raw, int max, int deadzone, int antideadzone)
++{
++	int value = max - (raw[0] | (raw[1] << 8));
++
++	if (value < deadzone)
++		return 0;
++	return clamp(value - antideadzone, 0, max - antideadzone);
+ }
+ 
+ static void gamepad_input_handler(struct gamepad_device *dev,
+ 				  struct gamepad_data *data)
+ {
+-	static unsigned long prev_states;
+-	unsigned long keys = data->data[0] | (data->data[1] << 8);
+-	unsigned long current_states = keys, changes;
++	unsigned long keys;
++	int16_t value;
+ 	int i;
+ 	struct input_dev *indev;
+ 
+@@ -215,55 +343,36 @@ static void gamepad_input_handler(struct gamepad_device *dev,
+ 	if (!indev)
+ 		return;
+ 
+-	if (update_params)
+-	{
+-		input_set_abs_params(indev, ABS_X,
+-			INT_SIGN(axis_leftx_min) * ( abs(axis_leftx_min) - axis_leftx_antideadzone ),
+-			INT_SIGN(axis_leftx_max) * ( abs(axis_leftx_max) - axis_leftx_antideadzone ),
+-			0, 0);
+-		input_set_abs_params(indev, ABS_Y,
+-			INT_SIGN(axis_lefty_min) * ( abs(axis_lefty_min) - axis_lefty_antideadzone ),
+-			INT_SIGN(axis_lefty_max) * ( abs(axis_lefty_max) - axis_lefty_antideadzone ),
+-			 0, 0);
+-		input_set_abs_params(indev, ABS_Z,
+-			INT_SIGN(axis_leftz_min) * ( abs(axis_leftz_min) - axis_leftz_antideadzone ),
+-			INT_SIGN(axis_leftz_max) * ( abs(axis_leftz_max) - axis_leftz_antideadzone ),
+-			 0, 0);
+-
+-		input_set_abs_params(indev, ABS_RX,
+-			INT_SIGN(axis_rightx_min) * ( abs(axis_rightx_min) - axis_rightx_antideadzone ),
+-			INT_SIGN(axis_rightx_max) * ( abs(axis_rightx_max) - axis_rightx_antideadzone ),
+-			0, 0);
+-		input_set_abs_params(indev, ABS_RY,
+-			INT_SIGN(axis_righty_min) * ( abs(axis_righty_min) - axis_righty_antideadzone ),
+-			INT_SIGN(axis_righty_max) * ( abs(axis_righty_max) - axis_righty_antideadzone ),
+-			 0, 0);
+-		input_set_abs_params(indev, ABS_RZ,
+-			INT_SIGN(axis_rightz_min) * ( abs(axis_rightz_min) - axis_rightz_antideadzone ),
+-			INT_SIGN(axis_rightz_max) * ( abs(axis_rightz_max) - axis_rightz_antideadzone ),
+-			 0, 0);
+-
+-		input_set_abs_params(indev, ABS_HAT2X, 0, trigger_left_max - trigger_left_antideadzone, 0, 30);
+-		input_set_abs_params(indev, ABS_HAT2Y, 0, trigger_right_max - trigger_right_antideadzone, 0, 30);
+-		update_params = 0;
++	/* A short report would read its missing bytes as zeros: full triggers. */
++	if (data->data_len < STATUS_DATA_LEN) {
++		dev_warn_ratelimited(dev->dev, "Short status report: %u bytes\n",
++				     data->data_len);
++		return;
+ 	}
+ 
++	complete(&dev->report_seen);
+ 
+-	bitmap_xor(&changes, &current_states, &prev_states, ARRAY_SIZE(keymap));
+-
+-	for_each_set_bit(i, &changes, ARRAY_SIZE(keymap)) {
+-		input_report_key(indev, keymap[i], (current_states & BIT(i)));
++	if (update_params)
++	{
++		gamepad_set_abs_ranges(indev);
++		update_params = 0;
+ 	}
+ 
+-	int16_t value;
++	/*
++	 * Every report holds the whole button state: report all of it, and let
++	 * the input core pass on only the changes. No state of our own to go stale
++	 * when the core releases the keys across suspend.
++	 */
++	keys = data->data[0] | (data->data[1] << 8);
++	for (i = 0; i < ARRAY_SIZE(keymap); i++)
++		input_report_key(indev, keymap[i], keys & BIT(i));
+ 
+-	value = (int16_t)(trigger_left_max - (data->data[2] | (data->data[3] << 8)));
+ 	input_report_abs(indev, ABS_HAT2X,
+-			 ( value < trigger_left_deadzone )? 0 : value - trigger_left_antideadzone);
+-
+-	value = (int16_t)(trigger_right_max - (data->data[4] | (data->data[5] << 8)));
++			 gamepad_trigger(&data->data[2], trigger_left_max,
++					 trigger_left_deadzone, trigger_left_antideadzone));
+ 	input_report_abs(indev, ABS_HAT2Y,
+-			 ( value < trigger_right_deadzone )? 0 : value - trigger_right_antideadzone);
++			 gamepad_trigger(&data->data[4], trigger_right_max,
++					 trigger_right_deadzone, trigger_right_antideadzone));
+ 
+ 	value = -(int16_t)(data->data[6] | (data->data[7] << 8));
+ 	value += axis_leftx_center;
+@@ -286,7 +395,6 @@ static void gamepad_input_handler(struct gamepad_device *dev,
+ 			 ( abs(value) < axis_righty_deadzone )? 0 : INT_SIGN(value) * ( abs(value) - axis_righty_antideadzone ));
+ 
+ 	input_sync(indev);
+-	prev_states = keys;
+ }
+ 
+ static void gamepad_data_handler(struct serdev_device *serdev,
+@@ -445,42 +553,25 @@ static int gamepad_mcu_uart_probe(struct serdev_device *serdev)
+ 
+ 	gamepad_dev->boot_gpio =
+ 		devm_gpiod_get_optional(dev, "boot", GPIOD_OUT_HIGH);
+-	if (IS_ERR(gamepad_dev->boot_gpio)) {
+-		ret = PTR_ERR(gamepad_dev->boot_gpio);
+-		dev_warn(dev, "Unable to get boot gpio: %d\n", ret);
+-	}
++	if (IS_ERR(gamepad_dev->boot_gpio))
++		return dev_err_probe(dev, PTR_ERR(gamepad_dev->boot_gpio),
++				     "Unable to get boot gpio\n");
+ 
+ 	gamepad_dev->enable_gpio =
+ 		devm_gpiod_get_optional(dev, "enable", GPIOD_OUT_HIGH);
+-	if (IS_ERR(gamepad_dev->enable_gpio)) {
+-		ret = PTR_ERR(gamepad_dev->enable_gpio);
+-		dev_warn(dev, "Unable to get enable gpio: %d\n", ret);
+-	}
++	if (IS_ERR(gamepad_dev->enable_gpio))
++		return dev_err_probe(dev, PTR_ERR(gamepad_dev->enable_gpio),
++				     "Unable to get enable gpio\n");
+ 
+ 	gamepad_dev->reset_gpio =
+ 		devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
+-	if (IS_ERR(gamepad_dev->reset_gpio)) {
+-		ret = PTR_ERR(gamepad_dev->reset_gpio);
+-		dev_warn(dev, "Unable to get reset gpio: %d\n", ret);
+-	}
+-
+-	if (gamepad_dev->boot_gpio)
+-		gpiod_set_value_cansleep(gamepad_dev->boot_gpio, 0);
+-
+-	if (gamepad_dev->reset_gpio)
+-		gpiod_set_value_cansleep(gamepad_dev->reset_gpio, 0);
+-
+-	msleep(100);
+-
+-	if (gamepad_dev->enable_gpio)
+-		gpiod_set_value_cansleep(gamepad_dev->enable_gpio, 1);
+-
+-	if (gamepad_dev->reset_gpio)
+-		gpiod_set_value_cansleep(gamepad_dev->reset_gpio, 1);
+-
+-	msleep(100);
++	if (IS_ERR(gamepad_dev->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(gamepad_dev->reset_gpio),
++				     "Unable to get reset gpio\n");
+ 
+ 	gamepad_dev->dev = dev;
++	gamepad_dev->serdev = serdev;
++	init_completion(&gamepad_dev->report_seen);
+ 
+ 	gamepad_dev->dev_input = devm_input_allocate_device(dev);
+ 	if (!gamepad_dev->dev_input)
+@@ -509,34 +600,7 @@ static int gamepad_mcu_uart_probe(struct serdev_device *serdev)
+ 
+ 	__set_bit(EV_ABS, gamepad_dev->dev_input->evbit);
+ 
+-	input_set_abs_params(gamepad_dev->dev_input, ABS_X,
+-		INT_SIGN(axis_leftx_min) * ( abs(axis_leftx_min) - axis_leftx_antideadzone ),
+-		INT_SIGN(axis_leftx_max) * ( abs(axis_leftx_max) - axis_leftx_antideadzone ),
+-		0, 0);
+-	input_set_abs_params(gamepad_dev->dev_input, ABS_Y,
+-		INT_SIGN(axis_lefty_min) * ( abs(axis_lefty_min) - axis_lefty_antideadzone ),
+-		INT_SIGN(axis_lefty_max) * ( abs(axis_lefty_max) - axis_lefty_antideadzone ),
+-		0, 0);
+-	input_set_abs_params(gamepad_dev->dev_input, ABS_Z,
+-		INT_SIGN(axis_leftz_min) * ( abs(axis_leftz_min) - axis_leftz_antideadzone ),
+-		INT_SIGN(axis_leftz_max) * ( abs(axis_leftz_max) - axis_leftz_antideadzone ),
+-		0, 0);
+-
+-	input_set_abs_params(gamepad_dev->dev_input, ABS_RX,
+-		INT_SIGN(axis_rightx_min) * ( abs(axis_rightx_min) - axis_rightx_antideadzone ),
+-		INT_SIGN(axis_rightx_max) * ( abs(axis_rightx_max) - axis_rightx_antideadzone ),
+-		0, 0);
+-	input_set_abs_params(gamepad_dev->dev_input, ABS_RY,
+-		INT_SIGN(axis_righty_min) * ( abs(axis_righty_min) - axis_righty_antideadzone ),
+-		INT_SIGN(axis_righty_max) * ( abs(axis_righty_max) - axis_righty_antideadzone ),
+-		0, 0);
+-	input_set_abs_params(gamepad_dev->dev_input, ABS_RZ,
+-		INT_SIGN(axis_rightz_min) * ( abs(axis_rightz_min) - axis_rightz_antideadzone ),
+-		INT_SIGN(axis_rightz_max) * ( abs(axis_rightz_max) - axis_rightz_antideadzone ),
+-		0, 0);
+-
+-		input_set_abs_params(gamepad_dev->dev_input, ABS_HAT2X, 0, trigger_left_max - trigger_left_antideadzone, 0, 30);
+-		input_set_abs_params(gamepad_dev->dev_input, ABS_HAT2Y, 0, trigger_right_max - trigger_right_antideadzone, 0, 30);
++	gamepad_set_abs_ranges(gamepad_dev->dev_input);
+ 
+ 		input_set_capability(gamepad_dev->dev_input, EV_FF, FF_RUMBLE);
+ 		ret = input_ff_create_memless(gamepad_dev->dev_input, NULL, retroid_rumble_play);
+@@ -576,11 +640,59 @@ static int gamepad_mcu_uart_probe(struct serdev_device *serdev)
+ 
+ 	serdev_device_set_flow_control(serdev, false);
+ 
+-	gamepad_send_init_sequence(serdev);
++	/* Registered after the port opens, so unbind cancels it before closing. */
++	ret = devm_delayed_work_autocancel(dev, &gamepad_dev->init_work, gamepad_init_work);
++	if (ret)
++		return ret;
++
++	ret = gamepad_power_on(gamepad_dev);
++	if (ret) {
++		dev_warn(dev, "MCU init failed, retrying: %d\n", ret);
++		schedule_delayed_work(&gamepad_dev->init_work,
++				      msecs_to_jiffies(MCU_INIT_RETRY_MS));
++	}
+ 
+ 	return 0;
+ }
+ 
++/*
++ * The MCU streams reports continuously over the UART. If it keeps sending
++ * across the suspend teardown, the geni-serial RX interrupt can storm while
++ * the port is stopped until the spurious-IRQ detector disables it, leaving the
++ * pad dead after resume (rsinput's 1004). Hold the MCU off while asleep, which
++ * also saves its power; resume brings it back up from the init work.
++ */
++static int gamepad_suspend(struct device *d)
++{
++	struct gamepad_device *dev = dev_get_drvdata(d);
++
++	cancel_delayed_work_sync(&dev->init_work);
++
++	if (dev->enable_gpio)
++		gpiod_set_value_cansleep(dev->enable_gpio, 0);
++
++	if (dev->reset_gpio)
++		gpiod_set_value_cansleep(dev->reset_gpio, 0);
++
++	/* Drop any partial frame from before the MCU went quiet. */
++	dev->rx_len = 0;
++
++	return 0;
++}
++
++static int gamepad_resume(struct device *d)
++{
++	struct gamepad_device *dev = dev_get_drvdata(d);
++
++	dev->rx_len = 0;
++	dev->init_attempts = 0;
++	schedule_delayed_work(&dev->init_work, 0);
++
++	return 0;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(gamepad_pm_ops, gamepad_suspend, gamepad_resume);
++
+ static const struct of_device_id gamepad_mcu_uart_of_match[] = {
+ 	{ .compatible = "retroid,retroid-pocket-gamepad" },
+ 	{}
+@@ -591,6 +703,7 @@ static struct serdev_device_driver gamepad_mcu_uart_driver = {
+ 	.driver = {
+ 		.name = DRIVER_NAME,
+ 		.of_match_table = gamepad_mcu_uart_of_match,
++		.pm = pm_sleep_ptr(&gamepad_pm_ops),
+ 	},
+ 	.probe = gamepad_mcu_uart_probe,
+ };

@@ -276,6 +276,9 @@ systemctl --global enable steamos-manager.service kettle-steam-bootstrap.service
   kettle-desktop-controller.service kettle-qam-button.service \
   kettle-retroarch-cores.service >/dev/null 2>&1
 systemctl mask systemd-firstboot.service >/dev/null 2>&1
+# Arch's maintenance timers have nothing to do on an image OS (no pacman keyring to refresh,
+# no man index to rebuild under a read-only /usr), and can fire in the middle of a game
+systemctl mask archlinux-keyring-wkd-sync.timer man-db.timer shadow.timer >/dev/null 2>&1
 : >/etc/machine-id
 mkinitcpio -k $KVER -g /boot/initramfs-linux.img
 steamos-atomupd-mkmanifest >/etc/steamos-atomupd/manifest.json

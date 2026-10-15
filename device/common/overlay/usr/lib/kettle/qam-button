@@ -14,7 +14,6 @@ import json
 import os
 import socket
 import struct
-import sys
 import time
 import urllib.request
 from urllib.parse import urlparse
@@ -23,6 +22,7 @@ import evdev
 from evdev import ecodes as e
 
 import kettle_device
+from kettle_device import find_pad, log
 
 PAD_NAME = kettle_device.conf.get("PAD_NAME", "")
 QAM_BUTTON = e.BTN_BACK
@@ -32,27 +32,12 @@ TOGGLE_QAM = ("(w => w ? (w.OnQuickAccessButtonPressed(), true) : false)"
               "(SteamUIStore?.WindowStore?.GamepadUIMainWindowInstance)")
 
 
-def log(msg):
-    print(msg, file=sys.stderr, flush=True)
-
-
-def find_pad():
-    for path in evdev.list_devices():
-        try:
-            dev = evdev.InputDevice(path)
-        except OSError:
-            continue
-        if dev.name == PAD_NAME:
-            return dev
-        dev.close()
-    return None
-
-
 def cef_eval(expr):
     """Evaluate expr in Steam's SharedJSContext over a minimal WebSocket client."""
     with urllib.request.urlopen(CEF, timeout=CEF_TIMEOUT) as resp:
         targets = json.load(resp)
-    url = next(t["webSocketDebuggerUrl"] for t in targets if t.get("title") == "SharedJSContext")
+    url = next(t["webSocketDebuggerUrl"] for t in targets
+               if t.get("title") == "SharedJSContext" and "webSocketDebuggerUrl" in t)
     u = urlparse(url)
     with socket.create_connection((u.hostname, u.port), timeout=CEF_TIMEOUT) as sock:
         key = base64.b64encode(os.urandom(16)).decode()

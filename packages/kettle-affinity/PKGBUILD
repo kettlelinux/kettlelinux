@@ -1,0 +1,46 @@
+# Kettle Linux's thread affinity fix: libkettle_affinity.so (affinity.c), preloaded into a game by
+# the kettle-affinity wrapper in its launch options, moves the threads the game pins to little
+# cores onto the fast ones. Baldur's Gate 3's native Linux build pins GameThread and ServerWorker
+# to cpus 1 and 2, the A510s on SM8550.
+#
+# Built twice: x86_64 for x86 Linux games under FEX (in the Steam Runtime's container, on its
+# glibc) and aarch64 for native ones. affinity.c uses no system headers, so clang builds both from
+# here with no x86 sysroot; it links against stub libc/libdl/libpthread, which only give the
+# library its DT_NEEDED entries (all three exist in old and new glibc alike).
+pkgname=kettle-affinity
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Kettle Linux: moves the threads a game pins to little cores onto the fast cores'
+arch=(aarch64)
+license=(BSD-3-Clause)
+depends=(bash)
+makedepends=(clang lld)
+options=(!strip)  # makepkg's strip doesn't know the x86_64 build
+
+build() {
+  local a d
+  for a in x86_64 aarch64; do
+    d="$srcdir/$a"
+    mkdir -p "$d"
+    local cc=(clang --target=$a-linux-gnu -O2 -fPIC -shared -nostdlib -fuse-ld=lld)
+    echo 'void dlsym(void) {}' >"$d/dl.c"
+    echo 'void getenv(void) {} void open(void) {} void read(void) {} void write(void) {}
+          void close(void) {} void pthread_self(void) {}' >"$d/c.c"
+    echo 'void pthread_getname_np(void) {}' >"$d/pthread.c"
+    "${cc[@]}" -Wl,-soname,libdl.so.2 -o "$d/libdl.so.2" "$d/dl.c"
+    "${cc[@]}" -Wl,-soname,libc.so.6 -o "$d/libc.so.6" "$d/c.c"
+    "${cc[@]}" -Wl,-soname,libpthread.so.0 -o "$d/libpthread.so.0" "$d/pthread.c"
+    "${cc[@]}" -Wall -Wextra -ffreestanding -fno-builtin -fno-stack-protector -fvisibility=hidden \
+      -Wl,-z,defs -Wl,-s -o "$d/libkettle_affinity.so" "$startdir/affinity.c" \
+      "$d/libc.so.6" "$d/libdl.so.2" "$d/libpthread.so.0"
+  done
+}
+
+package() {
+  local a
+  for a in x86_64 aarch64; do
+    install -Dm755 "$srcdir/$a/libkettle_affinity.so" -t "$pkgdir/usr/lib/kettle-affinity/$a"
+  done
+  install -Dm755 "$startdir/kettle-affinity" -t "$pkgdir/usr/bin"
+  install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}

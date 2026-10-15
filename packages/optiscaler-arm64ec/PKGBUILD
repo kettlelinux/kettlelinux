@@ -36,7 +36,7 @@
 # runs makepkg in the aarch64 chroot.
 pkgname=optiscaler-arm64ec
 pkgver=10.0.0.20260923
-pkgrel=5
+pkgrel=6
 _commit=f80e4da339cd4624212fd0546922571fe01205c1
 _llvm_mingw=20260908
 _ffx=c6efa6bf7f2027b3ec94f28578bb5965eabb9e55   # FidelityFX-SDK: only ffx-api/include is used

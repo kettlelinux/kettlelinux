@@ -203,8 +203,8 @@ export function FrameGenPage({ f }: { f: Features }) {
       </Text>
       <Feature img={gsFramegen} title="More frames on screen">
         <p>
-          Kettle's own frame generation shows extra frames between the ones the game renders: 2×, 3×, or the fewest that
-          fill the display. Its base frame rate is capped automatically, so leave Steam's frame limit off for these
+          Kettle's own frame generation shows an extra frame between each two the game renders. Pick the game's base
+          frame rate in the tab, even while it runs: the screen runs at twice it. Leave Steam's frame limit off for these
           games.
         </p>
       </Feature>
@@ -274,7 +274,7 @@ export function DevicePage({ f }: { f: Features }) {
       <Feature img={dsGyro} title="Gyro, and System">
         <p>
           The motion sensors for Steam Input's gyro controls, on while a game runs to save power. <b>System</b> holds
-          what Kettle starts up in, the SSH server for logging in from another computer, resetting the device, and, where the ROCKNIX ABL starts Kettle, its updates.
+          what Kettle starts up in, the SSH server for logging in from another computer, resetting the device, and the bootloader: installing, updating or removing the ROCKNIX ABL.
         </p>
       </Feature>
       <Wide img={diag} caption="Diagnostics, at the bottom of Device Settings: power use, temperatures and everything about the device." />

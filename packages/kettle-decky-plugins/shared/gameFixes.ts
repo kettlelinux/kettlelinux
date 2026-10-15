@@ -1,6 +1,6 @@
-// Game fixes: launch options a game needs to run on this hardware at all. Welcome applies each
-// once (welcome/src/fixes.ts); Game Settings shows the ones for the selected game and can take
-// one off or put it back.
+// Game fixes: launch options a game needs to run, or to run well, on this hardware. Welcome
+// applies each once (welcome/src/fixes.ts); Game Settings shows the ones for the selected game
+// and can take one off or put it back.
 import { hasEnv, hasWrapper, withEnv, withWrapper, withoutWrapper } from "./launchOptions";
 
 export type GameFix = {
@@ -46,6 +46,18 @@ export const GAME_FIXES: GameFix[] = [
     applied: (opts) => hasEnv(opts, "VKD3D_FEATURE_LEVEL"),
     edit: (opts) => withEnv(opts, "VKD3D_FEATURE_LEVEL", "12_0"),
     undo: (opts) => withEnv(opts, "VKD3D_FEATURE_LEVEL", null),
+  },
+  {
+    // Baldur's Gate 3's native Linux build (x86-64, under FEX) pins GameThread to cpu 1 and
+    // ServerWorker to cpu 2, A510 little cores on SM8550: loading takes over 10 minutes and Act 3
+    // stutters (frame time p99 80 ms). kettle-affinity moves those pins to the fast cores.
+    id: "bg3-fast-cores",
+    appid: 1086940,
+    title: "Keep threads off the little cores",
+    description: "The game pins its main threads to the slow cores: loads take minutes and it stutters.",
+    applied: (opts) => hasWrapper(opts, "kettle-affinity"),
+    edit: (opts) => withWrapper(opts, "kettle-affinity"),
+    undo: (opts) => withoutWrapper(opts, "kettle-affinity"),
   },
 ];
 

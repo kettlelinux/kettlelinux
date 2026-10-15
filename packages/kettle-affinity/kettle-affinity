@@ -1,0 +1,36 @@
+#!/bin/bash
+# kettle-affinity %command%: run a Steam game with libkettle_affinity.so preloaded, which moves the
+# threads it pins to little cores onto the fast ones (see affinity.c). Game Settings puts it in the
+# launch options of games that need it; KETTLE_AFFINITY_MAP and KETTLE_AFFINITY_LOG pass through.
+#
+# The preload can't simply go in the environment: Valve's FEX compat tool deletes LD_PRELOAD, and
+# the game runs in the Steam Runtime's container, where the host's /usr is /run/host/usr. So it is
+# set inside the container, just before the game: after the runtime entry point's "--", as
+#   ... _v2-entry-point --verb=waitforexitandrun -- /bin/sh -c 'LD_PRELOAD=... exec "$@"' sh <game>
+# x86 games (behind fex-compat-tool) get the x86_64 build, others the aarch64 one. A game run
+# without a runtime container gets the host path in its environment.
+lib=/usr/lib/kettle-affinity
+arch=aarch64 entry=
+for a in "$@"; do
+  case $a in
+    */fex-compat-tool) arch=x86_64 ;;
+    */_v2-entry-point) entry=1 ;;
+  esac
+done
+
+if [ -z "$entry" ]; then
+  export LD_PRELOAD="$lib/$arch/libkettle_affinity.so${LD_PRELOAD:+:$LD_PRELOAD}"
+  exec "$@"
+fi
+
+preload=/run/host$lib/$arch/libkettle_affinity.so
+args=() seen= done=
+for a in "$@"; do
+  args+=("$a")
+  [ -n "$done" ] && continue
+  case $a in
+    */_v2-entry-point) seen=1 ;;
+    --) [ -n "$seen" ] && { args+=(/bin/sh -c 'LD_PRELOAD="$0${LD_PRELOAD:+:$LD_PRELOAD}" exec "$@"' "$preload"); done=1; } ;;
+  esac
+done
+exec "${args[@]}"

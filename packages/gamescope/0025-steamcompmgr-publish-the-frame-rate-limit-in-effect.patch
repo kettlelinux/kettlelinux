@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Wed, 14 Oct 2026 07:05:49 -0500
+Subject: [PATCH] steamcompmgr: publish the frame rate limit in effect as
+ GAMESCOPE_FPS_LIMIT_FEEDBACK
+
+Steam sets its frame rate limit through gamescope_control
+(set_app_target_refresh_cycle), which changes the limit gamescope
+applies but never updates the GAMESCOPE_FPS_LIMIT root property: that
+keeps whatever was last written to it (60 on the AYN Odin 2 Portal,
+whatever Steam's limit is). Only GAMESCOPE_LIMITER_FEEDBACK follows the
+real limit, and it only says whether there is one.
+
+Publish the limit in effect, in frames per second (0: none), as
+GAMESCOPE_FPS_LIMIT_FEEDBACK on every Xwayland root, alongside
+GAMESCOPE_LIMITER_FEEDBACK and updated with it.
+---
+ src/steamcompmgr.cpp | 10 +++++++++-
+ src/xwayland_ctx.hpp |  1 +
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index 863356a0..94200d57 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -9045,6 +9045,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
+ 	ctx->atoms.gamescopeFPSLimit = XInternAtom( ctx->dpy, "GAMESCOPE_FPS_LIMIT", false );
+ 	ctx->atoms.gamescopeKeyboardLayout = XInternAtom( ctx->dpy, "GAMESCOPE_KEYBOARD_LAYOUT", false );
+ 	ctx->atoms.gamescopeLimiterFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_LIMITER_FEEDBACK", false );
++	ctx->atoms.gamescopeFPSLimitFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_FPS_LIMIT_FEEDBACK", false );
+ 	ctx->atoms.gamescopeDynamicRefresh[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH", false );
+ 	ctx->atoms.gamescopeDynamicRefresh[gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH_EXTERNAL", false );
+ 	ctx->atoms.gamescopeLowLatency = XInternAtom( ctx->dpy, "GAMESCOPE_LOW_LATENCY", false );
+@@ -9276,20 +9277,27 @@ void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush =
+ }
+ 
+ static uint32_t g_uLimiterFeedback_CachedValue = 0;
++static uint32_t g_uFPSLimitFeedback_CachedValue = 0;
+ 
+ void update_limiter_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = nullptr)
+ {
+ 	uint32_t uLimiterFeedback = wlserver_get_frame_limiter_state();
+-	if ( uLimiterFeedback == g_uLimiterFeedback_CachedValue && !force )
++	// The frame rate limit in effect (0: none). Steam sets it through gamescope_control, which
++	// never updates GAMESCOPE_FPS_LIMIT: that keeps whatever was last written to it.
++	uint32_t uFPSLimitFeedback = g_nSteamCompMgrTargetFPS > 0 ? g_nSteamCompMgrTargetFPS : 0;
++	if ( uLimiterFeedback == g_uLimiterFeedback_CachedValue && uFPSLimitFeedback == g_uFPSLimitFeedback_CachedValue && !force )
+ 		return;
+ 
+ 	g_uLimiterFeedback_CachedValue = uLimiterFeedback;
++	g_uFPSLimitFeedback_CachedValue = uFPSLimitFeedback;
+ 
+ 	gamescope_xwayland_server_t *server = NULL;
+ 	for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+ 	{
+ 		XChangeProperty(server->ctx->dpy, server->ctx->root, server->ctx->atoms.gamescopeLimiterFeedback, XA_CARDINAL, 32, PropModeReplace,
+ 			(unsigned char *)&uLimiterFeedback, 1 );
++		XChangeProperty(server->ctx->dpy, server->ctx->root, server->ctx->atoms.gamescopeFPSLimitFeedback, XA_CARDINAL, 32, PropModeReplace,
++			(unsigned char *)&uFPSLimitFeedback, 1 );
+ 
+ 		if (server->ctx.get() == root_ctx)
+ 		{
+diff --git a/src/xwayland_ctx.hpp b/src/xwayland_ctx.hpp
+index 7b39ecb3..89689a97 100644
+--- a/src/xwayland_ctx.hpp
++++ b/src/xwayland_ctx.hpp
+@@ -173,6 +173,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
+ 		Atom gamescopeFPSLimit;
+ 		Atom gamescopeKeyboardLayout;
+ 		Atom gamescopeLimiterFeedback;
++		Atom gamescopeFPSLimitFeedback;
+ 		Atom gamescopeDynamicRefresh[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
+ 		Atom gamescopeLowLatency;
+ 
+-- 
+2.56.0
+

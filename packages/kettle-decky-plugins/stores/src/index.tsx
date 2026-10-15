@@ -1,5 +1,5 @@
-// Game Stores: Epic Games, GOG and Amazon Games in Game Mode, Flathub's ARM64 apps and Android
-// games (main.py).
+// Game Stores: Epic Games, GOG and Amazon Games in Game Mode, Flathub's ARM64 apps, Android
+// games and Amethyst Mod Manager (main.py).
 // The Quick Access panel shows the accounts and the running download and opens the Game Stores
 // page (library.tsx); each game has its own page (game.tsx). The listeners here run while Game
 // Mode does: leaving Steam's browser after a sign-in, and adding a finished install to Steam
@@ -13,13 +13,16 @@ import { GamePage } from "./game";
 import { Page } from "./library";
 import { addShortcut } from "./shortcuts";
 import { androidInfo } from "./android";
+import { modManagerInfo, openModManager } from "./modmanager";
 import { GAME_ROUTE, JobProgress, ROUTE, act, openGame, openStores, signIn, usePoll } from "./ui";
 
 function Content() {
   const [s] = usePoll(status, 2000);
   const [android, setAndroid] = useState(false);
+  const [mods, setMods] = useState(false);
   useEffect(() => {
     androidInfo().then((a) => setAndroid(a.available)).catch(() => {});
+    modManagerInfo().then((m) => setMods(m.available)).catch(() => {});
   }, []);
   return (
     <>
@@ -34,10 +37,22 @@ function Content() {
             Browse Flathub
           </ButtonItem>
         </PanelSectionRow>
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={() => openStores("installed")}>
+            Installed games and apps
+          </ButtonItem>
+        </PanelSectionRow>
         {android && (
           <PanelSectionRow>
             <ButtonItem layout="below" onClick={() => openStores("android")}>
               Android games
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
+        {mods && (
+          <PanelSectionRow>
+            <ButtonItem layout="below" onClick={() => act(openModManager, "Opening the Mod Manager failed")}>
+              Mod Manager
             </ButtonItem>
           </PanelSectionRow>
         )}

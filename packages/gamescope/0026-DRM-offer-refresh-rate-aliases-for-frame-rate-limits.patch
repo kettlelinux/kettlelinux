@@ -1,0 +1,121 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Wed, 14 Oct 2026 17:23:59 -0500
+Subject: [PATCH] DRM: offer refresh rate aliases for frame rate limits between
+ a panel's modes
+
+Steam only offers frame rate limits that divide one of the display's
+refresh rates exactly. The AYN Odin 2 Portal's panel runs at 50, 60,
+120, 145 and 165 Hz, so nothing between 60 and 120 fps is offered: 165
+Hz at every second vblank would be 82.5 fps, which no whole limit
+names.
+
+GAMESCOPE_REFRESH_RATE_ALIASES=164:165,144:145 offers each alias as a
+refresh rate of an EDID-less internal panel, when the real rate is one
+of its modes and one Hz off it. Steam then offers 82 and 72 fps limits
+(164 / 2, 144 / 2); asking for an alias switches to the real mode, so an
+82 fps limit runs at 165 Hz, every second vblank: 82.5 fps.
+g_nDynamicRefreshHz keeps the alias asked for, so the refresh rate isn't
+switched again and again.
+---
+ src/Backends/DRMBackend.cpp | 63 ++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 62 insertions(+), 1 deletion(-)
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 4a6a5e86..5a282fbc 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -536,6 +536,7 @@ namespace gamescope
+ 		void ParseEDID();
+ 		void AddNativeModeRefreshRates();
+ 		void AddGeneratedRefreshRates();
++		void AddRefreshRateAliases();
+ 
+ 
+ 		CDRMBackend *m_pBackend = nullptr;
+@@ -3192,6 +3193,64 @@ namespace gamescope
+ 		drm_log.infof( "Connector %s: generated refresh rates %s", m_Mutable.szName, pszRates );
+ 	}
+ 
++	// GAMESCOPE_REFRESH_RATE_ALIASES=164:165,144:145: rates offered as stand-ins for a mode the
++	// panel has, one Hz off it. Steam only offers frame rate limits that divide a refresh rate
++	// exactly: a 164 Hz rate gives an 82 fps limit, which the 165 Hz mode then runs at every second
++	// vblank (82.5 fps). Without the alias, nothing between 60 and 165 fps / 2 is offered.
++	static int ResolveRefreshRateAlias( int nRefreshHz )
++	{
++		const char *pszAliases = getenv( "GAMESCOPE_REFRESH_RATE_ALIASES" );
++		for ( const char *p = pszAliases ? pszAliases : ""; *p; )
++		{
++			char *pEnd = nullptr;
++			long nAlias = strtol( p, &pEnd, 10 );
++			if ( pEnd == p || *pEnd != ':' )
++				break;
++			const char *pReal = pEnd + 1;
++			long nReal = strtol( pReal, &pEnd, 10 );
++			if ( pEnd == pReal )
++				break;
++			if ( nAlias == nRefreshHz )
++				return int( nReal );
++			p = *pEnd ? pEnd + 1 : pEnd;
++		}
++		return nRefreshHz;
++	}
++
++	void CDRMConnector::AddRefreshRateAliases()
++	{
++		const char *pszAliases = getenv( "GAMESCOPE_REFRESH_RATE_ALIASES" );
++		if ( !pszAliases )
++			return;
++
++		bool bAdded = false;
++		for ( const char *p = pszAliases; *p; )
++		{
++			char *pEnd = nullptr;
++			long nAlias = strtol( p, &pEnd, 10 );
++			if ( pEnd == p || *pEnd != ':' )
++				break;
++			const char *pReal = pEnd + 1;
++			long nReal = strtol( pReal, &pEnd, 10 );
++			if ( pEnd == pReal )
++				break;
++			// only for a rate the panel has, one Hz off it
++			if ( nAlias > 0 && std::abs( nAlias - nReal ) == 1 &&
++			     Algorithm::Contains( m_Mutable.ValidDynamicRefreshRates, uint32_t( nReal ) ) &&
++			     !Algorithm::Contains( m_Mutable.ValidDynamicRefreshRates, uint32_t( nAlias ) ) )
++			{
++				m_Mutable.ValidDynamicRefreshRates.push_back( uint32_t( nAlias ) );
++				bAdded = true;
++			}
++			p = *pEnd ? pEnd + 1 : pEnd;
++		}
++		if ( !bAdded )
++			return;
++
++		std::sort( m_Mutable.ValidDynamicRefreshRates.begin(), m_Mutable.ValidDynamicRefreshRates.end() );
++		drm_log.infof( "Connector %s: refresh rate aliases %s", m_Mutable.szName, pszAliases );
++	}
++
+ 	void CDRMConnector::ParseEDID()
+ 	{
+ 		uint64_t ulBlobId = GetProperties().EDID ? GetProperties().EDID->GetCurrentValue() : 0;
+@@ -3205,6 +3264,7 @@ namespace gamescope
+ 			{
+ 				AddNativeModeRefreshRates();
+ 				AddGeneratedRefreshRates();
++				AddRefreshRateAliases();
+ 			}
+ 			return;
+ 		}
+@@ -4362,7 +4422,8 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
+ 		return false;
+ 
+ 	drmModeConnector *connector = drm->pConnector->GetModeConnector();
+-	const drmModeModeInfo *existing_mode = find_mode(connector, width, height, refresh);
++	// an alias runs its panel mode; g_nDynamicRefreshHz keeps the rate asked for
++	const drmModeModeInfo *existing_mode = find_mode(connector, width, height, gamescope::ResolveRefreshRateAlias( refresh ));
+ 	drmModeModeInfo mode = {0};
+ 	if ( existing_mode )
+ 	{
+-- 
+2.56.0
+
