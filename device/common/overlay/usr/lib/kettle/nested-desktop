@@ -8,6 +8,9 @@
 #    session's PipeWire.
 #  - KWin's windowed X11 backend, as a window of gamescope's Xwayland, the size of gamescope's
 #    screen. Logging out (or the desktop's Return to Gaming Mode) ends it; so does Exit Game.
+# Usage: nested-desktop [command...]: the command (an app, e.g. amethyst-mod-manager for the
+# Game Stores plugin's Mod Manager entry) starts once the desktop is up. With a desktop already
+# running (Steam's other entry), it starts in that one instead, and this one ends.
 set -u
 [ -n "${DISPLAY:-}" ] || { echo "nested-desktop: no X display from gamescope" >&2; exit 1; }
 
@@ -27,6 +30,16 @@ for v in "${keep[@]}"; do [ -n "${!v+x}" ] && env+=("$v=${!v}"); done
 while IFS='=' read -r v _; do env+=("$v=${!v}"); done < <(env | grep '^LC_[A-Z_]*=')
 
 runtime=$outer_runtime/nested-desktop
+
+# One desktop at a time (both entries share the runtime dir): a running one gets the command,
+# started with its session's environment (session.env, written by the desktop's autostart below)
+exec 9>"$outer_runtime/nested-desktop.lock"
+if ! flock -n 9; then
+  [ $# -gt 0 ] && [ -r "$runtime/session.env" ] || exit 0
+  ( set -a; . "$runtime/session.env"; set +a; exec setsid -f "$@" ) </dev/null >/dev/null 2>&1
+  exit 0
+fi
+
 # What the desktop started and outlives it (daemons that don't end with its session bus, apps)
 # would keep Steam's reaper, and so the app, running: everything carrying this session's mark
 # ends with it.
@@ -58,6 +71,26 @@ cat >"$runtime/bin/kwin_wayland_wrapper" <<EOF
 exec /usr/bin/kwin_wayland_wrapper --width $width --height $height --no-lockscreen "\$@"
 EOF
 chmod +x "$runtime/bin/kwin_wayland_wrapper"
+
+# An autostart of this session only: it records the session's environment (for a command from
+# another launch, above) and starts this launch's command, if any
+mkdir -p "$runtime/xdg/autostart"
+[ $# -gt 0 ] && printf '%s\0' "$@" >"$runtime/command"
+cat >"$runtime/bin/nested-session" <<EOF
+#!/bin/bash
+export -p >"$runtime/session.env"
+[ -r "$runtime/command" ] || exit 0
+mapfile -d '' -t command <"$runtime/command"
+exec "\${command[@]}"
+EOF
+chmod +x "$runtime/bin/nested-session"
+cat >"$runtime/xdg/autostart/kettle-nested-session.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Nested desktop session
+Exec=$runtime/bin/nested-session
+NoDisplay=true
+EOF
 
 # The desktop's scale, on its built-in panel, for the nested screen too (KWin's own output
 # settings: nested in X, its --scale enlarges its window instead, which gamescope shrinks back).
@@ -104,7 +137,7 @@ env+=(
   # Desktop Mode's autostarts, less the ones that belong to Game Mode or the desktop alone
   # (Steam, powerdevil's idle dimming and suspend next to Steam's, Kettle Welcome, and Baloo's
   # file indexing, kept out of Game Mode's power)
-  XDG_CONFIG_DIRS=/usr/share/kettle/nested-desktop/xdg:/etc/xdg
+  XDG_CONFIG_DIRS=$runtime/xdg:/usr/share/kettle/nested-desktop/xdg:/etc/xdg
   XCURSOR_THEME=breeze_cursors XCURSOR_SIZE=24
   # No explicit sync in this KWin (packages/kwin 0002): nested in X, its clients hang with it
   KWIN_NO_EXPLICIT_SYNC=1
@@ -112,4 +145,4 @@ env+=(
   DISABLE_GAMESCOPE_WSI=1
   "$mark"
 )
-env -i "${env[@]}" dbus-run-session startplasma-wayland
+env -i "${env[@]}" dbus-run-session startplasma-wayland 9>&-

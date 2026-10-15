@@ -1,11 +1,11 @@
 # The ROCKNIX ABL (github.com/ROCKNIX/abl), for devices whose stock bootloader can't start U-Boot
-# (no Loader choice in fastboot mode): users install it from Android with ROCKNIX's scripts
-# (docs/INSTALL.md), and it starts Kettle's steamcl (\EFI\BOOT\BOOTAA64.EFI, so A/B fallback
-# works), else \KERNEL. This package only keeps an installed one up to date:
-# `sudo kettle-abl-update` replaces a recognised, older ROCKNIX ABL in abl_a/abl_b with this
-# release and never touches a stock one. Device Settings' System tab (kettle-decky-plugins) runs it
-# too, through pkexec: org.kettle.abl-update, allowed for Decky's plugin backends by
-# 50-kettle-abl-update.rules.
+# (no Loader choice in fastboot mode). It starts Kettle's steamcl (\EFI\BOOT\BOOTAA64.EFI, so A/B
+# fallback works), else \KERNEL. kettle-abl-update installs it (--install: over the stock
+# bootloader, which it saves first, or over the slot an Android update put the stock one back in),
+# keeps it up to date (replacing a recognised, older ROCKNIX ABL in abl_a/abl_b with this release)
+# and puts the saved stock bootloader back (--restore-stock). Device Settings' System tab
+# (kettle-decky-plugins) runs it too, through pkexec: org.kettle.abl-update, allowed for Decky's
+# plugin backends by 50-kettle-abl-update.rules.
 #
 # ROCKNIX publishes only signed binaries, built from its private LinuxLoader fork (Qualcomm's
 # BSD-3-Clause LinuxLoader). The repo states no licence; ROCKNIX's developers agreed to Kettle
@@ -13,8 +13,8 @@
 # (scripts/build-packages.sh) and pinned by hash. releases.tsv identifies installed releases.
 pkgname=rocknix-abl
 pkgver=1.2
-pkgrel=3
-pkgdesc='ROCKNIX ABL builds, and kettle-abl-update to keep an installed one up to date'
+pkgrel=4
+pkgdesc='ROCKNIX ABL builds, and kettle-abl-update to install, update or remove one'
 arch=(any)
 url='https://github.com/ROCKNIX/abl'
 license=(LicenseRef-ROCKNIX-ABL)
@@ -28,9 +28,9 @@ source=("rocknix-abl-v$pkgver.tar.gz::https://github.com/ROCKNIX/abl/releases/do
         LICENSE)
 sha256sums=('64034fb076ea0bb858beaa2f29dbef635e97d29f3e3d32c13bce61bd4af4cff7'
             '3d72c8ac7ef9076135f7ad84b48c29a6b6380acf95481b06f6016d2592c6ebde'
-            'a154692eb2d0edaa13120d71f70bc36315551b141182f00fcdb3c1f00baac928'
-            'ccb041990f5a20869fa85b551f1c207e52052adfa3962fdbd404e0399672a798'
-            '7b38271af0e1aa1b143cc1ed82ba47025c2e00757ff9d33649c34091eb60cff3'
+            '0a14fe9624d83cf6e00951a93c4fd40cb04ef6bf3c1aa7a31814dfdcab99da90'
+            '8277e689549581a09bdca85e4606bba6921efcf2b7ae427e3836585699dd12fc'
+            '9eae899bf27ece7348b075c1fd133d0f7f16f2ed8cca8f169a057594066cc3de'
             '85c4d9a67a22b9658ac18fd375d2e1e42d41364776c694c955b2b252756df5cc')
 
 package() {

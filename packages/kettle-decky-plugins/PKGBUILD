@@ -13,8 +13,9 @@
 #              Screens: the AYN Thor's bottom screen (on/off, its own brightness, 30/60 Hz; the tab
 #              shows where the image has /usr/lib/kettle/bottom-screen); System: the start-up mode
 #              (steamosctl), the SSH server (started and stopped only: 50-kettle-ssh.rules),
-#              Reset, settings or everything (kettle-reset: 50-kettle-reset.rules), and a
-#              ROCKNIX ABL's updates (rocknix-abl's kettle-abl-update: 50-kettle-abl-update.rules).
+#              Reset, settings or everything (kettle-reset: 50-kettle-reset.rules), and the
+#              bootloader: installing, updating or removing the ROCKNIX ABL (rocknix-abl's
+#              kettle-abl-update: 50-kettle-abl-update.rules).
 #              Also a Diagnostics window (the live power readout and everything about the device, a
 #              tab each), Steam's power sliders following what the Performance app sets
 #              (steamSync.ts), and Steam's frame rate limit, watched on gamescope's root window
@@ -55,17 +56,20 @@
 #              the apps it builds for ARM64 (its search API), installed per user through the same
 #              job queue (flatpak --user, as the welcome plugin's Gaming Extras) and added to Steam
 #              as native `flatpak run` shortcuts (RetroArch pointed at the aarch64 cores right after
-#              its install); Battle.net, added to Steam with Proton-CachyOS through kettle-welcome's
+#              its install; apps that aren't games open in the desktop nested in Game Mode, which
+#              the app's page can switch); Battle.net, added to Steam with Proton-CachyOS through kettle-welcome's
 #              welcome-battlenet; and Android games from F-Droid or an APK file
 #              (kettle-lepton's kettle-android-games, where it's installed; it was the Welcome
-#              window's up to 1.12.0-37)
+#              window's up to 1.12.0-37); Amethyst Mod Manager (packages/amethyst-mod-manager), added
+#              to Steam as the nested desktop with the app started in it; and an Installed tab:
+#              everything installed through it, with sizes, updates and uninstalls
 # Sources live next to this PKGBUILD; shared/ holds code both frontends use.
 pkgbase=kettle-decky-plugins
 pkgname=(kettle-decky-welcome kettle-decky-device-settings
          kettle-decky-crash kettle-decky-game-settings
          kettle-decky-stores)
 pkgver=1.12.0
-pkgrel=46
+pkgrel=52
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
@@ -110,7 +114,7 @@ package_kettle-decky-device-settings() {
   depends=(decky-loader kettle-power python-gobject xorg-xprop coreutils polkit iproute2)
   optdepends=('kettle-leds: the Lights tab'
               'kettle-motion: the Gyro tab'
-              'rocknix-abl: the System tab'"'"'s Bootloader section, where the ROCKNIX ABL starts Kettle')
+              'rocknix-abl: the System tab'"'"'s Bootloader section (install, update or remove the ROCKNIX ABL)')
   # Power, Lights, Gyro and Screens are its tabs now
   replaces=(kettle-decky-power kettle-decky-lights kettle-decky-gyro kettle-decky-screens)
   conflicts=(kettle-decky-power kettle-decky-lights kettle-decky-gyro kettle-decky-screens)
@@ -135,9 +139,10 @@ package_kettle-decky-game-settings() {
 }
 
 package_kettle-decky-stores() {
-  pkgdesc='Game Stores Decky plugin (Epic Games, GOG, Amazon Games, Battle.net, Flathub and Android games in Game Mode)'
+  pkgdesc='Game Stores Decky plugin (Epic Games, GOG, Amazon Games, Battle.net, Flathub, Android games and Amethyst Mod Manager in Game Mode)'
   depends=(decky-loader heroic-games-launcher python flatpak kettle-welcome)  # legendary, gogdl, nile; welcome-battlenet
-  optdepends=('kettle-lepton: Android games')
+  optdepends=('kettle-lepton: Android games'
+              'amethyst-mod-manager: the Mod Manager tab')
   _install_plugin kettle-stores stores
   install -Dm755 src-tree/stores/kettle-store-run -t "$pkgdir/usr/bin"
 }

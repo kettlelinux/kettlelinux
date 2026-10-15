@@ -7,12 +7,13 @@
 # while /home holds the Kettle Installer's backup of the internal storage; the desktop's Reset
 # Kettle says what that means first. These were the Welcome window's up to 1.12.0-38.
 #
-# And the bootloader, where it's the ROCKNIX ABL (devices whose stock bootloader can't start
-# U-Boot): kettle-abl-update (package rocknix-abl) through pkexec, as org.kettle.abl-update
-# (50-kettle-abl-update.rules lets Decky's plugin backends run it), --check first, then --yes. It
-# only ever replaces a ROCKNIX ABL it recognises with the image's release, never a stock one.
+# And the bootloader, on devices with a ROCKNIX ABL build: kettle-abl-update (package rocknix-abl)
+# through pkexec, as org.kettle.abl-update (50-kettle-abl-update.rules lets Decky's plugin
+# backends run it), --check first, then --yes: updating a ROCKNIX ABL it recognises to the image's
+# release, installing it over the stock bootloader (--install, which saves the stock one first),
+# or putting the saved stock one back (--restore-stock).
 #
-# Turning SSH on, erasing everything and updating the bootloader wait, as root, for the device's
+# Turning SSH on, erasing everything and writing the bootloader wait, as root, for the device's
 # Volume Up and Volume Down to be held together (/usr/lib/kettle/confirm-keys): no password is
 # asked, and a dialog could be clicked by any program running as the user. Plugin.main shows
 # what's waiting (/run/kettle/confirm.json) as a notification.
@@ -21,6 +22,7 @@ import os
 import pwd
 import re
 import subprocess
+import threading
 
 import decky
 
@@ -121,58 +123,79 @@ def reset(what: str):
 
 def _abl(*args: str, timeout: int) -> dict:
     """kettle-abl-update --porcelain: {"slots": {"a": version | "test-signed" | "other", ...},
-    "image": version, "result": code}; raises with its message on an error."""
+    "image": version, "backup": a saved stock bootloader to put back, "result": code}; raises with
+    its message on an error."""
     r = subprocess.run(["pkexec", ABL_UPDATE, "--porcelain", *args], capture_output=True, text=True,
                        timeout=timeout)
-    out = {"slots": {}, "image": None, "result": None}
+    out = {"slots": {}, "image": None, "backup": False, "result": None}
     for line in r.stdout.splitlines():
         w = line.split()
         if len(w) == 3 and w[0] == "slot":
             out["slots"][w[1]] = w[2]
         elif len(w) == 2 and w[0] in ("image", "result"):
             out[w[0]] = w[1]
+        elif len(w) == 2 and w[0] == "backup":
+            out["backup"] = w[1] == "yes"
     if r.returncode != 0 or out["result"] is None:
         msg = (r.stderr.strip().splitlines() or ["kettle-abl-update failed"])[-1]
         raise RuntimeError(msg.removeprefix("kettle-abl-update: "))
     return out
 
 
-# the ABL update running, and the last status: a check can't run beside it (kettle-abl-update's
-# lock), and the System tab, reopened meanwhile, shows it still going
-_abl_update = {"busy": False, "last": None}
+# the bootloader being written, and the last status: a check can't run beside it
+# (kettle-abl-update's lock), and the System tab, reopened meanwhile, shows it still going
+_abl_write = {"busy": None, "last": None}
+_abl_lock = threading.Lock()  # each call runs in its own thread (asyncio.to_thread)
+# what kettle-abl-update --check can't act on: no ROCKNIX build for this SoC, or no abl partitions
+# Linux can see (the RP5's)
+ABL_NONE = ("no-build", "no-partitions")
+ABL_MODES = {"update": (), "install": ("--install",), "restore": ("--restore-stock",)}
 
 
 def abl_status() -> dict:
-    """What the bootloader is, and what kettle-abl-update would do. installed: some abl slot holds
-    a ROCKNIX ABL (the System tab shows its section only then). busy: an update is running."""
-    if _abl_update["busy"]:
-        return {**(_abl_update["last"] or {"slots": {}, "image": None, "result": None}),
-                "installed": True, "busy": True}
+    """What the bootloader is, and what kettle-abl-update would do. available: it can install or
+    update one here (the System tab shows its section only then); installed: some abl slot holds
+    a ROCKNIX ABL; busy: what's being done ("update", "install", "restore"), if anything."""
+    if _abl_write["busy"]:
+        return {**(_abl_write["last"] or {"slots": {}, "image": None, "backup": False, "result": None,
+                                          "check": None, "installed": True}),
+                "available": True, "busy": _abl_write["busy"]}
     if not os.access(ABL_UPDATE, os.X_OK):
-        return {"installed": False}
+        return {"available": False, "installed": False}
     try:
         s = _abl("--check", timeout=60)
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as e:
         decky.logger.warning("kettle-abl-update --check: %s", e)
-        return {"installed": False}
-    s = {**s, "installed": any(v != "other" for v in s["slots"].values())}
-    _abl_update["last"] = s
+        return {"available": False, "installed": False}
+    # check: what can be done now; result: the same, or (abl_update) what was just done
+    s = {**s, "check": s["result"], "available": s["result"] not in ABL_NONE,
+         "installed": any(v != "other" for v in s["slots"].values())}
+    _abl_write["last"] = s
     return s
 
 
-def abl_update() -> dict:
-    """Updates a recognised, older ROCKNIX ABL in both slots; the result as abl_status's."""
-    if _abl_update["busy"]:
-        raise RuntimeError("an update is already running")
-    decky.logger.info("updating the ROCKNIX ABL")
-    _abl_update["busy"] = True
+def abl_update(mode: str = "update") -> dict:
+    """Writes the bootloader: "update" a recognised, older ROCKNIX ABL, "install" the ROCKNIX ABL
+    over a stock one (saving it first), or "restore" the saved stock one. The result as
+    abl_status's, after a fresh check."""
+    if mode not in ABL_MODES:
+        raise ValueError(f"unknown mode {mode!r}")
+    with _abl_lock:
+        if _abl_write["busy"]:
+            raise RuntimeError("the bootloader is already being written")
+        _abl_write["busy"] = mode
+    decky.logger.info("kettle-abl-update: %s", mode)
     try:
-        s = {**_abl("--yes", timeout=300), "installed": True}
+        r = _abl(*ABL_MODES[mode], "--yes", timeout=300)
     finally:
-        _abl_update["busy"] = False
-    decky.logger.info("kettle-abl-update: %s", s["result"])
-    _abl_update["last"] = s
-    return s
+        _abl_write["busy"] = None
+    decky.logger.info("kettle-abl-update %s: %s", mode, r["result"])
+    # what's there now (and whether a stock backup is), with what was done as the result
+    s = abl_status()
+    if not s["available"]:  # the check failed: what the write saw
+        s = {**r, "check": None, "available": True,
+             "installed": any(v != "other" for v in r["slots"].values())}
+    return {**s, "result": r["result"]}
 
 
 def confirm_pending() -> dict | None:

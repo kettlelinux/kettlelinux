@@ -1,0 +1,26 @@
+diff --git a/native/amethyst_filegraph/Cargo.toml b/native/amethyst_filegraph/Cargo.toml
+index 96382c6..0e7f5d4 100644
+--- a/native/amethyst_filegraph/Cargo.toml
++++ b/native/amethyst_filegraph/Cargo.toml
+@@ -17,7 +17,7 @@ bundled-sqlite = ["rusqlite/bundled"]
+ fs2 = "0.4"
+ im = "15.1"
+ parking_lot = "0.12"
+-pyo3 = { version = "0.27", features = ["abi3-py312", "extension-module"] }
++pyo3 = { version = "0.27", features = ["abi3-py311", "extension-module"] }
+ rmp-serde = "1.3"
+ rusqlite = "0.38"
+ serde = { version = "1", features = ["derive"] }
+diff --git a/src/Utils/mods/install.py b/src/Utils/mods/install.py
+index 1750423..bcf51a1 100644
+--- a/src/Utils/mods/install.py
++++ b/src/Utils/mods/install.py
+@@ -1783,7 +1783,7 @@ def _run_additional_install_logic_inner(game, dest_root: Path, mod_name: str,
+                         os.chmod(path, 0o700)
+                         func(path)
+                     try:
+-                        shutil.rmtree(dest_root, onexc=_force_remove)
++                        shutil.rmtree(dest_root, onerror=_force_remove)
+                     except OSError as rm_exc:
+                         log_fn(f"  cleanup failed: {rm_exc}")
+                 return True

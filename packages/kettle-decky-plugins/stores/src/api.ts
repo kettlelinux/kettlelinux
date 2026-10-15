@@ -44,8 +44,9 @@ export type GameInfo = {
 // the game's page's About section ("" or [] where the store doesn't say)
 export type Details = { summary: string; developer: string; publisher: string; released: string; genres: string[]; modes: string[] };
 export type Location = { path: string; label: string; free: number };
-// native: started as it is (Flathub's flatpak), not with Proton; icon: a PNG for the shortcut
-export type ShortcutInfo = { title: string; exe: string; dir: string; launch: string; native?: boolean; icon?: string };
+// native: started as it is (Flathub's flatpak), not with Proton; icon: a PNG for the shortcut;
+// layout: a controller layout for it (a Flathub app in the nested desktop: the desktop's)
+export type ShortcutInfo = { title: string; exe: string; dir: string; launch: string; native?: boolean; icon?: string; layout?: string };
 
 // Flathub: a browse or search result, and an app's page
 // "installed", or one of the backend's FLATHUB_CATEGORIES (flathub.tsx's CATEGORIES names them)
@@ -65,6 +66,9 @@ export type FlathubDetails = FlathubApp & {
   update: boolean;
   appid: number | null; // its Steam shortcut, if any
   busy: "install" | "update" | null;
+  game: boolean; // Flathub's categories say it's a game
+  desktop: boolean; // it opens in the nested desktop (can_desktop: the image has one)
+  can_desktop: boolean;
 };
 
 export const status = callable<[], Status>("status");
@@ -79,6 +83,7 @@ export const setLocation = callable<[path: string], void>("set_location");
 export const setCloudSaves = callable<[on: boolean], void>("set_cloud_saves");
 export const flathubBrowse = callable<[category: FlathubCategory, query: string, page: number], { apps: FlathubApp[]; pages: number; total: number }>("flathub_browse");
 export const flathubApp = callable<[id: string], FlathubDetails>("flathub_app");
+export const setFlathubDesktop = callable<[id: string, on: boolean], void>("set_flathub_desktop");
 export const install = callable<[store: Source, id: string, title: string, kind: "install" | "update"], void>("install");
 export const cancel = callable<[store: Source, id: string], void>("cancel");
 export const uninstall = callable<[store: Source, id: string], number | null>("uninstall");

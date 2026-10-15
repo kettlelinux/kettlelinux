@@ -7,13 +7,16 @@
 # Runs with Game Mode only (kettle-inputplumber.service, device overlay): the desktop's own
 # controller (kettle-desktop-controller) needs the raw pad.
 # 0001 reads evdev motion sensors; the Portal's and Thor's configs take kettle-motiond's (packages/kettle-motion)
-# as the Deck controller's gyro and accelerometer.
+# as the Deck controller's gyro and accelerometer, in SI units and the kernel's sensor frame, as the
+# targets take them since 0.82.
+# 0002 has the evdev sources sleep in poll(2) while idle instead of waking every 2.5 ms (about
+# 1,200 wakeups a second for the Portal's and Thor's three sources, on any core, in every game).
 #
 # Built with upstream Rust (build time only): InputPlumber's crates need a newer compiler than
 # the snapshot's 1.78.
 pkgname=inputplumber
-pkgver=0.81.0
-pkgrel=10
+pkgver=0.82.0
+pkgrel=2
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Input router and remapper daemon (Steam Deck controller emulation for AYN handhelds)'
@@ -32,9 +35,10 @@ source=("InputPlumber-$pkgver.tar.gz::https://github.com/ShadowBlip/InputPlumber
         kettle-thor-capability-map.yaml
         kettle-rp5-capability-map.yaml
         kettle-pocketfitelite-capability-map.yaml
-        0001-source-add-an-evdev-motion-sensor-source.patch)
+        0001-source-add-an-evdev-motion-sensor-source.patch
+        0002-source-sleep-on-the-device-while-idle.patch)
 noextract=("rust-$_rust-aarch64-unknown-linux-gnu.tar.xz")
-sha256sums=('804ff31b6b67efe266f21cc752282b1defe14b34916261d0600da1b6094a21a7'
+sha256sums=('aaee9b65b47a21756169eb1c49eb258ecdd1896fb8dd4996c2b50d11af049d21'
             '0b514a8cc1cbcd939bff0f151661fe58b6ea5c7a7f645a5098c69e32e8c1e0a2'
             'e130eb2a293e1f7a9dc90e61a060aa7d36b63e58642d4cadc9b3b1cf881c984b'
             '64558755be19f505d3a072e3e5e4e62ce9a8ab0be19d9d8d4ee239dd0b6439bb'
@@ -43,10 +47,12 @@ sha256sums=('804ff31b6b67efe266f21cc752282b1defe14b34916261d0600da1b6094a21a7'
             '2cb3955e5d30d85589ddce8cd260851e60367b18e8b44c0b09e9250cf5518ee8'
             '769f8dfdb945985a3417ab2cbb988d43ef76bec81b6989251821a0200fbac69c'
             'ab8da320077687603d06892aced316ca3d32a827687f4601a5c8f3c7158eed08'
-            '3501fe835c2168de24109b15ec307c2c05c9e30534229dd82ff3850786b415ea')
+            'f818673f665b2e17ca3d5857929399d368b92cf54d428f7eebed1430c1dde398'
+            '9d0fec0d3e1bb8974813de003b40bcec69e2f7a192f0b5f4afdbd67073a8f106')
 
 prepare() {
   patch -d "InputPlumber-$pkgver" -Np1 -i ../0001-source-add-an-evdev-motion-sensor-source.patch
+  patch -d "InputPlumber-$pkgver" -Np1 -i ../0002-source-sleep-on-the-device-while-idle.patch
   rm -rf rust-dist rust && mkdir rust-dist
   bsdtar -xf "rust-$_rust-aarch64-unknown-linux-gnu.tar.xz" -C rust-dist --strip-components 1
   rust-dist/install.sh --prefix="$srcdir/rust" --disable-ldconfig \

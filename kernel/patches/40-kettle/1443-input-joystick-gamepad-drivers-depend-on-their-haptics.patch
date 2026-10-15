@@ -1,0 +1,29 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] Input: joystick: rsinput and retroid depend on their haptics drivers
+
+rsinput calls qcom_spmi_haptics_global_* from INPUT_QCOM_HV_HAPTICS and
+retroid calls qcom_spmi_haptics_rumble() and input_ff_create_memless(),
+but neither said so: a config with the haptics driver modular or off
+failed to link. Kettle's config enables both, so it is unchanged.
+---
+diff --git a/drivers/input/joystick/Kconfig b/drivers/input/joystick/Kconfig
+index 2a77296..a046c41 100644
+--- a/drivers/input/joystick/Kconfig
++++ b/drivers/input/joystick/Kconfig
+@@ -347,6 +347,8 @@ config JOYSTICK_MAPLE
+ config JOYSTICK_RETROID
+        tristate "Retroid Pocket gamepad"
+        depends on SERIAL_DEV_BUS
++       depends on INPUT_QCOM_SPMI_HAPTICS
++       select INPUT_FF_MEMLESS
+ 
+ config JOYSTICK_PSXPAD_SPI
+ 	tristate "PlayStation 1/2 joypads via SPI interface"
+@@ -390,6 +392,7 @@ config JOYSTICK_QWIIC
+ config JOYSTICK_RSINPUT
+ 	tristate "UART Based gamepad driver that found in AYN and Retroid Pocket products"
+ 	depends on SERIAL_DEV_BUS
++	depends on INPUT_QCOM_HV_HAPTICS
+ 
+ config JOYSTICK_FSIA6B
+ 	tristate "FlySky FS-iA6B RC Receiver"

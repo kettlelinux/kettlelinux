@@ -4,8 +4,8 @@
 <policyconfig>
   <vendor>Kettle Linux</vendor>
   <action id="org.kettle.abl-update">
-    <description>Update the ROCKNIX ABL bootloader</description>
-    <message>Updating the bootloader needs your password</message>
+    <description>Install, update or remove the ROCKNIX ABL bootloader</description>
+    <message>Writing the bootloader needs your password</message>
     <icon_name>system-software-update</icon_name>
     <defaults>
       <allow_any>no</allow_any>

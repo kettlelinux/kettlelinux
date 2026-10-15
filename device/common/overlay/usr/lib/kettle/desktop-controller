@@ -16,13 +16,13 @@ import errno
 import os
 import select
 import subprocess
-import sys
 import time
 
 import evdev
 from evdev import ecodes as e
 
 import kettle_device
+from kettle_device import find_pad, log
 
 PAD_NAME = kettle_device.conf.get("PAD_NAME", "")
 TICK = 1 / 125
@@ -67,41 +67,25 @@ FACE = ({e.BTN_EAST: e.BTN_SOUTH, e.BTN_SOUTH: e.BTN_EAST, e.BTN_NORTH: e.BTN_WE
          e.BTN_WEST: e.BTN_NORTH} if kettle_device.conf.get("FACE_BUTTONS") == "nintendo" else {})
 
 
-def log(msg):
-    print(msg, file=sys.stderr, flush=True)
-
-
 def notify(text):
     subprocess.Popen(["notify-send", "-a", "Controller", "-i", "input-gamepad", "-t", "2000",
                       "Controller", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def kwin_vkbd(*args):
-    return subprocess.run(["busctl", "--user", *args[:1], "org.kde.KWin", "/VirtualKeyboard",
-                           "org.kde.kwin.VirtualKeyboard", *args[1:]],
-                          capture_output=True, text=True, timeout=3)
+_osk = None
 
 
 def toggle_osk():
+    # in the background, so a slow KWin cannot stall the pointer; one at a time, so two quick
+    # presses cannot both see it hidden and both show it
+    global _osk
+    if _osk and _osk.poll() is None:
+        return
     try:
-        if kwin_vkbd("get-property", "visible").stdout.split()[-1:] == ["true"]:
-            kwin_vkbd("set-property", "active", "b", "false")
-        else:
-            kwin_vkbd("call", "forceActivate")
-    except (OSError, subprocess.TimeoutExpired) as err:
+        _osk = subprocess.Popen(["/usr/lib/kettle/osk-toggle"], stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+    except OSError as err:
         log(f"on-screen keyboard: {err}")
-
-
-def find_pad():
-    for path in evdev.list_devices():
-        try:
-            dev = evdev.InputDevice(path)
-        except OSError:
-            continue
-        if dev.name == PAD_NAME:
-            return dev
-        dev.close()
-    return None
 
 
 class Axis:
@@ -176,6 +160,8 @@ class Controller:
         self.held = {FACE.get(k, k) for k in pad.active_keys()}
         self.combo_used = False  # Select+Start were held together: no taps on release
         self.combo_since = None
+        self.toggle_pending = False  # held long enough: toggle once both are released
+        self.dropping = False  # the kernel dropped events: skip to the next report, resync
         self.rem = [0.0, 0.0, 0.0, 0.0]  # sub-unit remainders: x, y, wheel, hwheel
         self.detents = [0, 0]  # hi-res wheel units not yet reported as a legacy detent
         self.last_tick = time.monotonic()
@@ -205,6 +191,8 @@ class Controller:
         if value == 2:  # autorepeat; the compositor repeats keys itself
             return
         code = FACE.get(code, code)
+        if bool(value) == (code in self.held):
+            return  # already applied (by a resync), or a repeat
         (self.held.add if value else self.held.discard)(code)
         if code in COMBO:
             if COMBO <= self.held:
@@ -216,6 +204,11 @@ class Controller:
                     self.tap(TAP_CHORDS[code])
                 if not self.held & COMBO:
                     self.combo_used = False
+                    # Only now: grabbing or ungrabbing the pad while they are held would leave
+                    # them held down for the game that saw them pressed.
+                    if self.toggle_pending:
+                        self.toggle_pending = False
+                        self.toggle_mode()
             return
         if not self.enabled:
             return
@@ -237,6 +230,17 @@ class Controller:
         if code in TRIGGER_KEYS and self.enabled:
             self.set_source(code, TRIGGER_KEYS[code], axis.value >= TRIGGER_ON)
 
+    def resync(self):
+        """Catch up with the pad after the kernel dropped events (a release among them would
+        otherwise leave its button or key held): its current state, as events."""
+        log("events dropped, resyncing")
+        active = set(self.pad.active_keys())
+        for code in self.pad.capabilities().get(e.EV_KEY, []):
+            if (FACE.get(code, code) in self.held) != (code in active):
+                self.on_key(code, int(code in active))
+        for code in self.axes:
+            self.on_abs(code, self.pad.absinfo(code).value)
+
     def stick(self, xc, yc):
         x, y = self.axes.get(xc), self.axes.get(yc)
         return shaped(x.value if x else 0.0, y.value if y else 0.0, POINTER_CURVE)
@@ -249,8 +253,7 @@ class Controller:
         now = time.monotonic()
         dt, self.last_tick = min(now - self.last_tick, 0.05), now
         if self.combo_since is not None and now - self.combo_since >= TOGGLE_HOLD:
-            self.combo_since, self.combo_used = None, True
-            self.toggle_mode()
+            self.combo_since, self.combo_used, self.toggle_pending = None, True, True
         if not self.enabled:
             return
         px, py = self.stick(e.ABS_X, e.ABS_Y)
@@ -290,7 +293,15 @@ class Controller:
             ready, _, _ = select.select([self.pad.fd], [], [], TICK if busy else None)
             if ready:
                 for ev in self.pad.read():
-                    if ev.type == e.EV_KEY:
+                    if ev.type == e.EV_SYN:
+                        if ev.code == e.SYN_DROPPED:
+                            self.dropping = True
+                        elif ev.code == e.SYN_REPORT and self.dropping:
+                            self.dropping = False
+                            self.resync()
+                    elif self.dropping:
+                        continue
+                    elif ev.type == e.EV_KEY:
                         self.on_key(ev.code, ev.value)
                     elif ev.type == e.EV_ABS:
                         self.on_abs(ev.code, ev.value)
