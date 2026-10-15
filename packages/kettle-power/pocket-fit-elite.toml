@@ -1,11 +1,10 @@
 # kettle-powerd's description of the KONKR Pocket FIT Elite (SM8750, Snapdragon 8 Elite).
-# Written before the device arrived, from the SM8750 device tree and ROCKNIX's board dts: the
-# sysfs paths and the GPU table are the SoC's; the CPU caps, the TDP range and the charging
-# figures are placeholders until measured on a unit. Caps between frequency steps round down.
+# The sysfs paths and frequency tables are as read on a unit (2026-10-15); the TDP range and the
+# charging figures are still placeholders until measured. Caps between frequency steps round down.
 
 [cpu]
 # cpufreq policies (SCMI, the frequency table comes from the firmware), smallest cluster first:
-# six Oryon cores and two prime cores. cpu0 can't be taken offline. "prime" lets a game park
+# six Oryon cores (384 MHz - 3.53 GHz) and two prime cores (1.02 - 4.09 GHz on this unit's bin). cpu0 can't be taken offline. "prime" lets a game park
 # both prime cores (Game Settings); the main cluster is never parked.
 clusters = [
   { name = "main", policy = 0, cpus = [0, 1, 2, 3, 4, 5] },
@@ -17,8 +16,8 @@ devfreq = "/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu"
 # busy percentage (kernel patch 40-kettle/1110). By device name, not dri/0: under an EFI boot
 # simpledrm can take minor 0 for the boot framebuffer (as on the RP5)
 load = "/sys/kernel/debug/dri/ae01000.display-controller/perf_now"
-# lowest clock offered for a fixed (manual) GPU clock, MHz (sm8750.dtsi's A830 table runs
-# 160-1100 MHz; speed bins drop its top steps)
+# lowest clock offered for a fixed (manual) GPU clock, MHz (the A830 runs 160-1100 MHz, all 14
+# steps of sm8750.dtsi's table available on this unit's speed bin)
 manual_min_mhz = 222
 
 [fan]
@@ -47,19 +46,19 @@ tdp_max = 22
 charge_limit_min = 55
 
 # Steam's performance profiles (Quick Access > Performance). Caps in kHz / MHz; a cluster
-# left out runs up to its highest frequency. Placeholder caps until the firmware's tables
-# are read on a unit (they round down to its steps).
+# left out runs up to its highest frequency. Steps of this unit's tables, not yet tuned by
+# measured power draw.
 [[profile]]
 name = "Performance"
 
 [[profile]]
 name = "Balanced"
-main = 2800000
-prime = 3400000
+main = 2745600
+prime = 3283200
 gpu_mhz = 734
 
 [[profile]]
 name = "Powersave"
-main = 2000000
-prime = 2400000
+main = 1996800
+prime = 2246400
 gpu_mhz = 525
