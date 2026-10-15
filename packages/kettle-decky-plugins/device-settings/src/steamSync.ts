@@ -3,11 +3,15 @@
 // kettle-powerd through steamos-manager, but never reads them back: a value set in kettle-powerd
 // directly left Steam's sliders where they were, and Steam set its own again later.
 //
-// So, once a second: a value of Steam's that changes in kettle-powerd to something Steam's
-// setting doesn't have was set from outside Steam, and goes into Steam's setting (through the
-// setter Steam's own settings pages use), which moves the slider and sends it back to
-// kettle-powerd. A change made in Steam reaches kettle-powerd already matching Steam's setting,
-// and is left alone.
+// So, a second after kettle-powerd last said one changed (its PropertiesChanged, passed on by the
+// backend as "steam_values"), and every 30 s in case one was missed: a value of Steam's that
+// changes in kettle-powerd to something Steam's setting doesn't have was set from outside Steam,
+// and goes into Steam's setting (through the setter Steam's own settings pages use), which moves
+// the slider and sends it back to kettle-powerd. A change made in Steam reaches kettle-powerd already matching Steam's setting,
+// and is left alone. Not at once: setting one of Steam's values makes Steam send kettle-powerd
+// the values on the way (the limit turned on at its old value, then the new one), and one of those
+// read as set outside Steam went back into Steam's setting.
+import { addEventListener, removeEventListener } from "@decky/api";
 import { findModuleExport } from "@decky/ui";
 
 export type SteamValues = { tdp: number; profile: string; gpu_level: string; gpu_clock: number; charge_limit: number | null };
@@ -71,8 +75,13 @@ function setInSteam(key: (typeof KEYS)[number], value: number | string) {
 export function startSteamSync(read: () => Promise<{ steam: SteamValues; tdpMax: number }>): () => void {
   let last: SteamValues | null = null;
   let busy = false;
+  let again = false; // a change told of while looking: look once more after
   const tick = async () => {
-    if (busy || !findSteam()) return;
+    if (busy) {
+      again = true;
+      return;
+    }
+    if (!findSteam()) return;
     busy = true;
     try {
       const { steam, tdpMax } = await read();
@@ -92,8 +101,22 @@ export function startSteamSync(read: () => Promise<{ steam: SteamValues; tdpMax:
     } finally {
       busy = false;
     }
+    if (again) {
+      again = false;
+      tick();
+    }
   };
-  const timer = setInterval(tick, 1000);
+  let settle: ReturnType<typeof setTimeout> | undefined;
+  const changed = () => {
+    clearTimeout(settle);
+    settle = setTimeout(tick, 1000);
+  };
+  const timer = setInterval(tick, 30000);
+  addEventListener("steam_values", changed);
   tick();
-  return () => clearInterval(timer);
+  return () => {
+    clearInterval(timer);
+    clearTimeout(settle);
+    removeEventListener("steam_values", changed);
+  };
 }

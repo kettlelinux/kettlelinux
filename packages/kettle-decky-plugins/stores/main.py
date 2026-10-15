@@ -1047,6 +1047,7 @@ async def _android_run(command: str, arg: str):
 class Plugin:
     def __init__(self):
         self.lock = asyncio.Lock()
+        self.saved = asyncio.Event()
         self.login = {"store": None, "state": "idle", "error": ""}
         self.login_task = None
         self.login_cancel = False
@@ -1057,6 +1058,7 @@ class Plugin:
 
     def _save(self, s: dict):
         _write_json(STATE, s)
+        self.saved.set()  # a queued download for _main
 
     # signing in
 
@@ -1457,12 +1459,22 @@ class Plugin:
     async def _main(self):
         os.makedirs(SETTINGS, exist_ok=True)
         while True:
+            self.saved.clear()
             try:
                 await self._finish()
                 await self._next()
             except Exception as e:
                 decky.logger.error("stores: loop: %s", e)
-            await asyncio.sleep(2)
+            # a running download is looked at every 2 s; with none, nothing until one is queued
+            # (only this plugin writes STATE)
+            s = self._state()
+            if s.get("job") or s["queue"]:
+                await asyncio.sleep(2)
+            else:
+                try:
+                    await asyncio.wait_for(self.saved.wait(), 600)
+                except asyncio.TimeoutError:
+                    pass
 
     async def _unload(self):
         # running downloads carry on (a user unit); _main picks them up again
