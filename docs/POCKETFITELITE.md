@@ -105,6 +105,9 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   `ufshc@`). The install's `efi-A`/`efi-B` (64 MiB on 4K-sector UFS) come out as FAT32 with
   16316 clusters, under FAT32's minimum: not read on this boot path, but a strict FAT driver
   (UEFI) would take them for FAT16.
+- Suspend soak on the internal install (20261015.3): 20/20 `systemctl suspend` cycles with RTC
+  wake, no UFS errors, `/home` writable after, Wi-Fi back each time with no ath12k `-108`. Every
+  suspend logs `dwc3-qcom a600000.usb: port-1 HS-PHY not in L2` (no effect seen).
 - CPU tables: six cores 384 MHz-3.53 GHz, two prime cores 1.02-4.09 GHz (this unit's bin).
 - Fixed in the dts after the first boots: the SD bus at SDR104 read the card with I/O errors
   every few seconds (`max-frequency` 100 MHz); the CDSP firmware crashed at every start and the
