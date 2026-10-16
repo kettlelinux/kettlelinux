@@ -21,7 +21,9 @@
 # its own module: Performance (fan, CPU cores and caps, Auto TDP: kettle-powerd's per-game
 # settings, powerd.py; the game's own refresh rate, refresh.py; and Lumen off in Unreal Engine 5
 # games, lumen.py), Upscaling (OptiScaler, upscaling.py) and Frame Gen (the kettle-framegen
-# layer, framegen.py). "All games" in the game
+# layer, framegen.py). Beside the game fixes in the Compatibility tab are config fixes, values
+# set in a game's own config file for games with no launch option for them (configfix.py: Path of
+# Exile 2 in DirectX 12). "All games" in the game
 # picker edits kettle-powerd's all-games settings. The last tab, Extras, isn't per game: the
 # community Protons and the optional components (AMD FSR 3.1), extras.py.
 import asyncio
@@ -36,6 +38,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import configfix
 import decky
 import extras
 import framegen
@@ -64,6 +67,15 @@ _lumen_lock = threading.Lock()
 def _lumen(fn, *args):
     with _lumen_lock:
         return fn(*args, _engine)
+
+
+# The game config fixes' file edits and configfix.json, the same way
+_configfix_lock = threading.Lock()
+
+
+def _configfix(fn, *args):
+    with _configfix_lock:
+        return fn(*args)
 
 CATALOG = os.path.join(decky.DECKY_PLUGIN_DIR, "game-options.json")
 GAMES = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "games.json")
@@ -665,6 +677,21 @@ class Plugin:
         """After a game exits: its prefix may be new (first launch), or the game rewrote its config."""
         await asyncio.to_thread(_lumen, lumen.sync_all)
 
+    # ---------- game config fixes: values in a game's own config file ----------
+
+    async def configfix_get(self, appid: int) -> list[dict]:
+        """The game's config fixes (configfix.py's sync_fix: on, applied: our key is in its
+        file, game_value: the value the file has when it isn't ours, pending: no prefix yet)."""
+        return await asyncio.to_thread(_configfix, configfix.get, appid)
+
+    async def configfix_set(self, appid: int, fix_id: str, on: bool) -> list[dict]:
+        """Off: we stop setting it, and our key comes out of the file while it holds our value."""
+        return await asyncio.to_thread(_configfix, configfix.set_on, appid, fix_id, bool(on))
+
+    async def configfix_sync(self):
+        """After a game exits: its prefix may be new (first launch), or the game rewrote its config."""
+        await asyncio.to_thread(_configfix, configfix.sync_all)
+
     # ---------- Upscaling: OptiScaler ----------
 
     async def up_status(self) -> dict:
@@ -735,6 +762,10 @@ class Plugin:
             await self.lumen_sync()
         except Exception:
             decky.logger.exception("lumen: sync at start failed")
+        try:
+            await self.configfix_sync()
+        except Exception:
+            decky.logger.exception("config fix: sync at start failed")
         try:
             info = await self.perf_info()
             decky.logger.info("performance: kettle-powerd up, fan control %s", info["fan"])

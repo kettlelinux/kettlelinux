@@ -73,8 +73,9 @@ opens the same tour in Welcome. These are from an Odin 2 Portal.
 - **Game Mode plugins** (Decky Loader), in Quick Access:
   - **Game Settings**: everything set per game, a tab each, all off until enabled for a game
     (except Lumen in Unreal Engine 5 games, off unless turned back on).
-    **Compat**: FEX, DXVK, vkd3d, Turnip and Proton options, the Proton version, and known good
-    settings from the Kettle game database ([docs/GAME-DATABASE.md](docs/GAME-DATABASE.md)).
+    **Compat**: FEX, DXVK, vkd3d, Turnip and Proton options, the Proton version, fixes for games
+    that need one here (Path of Exile 2 starts in DirectX 12: its Vulkan renderer crashes), and
+    known good settings from the Kettle game database ([docs/GAME-DATABASE.md](docs/GAME-DATABASE.md)).
     **Perf**: fan curve, CPU core and clock limits, Auto TDP and the refresh rate, per game or
     for all games, and Lumen (UE5's global illumination, the heaviest part of most UE5 games
     here) off in Unreal Engine 5 games through their Engine.ini, back on for all games or one. **Upscale**: gamescope FSR 1, and SGSR 2, Arm ASR or FSR 2.2 through an ARM64EC
