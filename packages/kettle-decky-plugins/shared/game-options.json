@@ -139,13 +139,22 @@
       "id": "dxvk_memory",
       "section": "graphics",
       "label": "Report video memory",
-      "help": "For DirectX 9-11 games that refuse to start, or pick low textures, because of the shared GPU memory.",
+      "help": "How much video memory DirectX 9-12 games are told the GPU has, for games that refuse to start or pick low textures because of the shared GPU memory. Steam tells every game 4 GB at most: more needs \"Lift the 4 GB video memory limit\" too.",
       "target": { "dxvk": "dxgi.maxDeviceMemory" },
       "choices": [
         { "value": "2048", "label": "2 GB" },
         { "value": "4096", "label": "4 GB" },
-        { "value": "6144", "label": "6 GB" }
+        { "value": "6144", "label": "6 GB" },
+        { "value": "8192", "label": "8 GB" }
       ]
+    },
+    {
+      "id": "vram_limit_off",
+      "section": "graphics",
+      "label": "Lift the 4 GB video memory limit",
+      "help": "Steam tells every game the GPU has 4 GB of video memory, which 32-bit games need. For 64-bit games that ask for more (Oblivion Remastered wants 6 GB): the game sees the shared memory, or the amount in \"Report video memory\". Not for 32-bit games.",
+      "target": { "env": "DISABLE_MESA_VRAM_REPORT_LIMIT" },
+      "choices": [{ "value": "1", "label": "On" }]
     },
     {
       "id": "dxvk_hud",
@@ -354,6 +363,12 @@
       "label": "DirectX 11: pass GPU checks",
       "help": "For DirectX 9-11 games that refuse an unknown GPU or its shared memory.",
       "settings": { "dxvk_vendor": "1002", "dxvk_memory": "4096" }
+    },
+    {
+      "id": "vram-6gb",
+      "label": "Needs more than 4 GB of video memory",
+      "help": "For 64-bit games that refuse to start, or warn, because Steam reports 4 GB of video memory: they're told 6 GB.",
+      "settings": { "vram_limit_off": "1", "dxvk_memory": "6144" }
     },
     {
       "id": "gpu-hangs",
