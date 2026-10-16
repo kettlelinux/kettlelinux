@@ -163,3 +163,17 @@ def install_dir(appid: int) -> str | None:
     i = install(appid)
     return i[0] if i else None
 
+
+def prefix(appid: int) -> str | None:
+    """The game's Wine prefix (Proton's compatdata/<appid>/pfx), looked for in the library the
+    game is installed in first; None before the game's first launch through Proton."""
+    libs = libraries()
+    if not is_shortcut(appid):
+        own = [l for l in libs if os.path.isfile(os.path.join(l, "steamapps", f"appmanifest_{appid}.acf"))]
+        libs = own + [l for l in libs if l not in own]
+    for lib in libs:
+        p = os.path.join(lib, "steamapps", "compatdata", str(int(appid)), "pfx")
+        if os.path.isdir(p):
+            return p
+    return None
+

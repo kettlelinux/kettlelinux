@@ -1,6 +1,7 @@
 // The Performance tab: kettle-powerd's per-game fan, CPU and Auto TDP settings (with "All games"
 // picked, the settings every game without its own uses), and a game's own refresh rate, held
-// while it runs (the all-games rate is Device Settings'). Steam's TDP limit, profile and GPU
+// while it runs (the all-games rate is Device Settings'), and Lumen in Unreal Engine 5 games (off
+// unless turned back on, for all games or one: lumen.py). Steam's TDP limit, profile and GPU
 // clock stay in Quick Access > Performance.
 import { ButtonItem, DropdownItem, PanelSectionRow, SliderField, ToggleField } from "@decky/ui";
 import { callable } from "@decky/api";
@@ -36,6 +37,9 @@ type Status = { steam: { fan_control: number }; auto_tdp: { fps_limit: number } 
 // framegen: games with Frame Gen on, which holds their rate instead
 type Refresh = { rates: number[]; hz: number; games: Record<string, number>; framegen: Record<string, number> };
 
+// Lumen: the all-games default, and with a game, its state (lumen.py's get)
+type Lumen = { default_off: boolean; ue5?: boolean; choice?: "default" | "off" | "on"; off?: boolean; applied?: boolean; pending?: boolean };
+
 const info = callable<[], Info>("perf_info");
 const status = callable<[], Status>("perf_status");
 const getGame = callable<[appid: number | null], Game>("perf_get_game");
@@ -43,6 +47,10 @@ const getGame = callable<[appid: number | null], Game>("perf_get_game");
 const setGame = callable<[appid: number | null, settings: Patch | Settings | null], Game>("perf_set_game");
 const getRefresh = callable<[], Refresh>("get_refresh");
 const setGameRefresh = callable<[appid: number, hz: number | null, running: boolean], Refresh>("set_game_refresh");
+const getLumen = callable<[appid: number | null], Lumen>("lumen_get");
+const setLumen = callable<[appid: number | null, value: boolean | string], Lumen>("lumen_set");
+// after a game exits (index.tsx): a first launch made its prefix, or it rewrote its Engine.ini
+export const syncLumen = callable<[], void>("lumen_sync");
 
 const FAN_MODES = [
   { data: "auto", label: "Automatic (built-in curve)" },
@@ -230,6 +238,55 @@ function GameRefresh({ appid, name, r, onChange }: { appid: number; name: string
   );
 }
 
+// Lumen, UE5's global illumination and reflections: off in UE5 games unless turned back on
+function LumenSetting({ appid, name }: { appid: number | null; name: string }) {
+  const [l, setL] = useState<Lumen | null>(null);
+  useEffect(() => {
+    setL(null);
+    getLumen(appid).then(setL).catch(() => {});
+  }, [appid]);
+  if (!l) return null;
+  if (appid === null)
+    return (
+      <PanelSectionRow>
+        <ToggleField
+          label="Lumen off in Unreal Engine 5 games"
+          description="UE5's global illumination and reflections: the heaviest part of most UE5 games here. Some games look darker without it; turn it back on per game. Takes effect at each game's next launch."
+          checked={l.default_off}
+          onChange={async (on) => {
+            setL({ ...l, default_off: on });
+            setL(await setLumen(null, on));
+          }}
+        />
+      </PanelSectionRow>
+    );
+  if (!l.ue5) return null;
+  const all = l.default_off ? "Off" : "On";
+  const state = l.pending
+    ? `Off from ${name}'s next launch (it hasn't run here yet)`
+    : l.off
+      ? `Off: set in ${name}'s Engine.ini from its next launch. A game that ignores it keeps Lumen.`
+      : "On: the game's own setting";
+  return (
+    <PanelSectionRow>
+      <DropdownItem
+        label="Lumen (Unreal Engine 5)"
+        description={state}
+        rgOptions={[
+          { data: "default", label: `All games' (${all})` },
+          { data: "off", label: "Off" },
+          { data: "on", label: "On" },
+        ]}
+        selectedOption={l.choice ?? "default"}
+        onChange={async (o) => {
+          setL({ ...l, choice: o.data });
+          setL(await setLumen(appid, o.data));
+        }}
+      />
+    </PanelSectionRow>
+  );
+}
+
 export function PerformanceTab({ appid, name }: { appid: number | null; name: string }) {
   const [inf, setInf] = useState<Info | null>(null);
   const [s, setS] = useState<Status | null>(null);
@@ -252,6 +309,7 @@ export function PerformanceTab({ appid, name }: { appid: number | null; name: st
       <PowerSettings key={appid ?? "all"} appid={appid} name={name} inf={inf}
         fanControl={s.steam.fan_control === 1} fpsLimit={s.auto_tdp.fps_limit} />
       {appid !== null && r && r.rates.length >= 2 && <GameRefresh appid={appid} name={name} r={r} onChange={setR} />}
+      <LumenSetting key={`lumen-${appid ?? "all"}`} appid={appid} name={name} />
     </>
   );
 }

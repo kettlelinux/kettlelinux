@@ -55,7 +55,7 @@ import { Engine, NATIVE_WRAPPER, anticheatText, engineLabel, engineText, runsNat
 import { DatabasePage } from "./database";
 import { AUTO_EVERY_MS, AUTO_FIRST_MS, autoSync } from "./auto";
 import { Tab, Tabs } from "../../shared/Tabs";
-import { PerformanceTab } from "./performance";
+import { PerformanceTab, syncLumen } from "./performance";
 import { UpscalingTab } from "./upscaling";
 import { FrameGenTab, syncFrameGen } from "./framegen";
 import { ExtrasTab } from "./extras";
@@ -587,6 +587,8 @@ export default definePlugin(() => {
         // the backend stores the Frame Gen measurement after a game exits (it samples every
         // 2 s), which can change the automatic cap: rewrite launch options for the next launch
         setTimeout(() => syncFrameGen().catch(() => {}), 5000);
+        // a first launch made the game's prefix, or the game rewrote its Engine.ini: Lumen's lines back
+        syncLumen().catch(() => {});
       }
     },
   );

@@ -39,8 +39,9 @@
 #              game fixes, the engine the game is built on (shared/gameengine.py), and the game
 #              database (server/game-db): known good settings players share once they've played
 #              with them; Performance: fan curve / fixed speed, CPU core parking and caps and Auto
-#              TDP (kettle-powerd; "All games" in the picker sets the defaults), and the game's
-#              own refresh rate; Upscaling: gamescope FSR 1 (render resolution + Sharp filter) and
+#              TDP (kettle-powerd; "All games" in the picker sets the defaults), the game's
+#              own refresh rate, and Lumen off in Unreal Engine 5 games (their Engine.ini, on
+#              unless turned back on); Upscaling: gamescope FSR 1 (render resolution + Sharp filter) and
 #              SGSR 2 / Arm ASR / FSR 2.2 through OptiScaler (ARM64EC build, optiscaler-arm64ec);
 #              Frame Gen: frame generation (our kettle-framegen layer); and, for every game, Extras:
 #              GE-Proton / Proton-CachyOS through kettle-welcome's welcome-proton, and optional
@@ -69,7 +70,7 @@ pkgname=(kettle-decky-welcome kettle-decky-device-settings
          kettle-decky-crash kettle-decky-game-settings
          kettle-decky-stores)
 pkgver=1.12.0
-pkgrel=52
+pkgrel=53
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
