@@ -33,3 +33,69 @@
 	trigger-left-deadzone = <100>;
 	trigger-right-deadzone = <100>;
 };
+
+/*
+ * Kettle Linux: the back paddles as a gpio-keys device of their own, as on the Portal
+ * (qcs8550-ayn-odin2portal.dts). The RP6 dts adds them to /gpio-keys, next to Volume Up, so
+ * InputPlumber taking the paddles in Game Mode would take Volume Up with them. The node name is
+ * the input device name InputPlumber matches ("gpio-keys-paddles"); its rsinput1 map turns
+ * BTN_Z/BTN_C into the left/right back paddles. Same TLMM GPIOs 57/58 and pinctrl as the RP6's.
+ */
+&{/gpio-keys} {
+	pinctrl-0 = <&volume_up_n>;
+
+	/delete-node/ key-paddle-left;
+	/delete-node/ key-paddle-right;
+};
+
+/ {
+	gpio-keys-paddles {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&paddle_keys_default>;
+
+		key-paddle-left {
+			label = "Back Paddle Left";
+			linux,code = <BTN_Z>;
+			gpios = <&tlmm 57 GPIO_ACTIVE_LOW>;
+			debounce-interval = <15>;
+		};
+
+		key-paddle-right {
+			label = "Back Paddle Right";
+			linux,code = <BTN_C>;
+			gpios = <&tlmm 58 GPIO_ACTIVE_LOW>;
+			debounce-interval = <15>;
+		};
+	};
+};
+
+/*
+ * Kettle Linux: the Nova's own ADSP firmware, from its Android vendor partition, has its IMU's
+ * driver (QMI8658) and its battery's profile (5000 mAh); the Odin 2's in the image has neither.
+ * It can't be shipped, nor swapped in later (stopping the running ADSP resets the SoC), so the
+ * tree names firmware the image doesn't have: the ADSP stays offline at boot until
+ * kettle-adsp-firmware (packages/kettle-motion) has copied the Nova's own to
+ * /var/lib/kettle-firmware/qcom/sm8550/retroid/rpnova and starts it, or starts it with the
+ * Odin 2's (device.conf ADSP_FIRMWARE_FALLBACK) if there is none.
+ */
+&remoteproc_adsp {
+	firmware-name = "qcom/sm8550/retroid/rpnova/adsp.mbn",
+			"qcom/sm8550/retroid/rpnova/adsp_dtb.mbn";
+};
+
+/*
+ * Kettle Linux: the Nova has no power LED (only the stick lights; checked on a unit), so the AYN
+ * common dtsi's power-led on the PM8550 LPG goes, as on the Thor. Without the node, Device
+ * Settings' Lights tab offers no power light here. Channel 4 is the fan's, so the LPG stays.
+ */
+&pm8550_pwm {
+	/delete-node/ power_led;
+};
+
+/*
+ * Kettle Linux: the fan curve in the kernel, as on the AYN boards. The RP6 dts has the common
+ * dtsi's pwm-fan and its trip points but no cooling-maps (ROCKNIX drives the fan from
+ * userspace), so without this the fan would sit at its boot duty cycle.
+ */
+#include "qcs8550-ayn-fan.dtsi"

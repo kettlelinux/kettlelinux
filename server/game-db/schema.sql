@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   app_id      INTEGER NOT NULL,
   game        TEXT NOT NULL,
   device      TEXT NOT NULL,              -- device model (/proc/device-tree/model)
-  variant     TEXT NOT NULL,              -- Kettle image variant (device/<name>): odin2portal, thor, rp5
+  variant     TEXT NOT NULL,              -- Kettle image variant (device/<name>): odin2portal, thor, rp5, rpnova
   build       TEXT NOT NULL,              -- Kettle build id it was shared from
   hash        TEXT NOT NULL,              -- the settings, canonical: one entry per game, device, settings
   compat_tool TEXT,                       -- Steam compatibility tool name; NULL: Steam's choice

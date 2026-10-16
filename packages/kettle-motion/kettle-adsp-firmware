@@ -1,0 +1,156 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""kettle-adsp-firmware: start the ADSP with the device's own firmware.
+
+Some devices' ADSP firmware is only on their own Android partitions. The Retroid Pocket Nova's
+(vendor/firmware/adsp.*) has its IMU's driver (QMI8658) and its battery's profile (5000 mAh);
+the AYN Odin 2 image Kettle can ship has neither. It can't be swapped in later, because
+stopping a running ADSP resets the SoC. So such a device's tree names ADSP firmware the image
+doesn't have, which leaves the ADSP offline at boot, and this starts it once /var is mounted:
+  - from /var/lib/kettle-firmware/<the firmware's directory>: the device's own firmware,
+    copied from vendor (split .mdt/.bNN files, joined into the .mbn the tree names) on the
+    first start; delete the directory to copy it again
+  - or, with no vendor copy, from the image's fallback, the directory under /usr/lib/firmware
+    that device.conf's ADSP_FIRMWARE_FALLBACK names
+The kernel looks in /var/lib/kettle-firmware first from then on (firmware_class.path). With
+the ADSP already running (any other device), it does nothing.
+"""
+import glob
+import os
+import shutil
+import struct
+import sys
+import time
+
+sys.path.insert(1, "/usr/lib/kettle")
+import kettle_device  # noqa: E402
+from android_parts import PARTS, mounted, super_partitions  # noqa: E402
+
+FW_ROOT = "/var/lib/kettle-firmware"
+FILES = ("adsp", "adsp_dtb")
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def adsp_remoteproc():
+    for name in glob.glob("/sys/class/remoteproc/remoteproc*/name"):
+        if open(name).read().strip() == "adsp":
+            return os.path.dirname(name)
+    return None
+
+
+def join_split(mdt, out):
+    """A split Qualcomm image (NAME.mdt and NAME.bNN, one per program segment) as the single
+    ELF file the kernel loads, each segment at its file offset (as pil-squasher does)."""
+    hdr = open(mdt, "rb").read()
+    if hdr[:4] != b"\x7fELF":
+        raise ValueError(f"{mdt}: not an ELF file")
+    if hdr[4] == 1:
+        phoff, = struct.unpack_from("<I", hdr, 28)
+        phentsize, phnum = struct.unpack_from("<HH", hdr, 42)
+        segs = [struct.unpack_from("<8I", hdr, phoff + i * phentsize) for i in range(phnum)]
+        segs = [(p[1], p[4]) for p in segs]
+    else:
+        phoff, = struct.unpack_from("<Q", hdr, 32)
+        phentsize, phnum = struct.unpack_from("<HH", hdr, 54)
+        segs = [struct.unpack_from("<IIQQQQQQ", hdr, phoff + i * phentsize) for i in range(phnum)]
+        segs = [(p[2], p[5]) for p in segs]
+    buf = bytearray(max(off + size for off, size in segs))
+    for i, (off, size) in enumerate(segs):
+        if size == 0:
+            continue
+        part = f"{mdt[:-4]}.b{i:02d}"
+        data = open(part, "rb").read() if os.path.exists(part) else hdr[off:off + size]
+        if len(data) < size:
+            raise ValueError(f"{part}: {len(data)} bytes, the segment has {size}")
+        buf[off:off + size] = data[:size]
+    with open(out, "wb") as f:
+        f.write(buf)
+
+
+def copy_from_vendor(dest):
+    """The device's own ADSP firmware from its Android vendor partition, into dest."""
+    parts = super_partitions(f"{PARTS}/super")
+    slot = next((s for s in ("_a", "_b") if len(parts.get("vendor" + s, [])) == 1), None)
+    if slot is None:
+        raise RuntimeError("no vendor partition in super")
+    (offset, size), = parts["vendor" + slot]
+    with mounted(f"{PARTS}/super", offset, size) as vendor:
+        for name in FILES:
+            mdt = f"{vendor}/firmware/{name}.mdt"
+            if not os.path.exists(mdt):
+                raise RuntimeError(f"no {name}.mdt in vendor{slot}/firmware")
+            join_split(mdt, f"{dest}/{name}.mbn")
+    log(f"copied the ADSP firmware from vendor{slot}")
+
+
+def copy_fallback(dest):
+    """The image's own ADSP firmware (device.conf ADSP_FIRMWARE_FALLBACK), into dest."""
+    src = "/usr/lib/firmware/" + kettle_device.conf.get("ADSP_FIRMWARE_FALLBACK", "")
+    for name in FILES:
+        shutil.copyfile(f"{src}/{name}.mbn", f"{dest}/{name}.mbn")
+    log(f"using the image's ADSP firmware ({src})")
+
+
+def fill(dest, own):
+    """dest holding the device's own firmware (own) or the fallback, replaced in one rename."""
+    new = dest + ".new"
+    shutil.rmtree(new, ignore_errors=True)
+    os.makedirs(new)
+    if own:
+        copy_from_vendor(new)
+    else:
+        copy_fallback(new)
+    shutil.rmtree(dest, ignore_errors=True)
+    os.rename(new, dest)
+
+
+def start(rproc):
+    with open("/sys/module/firmware_class/parameters/path", "w") as f:
+        f.write(FW_ROOT)
+    try:
+        with open(f"{rproc}/state", "w") as f:
+            f.write("start")
+    except OSError as e:
+        log(f"could not start the ADSP: {e}")
+    for _ in range(40):
+        if open(f"{rproc}/state").read().strip() == "running":
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def main():
+    rproc = adsp_remoteproc()
+    if rproc is None:
+        log("no ADSP remoteproc")
+        return 0
+    state = open(f"{rproc}/state").read().strip()
+    if state != "offline":
+        log(f"the ADSP is {state}: nothing to do")
+        return 0
+    # the firmware the device tree names; the tree's second name, the ADSP's devicetree
+    # (adsp_dtb.mbn), is in the same directory
+    dest = os.path.join(FW_ROOT, os.path.dirname(open(f"{rproc}/firmware").read().strip()))
+    if not all(os.path.exists(f"{dest}/{n}.mbn") for n in FILES):
+        try:
+            fill(dest, own=True)
+        except Exception as e:  # anything but a started ADSP leaves the device without audio and battery data
+            log(f"no ADSP firmware from vendor ({e})")
+            fill(dest, own=False)
+    if start(rproc):
+        log("the ADSP is running")
+        return 0
+    log("the ADSP did not start: trying the image's firmware")
+    fill(dest, own=False)
+    if start(rproc):
+        log("the ADSP is running (the image's firmware; the device's own copy is replaced)")
+        return 0
+    log("the ADSP did not start")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

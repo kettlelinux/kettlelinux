@@ -1,0 +1,20 @@
+# Starts the ADSP with the device's own firmware on devices whose tree leaves it offline at boot
+# (kettle-adsp-firmware). Enabled by such a device's overlay (device/rpnova); elsewhere the ADSP
+# is already running and this does nothing.
+[Unit]
+Description=Start the ADSP with the device's own firmware
+Documentation=file:///usr/lib/kettle-motion/kettle-adsp-firmware
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/kettle-motion/kettle-adsp-firmware
+StateDirectory=kettle-firmware
+RuntimeDirectory=kettle-adsp-firmware
+
+[Install]
+WantedBy=sysinit.target

@@ -4,7 +4,9 @@ Kettle Linux builds one image per device from the same sources. Most of an image
 kernel, the packages, and `device/common/overlay`. What a device adds is kept in
 `device/<name>/`, so a new device is a new directory, not changes to shared scripts. The Odin 2
 Portal (`odin2portal`) and the AYN Thor (`thor`) are the examples to copy; the Retroid Pocket 5
-(`rp5`, [RP5.md](RP5.md)) is the example of a device on another SoC (SM8250).
+(`rp5`, [RP5.md](RP5.md)) is the example of a device on another SoC (SM8250), and the Retroid
+Pocket Nova (`rpnova`, [RPNOVA.md](RPNOVA.md)) of another maker's board on an SoC Kettle already
+runs, which adds split packages to the existing firmware and UCM packages.
 
 ## Shared or per-device?
 - **Shared** is anything that works the same, or better, on every device: a bug fix, a newer
@@ -24,7 +26,7 @@ setting instead, from the device's `device.conf` or one of its overlay's files.
 ## What a device directory holds
 | File | What it is | Read by |
 |---|---|---|
-| `device.conf` | `MODEL`, `DTB`, `ABL_DTBS`, `RAUC_COMPATIBLE`, `PAD_NAME`, `FACE_BUTTONS` (all required); `DTB_ALT`, `CMDLINE_EXTRA` (optional) | `scripts/build-image.sh`; installed in the image as `/usr/lib/kettle/device.conf` |
+| `device.conf` | `MODEL`, `DTB`, `ABL_DTBS`, `RAUC_COMPATIBLE`, `PAD_NAME`, `FACE_BUTTONS` (all required); `DTB_ALT`, `CMDLINE_EXTRA`, `ADSP_FIRMWARE_FALLBACK` (optional) | `scripts/build-image.sh`; installed in the image as `/usr/lib/kettle/device.conf` |
 | `packages.txt` | packages only this device's image gets, added to `image/packages.txt` | `scripts/build-image.sh` |
 | `overlay/` | files copied over `device/common/overlay` | `scripts/build-image.sh` |
 | `overlay/usr/lib/kettle/gamescope.conf` | Game Mode's screen: `GAMESCOPE_ORIENTATION`, `GAMESCOPE_OUTPUT`, a second screen's `GAMESCOPE_LEASE_*` (required) | `gamescope-session` |
@@ -45,6 +47,10 @@ Devicetree settings (the image build copies them into `/usr/lib/kettle/boot.conf
 - `DTB_ALT`: revisions of the device that nothing can tell apart before the kernel runs, as
   `NAME:DTB` pairs (the RP5's `visionox:...-rp5-visionox.dtb`). An empty file `NAME` or `NAME.txt`
   in the top folder of the KETTLE partition makes GRUB and extlinux boot that DTB instead.
+- `ADSP_FIRMWARE_FALLBACK`: for a device whose ADSP runs its own firmware from its Android vendor
+  partition (its dts names firmware the image doesn't have, and its overlay enables
+  `kettle-adsp-firmware.service`, as `device/rpnova` does): the directory under
+  `/usr/lib/firmware` to start the ADSP with when there is no vendor copy.
 - `CMDLINE_EXTRA`: kernel options for this device only, appended to boot.conf's shared `CMDLINE`
   (the SM8550 devices' `pcie_ports=compat`).
 - `PAD_NAME` also goes into the udev rule that keeps the pad a joystick

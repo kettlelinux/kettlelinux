@@ -16,6 +16,9 @@ Group=fastrpc
 Restart=on-failure
 RestartSec=3
 ProtectSystem=strict
+# the sensors process may rebuild its registry in the copy of persist's sensors directory
+# (kettle-motion-setup; hexagonrpc 0002)
+ReadWritePaths=-/var/lib/kettle-motion/qcom/sensors/persist
 ProtectHome=yes
 PrivateTmp=yes
 NoNewPrivileges=yes

@@ -1,0 +1,11 @@
+# The Nova's own packages, added to image/packages.txt (built by us, packages/)
+
+# firmware: DSPs, audio topology, GPU, Wi-Fi, Bluetooth (packages/kettle-firmware-ayn: the Nova's
+# device tree takes the Odin 2's ADSP and amplifier files, as ROCKNIX ships it)
+kettle-firmware-rpnova
+# ALSA UCM profile for the "AYN-Odin2" card the Nova's device tree names (packages/kettle-ucm-ayn)
+kettle-ucm-rpnova
+# gyro and accelerometer for Steam Input: the ADSP's Sensor Core (hexagonrpc, libssc) as the Deck
+# controller's motion (packages/kettle-motion, packages/inputplumber 0001), as on the Portal and
+# Thor. Not yet tried on a Nova
+kettle-motion

@@ -1,0 +1,142 @@
+From c717bada25738cc5487ba0cfb836a723a0901f32 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Fri, 16 Oct 2026 16:56:51 -0500
+Subject: [PATCH] hexagonrpcd: fetch input buffers over 256 bytes with
+ get_in_bufs2
+
+---
+ hexagonrpcd/interfaces/adsp_listener.def |  1 +
+ hexagonrpcd/listener.c                   | 71 ++++++++++++++++++++++--
+ 2 files changed, 67 insertions(+), 5 deletions(-)
+
+diff --git a/hexagonrpcd/interfaces/adsp_listener.def b/hexagonrpcd/interfaces/adsp_listener.def
+index 4f521c0..1620471 100644
+--- a/hexagonrpcd/interfaces/adsp_listener.def
++++ b/hexagonrpcd/interfaces/adsp_listener.def
+@@ -28,5 +28,6 @@
+ 
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(3, adsp_listener_init2, 0, 0, 0, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(4, adsp_listener_next2, 2, 1, 4, 1)
++HEXAGONRPC_DEFINE_REMOTE_METHOD(5, adsp_listener_get_in_bufs2, 2, 0, 1, 1)
+ 
+ #endif /* INTERFACE_ADSP_LISTENER_DEF */
+diff --git a/hexagonrpcd/listener.c b/hexagonrpcd/listener.c
+index e298688..66fa8ee 100644
+--- a/hexagonrpcd/listener.c
++++ b/hexagonrpcd/listener.c
+@@ -24,6 +24,8 @@
+ #include <libhexagonrpc/interfaces/remotectl.def>
+ #include <stddef.h>
+ #include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
+ 
+ #include "aee_error.h"
+ #include "interfaces/adsp_listener.def"
+@@ -56,6 +58,59 @@ static int adsp_listener_next2(int fd,
+ 			inbufs_size, inbufs);
+ }
+ 
++static int adsp_listener_get_in_bufs2(int fd,
++				      uint32_t rctx,
++				      uint32_t offset,
++				      uint32_t *len_req,
++				      uint32_t bufs_size, void *bufs)
++{
++	return fastrpc2(&adsp_listener_get_in_bufs2_def, fd, ADSP_LISTENER_HANDLE,
++			rctx,
++			offset,
++			len_req,
++			bufs_size, bufs);
++}
++
++/*
++ * A message larger than the part next2 returns (a file write of more than a
++ * few hundred bytes, for example): fetch the rest with get_in_bufs2, as
++ * Qualcomm's listener does. *out is the whole message, to be freed.
++ */
++static int fetch_large_inbufs(int fd, uint32_t rctx,
++			      const char *first, uint32_t first_len,
++			      uint32_t len, char **out)
++{
++	uint32_t req = 0;
++	char *buf;
++	int ret;
++
++	if (len > 16 * 1024 * 1024) {
++		fprintf(stderr, "Input buffers too large: %" PRIu32 "\n", len);
++		return -1;
++	}
++
++	buf = malloc(len);
++	if (buf == NULL) {
++		perror("Could not allocate the input buffers");
++		return -1;
++	}
++
++	memcpy(buf, first, first_len);
++
++	ret = adsp_listener_get_in_bufs2(fd, rctx, first_len, &req,
++					 len - first_len, buf + first_len);
++	if (ret || req > len) {
++		fprintf(stderr, "Could not fetch the rest of the input buffers: %d (%" PRIu32 " of %" PRIu32 ")\n",
++				ret, req, len);
++		free(buf);
++		return -1;
++	}
++
++	*out = buf;
++
++	return 0;
++}
++
+ static struct fastrpc_io_buffer *allocate_outbufs(const struct fastrpc_function_def_interp2 *def,
+ 						  uint32_t *first_inbuf)
+ {
+@@ -143,6 +198,8 @@ static int return_for_next_invoke(int fd,
+ {
+ 	struct fastrpc_decoder_context *ctx;
+ 	char inbufs[256];
++	const char *msg = inbufs;
++	char *large = NULL;
+ 	char *outbufs = NULL;
+ 	uint32_t inbufs_len;
+ 	uint32_t outbufs_len;
+@@ -174,10 +231,13 @@ static int return_for_next_invoke(int fd,
+ 		goto err_free_outbufs;
+ 	}
+ 
+-	if (inbufs_len > 256) {
+-		fprintf(stderr, "Large (>256B) input buffers aren't implemented\n");
+-		ret = -1;
+-		goto err_free_outbufs;
++	if (inbufs_len > sizeof(inbufs)) {
++		ret = fetch_large_inbufs(fd, *rctx, inbufs, sizeof(inbufs),
++					 inbufs_len, &large);
++		if (ret)
++			goto err_free_outbufs;
++
++		msg = large;
+ 	}
+ 
+ 	ctx = inbuf_decode_start(*sc);
+@@ -187,7 +247,7 @@ static int return_for_next_invoke(int fd,
+ 		goto err_free_outbufs;
+ 	}
+ 
+-	ret = inbuf_decode(ctx, inbufs_len, inbufs);
++	ret = inbuf_decode(ctx, inbufs_len, msg);
+ 	if (ret) {
+ 		perror("Could not decode");
+ 		goto err_free_outbufs;
+@@ -202,6 +262,7 @@ static int return_for_next_invoke(int fd,
+ 	*decoded = inbuf_decode_finish(ctx);
+ 
+ err_free_outbufs:
++	free(large);
+ 	free(outbufs);
+ 	return ret;
+ }
+-- 
+2.56.0
+
