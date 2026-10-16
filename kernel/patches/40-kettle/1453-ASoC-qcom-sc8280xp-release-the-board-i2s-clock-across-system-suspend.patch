@@ -18,17 +18,19 @@ or closed between the two only updates the count.
 
 Armada 0531, rebased onto 22-sm8750/0060 and 40-kettle/1291 (no wsa2_only here).
 ---
+diff --git a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
+index f50a96af2..a6889023f 100644
 --- a/sound/soc/qcom/sc8280xp.c
 +++ b/sound/soc/qcom/sc8280xp.c
-@@ -23,6 +23,7 @@
- 	struct snd_soc_jack dp_jack[8];
+@@ -83,6 +83,7 @@ struct sc8280xp_snd_data {
+ 	const struct qcom_snd_soc_common *priv;
  	struct clk *i2s_clk;
  	int mi2s_clk_count;
 +	bool mi2s_clk_suspended;
  	bool jack_setup;
  };
  
-@@ -90,7 +91,7 @@
+@@ -238,7 +239,7 @@ static int sc8280xp_snd_startup(struct snd_pcm_substream *substream)
  		 * the BE streams but no BCLK ever leaves the SoC and
  		 * BCLK-slaved speaker amps cannot lock their PLL.
  		 */
@@ -37,7 +39,7 @@ Armada 0531, rebased onto 22-sm8750/0060 and 40-kettle/1291 (no wsa2_only here).
  			ret = clk_prepare_enable(pdata->i2s_clk);
  			if (ret) {
  				pdata->mi2s_clk_count--;
-@@ -118,7 +119,7 @@
+@@ -266,7 +267,7 @@ static void sc8280xp_snd_shutdown(struct snd_pcm_substream *substream)
  	switch (cpu_dai->id) {
  	case PRIMARY_MI2S_RX...QUATERNARY_MI2S_TX:
  	case QUINARY_MI2S_RX...QUINARY_MI2S_TX:
@@ -46,7 +48,7 @@ Armada 0531, rebased onto 22-sm8750/0060 and 40-kettle/1291 (no wsa2_only here).
  			clk_disable_unprepare(pdata->i2s_clk);
  		break;
  	default:
-@@ -199,6 +200,41 @@
+@@ -454,6 +455,41 @@ static void sc8280xp_add_be_ops(struct snd_soc_card *card)
  	}
  }
  
@@ -88,7 +90,7 @@ Armada 0531, rebased onto 22-sm8750/0060 and 40-kettle/1291 (no wsa2_only here).
  static int sc8280xp_platform_probe(struct platform_device *pdev)
  {
  	struct snd_soc_card *card;
-@@ -222,6 +258,9 @@
+@@ -489,6 +525,9 @@ static int sc8280xp_platform_probe(struct platform_device *pdev)
  	if (ret)
  		return ret;
  

@@ -25,7 +25,7 @@ log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 fetch() {
-  local tar="$CACHE/linux-$KERNEL_VERSION.tar.xz"
+  local tar="$CACHE/${KERNEL_SOURCE_URL##*/}"
   mkdir -p "$CACHE"
   [ -f "$tar" ] || curl -fLo "$tar" "$KERNEL_SOURCE_URL"
   echo "$KERNEL_SOURCE_SHA256  $tar" | sha256sum -c --quiet || die "checksum mismatch: $tar"
@@ -36,7 +36,7 @@ prepare() {
   log "extracting linux-$KERNEL_VERSION (fresh tree)"
   rm -rf "$KSRC"
   mkdir -p "$ROOT/build"
-  tar -xf "$CACHE/linux-$KERNEL_VERSION.tar.xz" -C "$ROOT/build"
+  tar -xf "$CACHE/${KERNEL_SOURCE_URL##*/}" -C "$ROOT/build"
   mv "$ROOT/build/linux-$KERNEL_VERSION" "$KSRC"
 
   local dir p n=0

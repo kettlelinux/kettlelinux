@@ -7,10 +7,10 @@ Subject: [PATCH] gpu:drm:panel:add pocket fit panel
 [Kettle: rebased onto our panel Kconfig/Makefile entries; code unchanged]
 ---
 diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
-index 6bd4169c1..1bed8d891 100644
+index 52e2f9cce..8366313ee 100644
 --- a/drivers/gpu/drm/panel/Kconfig
 +++ b/drivers/gpu/drm/panel/Kconfig
-@@ -37,6 +37,22 @@ config DRM_PANEL_AR02_3INCH
+@@ -47,6 +47,22 @@ config DRM_PANEL_AR02_3INCH
  	  Say Y here if you want to enable support for Ayaneo Pocket DMG
  	  1080x1240 60hz Panel.
  
@@ -34,22 +34,22 @@ index 6bd4169c1..1bed8d891 100644
  	tristate "ARM Versatile panel driver"
  	depends on OF
 diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
-index 31cc5f37e..9f6d1798b 100644
+index f35c04f5b..a7e1b9c5e 100644
 --- a/drivers/gpu/drm/panel/Makefile
 +++ b/drivers/gpu/drm/panel/Makefile
 @@ -1,5 +1,6 @@
  # SPDX-License-Identifier: GPL-2.0
  obj-$(CONFIG_DRM_PANEL_ABT_Y030XX067A) += panel-abt-y030xx067a.o
 +obj-$(CONFIG_DRM_PANEL_AR14) += panel-ar14-144hz.o
+ obj-$(CONFIG_DRM_PANEL_ANBERNIC_TD4310) += panel-anbernic-td4310.o
  obj-$(CONFIG_DRM_PANEL_AR06_4INCH) += panel-ar06-4inch.o
  obj-$(CONFIG_DRM_PANEL_AR02_3INCH) += panel-ar02-3inch.o
- obj-$(CONFIG_DRM_PANEL_ARM_VERSATILE) += panel-arm-versatile.o
 diff --git a/drivers/gpu/drm/panel/panel-ar14-144hz.c b/drivers/gpu/drm/panel/panel-ar14-144hz.c
 new file mode 100644
 index 000000000..5d59730ed
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-ar14-144hz.c
-@@ -0,0 +1,550 @@
+@@ -0,0 +1,551 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +// Copyright (c) 2026 Philippe Simons <simons.philippe@gmail.com>
 +// Generated with linux-mdss-dsi-panel-driver-generator from vendor device tree:
@@ -67,6 +67,7 @@ index 000000000..5d59730ed
 +#include <drm/drm_mipi_dsi.h>
 +#include <drm/drm_modes.h>
 +#include <drm/drm_panel.h>
++#include <drm/drm_of.h>
 +#include <drm/drm_probe_helper.h>
 +
 +struct panel_ar14_144hz {
@@ -519,7 +520,7 @@ index 000000000..5d59730ed
 +		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
 +				     "Failed to get reset-gpios\n");
 +
-+	ret = of_drm_get_panel_orientation(dev->of_node, &ctx->orientation);
++	ret = drm_of_get_panel_orientation(dev->of_node, &ctx->orientation);
 +	if (ret < 0) {
 +		dev_err(dev, "%pOF: failed to get orientation %d\n", dev->of_node, ret);
 +		return ret;
