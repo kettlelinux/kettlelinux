@@ -231,7 +231,7 @@
 };
 
 &display_panel {
-	compatible = "chipone,icna3512";
+	compatible = "ayaneo,pocketds-panel-top", "chipone,icna3512";
 
 	vci-supply = <&vreg_l13b_3p0>;
 	vddio-supply = <&vreg_l12b_1p8>;
