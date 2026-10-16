@@ -26,7 +26,8 @@ while the game holds the target, back up as soon as it falls short on a unit at 
 step that failed for a while. A game held back by the GPU at its full clock holds all it can: only
 the CPU is lowered then, until the GPU stops being the limit. A game that stays below the target
 without any of Auto TDP's caps (its own frame cap, its CPU) is held at the frame rate it reaches
-there instead. Steam's TDP limit still applies on top.
+there instead. A loading screen (under 10 fps) counts as no frames: it neither moves the caps nor
+sets the rate held. Steam's TDP limit still applies on top.
 
   kettle-powerd            run the daemon (system bus, root)
   kettle-powerd --restore  hand the fan back to the kernel and lift every cap, the GPU's to
@@ -68,6 +69,7 @@ CUSTOM_STEP_UA = 500_000
 FPS_FILES = "/run/user"  # <uid>/kettle-fps, written by mangoapp about once a second
 FPS_MAX_BYTES = 4096  # kettle-fps is a few short lines
 FPS_STALE = 3  # s: an older frame rate means no game is drawing (paused, loading, gone)
+FPS_LOADING = 10  # fps: a game drawing slower than this is on a loading screen, not playing
 AUTO_RESET = 10  # s without frames: Auto TDP starts again from no cap
 AUTO_DWELL = 2  # ticks after an Auto TDP change before judging it
 AUTO_SETTLE = 5  # ticks holding the target before trying a lower cap
@@ -787,9 +789,11 @@ class Daemon:
                 self.auto_reset()
             return changed
         f = read_fps()
-        if f is None or f["age"] > FPS_STALE or f["steam_focused"]:
+        if f is None or f["age"] > FPS_STALE or f["steam_focused"] or f["fps"] < FPS_LOADING:
             # nothing to judge (Steam's UI in front, the game paused or loading): hold the caps,
-            # and after a while lift them, to search again from the top once the game is back
+            # and after a while lift them, to search again from the top once the game is back.
+            # A loading screen still draws (Borderlands 2's at about 1 fps): taken as the rate
+            # the game reaches, it was held as the target and the caps went to the bottom.
             self.auto_fps = None
             self.auto_idle += 1
             if self.auto_idle >= AUTO_RESET and (self.auto_cpu or self.auto_gpu):
