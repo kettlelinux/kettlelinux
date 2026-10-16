@@ -1,6 +1,6 @@
 # kettle-powerd's description of the KONKR Pocket FIT Elite (SM8750, Snapdragon 8 Elite).
-# The sysfs paths and frequency tables are as read on a unit (2026-10-15); the TDP range and the
-# charging figures are still placeholders until measured. Caps between frequency steps round down.
+# The sysfs paths and frequency tables are as read on a unit (2026-10-15); the charging figures were
+# tested on it, the TDP range is still a placeholder. Caps between frequency steps round down.
 
 [cpu]
 # cpufreq policies (SCMI, the frequency table comes from the firmware), smallest cluster first:
@@ -38,12 +38,25 @@ charger_efficiency = 0.9
 # Placeholder: the 8 Elite draws more than the SM8550 at the top; measure on a unit
 tdp_min = 4
 tdp_max = 22
-# Charging: the SM8750 battery manager is the SM8550's (pmic-glink falls back to its
-# compatible), so 40-kettle/1190's constant_charge_current may be there as on the Portal;
-# until a unit shows it is, Steam's charge limit is the charger's end threshold (the default)
-# and there are no charge speeds. remotes.d/kettle-power-charge.toml (device overlay) is left
-# out for the same reason.
+# Charging, as tested on a unit (2026-10-15, 9 V PD charger): unlike the Portal's, this
+# firmware takes qcom_battmgr's charge limit request. At an end threshold below the battery
+# level it stops charging within seconds (the charger powers the system, the battery sits at
+# 0 mA), and charging resumes when the threshold is raised again. So Steam's charge limit is
+# the charger's end threshold (the default), held by the firmware even asleep or off, and
+# Steam's setting comes through remotes.d/kettle-power-charge.toml (device overlay).
 charge_limit_min = 55
+# The firmware takes a charge current too (constant_charge_current, kernel patch 40-kettle/1190;
+# 2 A gave 1.85 A into the battery, 0 stopped it, and raising it resumed at once at 85%).
+# The firmware's own, uA (BATT_CHG_CTRL_LIM at boot, also its maximum): what charging returns
+# to when kettle-powerd stops
+charge_current = 8400000
+# Device Settings' charge speeds, the first the default. These cap what goes into the
+# battery; a weaker charger gives it less than the cap.
+charge_speed = [
+  { name = "Fast", ua = 8400000 },
+  { name = "Balanced", ua = 3000000 },
+  { name = "Slow", ua = 1500000 },
+]
 
 # Steam's performance profiles (Quick Access > Performance). Caps in kHz / MHz; a cluster
 # left out runs up to its highest frequency. Steps of this unit's tables, not yet tuned by
