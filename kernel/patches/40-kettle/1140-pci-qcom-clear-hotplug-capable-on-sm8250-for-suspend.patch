@@ -13,9 +13,11 @@ s2idle (qcom_stats aosd/cxsd/ddr stay at 0).
 Clear HPC on SM8250, as mainline did before it switched to setting NCCS.
 
 ---
+diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
+index e193e4ed9..a8c367fc5 100644
 --- a/drivers/pci/controller/dwc/pcie-qcom.c
 +++ b/drivers/pci/controller/dwc/pcie-qcom.c
-@@ -377,6 +377,27 @@
+@@ -401,6 +401,27 @@ static void qcom_pcie_set_slot_cap(struct dw_pcie *pci)
  	dw_pcie_dbi_ro_wr_dis(pci);
  }
  
@@ -43,10 +45,10 @@ Clear HPC on SM8250, as mainline did before it switched to setting NCCS.
  static void qcom_pcie_configure_dbi_base(struct qcom_pcie *pcie)
  {
  	struct dw_pcie *pci = pcie->pci;
-@@ -1079,6 +1100,8 @@
+@@ -1103,6 +1124,8 @@ static int qcom_pcie_post_init_2_7_0(struct qcom_pcie *pcie)
  				pcie->parf + PARF_NO_SNOOP_OVERRIDE);
  
- 	qcom_pcie_set_slot_nccs(pcie->pci);
+ 	qcom_pcie_set_slot_cap(pcie->pci);
 +	if (of_device_is_compatible(pcie->pci->dev->of_node, "qcom,pcie-sm8250"))
 +		qcom_pcie_clear_hpc(pcie->pci);
  

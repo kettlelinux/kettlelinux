@@ -20,10 +20,10 @@ reboot.
 
 ---
 diff --git a/drivers/input/misc/Kconfig b/drivers/input/misc/Kconfig
-index 1f6c57dba..c0383376f 100644
+index 2ea729f32..ce9017f11 100644
 --- a/drivers/input/misc/Kconfig
 +++ b/drivers/input/misc/Kconfig
-@@ -993,4 +993,17 @@ config INPUT_STPMIC1_ONKEY
+@@ -1046,4 +1046,17 @@ config INPUT_STPMIC1_ONKEY
  	  To compile this driver as a module, choose M here: the
  	  module will be called stpmic1_onkey.
  
@@ -42,12 +42,12 @@ index 1f6c57dba..c0383376f 100644
 +
  endif
 diff --git a/drivers/input/misc/Makefile b/drivers/input/misc/Makefile
-index 2281d6803..314d56864 100644
+index 58e631182..471ecac2a 100644
 --- a/drivers/input/misc/Makefile
 +++ b/drivers/input/misc/Makefile
-@@ -50,6 +50,7 @@ obj-$(CONFIG_INPUT_IQS269A)		+= iqs269a.o
- obj-$(CONFIG_INPUT_IQS626A)		+= iqs626a.o
+@@ -53,6 +53,7 @@ obj-$(CONFIG_INPUT_IQS626A)		+= iqs626a.o
  obj-$(CONFIG_INPUT_IQS7222)		+= iqs7222.o
+ obj-$(CONFIG_INPUT_ISA1200_HAPTIC)	+= isa1200.o
  obj-$(CONFIG_INPUT_KEYSPAN_REMOTE)	+= keyspan_remote.o
 +obj-$(CONFIG_INPUT_KONKR_SYSBTN)	+= konkr_sysbtn.o
  obj-$(CONFIG_INPUT_KXTJ9)		+= kxtj9.o

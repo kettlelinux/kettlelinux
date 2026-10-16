@@ -18,6 +18,8 @@
 /delete-node/ &camera_mem;
 /delete-node/ &ipa_fw_mem;
 /delete-node/ &ipa_gsi_mem;
+/* 7.3: the (disabled) IPA node points at ipa_fw_mem; no modem here */
+/delete-node/ &ipa;
 /delete-node/ &mpss_dsm_mem;
 /delete-node/ &mpss_mem;
 /delete-node/ &q6_mpss_dtb_mem;
@@ -1370,7 +1372,7 @@
 	status = "okay";
 };
 
-&pcieport0 {
+&pcie0_port0 {
 	wake-gpios = <&tlmm 96 GPIO_ACTIVE_HIGH>;
 	reset-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
 
