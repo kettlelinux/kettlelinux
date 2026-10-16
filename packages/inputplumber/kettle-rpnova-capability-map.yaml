@@ -1,0 +1,124 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+# Kettle Linux: upstream's rsinput_type1.yaml (the Portal's map) with the Nova's face buttons
+# mapped by their labels, as the Thor's are (kettle-thor-capability-map.yaml: the same rsinput
+# pad, without the Thor's AYN key). Used by 40-kettle-rpnova.yaml.
+version: 2
+kind: CapabilityMap
+name: Retroid Pocket Nova (Kettle)
+id: kettle-rpnova
+
+mapping:
+  - name: D-Pad Up
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_DPAD_UP
+          value_type: button
+    target_event:
+      gamepad:
+        button: DPadUp
+
+  - name: D-Pad Down
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_DPAD_DOWN
+          value_type: button
+    target_event:
+      gamepad:
+        button: DPadDown
+
+  - name: D-Pad Left
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_DPAD_LEFT
+          value_type: button
+    target_event:
+      gamepad:
+        button: DPadLeft
+
+  - name: D-Pad Right
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_DPAD_RIGHT
+          value_type: button
+    target_event:
+      gamepad:
+        button: DPadRight
+
+  - name: Back Button
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_BACK
+          value_type: button
+    target_event:
+      gamepad:
+        button: QuickAccess
+
+  - name: Left Back Paddle
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_Z
+          value_type: button
+    target_event:
+      gamepad:
+        button: LeftPaddle1
+
+  - name: Right Back Paddle
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_C
+          value_type: button
+    target_event:
+      gamepad:
+        button: RightPaddle1
+
+  # The Nova's face buttons are labelled Nintendo-style (A right, B bottom, X top, Y left), and
+  # Steam follows the labels here: the button marked A is Steam's A, and so on. (The Portal's
+  # rsinput1 map follows the Xbox layout by position, which on the Nova swapped A/B and X/Y.)
+  - name: A Button
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_EAST
+          value_type: button
+    target_event:
+      gamepad:
+        button: South
+
+  - name: B Button
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_SOUTH
+          value_type: button
+    target_event:
+      gamepad:
+        button: East
+
+  - name: X Button
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_NORTH
+          value_type: button
+    target_event:
+      gamepad:
+        button: North
+
+  - name: Y Button
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_WEST
+          value_type: button
+    target_event:
+      gamepad:
+        button: West
+
+filtered_events: []

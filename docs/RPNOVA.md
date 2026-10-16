@@ -62,9 +62,13 @@ ROCKNIX does on the Nova:
   get it back). Our Nova dts moves them to a `gpio-keys-paddles` device, as on the Portal.
 - **Fan**: the RP6 dts has the AYN pwm-fan and trip points but no cooling maps (ROCKNIX drives the
   fan from userspace). Our Nova dts includes `qcs8550-ayn-fan.dtsi`, the Portal's curve.
-- **Controls**: InputPlumber presents the pad as a Deck controller (`40-kettle-rpnova.yaml`,
-  over upstream's `50-retroid_pocket_nova.yaml`), with upstream's `rsinput1` map, the motion
-  sensors from `kettle-motiond`, and Nintendo-labelled face buttons (`FACE_BUTTONS`).
+- **Controls**: InputPlumber presents the pad as a Deck controller (`40-kettle-rpnova.yaml`), with
+  the motion sensors from `kettle-motiond`. Its map (`kettle-rpnova-capability-map.yaml`) is the
+  Thor's without the AYN key: the face buttons are labelled Nintendo-style, and Steam follows the
+  labels (upstream's `rsinput1` follows the Xbox layout by position, which swapped A/B and X/Y on
+  a Nova). Upstream's `50-retroid_pocket_nova.yaml` isn't installed: it takes `gpio-keys` (Volume
+  Up), which ours leaves to the kernel, so it made a second controller that raced ours for the
+  pad (seen on 20261016.4).
 - **Firmware**: `kettle-firmware-rpnova` (in `packages/kettle-firmware-ayn`) installs the Odin 2's
   ADSP and amplifier files, the paths the dts asks for, as ROCKNIX ships them.
 - **Charging**: no charge speeds or `current` charge limit yet. The ADSP image is the Odin 2's,
