@@ -59,6 +59,7 @@ import { PerformanceTab, syncLumen } from "./performance";
 import { UpscalingTab } from "./upscaling";
 import { FrameGenTab, syncFrameGen } from "./framegen";
 import { ExtrasTab } from "./extras";
+import { ConfigFixes, syncConfigFixes } from "./configfix";
 
 const small: React.CSSProperties = { fontSize: "12px", lineHeight: "16px" };
 const mono: React.CSSProperties = { ...small, fontFamily: "monospace", wordBreak: "break-all" };
@@ -263,6 +264,7 @@ function GamePanel({ appid, name, s, onChanged }: { appid: number; name: string;
           />
         </PanelSectionRow>
       ))}
+      <ConfigFixes appid={appid} name={name} />
 
       {db && (
         <>
@@ -589,6 +591,8 @@ export default definePlugin(() => {
         setTimeout(() => syncFrameGen().catch(() => {}), 5000);
         // a first launch made the game's prefix, or the game rewrote its Engine.ini: Lumen's lines back
         syncLumen().catch(() => {});
+        // and the game config fixes (a first launch made the game's prefix and config file)
+        syncConfigFixes().catch(() => {});
       }
     },
   );
