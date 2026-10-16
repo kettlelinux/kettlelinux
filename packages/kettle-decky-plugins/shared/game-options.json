@@ -257,6 +257,14 @@
       "choices": [{ "value": "/usr/lib/kettle-turnip/share/vulkan/icd.d/freedreno_icd.aarch64.json:/usr/share/vulkan/icd.d/freedreno_icd.x86_64.json:/usr/share/vulkan/icd.d/freedreno_icd.x86.json", "label": "On" }]
     },
     {
+      "id": "proton_all_cores",
+      "section": "proton",
+      "label": "Use all 8 CPU cores",
+      "help": "Steam keeps games on 5 of the 8 cores (off the Portal's and Thor's slow cores), and Proton tells them they have 5. For games that refuse to start with fewer than 6 (Oblivion Remastered): they see all 8 and run on them. On the Pocket FIT Elite all 8 are fast cores.",
+      "target": { "env": "PROTON_CPU_TOPOLOGY" },
+      "choices": [{ "value": "8:0,1,2,3,4,5,6,7", "label": "On" }]
+    },
+    {
       "id": "proton_wined3d",
       "section": "proton",
       "label": "Use WineD3D",
