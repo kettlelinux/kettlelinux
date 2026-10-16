@@ -2,7 +2,10 @@ Portal (SM8550, mainline msm) sensors for Valve's Steam Frame metrics.
 
 - GPU/memory temperature: look thermal zones up by type instead of the
   Frame's zone numbers (28/26/22 are aoss2/camera0/modem0 here);
-  junction temperature is the hottest gpuss zone.
+  junction temperature is the hottest gpuss zone. SM8750 names them
+  gpussN-thermal, without the dash.
+- CPU temperature: the Frame's average also takes SM8750's per-core
+  cpu-C-N-S-thermal zones, and reads 0 rather than NaN with none.
 - Fan: pwmfan when the Frame's slg4ax46073v controller is absent.
 - GPU clock: first devfreq device named *.gpu.
 - Memory total: MemTotal (unified memory) instead of a fixed 16000.
@@ -13,7 +16,7 @@ Portal (SM8550, mainline msm) sensors for Valve's Steam Frame metrics.
   scope Device (controller batteries).
 ---
 diff --git a/src/battery.cpp b/src/battery.cpp
-index f10ec5f..3995f3e 100644
+index f10ec5f3..0aeccee2 100644
 --- a/src/battery.cpp
 +++ b/src/battery.cpp
 @@ -1,6 +1,7 @@
@@ -37,8 +40,45 @@ index f10ec5f..3995f3e 100644
                  battPath[batteryCount++] = p.path();
              }
          }
+diff --git a/src/deckard_temp.cpp b/src/deckard_temp.cpp
+index 8c507c62..25f76e02 100644
+--- a/src/deckard_temp.cpp
++++ b/src/deckard_temp.cpp
+@@ -5,6 +5,7 @@
+ #include <filesystem>
+ #include <fstream>
+ #include <iostream>
++#include <regex>
+ 
+ #ifndef MAX_TEST
+ #include <filesystem.h>
+@@ -21,9 +22,12 @@ DeckardTemp::DeckardTemp() {
+ 			std::ifstream name_if(name_path);
+ 			std::string name;
+ 			name_if >> name;
+-			if (name.substr(0, 3) != "cpu" || 
++			// cpuN-thermal, cpuN-top-thermal (SM8550); cpu-C-N-S-thermal, one per core
++			// sensor (SM8750)
++			bool sm8750 = std::regex_match(name, std::regex("cpu-\\d+-\\d+-\\d+-thermal"));
++			if (!sm8750 && (name.substr(0, 3) != "cpu" || 
+ 				(name.substr(4, name.size()) != "-thermal" && 
+-				 name.substr(4, name.size()) != "-top-thermal"))
++				 name.substr(4, name.size()) != "-top-thermal")))
+ 				continue;
+ 			paths.push_back(dir_entry.path().string());
+ 		} catch (std::exception &e) {
+@@ -48,7 +52,8 @@ float DeckardTemp::get_temp() {
+ 		}
+ 	}
+ 
+-	return avg / (float)count;
++	// no CPU zone found: 0, not NaN
++	return count ? avg / (float)count : 0.0f;
+ }
+ 
+ #ifdef MAX_TEST
 diff --git a/src/ftrace_gpumem.c b/src/ftrace_gpumem.c
-index 76fd5c7..cea7139 100644
+index 76fd5c7d..cea7139f 100644
 --- a/src/ftrace_gpumem.c
 +++ b/src/ftrace_gpumem.c
 @@ -43,15 +43,16 @@ void ftrace_gpumem_init(void)
@@ -101,7 +141,7 @@ index 76fd5c7..cea7139 100644
 +	inst = NULL;
  }
 diff --git a/src/msm.cpp b/src/msm.cpp
-index 1ab858d..a616935 100644
+index 1ab858da..c13d1534 100644
 --- a/src/msm.cpp
 +++ b/src/msm.cpp
 @@ -11,6 +11,10 @@
@@ -172,8 +212,8 @@ index 1ab858d..a616935 100644
  uint64_t MSM::getQcomGpuInfo(){
      static std::thread perf_thread(perf_read_thread);
 -    //printf("gpu_bytes_memory()=%d\n",gpu_bytes_memory());
-+    static const std::string temp_zone = find_thermal_zone({"gpuss-2-thermal", "gpuss-0-thermal", "gpu-top-thermal"});
-+    static const std::vector<std::string> gpu_zones = find_thermal_zones("gpu"); // gpuss-* (SM8550), gpu-top/bottom (SM8250)
++    static const std::string temp_zone = find_thermal_zone({"gpuss-2-thermal", "gpuss2-thermal", "gpuss-0-thermal", "gpuss0-thermal", "gpu-top-thermal"});
++    static const std::vector<std::string> gpu_zones = find_thermal_zones("gpu"); // gpuss-* (SM8550), gpussN (SM8750), gpu-top/bottom (SM8250)
 +    static const std::string mem_zone = find_thermal_zone({"ddr-thermal", "mem-thermal"});
 +    static const std::string devfreq = find_gpu_devfreq();
 +    static const float mem_total = mem_total_gib();
