@@ -257,6 +257,19 @@
       "choices": [{ "value": "/usr/lib/kettle-turnip/share/vulkan/icd.d/freedreno_icd.aarch64.json:/usr/share/vulkan/icd.d/freedreno_icd.x86_64.json:/usr/share/vulkan/icd.d/freedreno_icd.x86.json", "label": "On" }]
     },
     {
+      "id": "ue_graphics_api",
+      "section": "graphics",
+      "label": "Unreal Engine: graphics API",
+      "help": "Starts an Unreal Engine game in this API, over its own setting (which can't be changed in the game's menu while Game Settings manages its Engine.ini). Some games run better in Vulkan, others in DirectX 12. Takes the place of any -dx12, -vulkan or -dx11 in the launch options; don't also pick a \"Play (DirectX 12)\" style choice in Steam's Play menu, which adds one too.",
+      "for": { "engines": ["unreal"] },
+      "target": { "args": ["-dx12", "-d3d12", "-vulkan", "-dx11", "-d3d11", "-dx10", "-d3d10", "-opengl", "-opengl4"] },
+      "choices": [
+        { "value": "-dx12", "label": "DirectX 12" },
+        { "value": "-vulkan", "label": "Vulkan" },
+        { "value": "-dx11", "label": "DirectX 11" }
+      ]
+    },
+    {
       "id": "proton_all_cores",
       "section": "proton",
       "label": "Use all 8 CPU cores",

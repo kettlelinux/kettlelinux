@@ -91,18 +91,21 @@ function launchOptions(e, catalog) {
   const words = [];
   const flags = new Map();
   const dxvk = [];
+  const args = []; // game arguments, after %command%
   for (const [k, v] of Object.entries(e.settings)) {
     const t = opts.get(k)?.target;
     if (!t) continue;
     if (t.env) words.push(`${t.env}=${v}`);
     else if (t.flags) flags.set(t.flags, [...(flags.get(t.flags) ?? []), t.flag]);
     else if (t.dxvk) dxvk.push(`${t.dxvk}=${v}`);
+    else if (t.args) args.push(v);
   }
   for (const [name, list] of flags) words.push(`${name}=${list.join(",")}`);
   if (dxvk.length) words.push(`DXVK_CONFIG="${dxvk.join(";")}"`);
   for (const [n, v] of e.env) words.push(/;/.test(v) ? `${n}="${v}"` : `${n}=${v}`);
   if (e.dlls.length) words.push(`WINEDLLOVERRIDES="${e.dlls.map(([d, m]) => `${d}=${m}`).join(";")}"`);
-  return words.length ? `${words.join(" ")} %command%` : "";
+  if (!words.length && !args.length) return "";
+  return [...words, "%command%", ...args].join(" ");
 }
 
 function settingsBySection(e, catalog) {

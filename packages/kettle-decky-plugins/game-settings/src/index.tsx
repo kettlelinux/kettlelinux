@@ -26,6 +26,7 @@ import {
   changedIn,
   isEmpty,
   optionById,
+  optionShown,
   presetsFor,
   profileOf,
   withPreset,
@@ -286,7 +287,7 @@ function GamePanel({ appid, name, s, onChanged }: { appid: number; name: string;
             </ButtonItem>
           </PanelSectionRow>
           {open.has(sec.id) &&
-            OPTIONS.filter((o) => o.section === sec.id).map((o) => (
+            OPTIONS.filter((o) => o.section === sec.id && optionShown(o, engine, p)).map((o) => (
               <PanelSectionRow key={o.id}>
                 <DropdownItem
                   label={o.label}

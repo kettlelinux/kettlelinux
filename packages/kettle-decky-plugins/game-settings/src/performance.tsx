@@ -1,8 +1,9 @@
 // The Performance tab: kettle-powerd's per-game fan, CPU and Auto TDP settings (with "All games"
 // picked, the settings every game without its own uses), and a game's own refresh rate, held
-// while it runs (the all-games rate is Device Settings'), and Lumen in Unreal Engine 5 games (off
-// unless turned back on, for all games or one: lumen.py). Steam's TDP limit, profile and GPU
-// clock stay in Quick Access > Performance.
+// while it runs (the all-games rate is Device Settings'), and in Unreal Engine 5 games Lumen (off
+// unless turned back on, for all games or one) and the Nanite fix for DirectX 12 (on unless turned
+// off for a game): lumen.py. Steam's TDP limit, profile and GPU clock stay in Quick Access >
+// Performance.
 import { ButtonItem, DropdownItem, PanelSectionRow, SliderField, ToggleField } from "@decky/ui";
 import { callable } from "@decky/api";
 import { useEffect, useState } from "react";
@@ -37,8 +38,11 @@ type Status = { steam: { fan_control: number }; auto_tdp: { fps_limit: number } 
 // framegen: games with Frame Gen on, which holds their rate instead
 type Refresh = { rates: number[]; hz: number; games: Record<string, number>; framegen: Record<string, number> };
 
-// Lumen: the all-games default, and with a game, its state (lumen.py's get)
-type Lumen = { default_off: boolean; ue5?: boolean; choice?: "default" | "off" | "on"; off?: boolean; applied?: boolean; pending?: boolean };
+// Lumen: the all-games default, and with a game, its state and the Nanite fix's (lumen.py's get)
+type Lumen = {
+  default_off: boolean; ue5?: boolean; choice?: "default" | "off" | "on"; off?: boolean; applied?: boolean; pending?: boolean;
+  nanite?: boolean; nanite_applied?: boolean; nanite_pending?: boolean;
+};
 
 const info = callable<[], Info>("perf_info");
 const status = callable<[], Status>("perf_status");
@@ -49,6 +53,7 @@ const getRefresh = callable<[], Refresh>("get_refresh");
 const setGameRefresh = callable<[appid: number, hz: number | null, running: boolean], Refresh>("set_game_refresh");
 const getLumen = callable<[appid: number | null], Lumen>("lumen_get");
 const setLumen = callable<[appid: number | null, value: boolean | string], Lumen>("lumen_set");
+const setNanite = callable<[appid: number, on: boolean], Lumen>("lumen_set_nanite");
 // after a game exits (index.tsx): a first launch made its prefix, or it rewrote its Engine.ini
 export const syncLumen = callable<[], void>("lumen_sync");
 
@@ -238,7 +243,9 @@ function GameRefresh({ appid, name, r, onChange }: { appid: number; name: string
   );
 }
 
-// Lumen, UE5's global illumination and reflections: off in UE5 games unless turned back on
+// Lumen, UE5's global illumination and reflections: off in UE5 games unless turned back on; and
+// with a game, its Nanite fix (Nanite's meshes drawn in software: its hardware path is broken in
+// DirectX 12 here)
 function LumenSetting({ appid, name }: { appid: number | null; name: string }) {
   const [l, setL] = useState<Lumen | null>(null);
   useEffect(() => {
@@ -267,23 +274,41 @@ function LumenSetting({ appid, name }: { appid: number | null; name: string }) {
     : l.off
       ? `Off: set in ${name}'s Engine.ini from its next launch. A game that ignores it keeps Lumen.`
       : "On: the game's own setting";
+  const nanite = l.nanite_pending
+    ? `On from ${name}'s next launch (it hasn't run here yet). `
+    : l.nanite
+      ? `On: set in ${name}'s Engine.ini from its next launch. `
+      : "";
   return (
-    <PanelSectionRow>
-      <DropdownItem
-        label="Lumen (Unreal Engine 5)"
-        description={state}
-        rgOptions={[
-          { data: "default", label: `All games' (${all})` },
-          { data: "off", label: "Off" },
-          { data: "on", label: "On" },
-        ]}
-        selectedOption={l.choice ?? "default"}
-        onChange={async (o) => {
-          setL({ ...l, choice: o.data });
-          setL(await setLumen(appid, o.data));
-        }}
-      />
-    </PanelSectionRow>
+    <>
+      <PanelSectionRow>
+        <DropdownItem
+          label="Lumen (Unreal Engine 5)"
+          description={state}
+          rgOptions={[
+            { data: "default", label: `All games' (${all})` },
+            { data: "off", label: "Off" },
+            { data: "on", label: "On" },
+          ]}
+          selectedOption={l.choice ?? "default"}
+          onChange={async (o) => {
+            setL({ ...l, choice: o.data });
+            setL(await setLumen(appid, o.data));
+          }}
+        />
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <ToggleField
+          label="Nanite fix (Unreal Engine 5)"
+          description={`${nanite}Draws Nanite meshes in software: in DirectX 12 the faster path makes distant objects vanish as you get close.`}
+          checked={l.nanite ?? true}
+          onChange={async (on) => {
+            setL({ ...l, nanite: on });
+            setL(await setNanite(appid, on));
+          }}
+        />
+      </PanelSectionRow>
+    </>
   );
 }
 

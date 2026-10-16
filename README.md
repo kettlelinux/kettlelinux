@@ -35,7 +35,7 @@ opens the same tour in Welcome. These are from an Odin 2 Portal.
 | Game Settings | | | |
 |:-:|:-:|:-:|:-:|
 | <img src="packages/kettle-decky-plugins/welcome/assets/gs-compat.jpg" width="200" alt="Compat tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/gs-perf.jpg" width="200" alt="Perf tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/gs-upscale.jpg" width="200" alt="Upscale tab"> | <img src="packages/kettle-decky-plugins/welcome/assets/gs-framegen.jpg" width="200" alt="Frame Gen tab"> |
-| **Compat**: Proton, FEX, DXVK, vkd3d and Turnip options, known good settings | **Perf**: fan, CPU limits, refresh rate, Auto TDP, Lumen off in UE5 games | **Upscale**: FSR 1, and SGSR 2 / Arm ASR / FSR 2.2 through OptiScaler | **Frame Gen**: Kettle's own frame generation |
+| **Compat**: Proton, FEX, DXVK, vkd3d and Turnip options, known good settings | **Perf**: fan, CPU limits, refresh rate, Auto TDP, Lumen off and a Nanite fix in UE5 games | **Upscale**: FSR 1, and SGSR 2 / Arm ASR / FSR 2.2 through OptiScaler | **Frame Gen**: Kettle's own frame generation |
 
 | Device Settings | | | | | Quick Access |
 |:-:|:-:|:-:|:-:|:-:|:-:|
@@ -72,13 +72,16 @@ opens the same tour in Welcome. These are from an Odin 2 Portal.
   Mode, without a session switch, with the desktop's controls. ([docs/NESTED-DESKTOP.md](docs/NESTED-DESKTOP.md))
 - **Game Mode plugins** (Decky Loader), in Quick Access:
   - **Game Settings**: everything set per game, a tab each, all off until enabled for a game
-    (except Lumen in Unreal Engine 5 games, off unless turned back on).
-    **Compat**: FEX, DXVK, vkd3d, Turnip and Proton options, the Proton version, fixes for games
+    (except in Unreal Engine 5 games: Lumen, off unless turned back on, and the Nanite fix).
+    **Compat**: FEX, DXVK, vkd3d, Turnip and Proton options, the graphics API an Unreal Engine
+    game starts in (DirectX 12, Vulkan or DirectX 11), the Proton version, fixes for games
     that need one here (Path of Exile 2 starts in DirectX 12: its Vulkan renderer crashes), and
     known good settings from the Kettle game database ([docs/GAME-DATABASE.md](docs/GAME-DATABASE.md)).
     **Perf**: fan curve, CPU core and clock limits, Auto TDP and the refresh rate, per game or
     for all games, and Lumen (UE5's global illumination, the heaviest part of most UE5 games
-    here) off in Unreal Engine 5 games through their Engine.ini, back on for all games or one. **Upscale**: gamescope FSR 1, and SGSR 2, Arm ASR or FSR 2.2 through an ARM64EC
+    here) off in Unreal Engine 5 games through their Engine.ini, back on for all games or one,
+    and a Nanite fix there (on unless turned off for a game: Nanite's meshes drawn in software,
+    since in DirectX 12 its hardware path makes distant objects vanish up close). **Upscale**: gamescope FSR 1, and SGSR 2, Arm ASR or FSR 2.2 through an ARM64EC
     build of OptiScaler. **Frame Gen**: Kettle's own Vulkan layer at 2×, with the screen held at
     twice the base frame rate you pick, changeable while the game runs. **Extras**: GE-Proton, Proton-CachyOS and AMD
     FSR 3.1, downloaded from their projects.

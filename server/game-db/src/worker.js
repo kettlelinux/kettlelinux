@@ -49,7 +49,8 @@ const PAGE = 50;
 const CHOICES = new Map(catalog.options.map((o) => [o.id, new Set(o.choices.map((c) => c.value))]));
 const MANAGED = new Set([
   ...catalog.custom.env_reserved,
-  ...catalog.options.map((o) => o.target.env ?? o.target.flags ?? "DXVK_CONFIG"),
+  // variables the options set (args targets are game arguments after %command%: none)
+  ...catalog.options.flatMap((o) => o.target.env ?? o.target.flags ?? (o.target.dxvk ? "DXVK_CONFIG" : [])),
 ]);
 const ENV_NAME = new RegExp(catalog.custom.env_name);
 const ENV_VALUE = new RegExp(catalog.custom.env_value);
