@@ -125,8 +125,8 @@ changes) unless `--all-luns` is given. Only use that if the firmware LUNs themse
 
 - steamcl and GRUB started by U-Boot from the UFS (no SD card inserted), and an update of the
   internal install.
-- The ROCKNIX ABL v1.1.9 starting the internal install's `\KERNEL` (*Boot source: Internal*),
-  and `--boot-files` on an existing install.
+- `--boot-files` on an existing install. (The ROCKNIX ABL starting the internal install's
+  `\KERNEL`, *Boot source: Internal*, works: v1.2 on a KONKR Pocket FIT Elite, 2026-10-15.)
 
 - An install on a Retroid Pocket 5 (any of the above, and the stock Retroid ABL acting on the
   `--wipe_data` request).

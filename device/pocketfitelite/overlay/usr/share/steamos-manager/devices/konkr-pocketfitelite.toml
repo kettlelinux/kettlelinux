@@ -2,8 +2,7 @@
 # (TDP, performance profiles, GPU clock, fan control) are kettle-powerd's, relayed through
 # remotes.d/kettle-power.toml: configuring them here would make steamos-manager write the same
 # cpufreq/devfreq files and fight it. Booted by the ROCKNIX ABL there is no SMBIOS, so it
-# matches on the devicetree only. The charge limit stays with the firmware's end threshold
-# (packages/kettle-power/pocket-fit-elite.toml), so no remotes.d/kettle-power-charge.toml yet.
+# matches on the devicetree only.
 [[device]]
 dt.compatible = "konkr,pocket-fit-elite"
 device = "pocket_fit_elite"

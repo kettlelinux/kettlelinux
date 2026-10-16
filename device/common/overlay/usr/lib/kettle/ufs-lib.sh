@@ -57,10 +57,15 @@ start_log() {
 }
 
 need_root() { [ "$(id -u)" = 0 ] || die "run as root (sudo $0)"; }
+# A block device (/sys/block/<name>) of the UFS: its SCSI host is the UFS host controller's.
+# By the host, not the sysfs path: the controller's node is ufshc@ on SM8550 but ufs@ on SM8750
+is_ufs_block() {
+  [ "$(cat "/sys/class/scsi_host/$(basename "$(readlink -f "$1/device/../..")")/proc_name" 2>/dev/null)" = ufshcd ]
+}
 # $DISK must be the UFS (LUN 0), never a USB drive that happened to get its name
 need_ufs_disk() {
   [ -b "$DISK" ] || die "$DISK not found"
-  readlink -f "/sys/block/${DISK##*/}" | grep -q ufshc || die "$DISK is not the internal UFS storage"
+  is_ufs_block "/sys/block/${DISK##*/}" || die "$DISK is not the internal UFS storage"
   [ "$(lun_dev 0)" = "$DISK" ] || die "$DISK is not LUN 0 of the internal UFS storage"
 }
 need_sd_root() {
@@ -101,7 +106,7 @@ need_power() {
 ufs_luns() {
   local d
   for d in /sys/block/sd*; do
-    readlink -f "$d" | grep -q 'ufshc' || continue
+    is_ufs_block "$d" || continue
     [ "$(cat "$d/size")" -gt 0 ] || continue
     echo "$(basename "$(readlink -f "$d/device")" | awk -F: '{print $4}') /dev/${d##*/}"
   done | sort -n

@@ -100,6 +100,7 @@ ROCKNIX does on the Nova:
   own `persist` registry, and the axis matrix (`packages/kettle-motion/devices.conf`, identity
   for now).
 - Power: the TDP range (4-18 W, a placeholder), the profiles, idle and sleep drain, s2idle and
-  wake (with the PCIe suspend OPP floor, `20-sm8550/1048`/`1049`), Wi-Fi/BT after resume.
+  wake: the SM8550 deep sleep (PCIe GDSCs off, `40-kettle/1463`, no PCIe suspend floor) reaches
+  CX/AOSS/DDR collapse on the Portal and Thor; check that the Nova does and wakes, Wi-Fi/BT after resume.
 - AYN-specific tuning in the common dtsi (regulators, PCIe, audio rails): the Nova runs it as
   ROCKNIX does, but none of our fixes on top of it have been tried on Retroid's board.
