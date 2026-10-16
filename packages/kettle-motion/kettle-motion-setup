@@ -6,77 +6,24 @@ The Qualcomm Sensor Core on the ADSP reads its sensor list, configuration and li
 hexagonrpcd. Android keeps them on the device's own partitions, which Kettle leaves in place:
   vendor (in super)  etc/sensors/config, etc/sensors/sns_reg_config
   persist            sensors/registry/registry (the sensors found at the factory, with this
-                     unit's calibration), sensors/registry/sns_reg_version
+                     unit's calibration), sensors/registry/sns_reg_version, and the whole
+                     sensors directory as a writable copy (sensors/persist, owned by fastrpc)
   dsp                adsp/ (the ADSP's shared objects)
 This copies them, mounted read-only, into /var/lib/kettle-motion/qcom in the layout hexagonrpcd
 serves (-R). It runs when that directory is missing; delete it to copy again.
 """
-import contextlib
 import os
+import pwd
 import shutil
-import struct
-import subprocess
 import sys
-import tempfile
-import time
+
+from android_parts import PARTS, mounted, super_partitions
 
 DEST = "/var/lib/kettle-motion/qcom"
-PARTS = "/dev/disk/by-partlabel"
 
 
 def log(msg):
     print(msg, flush=True)
-
-
-def super_partitions(path):
-    """{name: [(offset, size)]} from an Android super partition's (LP) metadata."""
-    with open(path, "rb") as f:
-        f.seek(4096)
-        if struct.unpack("<I", f.read(4))[0] != 0x616C4467:
-            raise ValueError("no LP geometry")
-        f.seek(4096 * 3)
-        h = f.read(256)
-        magic, _, _, hsz = struct.unpack("<IHHI", h[:12])
-        if magic != 0x414C5030:
-            raise ValueError("no LP metadata")
-        tables_size = struct.unpack("<I", h[44:48])[0]
-        desc = [struct.unpack("<III", h[80 + i * 12:92 + i * 12]) for i in range(2)]
-        f.seek(4096 * 3 + hsz)
-        t = f.read(tables_size)
-    (po, pn, ps), (eo, en, es) = desc
-    extents = [struct.unpack("<QIQI", t[eo + i * es:eo + i * es + 24]) for i in range(en)]
-    parts = {}
-    for i in range(pn):
-        e = t[po + i * ps:po + (i + 1) * ps]
-        name = e[:36].rstrip(b"\0").decode()
-        first, count = struct.unpack("<II", e[40:48])
-        # (num_sectors, target_type, target_data, target_source); type 0 is linear
-        parts[name] = [(x[2] * 512, x[0] * 512) for x in extents[first:first + count] if x[1] == 0]
-    return parts
-
-
-@contextlib.contextmanager
-def mounted(dev, offset=0, size=0):
-    """dev (or a range of it) mounted read-only, without replaying a journal."""
-    args = ["losetup", "-r", "-f", "--show"]
-    if size:
-        args += ["-o", str(offset), "--sizelimit", str(size)]
-    loop = subprocess.run(args + [dev], check=True, capture_output=True, text=True).stdout.strip()
-    mnt = tempfile.mkdtemp(prefix="mnt-", dir="/run/kettle-motion")
-    try:
-        if subprocess.run(["mount", "-o", "ro,noload", loop, mnt], capture_output=True).returncode:
-            subprocess.run(["mount", "-o", "ro", loop, mnt], check=True)
-        try:
-            yield mnt
-        finally:
-            for _ in range(10):
-                if subprocess.run(["umount", mnt], capture_output=True).returncode == 0:
-                    break
-                time.sleep(0.5)
-    finally:
-        subprocess.run(["losetup", "-d", loop], capture_output=True)
-        with contextlib.suppress(OSError):
-            os.rmdir(mnt)
 
 
 def main():
@@ -104,11 +51,15 @@ def main():
     with mounted(f"{PARTS}/persist") as persist:
         shutil.copytree(f"{persist}/sensors/registry/registry", f"{new}/sensors/registry")
         shutil.copyfile(f"{persist}/sensors/registry/sns_reg_version", f"{new}/sensors/sns_reg_version")
+        # persist's whole sensors directory, which hexagonrpcd serves writable when it's there
+        # (hexagonrpc 0002): some sensors processes (the Retroid Pocket Nova's) rebuild their
+        # registry in it at every start, as Android lets them
+        shutil.copytree(f"{persist}/sensors", f"{new}/sensors/persist", symlinks=True)
     with mounted(f"{PARTS}/dsp{slot}") as dsp:
         shutil.copytree(f"{dsp}/adsp", f"{new}/dsp/adsp")
     os.symlink("/sys/devices/soc0", f"{new}/socinfo")
 
-    # hexagonrpcd runs as fastrpc: everything readable, nothing writable
+    # hexagonrpcd runs as fastrpc: everything readable, only the persist copy writable
     for root, dirs, files in os.walk(new):
         for d in dirs:
             os.chmod(os.path.join(root, d), 0o755)
@@ -116,6 +67,10 @@ def main():
             p = os.path.join(root, f)
             if not os.path.islink(p):
                 os.chmod(p, 0o644)
+    fastrpc = pwd.getpwnam("fastrpc")
+    for root, dirs, files in os.walk(f"{new}/sensors/persist"):
+        for n in [root] + [os.path.join(root, f) for f in files]:
+            os.lchown(n, fastrpc.pw_uid, fastrpc.pw_gid)
     os.rename(new, DEST)
     log(f"copied the sensor files from vendor{slot}, persist and dsp{slot} to {DEST}")
     return 0

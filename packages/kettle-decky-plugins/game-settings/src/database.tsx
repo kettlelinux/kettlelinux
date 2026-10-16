@@ -8,7 +8,7 @@ import { Profile, describe } from "./catalog";
 import { LinkModal } from "./modals";
 
 const small: React.CSSProperties = { fontSize: "12px", lineHeight: "16px" };
-const VARIANTS: Record<string, string> = { odin2portal: "Odin 2 Portal", thor: "AYN Thor", rp5: "Retroid Pocket 5" };
+const VARIANTS: Record<string, string> = { odin2portal: "Odin 2 Portal", thor: "AYN Thor", rp5: "Retroid Pocket 5", rpnova: "Retroid Pocket Nova" };
 
 function appName(appid: number): string {
   try {

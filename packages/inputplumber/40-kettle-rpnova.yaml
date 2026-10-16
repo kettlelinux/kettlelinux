@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+# Kettle Linux: the Retroid Pocket Nova's pad as a Steam Deck controller, as on the Portal. Sorts
+# before upstream's 50-retroid_pocket_nova.yaml (Xbox Elite target), which then finds the pad
+# already in use. The same rsinput MCU as the AYN devices, under the same name. kettle-rpnova
+# (kettle-rpnova-capability-map.yaml): upstream's rsinput1 map (the button below the right stick
+# is Quick Access, the back buttons BTN_Z/BTN_C the left/right paddles) with the face buttons
+# mapped by their Nintendo-style labels, as on the Thor.
+version: 1
+kind: CompositeDevice
+name: Retroid Pocket Nova (Kettle)
+
+options:
+  auto_manage: true
+
+matches:
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
+        - name: compatible
+          value: retroidpocket,rpnova*
+
+source_devices:
+  - group: gamepad
+    capability_map_id: kettle-rpnova
+    evdev:
+      name: AYN Odin2 Gamepad
+      phys_path: rsinput-gamepad/input0
+      vendor_id: "2020"
+      product_id: "3001"
+      handler: event*
+
+  # the back paddles, a gpio-keys device of their own in our dts (upstream's config takes the
+  # whole gpio-keys device, Volume Up with them, as ROCKNIX's dts puts them there)
+  - group: gamepad
+    capability_map_id: kettle-rpnova
+    evdev:
+      name: gpio-keys-paddles
+      handler: event*
+
+  # the gyro and accelerometer, from kettle-motiond (packages/kettle-motion; read by our 0001)
+  - group: imu
+    evdev:
+      name: Kettle Motion Sensors
+      handler: event*
+
+target_devices:
+  - deck

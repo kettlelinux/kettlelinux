@@ -1,0 +1,4 @@
+# The Nova's own checks, sourced by kettle-hwcheck's summary (chk NAME COMMAND...)
+chk "panel (DSI, 1280x960)"    bash -c 'for c in /sys/class/drm/card*-DSI-*; do [ "$(cat $c/status)" = connected ] && echo -n "${c##*/card[0-9]-} $(tr "\n" " " <$c/modes)"; done'
+chk "back paddles"             bash -c 'grep -m1 "^N:.*gpio-keys-paddles" /proc/bus/input/devices'
+chk "backlights"               bash -c 'ls /sys/class/backlight | tr "\n" " "'

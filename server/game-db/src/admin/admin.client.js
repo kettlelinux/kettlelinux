@@ -3,7 +3,7 @@
 // players sent is put on the page as text, never as HTML.
 const TOKEN_KEY = "kettle-games-admin-token";
 const SITE = "https://kettlelinux.org/games.html";
-const DEVICES = { odin2portal: "Odin 2 Portal", thor: "AYN Thor", rp5: "Retroid Pocket 5" };
+const DEVICES = { odin2portal: "Odin 2 Portal", thor: "AYN Thor", rp5: "Retroid Pocket 5", rpnova: "Retroid Pocket Nova" };
 
 const $ = (id) => document.getElementById(id);
 const state = { tab: "pending", q: "", submitter: "", offset: 0, entries: [], selected: new Set(), catalog: null };
