@@ -83,16 +83,19 @@ ROCKNIX does on the Nova:
   within 2 s, and 7 A brought it straight back.
 
 ## Checked on a unit (20261016.4, 2026-10-16)
-- Boots from the SD card through ROCKNIX ABL 1.1.8, which starts steamcl (EFI, no SMBIOS), so
-  A/B fallback works without the ABL update. `kettle-hwcheck`: every check passes.
+- Boots from the SD card through ROCKNIX ABL 1.2 in both slots (`kettle-abl-update --check`;
+  fastboot's `version-bootloader` reads 1.1.8 all the same), which starts steamcl (EFI, no
+  SMBIOS). `kettle-hwcheck`: every check passes.
+- Internal storage (YMTC UFS, 115 GiB LUN 0): `userdata` is LUN 0's last partition, as the
+  installer expects (`kettle-install-internal --plan`).
 - Screen, touch, brightness (the panel's DCS backlight `ae94000.dsi.0`; the RP6 dts' PWM
   `backlight` stays powered off), speakers, the stick lights, Wi-Fi, Bluetooth.
 - Every button, the paddles and Volume Up, with the face buttons by their labels.
 - The charge current cap (Charging, above).
 
 ## Still to check, by hand
-- Boot: updating ABL 1.1.8 to 1.2 with `kettle-abl-update`, and whether 1.2's Device model list
-  has the Nova; a ROCKNIX ABL install from Android needs root, which Retroid's user build lacks.
+- Boot: a ROCKNIX ABL install from Android needs root, which Retroid's user build lacks (this
+  unit already had 1.2); the internal install with *Boot source: Internal*.
 - Screen: 60 Hz and switching between 60 and 120 Hz
   (if it sticks at a low frame rate or a wrong rate after a switch, limit it to 120 Hz as
   `20-sm8550/1021` does for the RP6). Steam's UI scale and the desktop's.
