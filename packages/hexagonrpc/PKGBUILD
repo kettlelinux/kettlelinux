@@ -2,9 +2,13 @@
 # sensors (gyro, accelerometer) hang off the ADSP's sensor island; the ADSP only starts its
 # sensors process (sensorspd) once something answers its file requests for the sensor registry
 # and config, which Android keeps on the device's own vendor and persist partitions.
+# 0001 serves the registry version file. 0002-0004 let a sensors process that rebuilds its registry
+# at every start (the Retroid Pocket Nova's) do so in a writable copy of persist's sensors
+# directory (kettle-motion-setup): file writes there only (0002), messages over 256 bytes (0003,
+# the registry itself) and methods numbered from 31 on (0004, its rename). Tested on a Nova.
 pkgname=hexagonrpc
 pkgver=0.5.0
-pkgrel=2
+pkgrel=3
 pkgdesc='FastRPC server for Qualcomm DSPs (starts the ADSP sensors process)'
 arch=(aarch64)
 url='https://github.com/linux-msm/hexagonrpc'
@@ -13,15 +17,24 @@ depends=(glibc)
 makedepends=(meson)
 source=("$pkgname-$pkgver.tar.gz::https://github.com/linux-msm/hexagonrpc/archive/refs/tags/v$pkgver.tar.gz"
         0001-hexagonrpcd-serve-the-sensors-registry-version-file.patch
+        0002-hexagonrpcd-a-writable-persist-sensors-directory.patch
+        0003-hexagonrpcd-fetch-large-input-buffers.patch
+        0004-hexagonrpcd-methods-from-31-on.patch
         hexagonrpc.sysusers
         hexagonrpc.udev)
 sha256sums=('2173985932ab68d8ac593f9954357123bdbbbe9ba5f1b17a098d9cbcec22c5d5'
+            SKIP
+            SKIP
+            SKIP
             SKIP
             SKIP
             SKIP)
 
 prepare() {
   patch -d "$pkgname-$pkgver" -Np1 -i ../0001-hexagonrpcd-serve-the-sensors-registry-version-file.patch
+  patch -d "$pkgname-$pkgver" -Np1 -i ../0002-hexagonrpcd-a-writable-persist-sensors-directory.patch
+  patch -d "$pkgname-$pkgver" -Np1 -i ../0003-hexagonrpcd-fetch-large-input-buffers.patch
+  patch -d "$pkgname-$pkgver" -Np1 -i ../0004-hexagonrpcd-methods-from-31-on.patch
 }
 
 build() {

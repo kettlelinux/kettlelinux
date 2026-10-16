@@ -5,10 +5,14 @@
 # kettle-motion-setup copies from the device's own Android partitions. The ADSP's FastRPC device
 # starts it all (70-kettle-motion.rules). It streams only while a game runs (the Gyro Decky
 # plugin reports games and sets the mode: games, always, off; org.kettlelinux.Motion1).
+# kettle-adsp-firmware starts the ADSP with the device's own firmware from its Android vendor
+# partition, on devices whose tree leaves it offline at boot (the Retroid Pocket Nova: its IMU
+# driver and battery profile are only there). android_parts.py reads the Android partitions
+# for both scripts.
 # Sources live next to this PKGBUILD.
 pkgname=kettle-motion
 pkgver=0.1.0
-pkgrel=8
+pkgrel=9
 pkgdesc='Kettle Linux motion sensors for Steam Input'
 arch=(aarch64)
 license=(GPL-3.0-or-later)
@@ -21,8 +25,10 @@ build() {
 }
 
 package() {
-  install -Dm755 "$srcdir/kettle-motiond" "$startdir/kettle-motion-setup" -t "$pkgdir/usr/lib/kettle-motion"
-  install -Dm644 "$startdir"/{kettle-motion-setup,kettle-hexagonrpcd,kettle-motiond}.service \
+  install -Dm755 "$srcdir/kettle-motiond" "$startdir"/{kettle-motion-setup,kettle-adsp-firmware} \
+    -t "$pkgdir/usr/lib/kettle-motion"
+  install -Dm644 "$startdir/android_parts.py" -t "$pkgdir/usr/lib/kettle-motion"
+  install -Dm644 "$startdir"/{kettle-motion-setup,kettle-hexagonrpcd,kettle-motiond,kettle-adsp-firmware}.service \
     -t "$pkgdir/usr/lib/systemd/system"
   install -Dm644 "$startdir/70-kettle-motion.rules" -t "$pkgdir/usr/lib/udev/rules.d"
   install -Dm644 "$startdir/org.kettlelinux.Motion1.conf" -t "$pkgdir/usr/share/dbus-1/system.d"

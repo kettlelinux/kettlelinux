@@ -87,10 +87,9 @@ package_kettle-firmware-thor() {
   _package thor AYN-Thor
 }
 
-# The Odin 2's ADSP files are what the Nova's own Android runs: on a Nova (2026-10-16) its
-# modem partition's adsp_dtb has the same loadable segment as this adsp_dtb.mbn (only the
-# test-key signature differs), the same .jsn files, and the same battery profile in adsp
-# (Quectel's SG8550 reference, "8000MAH")
+# The Nova runs its own ADSP firmware, from its Android vendor partition (its IMU driver and
+# battery profile are only there): kettle-adsp-firmware (packages/kettle-motion) starts the ADSP
+# with it, or with these Odin 2 files (device.conf ADSP_FIRMWARE_FALLBACK) when there is none
 package_kettle-firmware-rpnova() {
   pkgdesc='Firmware for the Retroid Pocket Nova (DSPs, audio, GPU, Wi-Fi, Bluetooth)'
   conflicts=(kettle-firmware-odin2portal kettle-firmware-thor)

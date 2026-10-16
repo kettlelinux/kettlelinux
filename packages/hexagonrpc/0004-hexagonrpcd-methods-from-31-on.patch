@@ -1,0 +1,68 @@
+From ba929f31a4c0e115874dde8895f6ef807eb28fb1 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Fri, 16 Oct 2026 17:08:49 -0500
+Subject: [PATCH] hexagonrpcd: methods from 31 on take their number from the
+ first input
+
+---
+ hexagonrpcd/apps_std.c              |  1 +
+ hexagonrpcd/interfaces/apps_std.def |  5 +++--
+ hexagonrpcd/listener.c              | 15 +++++++++++++++
+ 3 files changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/hexagonrpcd/apps_std.c b/hexagonrpcd/apps_std.c
+index 5b9e0fc..7a891c7 100644
+--- a/hexagonrpcd/apps_std.c
++++ b/hexagonrpcd/apps_std.c
+@@ -307,6 +307,7 @@ static uint32_t apps_std_ftrunc(void *data,
+ {
+ 	struct apps_std_ctx *ctx = data;
+ 	const struct {
++		uint32_t method; // from 31 on, the method comes first (listener.c)
+ 		uint32_t fd;
+ 		int32_t len;
+ 	} *first_in = inbufs[0].p;
+diff --git a/hexagonrpcd/interfaces/apps_std.def b/hexagonrpcd/interfaces/apps_std.def
+index 5e73117..bf77090 100644
+--- a/hexagonrpcd/interfaces/apps_std.def
++++ b/hexagonrpcd/interfaces/apps_std.def
+@@ -38,7 +38,8 @@ HEXAGONRPC_DEFINE_REMOTE_METHOD(27, apps_std_closedir, 2, 0, 0, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(28, apps_std_readdir, 2, 0, 66, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(29, apps_std_mkdir, 1, 1, 0, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(31, apps_std_stat, 1, 1, 24, 0)
+-HEXAGONRPC_DEFINE_REMOTE_METHOD(32, apps_std_ftrunc, 2, 0, 0, 0)
+-HEXAGONRPC_DEFINE_REMOTE_METHOD(33, apps_std_frename, 0, 2, 0, 0)
++// From 31 on, the first input number is the method (listener.c)
++HEXAGONRPC_DEFINE_REMOTE_METHOD(32, apps_std_ftrunc, 3, 0, 0, 0)
++HEXAGONRPC_DEFINE_REMOTE_METHOD(33, apps_std_frename, 1, 2, 0, 0)
+ 
+ #endif /* INTERFACE_APPS_STD_DEF */
+diff --git a/hexagonrpcd/listener.c b/hexagonrpcd/listener.c
+index 66fa8ee..a6a592e 100644
+--- a/hexagonrpcd/listener.c
++++ b/hexagonrpcd/listener.c
+@@ -294,6 +294,21 @@ static int invoke_requested_procedure(size_t n_ifaces,
+ 		return 1;
+ 	}
+ 
++	/*
++	 * The scalars have five bits for the method: from 31 on, they hold 31
++	 * and the method is the first input number (which these methods'
++	 * definitions count in their in_nums).
++	 */
++	if (method == 31) {
++		if (REMOTE_SCALARS_INBUFS(sc) == 0 || decoded[0].s < 4) {
++			fprintf(stderr, "Method 31 without its number: %08x\n", sc);
++			*result = AEE_EBADPARM;
++			return 1;
++		}
++
++		method = *(const uint32_t *) decoded[0].p;
++	}
++
+ 	if (method >= ifaces[handle]->n_procs) {
+ 		fprintf(stderr, "Unsupported method: %u (%08x)\n", method, sc);
+ 		*result = AEE_EUNSUPPORTED;
+-- 
+2.56.0
+
