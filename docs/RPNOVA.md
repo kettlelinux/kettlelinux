@@ -23,8 +23,8 @@ same dts as a beta device (shuuri-labs/pocknix-os issue #78).
 | Audio | The AYN-Odin2 card: AW88166 speaker amps (the Odin 2's tuning, `aw883xx_acf.bin`), WCD938x headphone codec |
 | Wi-Fi/BT | WCN7850 (ath12k), Wi-Fi 7, Bluetooth 5.3 |
 | Fan | pwm-fan on PM8550 PWM 3, from the AYN common dtsi |
-| Battery | 5000 mAh, pmic-glink battery manager (the Odin 2's ADSP firmware) |
-| Motion | 6-axis IMU, expected behind the ADSP's Sensor Core as on the Portal and Thor |
+| Battery | 5000 mAh (`8553644_QUECTEL_SA885G_5000MAH`, the Nova's own ADSP firmware), pmic-glink battery manager |
+| Motion | QST QMI8658 (accelerometer and gyro) behind the ADSP's Sensor Core; its driver is only in the Nova's own ADSP firmware |
 
 ## Building
 ```sh
@@ -69,14 +69,25 @@ ROCKNIX does on the Nova:
   a Nova). Upstream's `50-retroid_pocket_nova.yaml` isn't installed: it takes `gpio-keys` (Volume
   Up), which ours leaves to the kernel, so it made a second controller that raced ours for the
   pad (seen on 20261016.4).
-- **Firmware**: `kettle-firmware-rpnova` (in `packages/kettle-firmware-ayn`) installs the Odin 2's
-  ADSP and amplifier files, the paths the dts asks for, as ROCKNIX ships them. They are what the
-  Nova's own Android runs (compared on a unit, 2026-10-16): its `modem_a` partition's
-  `adsp_dtb` has the same loadable segment as the Odin 2's `adsp_dtb.mbn` (only the Qualcomm
-  test-key signature differs), the `.jsn` files are identical, and its `adsp` names the same
-  battery profile, Quectel's SG8550 reference `6690134_QUECTEL_SG8550_8000MAH`. So the battery
-  reads as an 8155 mAh design (`charge_full` learned 7232 mAh) on the Nova's 5000 mAh pack under
-  Android too, and the firmware's charge current is 7 A (`constant_charge_current`, 10 A max).
+- **ADSP firmware: the Nova's own, from its Android vendor partition.** Android loads
+  `vendor/firmware/adsp.*` (split `.mdt`/`.bNN` files), which has the QMI8658 driver and the
+  Nova's battery profile; the copy on `modem_a` is only a fallback, and like the Odin 2's
+  (`kettle-firmware-rpnova`) it has neither (it names the Odin 2's 8000 mAh `SG8550` profile).
+  Firmware from a unit can't ship in the image, and a running ADSP can't be restarted (stopping
+  it resets the SoC, seen on a Nova). So the dts names firmware the image doesn't have
+  (`qcom/sm8550/retroid/rpnova/`): the ADSP stays offline at boot until
+  `kettle-adsp-firmware.service` (`packages/kettle-motion`, enabled by `device/rpnova`) has
+  joined the Nova's own into `/var/lib/kettle-firmware` (on the first start) and starts it, with
+  the Odin 2's from the image (`ADSP_FIRMWARE_FALLBACK`) if there is no vendor copy or it
+  doesn't start. On the Nova's own firmware (tested 2026-10-16, swapped into the image by hand):
+  the battery reads a 5191 mAh design, and the charge current's maximum is 7 A.
+- **Gyro**: the Nova's sensors process rebuilds its registry from the vendor configuration at
+  every start, which Android allows. `kettle-motion-setup` keeps a writable copy of persist's
+  sensors directory (`sensors/persist`, owned by fastrpc) and hexagonrpcd serves it, with
+  hexagonrpc 0002-0004 (file writes there only, messages over 256 bytes, methods from 31 on).
+  Tested on a Nova: kettle-motiond finds the accelerometer and gyro and streams them.
+- **Amplifier tuning**: still the Odin 2's `aw883xx_acf.bin`; the Nova's vendor partition has its
+  own, which loads too early for a runtime copy. The speakers work as they are.
 - **Charging**: as on the Portal and Thor, kettle-powerd holds Steam's charge limit and Device
   Settings' charge speeds (Fast 7 A, Balanced 3 A, Slow 1.5 A) through `constant_charge_current`.
   Tested on a Nova on a 9 V PD charger at 99%: a 0.3 A cap took the battery from 566 to 277 mA
@@ -91,7 +102,8 @@ ROCKNIX does on the Nova:
 - Screen, touch, brightness (the panel's DCS backlight `ae94000.dsi.0`; the RP6 dts' PWM
   `backlight` stays powered off), speakers, the stick lights, Wi-Fi, Bluetooth.
 - Every button, the paddles and Volume Up, with the face buttons by their labels.
-- The charge current cap (Charging, above).
+- The charge current cap (Charging, above), and the gyro and battery profile on the Nova's own
+  ADSP firmware (above).
 
 ## Still to check, by hand
 - Boot: a ROCKNIX ABL install from Android needs root, which Retroid's user build lacks (this
@@ -105,13 +117,15 @@ ROCKNIX does on the Nova:
   controller.
 - Audio: the headphone jack and its detection, the microphone (the speakers work).
 - Battery and charging: a charge limit held and released below ~95% (at 98–99% the Portal's
-  firmware latches "Not charging" after a 0 cap until a replug; the Nova's is the same
-  firmware), and how far the percentage drifts on the 8000 mAh profile (does it shut down
-  early?). pocknix testers reported charging stopping after a kernel update.
+  firmware latches "Not charging" after a 0 cap until a replug), and the percentage on the
+  Nova's own profile over a full discharge. pocknix testers reported charging stopping after a
+  kernel update.
+- `kettle-adsp-firmware` in an image: the ADSP's late start (audio, battery data and the gyro
+  about a second later than on the other devices), the vendor copy on a fresh install, and the
+  fallback without one.
 - Fan: does it spin up with the trips, its noise, and whether `fan1_input` (tach) reads.
-- Motion: whether the Sensor Core on the Odin 2's ADSP image finds the Nova's IMU from its
-  own `persist` registry, and the axis matrix (`packages/kettle-motion/devices.conf`, identity
-  for now).
+- Motion: the axis matrix in a game (`packages/kettle-motion/devices.conf`, identity for now),
+  and the gyro after sleep.
 - Power: the TDP range (4-18 W, a placeholder), the profiles, idle and sleep drain, s2idle and
   wake: the SM8550 deep sleep (PCIe GDSCs off, `40-kettle/1463`, no PCIe suspend floor) reaches
   CX/AOSS/DDR collapse on the Portal and Thor; check that the Nova does and wakes, Wi-Fi/BT after resume.

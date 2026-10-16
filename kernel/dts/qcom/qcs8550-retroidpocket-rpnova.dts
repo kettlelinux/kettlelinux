@@ -71,6 +71,20 @@
 };
 
 /*
+ * Kettle Linux: the Nova's own ADSP firmware, from its Android vendor partition, has its IMU's
+ * driver (QMI8658) and its battery's profile (5000 mAh); the Odin 2's in the image has neither.
+ * It can't be shipped, nor swapped in later (stopping the running ADSP resets the SoC), so the
+ * tree names firmware the image doesn't have: the ADSP stays offline at boot until
+ * kettle-adsp-firmware (packages/kettle-motion) has copied the Nova's own to
+ * /var/lib/kettle-firmware/qcom/sm8550/retroid/rpnova and starts it, or starts it with the
+ * Odin 2's (device.conf ADSP_FIRMWARE_FALLBACK) if there is none.
+ */
+&remoteproc_adsp {
+	firmware-name = "qcom/sm8550/retroid/rpnova/adsp.mbn",
+			"qcom/sm8550/retroid/rpnova/adsp_dtb.mbn";
+};
+
+/*
  * Kettle Linux: the Nova has no power LED (only the stick lights; checked on a unit), so the AYN
  * common dtsi's power-led on the PM8550 LPG goes, as on the Thor. Without the node, Device
  * Settings' Lights tab offers no power light here. Channel 4 is the fan's, so the LPG stays.
