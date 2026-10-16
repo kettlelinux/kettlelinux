@@ -19,7 +19,7 @@ same dts as a beta device (shuuri-labs/pocknix-os issue #78).
 | Display | 4.5" 4:3 AMOLED, 1280x960, landscape-native (no dts rotation), 4-lane DSI video mode, 120 and 60 Hz (`il97680a,rpnova`, brightness over DCS 0..3445) |
 | Touch | FocalTech FT5426 on i2c_hub_3, 1280x960, no axis inversion |
 | Controls | rsinput MCU (`AYN Odin2 Gamepad`, both sticks inverted in the dts, trigger deadzones 100), hall sticks and analog triggers; back paddles on TLMM GPIO 57/58; Volume Up on gpio-keys |
-| Lights | Two HTR3212s, four RGB LEDs round each stick (`rgb:l1..l4`, `rgb:r1..r4`), as on the Portal |
+| Lights | Two HTR3212s, four RGB LEDs round each stick (`rgb:l1..l4`, `rgb:r1..r4`), as on the Portal; no power LED (the AYN dtsi's `power-led` node is dropped, as on the Thor) |
 | Audio | The AYN-Odin2 card: AW88166 speaker amps (the Odin 2's tuning, `aw883xx_acf.bin`), WCD938x headphone codec |
 | Wi-Fi/BT | WCN7850 (ath12k), Wi-Fi 7, Bluetooth 5.3 |
 | Fan | pwm-fan on PM8550 PWM 3, from the AYN common dtsi |
@@ -77,33 +77,34 @@ ROCKNIX does on the Nova:
   battery profile, Quectel's SG8550 reference `6690134_QUECTEL_SG8550_8000MAH`. So the battery
   reads as an 8155 mAh design (`charge_full` learned 7232 mAh) on the Nova's 5000 mAh pack under
   Android too, and the firmware's charge current is 7 A (`constant_charge_current`, 10 A max).
-- **Charging**: no charge speeds or `current` charge limit yet: the battery manager is the
-  Portal's and Thor's, which takes `constant_charge_current`, but that hasn't been tried on a
-  Nova on a charger. Until then, Steam's charge limit is the charger's end threshold.
+- **Charging**: as on the Portal and Thor, kettle-powerd holds Steam's charge limit and Device
+  Settings' charge speeds (Fast 7 A, Balanced 3 A, Slow 1.5 A) through `constant_charge_current`.
+  Tested on a Nova on a 9 V PD charger at 99%: a 0.3 A cap took the battery from 566 to 277 mA
+  within 2 s, and 7 A brought it straight back.
+
+## Checked on a unit (20261016.4, 2026-10-16)
+- Boots from the SD card through ROCKNIX ABL 1.1.8, which starts steamcl (EFI, no SMBIOS), so
+  A/B fallback works without the ABL update. `kettle-hwcheck`: every check passes.
+- Screen, touch, brightness (the panel's DCS backlight `ae94000.dsi.0`; the RP6 dts' PWM
+  `backlight` stays powered off), speakers, the stick lights, Wi-Fi, Bluetooth.
+- Every button, the paddles and Volume Up, with the face buttons by their labels.
+- The charge current cap (Charging, above).
 
 ## Still to check, by hand
-- Boot: the ABL flash from Android (root), whether ABL v1.2's Device model list has the Nova,
-  the dtb GRUB boots, and what SMBIOS the ABL's EFI reports (the UCM profile and steamos-manager
-  match the devicetree, with the Odin 2's EFI aliases as a fallback).
-- Screen: picture, touch and orientation, 60 Hz and switching between 60 and 120 Hz
+- Boot: updating ABL 1.1.8 to 1.2 with `kettle-abl-update`, and whether 1.2's Device model list
+  has the Nova; a ROCKNIX ABL install from Android needs root, which Retroid's user build lacks.
+- Screen: 60 Hz and switching between 60 and 120 Hz
   (if it sticks at a low frame rate or a wrong rate after a switch, limit it to 120 Hz as
   `20-sm8550/1021` does for the RP6). Steam's UI scale and the desktop's.
-- Brightness: the dts keeps the RP6's `pwm-backlight` node as well as the panel's own DCS
-  backlight, so two backlight devices may show up (`hwcheck-device` lists them). Check which one
-  Steam's slider and Plasma drive, and whether the PWM one controls anything on this board.
-  pocknix found the lowest Plasma brightness turns the panel fully dark: measure a floor, as
-  `40-kettle/1120` does for the Portal.
-- Controls: the face button labels, both sticks' directions (the dts inverts both axes) and
-  centring, the trigger deadzones, the paddles, Quick Access, and the desktop controller.
-- Stick lights: the colour order. The RP6 dts' LED labels don't match their nodes (the node
-  `ledl_b1` is labelled `l:r1`); kettle-ledd reads each group's `multi_index`, so check the
-  colours themselves.
-- Audio: the speakers with the Odin 2's amplifier tuning (`aw883xx_acf.bin`), the headphone jack
-  and its detection, the microphone.
-- Battery and charging: charge current from a PD charger, whether `constant_charge_current` is
-  taken (then the Portal's `current` charge limit and speeds), the end threshold, and how far
-  the percentage drifts on the 8000 mAh profile (does it shut down early?). pocknix testers
-  reported charging stopping after a kernel update.
+- Brightness: the lowest levels (pocknix found the lowest Plasma brightness turns the panel
+  fully dark), for a floor like `40-kettle/1120`'s on the Portal.
+- Controls: the sticks' centring and the trigger deadzones in games, and the desktop
+  controller.
+- Audio: the headphone jack and its detection, the microphone (the speakers work).
+- Battery and charging: a charge limit held and released below ~95% (at 98–99% the Portal's
+  firmware latches "Not charging" after a 0 cap until a replug; the Nova's is the same
+  firmware), and how far the percentage drifts on the 8000 mAh profile (does it shut down
+  early?). pocknix testers reported charging stopping after a kernel update.
 - Fan: does it spin up with the trips, its noise, and whether `fan1_input` (tach) reads.
 - Motion: whether the Sensor Core on the Odin 2's ADSP image finds the Nova's IMU from its
   own `persist` registry, and the axis matrix (`packages/kettle-motion/devices.conf`, identity
