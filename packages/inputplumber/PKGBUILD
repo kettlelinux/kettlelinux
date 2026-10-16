@@ -4,8 +4,9 @@
 # an Xbox Elite controller; 40-kettle-{odin2portal,thor,rp5}.yaml sort first and claim the pad
 # for the Deck target (the Thor's with its AYN key as Quick Access too). The KONKR Pocket FIT
 # Elite's 40-kettle-pocketfitelite.yaml joins its MCU's two input devices into one Deck pad.
-# The Retroid Pocket Nova (the same rsinput MCU) gets 40-kettle-rpnova.yaml, over upstream's
-# 50-retroid_pocket_nova.yaml.
+# The Retroid Pocket Nova (the same rsinput MCU, Nintendo-labelled like the Thor) gets
+# 40-kettle-rpnova.yaml with its own map, in place of upstream's 50-retroid_pocket_nova.yaml
+# (not installed: see package()).
 # Runs with Game Mode only (kettle-inputplumber.service, device overlay): the desktop's own
 # controller (kettle-desktop-controller) needs the raw pad.
 # 0001 reads evdev motion sensors; the Portal's and Thor's configs take kettle-motiond's (packages/kettle-motion)
@@ -18,7 +19,7 @@
 # the snapshot's 1.78.
 pkgname=inputplumber
 pkgver=0.82.0
-pkgrel=3
+pkgrel=4
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Input router and remapper daemon (Steam Deck controller emulation for AYN handhelds)'
@@ -38,6 +39,7 @@ source=("InputPlumber-$pkgver.tar.gz::https://github.com/ShadowBlip/InputPlumber
         kettle-thor-capability-map.yaml
         kettle-rp5-capability-map.yaml
         kettle-pocketfitelite-capability-map.yaml
+        kettle-rpnova-capability-map.yaml
         0001-source-add-an-evdev-motion-sensor-source.patch
         0002-source-sleep-on-the-device-while-idle.patch)
 noextract=("rust-$_rust-aarch64-unknown-linux-gnu.tar.xz")
@@ -47,10 +49,11 @@ sha256sums=('aaee9b65b47a21756169eb1c49eb258ecdd1896fb8dd4996c2b50d11af049d21'
             '64558755be19f505d3a072e3e5e4e62ce9a8ab0be19d9d8d4ee239dd0b6439bb'
             'c17970bf78ddab689d8b93acebd78fdf6fa03befde4377b04bd5f9b3e3b78e89'
             '9c66696cbf1c06f70b4f5ef932ca9191dbac2db919f325a3e75313787fbc1ec3'
-            '1088c6d765f4612ef38f56dd6f1792db67c26365e8f8faf979fecd562dfc1a4b'
+            '6ddd0a0b852c03558a5b71c4ca5944bf0b46d7c80b6cb0d9645792354d6b52e1'
             '2cb3955e5d30d85589ddce8cd260851e60367b18e8b44c0b09e9250cf5518ee8'
             '769f8dfdb945985a3417ab2cbb988d43ef76bec81b6989251821a0200fbac69c'
             'ab8da320077687603d06892aced316ca3d32a827687f4601a5c8f3c7158eed08'
+            'e90a24feb10a8dc271057dd21b2f792eaeb3098ed3a64943fd32632dce98dd62'
             'f818673f665b2e17ca3d5857929399d368b92cf54d428f7eebed1430c1dde398'
             '9d0fec0d3e1bb8974813de003b40bcec69e2f7a192f0b5f4afdbd67073a8f106')
 
@@ -74,11 +77,18 @@ package() {
   export PATH="$srcdir/rust/bin:$PATH" CARGO_HOME="$srcdir/cargo-home"
   make install PREFIX="$pkgdir/usr" NO_RELOAD=true TARGET_ARCH=aarch64-unknown-linux-gnu
   install -Dm644 "$srcdir"/40-kettle-{odin2portal,thor,rp5,pocketfitelite,rpnova}.yaml -t "$pkgdir/usr/share/inputplumber/devices"
+  # Upstream's Nova config takes gpio-keys (Volume Up) besides the pad: ours leaves Volume Up to
+  # the kernel and takes the paddles' own gpio-keys-paddles instead, so upstream's would still
+  # find a free device and make a second controller, which then races ours for the pad (seen on
+  # a Nova). 40-kettle-rpnova.yaml replaces it.
+  rm "$pkgdir/usr/share/inputplumber/devices/50-retroid_pocket_nova.yaml"
   install -Dm644 "$srcdir/kettle-thor-capability-map.yaml" \
     "$pkgdir/usr/share/inputplumber/capability_maps/kettle_thor.yaml"
   install -Dm644 "$srcdir/kettle-rp5-capability-map.yaml" \
     "$pkgdir/usr/share/inputplumber/capability_maps/kettle_rp5.yaml"
   install -Dm644 "$srcdir/kettle-pocketfitelite-capability-map.yaml" \
     "$pkgdir/usr/share/inputplumber/capability_maps/kettle_pocketfitelite.yaml"
+  install -Dm644 "$srcdir/kettle-rpnova-capability-map.yaml" \
+    "$pkgdir/usr/share/inputplumber/capability_maps/kettle_rpnova.yaml"
   install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
 }
