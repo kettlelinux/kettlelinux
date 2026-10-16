@@ -514,6 +514,8 @@
 			regulator-min-microvolt = <852000>;
 			regulator-max-microvolt = <1036000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			/* Kettle (as Armada does on the Odin 3): WCN7860 PMU rail, kept on */
+			regulator-always-on;
 		};
 
 		vreg_l1d_1p2: ldo1 {
@@ -562,6 +564,8 @@
 			regulator-min-microvolt = <852000>;
 			regulator-max-microvolt = <1000000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			/* Kettle (as Armada does on the Odin 3): WCN7860 PMU rail, kept on */
+			regulator-always-on;
 		};
 
 		vreg_l1f_0p88: ldo1 {
@@ -579,6 +583,8 @@
 			regulator-min-microvolt = <1200000>;
 			regulator-max-microvolt = <1200000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			/* Kettle (as Armada does on the Odin 3): WCN7860 PMU rail, kept on */
+			regulator-always-on;
 			regulator-allow-set-load;
 			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
 						   RPMH_REGULATOR_MODE_HPM>;
@@ -589,6 +595,8 @@
 			regulator-min-microvolt = <1800000>;
 			regulator-max-microvolt = <1800000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			/* Kettle (as Armada does on the Odin 3): WCN7860 PMU rail, kept on */
+			regulator-always-on;
 			regulator-allow-set-load;
 			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
 						   RPMH_REGULATOR_MODE_HPM>;
@@ -1336,6 +1344,11 @@
 	no-sdio;
 	no-mmc;
 
+	/* Kettle: at most 100 MHz (SDR50). At SDR104 (202 MHz) the first boots read the card with
+	 * I/O errors every few seconds (a card a PC reads cleanly), and the slow, failing reads kept
+	 * gamescope from starting before its timeout. */
+	max-frequency = <100000000>;
+
 	pinctrl-0 = <&sdc2_default &sdc2_card_det_n>;
 	pinctrl-1 = <&sdc2_sleep &sdc2_card_det_n>;
 	pinctrl-names = "default", "sleep";
@@ -1719,10 +1732,14 @@
 	status = "okay";
 };
 
+/* Kettle: the CDSP is off. On the first boot (20261015.2) its firmware hit a fatal error in
+ * rcinit_worker at every start, and the recovery loop restarted it ~5 times a second (3600
+ * crashes in 12 minutes, each re-adding the fastrpc context banks), which starved the system:
+ * gamescope never came up. Nothing Kettle runs uses the compute DSP. */
 &remoteproc_cdsp {
 	firmware-name = "qcom/sm8750/konkr/pfe/cdsp.mbn",
 			"qcom/sm8750/konkr/pfe/cdsp_dtb.mbn";
-	status = "okay";
+	status = "disabled";
 };
 
 /* Kettle (from Armada): the codec keeps these rails on through s2idle; idle them in LPM */
@@ -1745,6 +1762,26 @@
 		regulator-on-in-suspend;
 		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
 	};
+};
+
+/* Kettle: the CoreSight trace network's TNOC off. Kettle builds no CoreSight drivers, so nothing
+ * binds it, and with fw_devlink.strict=1 (boot.conf) PCIe ended up waiting on one of its
+ * endpoints forever ("1c00000.pcie: deferred probe pending: wait for supplier
+ * /soc@0/tn@109ab000/in-ports/port@1e/endpoint"): no PCIe, so no Wi-Fi. fw_devlink skips
+ * disabled suppliers. (ROCKNIX builds CORESIGHT_TNOC and doesn't boot strict.) The cause was
+ * fw_devlink misreading the PCIe iommu-map, fixed by kernel 40-kettle/1430; this stays as a
+ * second guard. */
+&{/soc@0/tn@109ab000} {
+	status = "disabled";
+};
+
+/*
+ * The SoCCP (40-kettle/1451, 1452): the bootloader's early image stays in D0 and
+ * blocks SoC deep sleep. The driver reloads this unit's own image (from the
+ * Android modem partition), which parks itself in D3.
+ */
+&remoteproc_soccp {
+	firmware-name = "qcom/sm8750/konkr/pfe/soccp.mbn";
 };
 
 #include "sm8750-konkr-pf-elite-fan.dtsi"

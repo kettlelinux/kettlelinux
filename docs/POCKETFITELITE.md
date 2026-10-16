@@ -3,8 +3,8 @@
 The Pocket FIT Elite (KONKR is AYANEO's sub-brand) is the first Kettle device on the Snapdragon 8
 Elite (SM8750, Adreno 830). This is the 24 GB / 1 TB model. It uses the same kernel build: SM8750
 support is a patch directory and a config fragment next to the SM8550 and SM8250 ones. It also
-uses the same userspace and the same A/B updates. **The port was written before a unit arrived:
-nothing below has run on hardware yet.** How its files are kept apart from the other devices':
+uses the same userspace and the same A/B updates. The port was written before a unit arrived;
+it first booted on one on 2026-10-15 (build 20261015.2), see [Verified on a unit](#verified-on-a-unit). How its files are kept apart from the other devices':
 [PORTING.md](PORTING.md).
 
 The references are ROCKNIX's SM8750 device (`projects/ROCKNIX/devices/SM8750`, `next` @
@@ -33,17 +33,22 @@ scripts/build-packages.sh kettle-firmware-konkr kettle-ucm-konkr kettle-power in
 KETTLE_DEVICE=pocketfitelite scripts/build-image.sh    # -> out/kettle-<build>-pocketfitelite.img
 ```
 
-## Booting (planned)
+## Booting
 There is no U-Boot for SM8750 (mainline U-Boot has no SM8750 clock driver, [BOOTLOADER.md](BOOTLOADER.md)).
 The image boots through ROCKNIX's ABL, as ROCKNIX does:
-- ROCKNIX's SM8750 ABL build (`abl_signed-SM8750.elf`, already in `packages/rocknix-abl`) replaces
-  the stock ABL. ROCKNIX flashes it from rooted Android (`backup_abl.sh`, `flash_abl.sh`).
-- With the ABL in place, holding Volume Down at power-on opens its menu. From there it boots
-  `\KERNEL` from the SD card: our kernel with the `sm8750-*` dtbs appended (`ABL_DTBS`). It
-  picks the dtb by `qcom,msm-id` and `qcom,board-id`.
-- Still to find out on the unit: whether the bootloader must be unlocked (rooting Android needs
-  it), how to reach EDL, and whether KONKR's firmware offers a UEFI path like the Odin 3's.
-- An install guide (like [INSTALL-RP5.md](INSTALL-RP5.md)) follows once a unit has booted.
+- ROCKNIX's SM8750 ABL build (`abl_signed-SM8750.elf`, in `packages/rocknix-abl`) replaces the
+  stock ABL in `abl_a` and `abl_b`. The unit came with its bootloader unlocked
+  (`ro.boot.verifiedbootstate=orange`), and stock Android ships AYANEO's pre-root helper
+  `/product/bin/xsu`, which runs a command as root from `adb shell` without Magisk:
+  `xsu dd if=… of=/dev/block/by-name/abl_a`. Run it detached (`(nohup /product/bin/xsu … &)`):
+  in the foreground `adb` loses the device. Some invocations silently don't run and its output
+  loses lines, so back up both slots first and read every write back (after
+  `echo 3 > /proc/sys/vm/drop_caches`) before rebooting. The two stock slots held different ABL
+  versions.
+- With the ABL in place, holding Volume Down at power-on opens its menu (Boot mode Linux). It
+  starts Kettle's steamcl (`\EFI\BOOT\BOOTAA64.EFI`), then GRUB with `DTB`.
+- Still to find out: how to reach EDL, and whether KONKR's firmware offers a UEFI path like the
+  Odin 3's. An install guide (like [INSTALL-RP5.md](INSTALL-RP5.md)) is still to write.
 
 ## What is different from the other devices
 - **Kernel** (`kernel/patches/22-sm8750`): 33 of ROCKNIX's SM8750 patches (one of them in Armada's version) and two of Armada's. They add GPU clock and
@@ -83,21 +88,91 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   as the RP5 and Thor do. The real 6" makes the UI far too large.
 - **Headphone jack**: `61-kettle-pocketfitelite-jack.rules` keeps the WCD9395's SoundWire buses
   runtime-active, as ROCKNIX does, because a clock-stopped bus misses the jack plug.
-- **Charging**: no charge speeds or `current` charge limit yet. It is not known whether the SM8750
-  battery manager takes `constant_charge_current` (`40-kettle/1190`) as the Portal's does.
+- **Charging**: unlike the Portal's, the charger firmware takes the end threshold, so Steam's
+  charge limit is the firmware's (it holds while asleep or off). The charge current
+  (`constant_charge_current`, `40-kettle/1190`) works too and gives Device Settings its charge
+  speeds.
+
+## Verified on a unit
+2026-10-15, build 20261015.2 with the dts fixes below (24 GB / 1 TB unit):
+- Boots from the SD card through the ROCKNIX ABL; panel (`DSI-1`, 1080x1920, 144/120 Hz),
+  rotation and Steam UI scale, touch, Adreno 830 (Turnip Vulkan, all 14 OPPs 160-1100 MHz),
+  gamepad and system buttons as one Deck controller in Steam, speakers, Wi-Fi (WCN7860) and
+  Bluetooth, fan, battery reading, Steam login.
+- s2idle: RTC wake, `systemctl suspend` and the power key (sleep and wake), Wi-Fi back after.
+- Internal install (build 20261015.3): `kettle-install-internal` with a full backup (941 GiB
+  LUN 0 at ~400 MB/s, 6.5 GB compressed), Android kept 64 GiB; the ROCKNIX ABL v1.2 starts
+  `\KERNEL` from `kettle-esp` (*Boot source: Internal*) and the system runs from UFS. The UFS
+  tools needed `ufs-lib.sh` to find the LUNs by SCSI host (the SM8750 node is `ufs@`, not
+  `ufshc@`). The install's `efi-A`/`efi-B` (64 MiB on 4K-sector UFS) come out as FAT32 with
+  16316 clusters, under FAT32's minimum: not read on this boot path, but a strict FAT driver
+  (UEFI) would take them for FAT16.
+- Suspend soak on the internal install (20261015.3): 20/20 `systemctl suspend` cycles with RTC
+  wake, no UFS errors, `/home` writable after, Wi-Fi back each time with no ath12k `-108`. Every
+  suspend logs `dwc3-qcom a600000.usb: port-1 HS-PHY not in L2` (no effect seen).
+- A/B update of the internal install (20261015.3 -> 20261015.4, `rauc install` of a local
+  bundle): slot B boots, `\KERNEL` rewritten by the update. Touch keeps working across resumes
+  (`40-kettle/1445`; before it, a resume could leave the touch IC dead until a reboot).
+- Charging (9 V PD charger): ~31 W in, up to ~6 A into the battery; around 84% the fast stage
+  hands over (charging on and off every ~15 s for a minute or two), then a steady ~2.65 A.
+  The end threshold stops charging within seconds (battery at 0 mA, the charger runs the
+  system) and charging resumes when it is raised; a charge current cap of 2 A held 1.85 A, 0
+  stopped charging, and raising it resumed at once at 85%. `power_now` reads ~50 W at a 3 W
+  draw (the Portal's battery manager does the same); current and voltage are right. Idle in
+  Game Mode: ~2.4 W at 75% brightness.
+- A game under load (Expedition 33, 20261015.4, Proton Experimental; Proton 11.0 ARM64
+  black-screens and exits): GPU-bound, the A830 at 1100 MHz 95-99% busy even at ~640x360
+  internal, ~28 fps with TSR on low. On battery 15.4 W average and 20 W peak uncapped, 12 W at
+  a 40 fps cap; prime cores up to 103 C, main 93 C, GPU 87 C, DDR 80 C, battery 36 C; the fan
+  at full speed (~7300 rpm, the tach works) throughout. No kernel thermal throttling, no GPU
+  faults. DDR stayed at 4224 MHz, as it does under a CPU memory stress (`stress-ng --stream 8`,
+  CPUs at full clock, 30 s at 4224): `ddr_stats` lists the SoC's 4761 MHz step and the GPU's
+  top OPPs vote for it, but neither voter reaches it, so this unit's memory most likely tops
+  out at 4224 MHz (LPDDR5X-8533). The Balanced profile's first GPU cap (734 MHz) cost a third
+  of the frame rate; it is 967 MHz now.
+- Overnight sleep (build .5, on battery, power key): one s2idle from 21:24 to 06:40 (9 h 16
+  min), no wakeups, Wi-Fi back after; 54% to 27%, 2.26 Ah, ~245 mA (~0.95 W, ~2.9%/h, ~34 h
+  from full). The CPU subsystem and the ADSP sleep the whole time, but `qcom_stats` cxsd, aosd
+  and ddr stay at count 0: `22-sm8750/0521`'s PCIe suspend OPP holds a DDR/CX vote through
+  s2idle on purpose (without it the SoC resets instead of waking, as on the SM8550), so CX,
+  AOSS and DDR never collapse. The wake-from-collapse reset is the open work, shared with the
+  Portal.
+- Deep sleep (build 20261016.1, Armada's deep-sleep work as `40-kettle/1450-1462`, 0044 and
+  0521 dropped, `1446`): the SoCCP loads `soccp.mbn` and reports D3 at boot ("in D3, boot bus
+  vote dropped"). A 10-minute RTC-woken `systemctl suspend` on battery: CX shutdown and DDR low
+  power for the whole sleep (`cxsd`/`ddr` 29 entries, 601 s; `aosd` stays 0), **14 mA** against
+  188 mA on 20261015.5 (~0.3%/h). It woke normally, but that first wake lost Wi-Fi: the
+  firmware booted, timed out loading its board data (`-110`), and ath12k's recovery then hit
+  its own MHI state guard ("failed to set mhi state INIT(0) in current mhi state (0x5)"); a
+  reboot brought it back. The next nine wakes (60 s sleeps, all CX shutdown) each had Wi-Fi
+  back in 2-5 s, the MHI reset, BHI download and mission mode visible with debug on. The
+  first failure is not understood yet.
+- Against the Odin 2 Portal (2026-10-15, .5 against the Portal's 20261015.1): The Witcher 3,
+  same spot, Steam preset at 720p, no upscaler or frame generation, Performance, Auto TDP on,
+  no frame limit: **~55 fps against ~30** (1.8x), both GPU-bound at their top clocks (A830
+  1100 MHz 98% busy, A740 680 MHz 99%). 7-Zip (`7z b`): all cores 40359 against 25459 MIPS
+  (+59%); one core 5559 against 5349 under the conservative governor, 5931 on a prime core
+  under `performance` (the conservative governor held it at ~2.84 GHz, not 4.09). The prime
+  cores' boost steps (4.20, 4.32 GHz, `scaling_boost_frequencies`) are off (`cpufreq/boost`
+  0). MangoHud shows the CPU and GPU temperatures on build .5.
+- CPU tables: six cores 384 MHz-3.53 GHz, two prime cores 1.02-4.09 GHz (this unit's bin).
+- Fixed in the dts after the first boots: the SD bus at SDR104 read the card with I/O errors
+  every few seconds (`max-frequency` 100 MHz); the CDSP firmware crashed at every start and the
+  recovery loop restarted it ~5 times a second (CDSP disabled); PCIe waited forever on the
+  CoreSight TNOC under `fw_devlink.strict=1` (TNOC disabled), so there was no Wi-Fi.
+- Open: the WCN7860 twice stopped answering (ath12k `-108`, no firmware crash logged), once
+  22 s into a boot and once after a resume, and iwd crashed with it; other boots and resumes
+  were fine. Haptics (no node in the dts). One early power-key suspend didn't wake (during a
+  boot with that failure; not seen since).
 
 ## Still to check, by hand
-- Boot: the ABL flash, the dtb pick, panel rotation (`GAMESCOPE_ORIENTATION=right`,
-  KWin `Rotated270`; if upside down, swap to `left`/`Rotated90`), the refresh rates.
-- GPU chip id and Vulkan (Turnip on A830), the zap shader, GPU frequency table and speed bin.
-- CPU frequency tables (SCMI) for the profiles in `packages/kettle-power/pocket-fit-elite.toml`,
-  and measured TDP limits (the 4-22 W range there is a placeholder).
-- Fan trips and noise; the fan's tach (`fan1_input`).
+- Desktop Mode rotation (KWin `Rotated270`), the refresh rates in use.
+- Fan noise.
 - The button map against the physical buttons; the stick RGB in `kettle-leds` (one multicolor
   LED for both rings, where the AYN devices have `rgb:{l,r}N`).
 - Gyro: there is no IMU node in the dts, so it is probably the ADSP's Sensor Core as on the
   Portal and Thor (`kettle-motion` would need a `[konkr,pocket-fit-elite]` matrix).
-- Suspend (s2idle, with the PCIe suspend OPP), Wi-Fi/BT, DisplayPort out and its audio, the USB-C orientation GPIO (marked TODO in the
-  dts), the charger and the charge limit, speakers and the jack.
+- The intermittent WCN7860 loss above; suspend over many cycles; DisplayPort out and its audio, the USB-C orientation GPIO (marked TODO in the
+  dts), the headphone jack, Steam's charge limit and charge speeds end to end.
 - `60-kettle-usb-power.rules` and `60-kettle-ath12k-iommu-fq.rules` match SM8550's USB controller
   and WCN7850 only. Extend them to SM8750/WCN7860 once tested.
