@@ -19,8 +19,9 @@
 #
 # Beside the compatibility profiles, the panel's other tabs set a game's other settings, each in
 # its own module: Performance (fan, CPU cores and caps, Auto TDP: kettle-powerd's per-game
-# settings, powerd.py; and the game's own refresh rate, refresh.py), Upscaling (OptiScaler,
-# upscaling.py) and Frame Gen (the kettle-framegen layer, framegen.py). "All games" in the game
+# settings, powerd.py; the game's own refresh rate, refresh.py; and Lumen off in Unreal Engine 5
+# games, lumen.py), Upscaling (OptiScaler, upscaling.py) and Frame Gen (the kettle-framegen
+# layer, framegen.py). "All games" in the game
 # picker edits kettle-powerd's all-games settings. The last tab, Extras, isn't per game: the
 # community Protons and the optional components (AMD FSR 3.1), extras.py.
 import asyncio
@@ -39,6 +40,7 @@ import decky
 import extras
 import framegen
 import gameengine
+import lumen
 import refresh
 import steamlib
 import upscaling
@@ -52,6 +54,16 @@ _up_lock = threading.Lock()
 def _up(fn, *args):
     with _up_lock:
         return fn(*args)
+
+
+# Lumen's Engine.ini edits and lumen.json, one at a time (a sync at start or after a game exits
+# can overlap a change in the panel)
+_lumen_lock = threading.Lock()
+
+
+def _lumen(fn, *args):
+    with _lumen_lock:
+        return fn(*args, _engine)
 
 CATALOG = os.path.join(decky.DECKY_PLUGIN_DIR, "game-options.json")
 GAMES = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "games.json")
@@ -639,6 +651,20 @@ class Plugin:
         decky.logger.info("game settings: game %s refresh %s", appid, "all games'" if hz is None else hz)
         return await self.get_refresh()
 
+    async def lumen_get(self, appid: int | None) -> dict:
+        """appid None: whether Lumen is off in UE5 games by default; else the game's state
+        (ue5: it's a UE5 game; choice: default, off or on; off: what applies; applied: our lines
+        are in its Engine.ini; pending: it has no prefix yet, from its next launch)."""
+        return await asyncio.to_thread(_lumen, lumen.get, appid)
+
+    async def lumen_set(self, appid: int | None, value) -> dict:
+        """appid None: value is the all-games default (bool); else default, off or on."""
+        return await asyncio.to_thread(_lumen, lumen.set_choice, appid, value)
+
+    async def lumen_sync(self):
+        """After a game exits: its prefix may be new (first launch), or the game rewrote its config."""
+        await asyncio.to_thread(_lumen, lumen.sync_all)
+
     # ---------- Upscaling: OptiScaler ----------
 
     async def up_status(self) -> dict:
@@ -705,6 +731,10 @@ class Plugin:
         decky.logger.info("upscaling: OptiScaler %s", upscaling._version() or "not installed")
         decky.logger.info("extras: %d optional components offered", len(extras._manifest(log=True)))
         framegen.setup()
+        try:
+            await self.lumen_sync()
+        except Exception:
+            decky.logger.exception("lumen: sync at start failed")
         try:
             info = await self.perf_info()
             decky.logger.info("performance: kettle-powerd up, fan control %s", info["fan"])
