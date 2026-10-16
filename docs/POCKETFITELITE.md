@@ -130,6 +130,14 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   top OPPs vote for it, but neither voter reaches it, so this unit's memory most likely tops
   out at 4224 MHz (LPDDR5X-8533). The Balanced profile's first GPU cap (734 MHz) cost a third
   of the frame rate; it is 967 MHz now.
+- Against the Odin 2 Portal (2026-10-15, .5 against the Portal's 20261015.1): The Witcher 3,
+  same spot, Steam preset at 720p, no upscaler or frame generation, Performance, Auto TDP on,
+  no frame limit: **~55 fps against ~30** (1.8x), both GPU-bound at their top clocks (A830
+  1100 MHz 98% busy, A740 680 MHz 99%). 7-Zip (`7z b`): all cores 40359 against 25459 MIPS
+  (+59%); one core 5559 against 5349 under the conservative governor, 5931 on a prime core
+  under `performance` (the conservative governor held it at ~2.84 GHz, not 4.09). The prime
+  cores' boost steps (4.20, 4.32 GHz, `scaling_boost_frequencies`) are off (`cpufreq/boost`
+  0). MangoHud shows the CPU and GPU temperatures on build .5.
 - CPU tables: six cores 384 MHz-3.53 GHz, two prime cores 1.02-4.09 GHz (this unit's bin).
 - Fixed in the dts after the first boots: the SD bus at SDR104 read the card with I/O errors
   every few seconds (`max-frequency` 100 MHz); the CDSP firmware crashed at every start and the
