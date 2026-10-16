@@ -1360,6 +1360,9 @@
  *  USB
  * ===================================================================== */
 &usb {
+	/* Linux 7.3 made the SM8750 USB controller a wakeup source; keep 7.2's behaviour */
+	/delete-property/ wakeup-source;
+
 	status = "okay";
 };
 
@@ -1658,8 +1661,9 @@
 };
 
 &pcieport0 {
-	/* Kettle (from Armada): WAKE# is active-low */
-	wake-gpios = <&tlmm 104 GPIO_ACTIVE_LOW>;
+	/* WAKE# is gpio104, active low (Armada). */
+	/* No wake-gpios: Linux 7.3 arms it as a wakeup IRQ, enabled by default, and nothing
+	 * here wants Wi-Fi to wake the device (it never did on 7.2). */
 	reset-gpios = <&tlmm 102 GPIO_ACTIVE_LOW>;
 
 	wifi@0 {

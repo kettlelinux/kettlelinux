@@ -62,7 +62,15 @@ Ported (each says so in its header where the change isn't obvious):
 dts: SM8550's `pcieport0` label is `pcie0_port0` in 7.3, and its IPA node now references
 `ipa_fw_mem`, which our QCS8550 boards delete (no modem), so they delete `&ipa` as well.
 
-Config: `PROC_SYSCTL` is gone (proc sysctl builds with `SYSCTL`); the Qualcomm RNG moved
+7.3 behaviour we turn off in dts, to keep what was tested on 7.2: the PCI core now arms a
+root port's `wake-gpios` as a wakeup IRQ with wakeup enabled by default, so the Wi-Fi ports
+have none (the AYANEO boards' ACTIVE_HIGH flag would have fired on the idle, pulled-up line
+and stopped every s2idle); and the SM8750 USB controller became a `wakeup-source`, deleted
+on the Pocket FIT Elite. The ICNA35XX panels also name their board compatible first, as 7.3's
+`chipone,icna3512` binding requires (our driver matches the chip fallback).
+
+Config: `USERFAULTFD` on (it came off with the imported base config; Wine's write watches
+can use it). `PROC_SYSCTL` is gone (proc sysctl builds with `SYSCTL`); the Qualcomm RNG moved
 from `CRYPTO_DEV_QCOM_RNG` to `HW_RANDOM_QCOM`.
 
 ## Dropped
@@ -93,7 +101,7 @@ from `CRYPTO_DEV_QCOM_RNG` to `HW_RANDOM_QCOM`.
 - 9999 log-spam silencing: comments out real errors (and changes `net/core/sock.c` behaviour).
 
 ## Candidates not yet applied
-- Valve `linux-neptune-72` (7.2.4-valve1): `HID: steam` 2026 Steam Controller series
-  (`cbb072a1b4d3` and follow-ups), `xbox_gip`, uinput interruptible wait.
+- Valve `linux-neptune-72` (7.2.4-valve1): `xbox_gip`, uinput interruptible wait (its
+  `HID: steam` 2026 Steam Controller series is in 7.3).
 - Igalia robust-futex arm64 vDSO (`tonyk/robust_arm` @ `34e9604082b5`) for Proton/FEX.
 - Armada suspend refinements (0504 IPCC masked only for s2ram, 0515 rsinput frame reassembly).
