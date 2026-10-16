@@ -1,6 +1,7 @@
 # kettle-powerd's description of the KONKR Pocket FIT Elite (SM8750, Snapdragon 8 Elite).
 # The sysfs paths and frequency tables are as read on a unit (2026-10-15); the charging figures were
-# tested on it, the TDP range is still a placeholder. Caps between frequency steps round down.
+# tested on it, and the TDP range and profiles come from a game run on it (Expedition 33,
+# 2026-10-15, below). Caps between frequency steps round down.
 
 [cpu]
 # cpufreq policies (SCMI, the frequency table comes from the firmware), smallest cluster first:
@@ -35,7 +36,8 @@ charger = "qcom-battmgr-usb"
 # Share of the charger's input power that reaches the system and battery
 charger_efficiency = 0.9
 # Steam's TDP slider: whole-device draw in watts (screen included); max means no limit.
-# Placeholder: the 8 Elite draws more than the SM8550 at the top; measure on a unit
+# Measured in Expedition 33 (GPU-bound, GPU at 1100 MHz 95-99% busy, fan full): 15.4 W
+# average, 20 W peak uncapped; 12 W at a 40 fps cap
 tdp_min = 4
 tdp_max = 22
 # Charging, as tested on a unit (2026-10-15, 9 V PD charger): unlike the Portal's, this
@@ -59,8 +61,10 @@ charge_speed = [
 ]
 
 # Steam's performance profiles (Quick Access > Performance). Caps in kHz / MHz; a cluster
-# left out runs up to its highest frequency. Steps of this unit's tables, not yet tuned by
-# measured power draw.
+# left out runs up to its highest frequency. Steps of this unit's tables. Games here are
+# GPU-bound: in Expedition 33 a 734 MHz GPU cap took ~28 fps down to ~20 (7.3 W against
+# 12 W), so Balanced keeps 967 MHz, the highest step below the TURBO voltage levels, and
+# saves on the CPU, whose prime cores reached 103 C uncapped.
 [[profile]]
 name = "Performance"
 
@@ -68,10 +72,10 @@ name = "Performance"
 name = "Balanced"
 main = 2745600
 prime = 3283200
-gpu_mhz = 734
+gpu_mhz = 967
 
 [[profile]]
 name = "Powersave"
 main = 1996800
 prime = 2246400
-gpu_mhz = 525
+gpu_mhz = 734
