@@ -1,0 +1,19 @@
+#!/bin/bash
+# The CPUs Steam starts games on, for SoCs where Valve's own doesn't fit, as KEY=value lines for
+# steam.service's EnvironmentFile (kettle.conf); nothing on the others.
+#
+# Valve's steam.service pins games to CPUs 3-7 (STEAM_LAUNCH_WRAPPER_AFFINITY_LIST=0xf8): off
+# the three little cores of the Steam Frame, the Portal and the Thor. Proton's ARM64 script then
+# tells games they have that many CPUs (WINE_CPU_TOPOLOGY from its affinity), so they get 5.
+# The Snapdragon 8 Elite (SM8750) has no little cores: six Oryon cores and two prime ones, so
+# its games get all eight (Oblivion Remastered refuses to start with fewer than 6).
+while IFS= read -r -d '' c; do
+	case $c in
+	qcom,sm8750)
+		echo STEAM_LAUNCH_WRAPPER_AFFINITY_LIST=0xff
+		echo STEAM_DESKTOP_APP_AFFINITY_LIST=0xff
+		exit 0
+		;;
+	esac
+done </proc/device-tree/compatible
+exit 0
