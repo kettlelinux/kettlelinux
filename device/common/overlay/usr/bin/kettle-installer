@@ -94,7 +94,9 @@ run() {
         "@exit "*) echo "${l#@exit }" >"$TMP/run.rc"; break ;;
         "@err "*) printf '%s\n' "${l#@err }" >>"$TMP/run.err" ;;
         "@step "*) out "# ${l#@step }"; out 0 ;;
-        "@pct "*) out "${l#@pct }" ;;
+        # 99 at most: --auto-close closes the window at 100, and a step's own 100 (the end of a
+        # dd copy, a backup's last file) would close it with the tool still running unseen
+        "@pct "*) p=${l#@pct }; [[ $p =~ ^[0-9]+$ ]] && out $(( p > 99 ? 99 : p )) ;;
         "@done "*) printf '%s\n' "${l#@done }" >"$TMP/done" ;;
         "@error "*) printf '%s\n' "${l#@error }" >"$TMP/error" ;;
       esac
