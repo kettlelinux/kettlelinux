@@ -130,6 +130,13 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   top OPPs vote for it, but neither voter reaches it, so this unit's memory most likely tops
   out at 4224 MHz (LPDDR5X-8533). The Balanced profile's first GPU cap (734 MHz) cost a third
   of the frame rate; it is 967 MHz now.
+- Overnight sleep (build .5, on battery, power key): one s2idle from 21:24 to 06:40 (9 h 16
+  min), no wakeups, Wi-Fi back after; 54% to 27%, 2.26 Ah, ~245 mA (~0.95 W, ~2.9%/h, ~34 h
+  from full). The CPU subsystem and the ADSP sleep the whole time, but `qcom_stats` cxsd, aosd
+  and ddr stay at count 0: `22-sm8750/0521`'s PCIe suspend OPP holds a DDR/CX vote through
+  s2idle on purpose (without it the SoC resets instead of waking, as on the SM8550), so CX,
+  AOSS and DDR never collapse. The wake-from-collapse reset is the open work, shared with the
+  Portal.
 - Against the Odin 2 Portal (2026-10-15, .5 against the Portal's 20261015.1): The Witcher 3,
   same spot, Steam preset at 720p, no upscaler or frame generation, Performance, Auto TDP on,
   no frame limit: **~55 fps against ~30** (1.8x), both GPU-bound at their top clocks (A830
@@ -156,7 +163,6 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
 - Gyro: there is no IMU node in the dts, so it is probably the ADSP's Sensor Core as on the
   Portal and Thor (`kettle-motion` would need a `[konkr,pocket-fit-elite]` matrix).
 - The intermittent WCN7860 loss above; suspend over many cycles; DisplayPort out and its audio, the USB-C orientation GPIO (marked TODO in the
-  dts), the headphone jack, Steam's charge limit and charge speeds end to end (after
-  20261015.4), sleep drain.
+  dts), the headphone jack, Steam's charge limit and charge speeds end to end.
 - `60-kettle-usb-power.rules` and `60-kettle-ath12k-iommu-fq.rules` match SM8550's USB controller
   and WCN7850 only. Extend them to SM8750/WCN7860 once tested.
