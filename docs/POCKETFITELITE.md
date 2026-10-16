@@ -112,7 +112,7 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   suspend logs `dwc3-qcom a600000.usb: port-1 HS-PHY not in L2` (no effect seen).
 - A/B update of the internal install (20261015.3 -> 20261015.4, `rauc install` of a local
   bundle): slot B boots, `\KERNEL` rewritten by the update. Touch keeps working across resumes
-  (`40-kettle/1440`; before it, a resume could leave the touch IC dead until a reboot).
+  (`40-kettle/1445`; before it, a resume could leave the touch IC dead until a reboot).
 - Charging (9 V PD charger): ~31 W in, up to ~6 A into the battery; around 84% the fast stage
   hands over (charging on and off every ~15 s for a minute or two), then a steady ~2.65 A.
   The end threshold stops charging within seconds (battery at 0 mA, the charger runs the
