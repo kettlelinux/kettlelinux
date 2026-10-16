@@ -5,8 +5,9 @@
 #
 # It goes through the game's own user config: [SystemSettings] in its user Engine.ini, which UE
 # applies over its quality presets: in the Wine prefix (AppData/Local/<project>/Saved/Config/
-# Windows) or, for games that keep Saved next to the game (Black Myth: Wukong), in the install
-# folder; whichever the game made its config in. The file is made read-only, since games rewrite
+# Windows, or Documents/My Games/<project>/... as Oblivion Remastered has it) or, for games that
+# keep Saved next to the game (Black Myth: Wukong), in the install folder; whichever the game
+# made its config in. The file is made read-only, since games rewrite
 # it at launch and drop what they don't know (Expedition 33 deletes it). Some games ignore the
 # user Engine.ini (Titan Quest II); it changes nothing for them. The config only exists once the
 # game has run, so a new game gets it from its second launch on.
@@ -79,22 +80,25 @@ def engine_major(exe: str) -> int | None:
 
 
 def _ini_path(appid: int, root: str, exe_rel: str) -> str | None:
-    """The game's user Engine.ini: in Saved/Config/Windows under AppData/Local/<project> in its
-    prefix (<project>: the folder its Binaries are in, matched case-insensitively), or under
+    """The game's user Engine.ini: in Saved/Config/Windows under AppData/Local/<project> or
+    Documents/My Games/<project> in its prefix (<project>: the folder its Binaries are in, matched
+    ignoring case, spaces and punctuation: OblivionRemastered is "Oblivion Remastered"), or under
     <project> in its install folder; the one the game made its config in. None before it has."""
     parts = exe_rel.replace("\\", "/").split("/")
     low = [p.lower() for p in parts]
     if "binaries" not in low or low.index("binaries") == 0:
         return None
     i = low.index("binaries")
+    norm = lambda n: "".join(ch for ch in n.lower() if ch.isalnum())
     cands = []
     pfx = steamlib.prefix(appid)
     if pfx:
-        local = os.path.join(pfx, "drive_c", "users", "steamuser", "AppData", "Local")
-        try:
-            cands += [os.path.join(local, e) for e in os.listdir(local) if e.lower() == low[i - 1]]
-        except OSError:
-            pass
+        user = os.path.join(pfx, "drive_c", "users", "steamuser")
+        for base in (os.path.join(user, "AppData", "Local"), os.path.join(user, "Documents", "My Games")):
+            try:
+                cands += [os.path.join(base, e) for e in os.listdir(base) if norm(e) == norm(parts[i - 1])]
+            except OSError:
+                pass
     cands.append(os.path.join(root, *parts[:i]))
     for c in cands:
         d = os.path.join(c, "Saved", "Config", "Windows")
