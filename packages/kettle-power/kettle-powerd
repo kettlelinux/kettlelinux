@@ -895,10 +895,16 @@ class Daemon:
                 setattr(self, f"auto_{unit}", back)
                 self.auto_last = None
             elif limit["gpu"] or limit["cpu"] or stuck:
-                # the game got heavier: give a unit at its limit its clock back (the GPU first),
-                # else the busier one; faster when far short
+                # the game got heavier: give a unit at its limit its clock back, the GPU first,
+                # else the busier one; faster when far short. A GPU busy at its cap is the limit
+                # even when a CPU cluster runs at its cap too: under a low cap a loaded cluster
+                # always does, and the busiest core (a game's main thread) reads ~100% at any
+                # clock, so comparing loads raised the CPU. PoE2 at 40 fps on the KONKR sat at 36
+                # for 30 s, GPU 99% busy at its 525 MHz cap, while the CPU caps climbed to
+                # 2.7 GHz (8 -> 15 W); one GPU step gave it back its 40. A game that was the
+                # CPU's after all shows the GPU idling at the next shortfall.
                 for _ in range(2 if fps < goal * 0.85 else 1):
-                    gpu_first = limit["gpu"] if limit["gpu"] != limit["cpu"] else gpu_busy >= self.cpu_load
+                    gpu_first = limit["gpu"] or (not limit["cpu"] and gpu_busy >= self.cpu_load)
                     if (gpu_first or not self.auto_cpu) and self.auto_gpu:
                         self.auto_gpu -= 1
                     elif self.auto_cpu:
