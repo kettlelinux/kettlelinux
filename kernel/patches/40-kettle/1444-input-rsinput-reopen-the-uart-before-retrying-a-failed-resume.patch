@@ -1,0 +1,84 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] Input: rsinput: reopen the UART before retrying a failed resume
+
+On the Portal (20261015.1) one resume in 14 left the pad dead: every
+init attempt from the resume work timed out (-110), 15 power-cycles over
+17 s, and the work gave up. The UART carried nothing in, though the
+version requests went out. Unbinding and binding the driver brought the
+MCU straight back (version reply 110 ms after probe), so the MCU and
+the line were fine; probe opens the serdev port, resume reuses it as
+the serial core's resume left it.
+
+Each retry of the resume work now closes and reopens the port and sets
+its baud rate and flow control, as probe does, before power-cycling the
+MCU. The first attempt after a resume is unchanged. A failed reopen
+leaves the port closed, is retried by the next round, and remove does
+not close it again.
+---
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -175,6 +175,8 @@
+     uint8_t ack_pending;
+     struct delayed_work resume_work;
+     unsigned int resume_retries;
++    /* The UART is closed: a reopen for a retry failed (the work tries again). */
++    bool port_closed;
+ };
+ 
+ static bool rumble_enable = true;
+@@ -744,7 +746,8 @@
+     struct rsinput_driver *drv = serdev_device_get_drvdata(serdev);
+ 
+     cancel_delayed_work_sync(&drv->resume_work);
+-    serdev_device_close(serdev);
++    if (!drv->port_closed)
++        serdev_device_close(serdev);
+     input_unregister_device(drv->input);
+     if (drv->enable_gpio)
+         gpiod_set_value_cansleep(drv->enable_gpio, 0);
+@@ -810,12 +813,44 @@
+     return rsinput_init_commands(drv);
+ }
+ 
++/*
++ * Close and reopen the UART, as probe opens it. On the Portal one resume in
++ * 14 left the MCU's replies unheard through every power-cycle (all 15 init
++ * attempts timed out, the line silent) while a driver rebind, which reopens
++ * the port, brought the pad straight back.
++ */
++static int rsinput_reopen_port(struct rsinput_driver *drv)
++{
++    struct serdev_device *serdev = drv->serdev;
++    int error;
++
++    if (!drv->port_closed)
++        serdev_device_close(serdev);
++    drv->port_closed = true;
++    drv->rx_len = 0;
++
++    error = serdev_device_open(serdev);
++    if (error) {
++        dev_err(&serdev->dev, "Unable to reopen UART device: %d\n", error);
++        return error;
++    }
++    drv->port_closed = false;
++
++    serdev_device_set_baudrate(serdev, 115200);
++    serdev_device_set_flow_control(serdev, false);
++    return 0;
++}
++
+ static void rsinput_resume_work(struct work_struct *work)
+ {
+     struct rsinput_driver *drv = container_of(to_delayed_work(work),
+                                               struct rsinput_driver, resume_work);
++    int error = 0;
+ 
+-    if (!rsinput_power_up(drv))
++    /* A retry starts from a freshly opened UART, as probe does. */
++    if (drv->resume_retries || drv->port_closed)
++        error = rsinput_reopen_port(drv);
++    if (!error && !rsinput_power_up(drv))
+         return;
+ 
+     if (++drv->resume_retries < MCU_RESUME_MAX_RETRIES)
