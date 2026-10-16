@@ -88,8 +88,10 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   as the RP5 and Thor do. The real 6" makes the UI far too large.
 - **Headphone jack**: `61-kettle-pocketfitelite-jack.rules` keeps the WCD9395's SoundWire buses
   runtime-active, as ROCKNIX does, because a clock-stopped bus misses the jack plug.
-- **Charging**: no charge speeds or `current` charge limit yet. It is not known whether the SM8750
-  battery manager takes `constant_charge_current` (`40-kettle/1190`) as the Portal's does.
+- **Charging**: unlike the Portal's, the charger firmware takes the end threshold, so Steam's
+  charge limit is the firmware's (it holds while asleep or off). The charge current
+  (`constant_charge_current`, `40-kettle/1190`) works too and gives Device Settings its charge
+  speeds.
 
 ## Verified on a unit
 2026-10-15, build 20261015.2 with the dts fixes below (24 GB / 1 TB unit):
@@ -108,6 +110,16 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
 - Suspend soak on the internal install (20261015.3): 20/20 `systemctl suspend` cycles with RTC
   wake, no UFS errors, `/home` writable after, Wi-Fi back each time with no ath12k `-108`. Every
   suspend logs `dwc3-qcom a600000.usb: port-1 HS-PHY not in L2` (no effect seen).
+- A/B update of the internal install (20261015.3 -> 20261015.4, `rauc install` of a local
+  bundle): slot B boots, `\KERNEL` rewritten by the update. Touch keeps working across resumes
+  (`40-kettle/1440`; before it, a resume could leave the touch IC dead until a reboot).
+- Charging (9 V PD charger): ~31 W in, up to ~6 A into the battery; around 84% the fast stage
+  hands over (charging on and off every ~15 s for a minute or two), then a steady ~2.65 A.
+  The end threshold stops charging within seconds (battery at 0 mA, the charger runs the
+  system) and charging resumes when it is raised; a charge current cap of 2 A held 1.85 A, 0
+  stopped charging, and raising it resumed at once at 85%. `power_now` reads ~50 W at a 3 W
+  draw (the Portal's battery manager does the same); current and voltage are right. Idle in
+  Game Mode: ~2.4 W at 75% brightness.
 - CPU tables: six cores 384 MHz-3.53 GHz, two prime cores 1.02-4.09 GHz (this unit's bin).
 - Fixed in the dts after the first boots: the SD bus at SDR104 read the card with I/O errors
   every few seconds (`max-frequency` 100 MHz); the CDSP firmware crashed at every start and the
@@ -128,6 +140,7 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
 - Gyro: there is no IMU node in the dts, so it is probably the ADSP's Sensor Core as on the
   Portal and Thor (`kettle-motion` would need a `[konkr,pocket-fit-elite]` matrix).
 - The intermittent WCN7860 loss above; suspend over many cycles; DisplayPort out and its audio, the USB-C orientation GPIO (marked TODO in the
-  dts), the charger and the charge limit, the headphone jack.
+  dts), the headphone jack, Steam's charge limit and charge speeds end to end (after
+  20261015.4), sleep drain.
 - `60-kettle-usb-power.rules` and `60-kettle-ath12k-iommu-fq.rules` match SM8550's USB controller
   and WCN7850 only. Extend them to SM8750/WCN7860 once tested.
