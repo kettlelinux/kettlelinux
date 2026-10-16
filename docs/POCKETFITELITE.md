@@ -137,6 +137,16 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   s2idle on purpose (without it the SoC resets instead of waking, as on the SM8550), so CX,
   AOSS and DDR never collapse. The wake-from-collapse reset is the open work, shared with the
   Portal.
+- Deep sleep (build 20261016.1, Armada's deep-sleep work as `40-kettle/1450-1462`, 0044 and
+  0521 dropped, `1446`): the SoCCP loads `soccp.mbn` and reports D3 at boot ("in D3, boot bus
+  vote dropped"). A 10-minute RTC-woken `systemctl suspend` on battery: CX shutdown and DDR low
+  power for the whole sleep (`cxsd`/`ddr` 29 entries, 601 s; `aosd` stays 0), **14 mA** against
+  188 mA on 20261015.5 (~0.3%/h). It woke normally, but that first wake lost Wi-Fi: the
+  firmware booted, timed out loading its board data (`-110`), and ath12k's recovery then hit
+  its own MHI state guard ("failed to set mhi state INIT(0) in current mhi state (0x5)"); a
+  reboot brought it back. The next nine wakes (60 s sleeps, all CX shutdown) each had Wi-Fi
+  back in 2-5 s, the MHI reset, BHI download and mission mode visible with debug on. The
+  first failure is not understood yet.
 - Against the Odin 2 Portal (2026-10-15, .5 against the Portal's 20261015.1): The Witcher 3,
   same spot, Steam preset at 720p, no upscaler or frame generation, Performance, Auto TDP on,
   no frame limit: **~55 fps against ~30** (1.8x), both GPU-bound at their top clocks (A830
