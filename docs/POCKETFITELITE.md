@@ -125,7 +125,10 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   internal, ~28 fps with TSR on low. On battery 15.4 W average and 20 W peak uncapped, 12 W at
   a 40 fps cap; prime cores up to 103 C, main 93 C, GPU 87 C, DDR 80 C, battery 36 C; the fan
   at full speed (~7300 rpm, the tach works) throughout. No kernel thermal throttling, no GPU
-  faults. DDR stayed at 4224 MHz. The Balanced profile's first GPU cap (734 MHz) cost a third
+  faults. DDR stayed at 4224 MHz, as it does under a CPU memory stress (`stress-ng --stream 8`,
+  CPUs at full clock, 30 s at 4224): `ddr_stats` lists the SoC's 4761 MHz step and the GPU's
+  top OPPs vote for it, but neither voter reaches it, so this unit's memory most likely tops
+  out at 4224 MHz (LPDDR5X-8533). The Balanced profile's first GPU cap (734 MHz) cost a third
   of the frame rate; it is 967 MHz now.
 - CPU tables: six cores 384 MHz-3.53 GHz, two prime cores 1.02-4.09 GHz (this unit's bin).
 - Fixed in the dts after the first boots: the SD bus at SDR104 read the card with I/O errors
@@ -139,9 +142,6 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
 
 ## Still to check, by hand
 - Desktop Mode rotation (KWin `Rotated270`), the refresh rates in use.
-- DDR never runs above 4224 MHz, not even in a GPU-bound game, though `ddr_stats` lists 4761
-  MHz and the GPU's top OPPs vote for it (18.6 GB/s): this unit's memory rating, or a vote
-  that doesn't reach the firmware.
 - Fan noise.
 - The button map against the physical buttons; the stick RGB in `kettle-leds` (one multicolor
   LED for both rings, where the AYN devices have `rgb:{l,r}N`).
