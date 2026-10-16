@@ -1775,4 +1775,13 @@
 	status = "disabled";
 };
 
+/*
+ * The SoCCP (40-kettle/1451, 1452): the bootloader's early image stays in D0 and
+ * blocks SoC deep sleep. The driver reloads this unit's own image (from the
+ * Android modem partition), which parks itself in D3.
+ */
+&remoteproc_soccp {
+	firmware-name = "qcom/sm8750/konkr/pfe/soccp.mbn";
+};
+
 #include "sm8750-konkr-pf-elite-fan.dtsi"

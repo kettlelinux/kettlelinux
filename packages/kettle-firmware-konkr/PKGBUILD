@@ -6,12 +6,16 @@
 #  - Arch linux-firmware-qcom (Valve's deckard mirror): A830 GPU (gen80000 SQE/GMU/AQE and the
 #    SM8750 zap, signed with Qualcomm's test key, so the same on every SM8750 board) and the
 #    iris video firmware (vpu35_p4)
+#  - Armada (pinned commit): the SoCCP image, soccp.mbn, from the unit's own Android modem
+#    partition. The kernel reloads it so the SoCCP parks itself (40-kettle/1451), which the
+#    SoC's deep sleep needs; ROCKNIX's set has no SoCCP image.
 # Valve's own linux-firmware-deckard is ignored (image/pacman.conf); these files are ours alone.
 pkgname=kettle-firmware-pocketfitelite
 _extra_rev=8834a0c80f5b24fee5ed9e18c1560dc48a6f1bd9
 _linux_fw=20260221-1
+_armada_rev=f1e1a0848b95672df48503ada5e70d019372577b
 pkgver=${_linux_fw%-*}.${_extra_rev:0:8}
-pkgrel=1
+pkgrel=2
 pkgdesc='Firmware for the KONKR Pocket FIT Elite (DSPs, audio, GPU, video, Wi-Fi, Bluetooth)'
 arch=(any)
 url='https://github.com/ROCKNIX/extra-firmware'
@@ -22,11 +26,13 @@ options=(!strip)
 _mirror=https://steamdeck-packages.steamos.cloud/archlinux-deckard/archlinux/mash-20260305/core/os/aarch64
 source=("extra-firmware::git+https://github.com/ROCKNIX/extra-firmware.git#commit=$_extra_rev"
         "$_mirror/linux-firmware-qcom-$_linux_fw-any.pkg.tar.zst"
-        LICENSE.extra-firmware)
+        LICENSE.extra-firmware
+        "soccp-$_armada_rev.mbn::https://raw.githubusercontent.com/armada-os/armada/$_armada_rev/system_files/usr/lib/firmware/qcom/sm8750/konkr/pfe/soccp.mbn")
 noextract=("linux-firmware-qcom-$_linux_fw-any.pkg.tar.zst")
 sha256sums=('SKIP'
             'd7d520aa66b66004e2de1632ce80c16539b6058d0e6bdef5f66ca6e6ef6a26bd'
-            '065b143592b015fc830265711cea9fcc514f1a0fbd11b8cfd8107459540a114a')
+            '065b143592b015fc830265711cea9fcc514f1a0fbd11b8cfd8107459540a114a'
+            'cc975c278132a442a8a222b27af02d67910a83f4e5967d532fa07b006da05829')
 
 package() {
   local fw="$pkgdir/usr/lib/firmware"
@@ -36,6 +42,7 @@ package() {
     qca/gngbtfw20.mbn qca/gngbtnv20.bin \
     qcom/sm8750/konkr/pfe/* \
     qcom/sm8750/SM8750-KONKR-tplg.bin)
+  install -Dm644 "$srcdir/soccp-$_armada_rev.mbn" "$fw/qcom/sm8750/konkr/pfe/soccp.mbn"
   # where ROCKNIX's files come from, and that no licence for them is recorded
   install -Dm644 "$srcdir/LICENSE.extra-firmware" -t "$pkgdir/usr/share/licenses/$pkgname"
 
