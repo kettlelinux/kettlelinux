@@ -153,6 +153,49 @@ export function hasWrapper(opts: string, wrapper: string): boolean {
   return withoutWrapper(opts, wrapper) !== opts;
 }
 
+// The words after %command%, which Steam passes to the game, with where each is in `rest`
+// (split's). A quoted word ('a b', "a b", or one with a quote in it) is null: never matched.
+function argWords(rest: string): { start: number; end: number; word: string | null }[] {
+  const out: { start: number; end: number; word: string | null }[] = [];
+  const re = /(?:[^\s'"\\]|\\.|'[^']*'?|"(?:[^"\\]|\\.)*"?)+/g;
+  for (let m; (m = re.exec(rest)); ) {
+    out.push({ start: m.index, end: m.index + m[0].length, word: /['"\\]/.test(m[0]) ? null : m[0] });
+  }
+  return out;
+}
+
+// The game arguments in `owns` (matched without case, as Unreal does) found after %command%.
+function ownedArgs(rest: string, owns: string[]) {
+  const own = new Set(owns.map((a) => a.toLowerCase()));
+  return argWords(rest).filter((w) => w.word !== null && own.has(w.word.toLowerCase()));
+}
+
+// Set (or with value=null remove) one game argument after %command% out of a group that
+// excludes each other (Unreal's -dx12, -vulkan, -dx11...): every other argument in `owns` the
+// options have goes, so the game never gets two. One already there stays in its place, a new one
+// goes last. The other arguments are left as written, quotes and all.
+export function withArg(opts: string, owns: string[], value: string | null): string {
+  const { prefix, rest } = split(opts);
+  const found = ownedArgs(rest, owns);
+  const keep = value === null ? undefined : found.find((w) => w.word === value);
+  if (value === null && !found.length) return opts;
+  if (keep && found.length === 1) return opts;
+  let r = rest;
+  for (const w of [...found].reverse()) {
+    if (w === keep) continue;
+    let s = w.start;
+    while (s > 0 && /\s/.test(r[s - 1])) s--;
+    r = r.slice(0, s) + r.slice(w.end);
+  }
+  if (value !== null && !keep) r = `${r.trimEnd()} ${value}`;
+  return join(prefix, r);
+}
+
+// The first of the arguments in `owns` after %command%, as written, or null.
+export function argValue(opts: string, owns: string[]): string | null {
+  return ownedArgs(split(opts).rest, owns)[0]?.word ?? null;
+}
+
 export function hasEnv(opts: string, name: string): boolean {
   return split(opts).prefix.some((t) => t.startsWith(`${name}=`));
 }

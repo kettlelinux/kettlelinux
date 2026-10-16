@@ -1,9 +1,19 @@
-# Game Settings' Lumen switch (Performance tab): Lumen, Unreal Engine 5's global illumination and
-# reflections, off in UE5 games unless the player turns it back on, for all games or one. It is
-# the heaviest part of most UE5 games on these GPUs (Expedition 33 on the Pocket FIT Elite: 24 ->
-# 28 fps, no visible change), and many games keep it on even at their Low preset.
+# Game Settings' Unreal Engine 5 settings (Performance tab), set in the game's user Engine.ini:
 #
-# It goes through the game's own user config: [SystemSettings] in its user Engine.ini, which UE
+# Lumen, UE5's global illumination and reflections, off in UE5 games unless the player turns it
+# back on, for all games or one. It is the heaviest part of most UE5 games on these GPUs
+# (Expedition 33 on the Pocket FIT Elite: 24 -> 28 fps, no visible change), and many games keep it
+# on even at their Low preset.
+#
+# The Nanite fix, on in every UE5 game unless turned off for one: all of Nanite's triangles drawn
+# by its compute (software) rasterizer. In DirectX 12 (vkd3d-proton on Turnip, Adreno 830) the
+# hardware path Nanite takes for triangles that are large on screen is broken: distant Nanite
+# meshes vanish as you get close and come back as you move away (Satisfactory 1.0, the Black Myth:
+# Wukong benchmark). With the fix Satisfactory draws them right at 55-60 fps. In Vulkan, UE falls
+# back to SM5 on Turnip (no mesh shaders, fewer than 9 descriptor sets) and Nanite is off: the
+# line changes nothing there.
+#
+# Both go through the game's own user config: [SystemSettings] in its user Engine.ini, which UE
 # applies over its quality presets: in the Wine prefix (AppData/Local/<project>/Saved/Config/
 # Windows, or Documents/My Games/<project>/... as Oblivion Remastered has it) or, for games that
 # keep Saved next to the game (Black Myth: Wukong), in the install folder; whichever the game
@@ -12,9 +22,11 @@
 # user Engine.ini (Titan Quest II); it changes nothing for them. The config only exists once the
 # game has run, so a new game gets it from its second launch on.
 #
-# lumen.json (the plugin's settings) holds the all-games choice, the games' own, and for each game
-# it was written to, the file's text before and after and its mode, so turning Lumen back on
-# restores the file exactly (or, when something else changed it since, takes out only our lines).
+# lumen.json (the plugin's settings) holds the all-games Lumen choice, the games' own, the games
+# with the Nanite fix off, and for each game it was written to, the file's text before and after,
+# its mode and which parts are in it, so turning both back to the game's own restores the file
+# exactly (or, when something else changed it since, takes out only our lines), and turning one
+# rewrites our block with the other alone.
 import json
 import os
 import struct
@@ -23,10 +35,24 @@ import decky
 import steamlib
 
 STATE = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "lumen.json")
-MARK = "; Kettle Linux: Lumen off (Game Settings > Performance)"
-CVARS = [("r.DynamicGlobalIlluminationMethod", "0"),  # no Lumen GI (0: none)
-         ("r.ReflectionMethod", "2")]                 # screen-space reflections instead of Lumen's
-CHOICES = ("default", "off", "on")  # a game's own: follow all games, Lumen off, Lumen on
+# our block's parts, in the order they're written, and their cvars
+PARTS = {
+    "lumen": [("r.DynamicGlobalIlluminationMethod", "0"),  # no Lumen GI (0: none)
+              ("r.ReflectionMethod", "2")],                # screen-space reflections instead of Lumen's
+    "nanite": [("r.Nanite.MinPixelsPerEdgeHW", "100000")],  # no triangle is big enough for the HW path
+}
+LABELS = {"lumen": "Lumen off", "nanite": "Nanite fix"}
+NAMES = {k.lower() for cvars in PARTS.values() for k, _ in cvars}
+CHOICES = ("default", "off", "on")  # a game's own Lumen: follow all games, Lumen off, Lumen on
+
+
+def _mark(parts: list[str]) -> str:
+    """Our block's first line; Lumen alone gives the one versions before the Nanite fix wrote."""
+    return f"; Kettle Linux: {', '.join(LABELS[p] for p in parts)} (Game Settings > Performance)"
+
+
+def _is_mark(line: str) -> bool:
+    return line.startswith("; Kettle Linux: ") and line.endswith("(Game Settings > Performance)")
 
 
 def _load() -> dict:
@@ -39,6 +65,7 @@ def _load() -> dict:
     s["default_off"] = s.get("default_off", True) is not False
     for k in ("games", "applied"):
         s[k] = s[k] if isinstance(s.get(k), dict) else {}
+    s["nanite_off"] = [str(a) for a in s["nanite_off"]] if isinstance(s.get("nanite_off"), list) else []
     return s
 
 
@@ -79,16 +106,40 @@ def engine_major(exe: str) -> int | None:
     return None
 
 
-def _ini_path(appid: int, root: str, exe_rel: str) -> str | None:
-    """The game's user Engine.ini: in Saved/Config/Windows under AppData/Local/<project> or
-    Documents/My Games/<project> in its prefix (<project>: the folder its Binaries are in, matched
-    ignoring case, spaces and punctuation: OblivionRemastered is "Oblivion Remastered"), or under
-    <project> in its install folder; the one the game made its config in. None before it has."""
+def _project(root: str, exe_rel: str) -> tuple[str, list[str]] | None:
+    """The game's UE project folder, relative to install (the folder its Binaries are in), and
+    the exes that may carry the engine's version. A game started by a launcher stub at the top
+    (Satisfactory's FactoryGameSteam.exe) has its project in a top folder that isn't Engine with
+    Binaries/Win64 (or WinGDK, Win32) in it, holding the *-Shipping.exe."""
     parts = exe_rel.replace("\\", "/").split("/")
     low = [p.lower() for p in parts]
-    if "binaries" not in low or low.index("binaries") == 0:
+    if "binaries" in low and low.index("binaries") > 0:
+        return "/".join(parts[:low.index("binaries")]), [exe_rel]
+    if len(parts) > 1:
         return None
-    i = low.index("binaries")
+    try:
+        tops = sorted(e.name for e in os.scandir(root) if e.is_dir() and e.name.lower() != "engine")
+    except OSError:
+        return None
+    found = []
+    for top in tops:
+        for plat in ("Win64", "WinGDK", "Win32"):
+            d = os.path.join(root, top, "Binaries", plat)
+            try:
+                ship = sorted(f for f in os.listdir(d) if f.lower().endswith("-shipping.exe"))
+            except OSError:
+                continue
+            found.append((not ship, top, [exe_rel] + [f"{top}/Binaries/{plat}/{f}" for f in ship]))
+            break
+    return min(found)[1:] if found else None
+
+
+def _ini_path(appid: int, root: str, project: str) -> str | None:
+    """The game's user Engine.ini: in Saved/Config/Windows under AppData/Local/<project> or
+    Documents/My Games/<project> in its prefix (<project>'s name matched ignoring case, spaces and
+    punctuation: OblivionRemastered is "Oblivion Remastered"), or under <project> in its install
+    folder; the one the game made its config in. None before it has."""
+    name = os.path.basename(project)
     norm = lambda n: "".join(ch for ch in n.lower() if ch.isalnum())
     cands = []
     pfx = steamlib.prefix(appid)
@@ -96,10 +147,10 @@ def _ini_path(appid: int, root: str, exe_rel: str) -> str | None:
         user = os.path.join(pfx, "drive_c", "users", "steamuser")
         for base in (os.path.join(user, "AppData", "Local"), os.path.join(user, "Documents", "My Games")):
             try:
-                cands += [os.path.join(base, e) for e in os.listdir(base) if norm(e) == norm(parts[i - 1])]
+                cands += [os.path.join(base, e) for e in os.listdir(base) if norm(e) == norm(name)]
             except OSError:
                 pass
-    cands.append(os.path.join(root, *parts[:i]))
+    cands.append(os.path.join(root, *project.split("/")))
     for c in cands:
         d = os.path.join(c, "Saved", "Config", "Windows")
         if any(os.path.isfile(os.path.join(d, f)) for f in ("Engine.ini", "GameUserSettings.ini")):
@@ -127,30 +178,31 @@ def _write(path: str, text: str, mode: int):
 
 
 def _without_ours(text: str) -> str:
-    """text with our marker and the lines after it that set our cvars taken out."""
-    names = {k.lower() for k, _ in CVARS}
+    """text with our marker (any of ours, the Lumen-only one older versions wrote too) and the
+    lines after it that set our cvars taken out."""
     out, skipping = [], False
     for line in text.splitlines(keepends=True):
         s = line.strip()
-        if s == MARK:
+        if _is_mark(s):
             skipping = True
             continue
-        if skipping and "=" in s and s.split("=", 1)[0].strip().lower() in names:
+        if skipping and "=" in s and s.split("=", 1)[0].strip().lower() in NAMES:
             continue
         skipping = False
         out.append(line)
     return "".join(out)
 
 
-def _with_ours(text: str) -> str:
-    """text with our block at the top of [SystemSettings] (a new section when there's none), and
-    any other values for our cvars taken out, so ours are the ones UE reads."""
-    names = {k.lower() for k, _ in CVARS}
+def _with_ours(text: str, parts: list[str]) -> str:
+    """text with our block for parts at the top of [SystemSettings] (a new section when there's
+    none), and any other values for its cvars taken out, so ours are the ones UE reads."""
+    cvars = [kv for p in parts for kv in PARTS[p]]
+    names = {k.lower() for k, _ in cvars}
     lines = _without_ours(text).splitlines(keepends=True)
     nl = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
     if lines and not lines[-1].endswith(("\r", "\n")):
         lines[-1] += nl
-    block = [MARK + nl] + [f"{k}={v}{nl}" for k, v in CVARS]
+    block = [_mark(parts) + nl] + [f"{k}={v}{nl}" for k, v in cvars]
     out, cur, placed = [], None, False
     for line in lines:
         s = line.strip()
@@ -175,25 +227,29 @@ def _empty(text: str) -> bool:
     return all(not l.strip() or l.strip().lower() == "[systemsettings]" for l in text.splitlines())
 
 
-def _apply(s: dict, appid: int, path: str) -> bool:
-    """Our block in the game's Engine.ini, the file read-only; False when it already was."""
+def _apply(s: dict, appid: int, path: str, parts: list[str]) -> bool:
+    """Our block for parts in the game's Engine.ini, the file read-only; False when it already
+    was. A change of parts rewrites the block from the game's text, so a game value our other
+    part had replaced comes back."""
     a = s["applied"].get(str(appid))
     cur = _read(path)
-    if a and a.get("path") == path and cur is not None and cur == a.get("written"):
+    same = a and a.get("path") == path
+    if same and cur is not None and cur == a.get("written") and a.get("parts", ["lumen"]) == parts:
         if os.stat(path).st_mode & 0o222:
             os.chmod(path, 0o444)
         return False
-    if a and a.get("path") == path:
+    if same:
         # the file changed since we wrote it (a game update, Steam's verify): what's there now,
         # less our lines, is the game's
-        orig = _without_ours(cur) if cur is not None else a.get("orig")
+        orig = _without_ours(cur) if cur is not None and cur != a.get("written") else a.get("orig")
         mode = a.get("mode")
     else:
         orig = cur
         mode = os.stat(path).st_mode & 0o777 if cur is not None else None
-    written = _with_ours(cur or "")
+    # the game's text (a file the game deleted gets our block alone, as before)
+    written = _with_ours(orig or "" if cur is not None else "", parts)
     _write(path, written, 0o444)
-    s["applied"][str(appid)] = {"path": path, "orig": orig, "written": written, "mode": mode}
+    s["applied"][str(appid)] = {"path": path, "orig": orig, "written": written, "mode": mode, "parts": parts}
     return True
 
 
@@ -220,33 +276,47 @@ def wanted_off(s: dict, appid: int) -> bool:
     return s["default_off"] if c == "default" else c == "off"
 
 
+def _parts(s: dict, appid: int) -> list[str]:
+    """Our block's parts for the game: what it gets when it's a UE5 game."""
+    return [p for p, on in (("lumen", wanted_off(s, appid)), ("nanite", str(appid) not in s["nanite_off"])) if on]
+
+
 def sync_game(s: dict, appid: int, engine: dict | None) -> dict:
-    """Bring one game's Engine.ini in line with its choice. engine: what gameengine found (with
+    """Bring one game's Engine.ini in line with its choices. engine: what gameengine found (with
     the main exe relative to install), None when not installed. Returns the game's state."""
     root = steamlib.install_dir(appid)
     exe = engine.get("exe") if engine and engine.get("engine") == "unreal" else None
-    major = None
+    major, proj = None, None
     if root and exe and exe.lower().endswith(".exe"):
+        proj = _project(root, exe)
         # some exes are packed, without a version resource; the engine's crash reporter has it too
-        major = engine_major(os.path.join(root, exe)) or \
-            engine_major(os.path.join(root, "Engine", "Binaries", "Win64", "CrashReportClient.exe"))
-    off = wanted_off(s, appid)
-    path = _ini_path(appid, root, exe) if major == 5 else None
+        for e in (proj[1] if proj else [exe]) + [os.path.join("Engine", "Binaries", "Win64", "CrashReportClient.exe")]:
+            major = engine_major(os.path.join(root, e))
+            if major:
+                break
+    parts = _parts(s, appid) if major == 5 else []
+    path = _ini_path(appid, root, proj[0]) if major == 5 and proj else None
     a = s["applied"].get(str(appid))
     if major == 5 and not path and a and os.path.isdir(os.path.dirname(a["path"])):
         path = a["path"]  # the game deleted its Engine.ini (Expedition 33): where it was
     changed = False
     try:
-        if major == 5 and off and path:
-            changed = _apply(s, appid, path)
-        elif str(appid) in s["applied"] and not (major == 5 and off):
+        if parts and path:
+            changed = _apply(s, appid, path, parts)
+        elif str(appid) in s["applied"] and not parts:
             changed = _undo(s, appid)
     except OSError as e:
         decky.logger.warning("lumen: %s: %s", appid, e)
+    a = s["applied"].get(str(appid))
     if changed:
-        decky.logger.info("lumen: %s: Lumen %s (%s)", appid, "off" if str(appid) in s["applied"] else "back on", path)
+        decky.logger.info("lumen: %s: %s (%s)", appid,
+                          ", ".join(LABELS[p] for p in a["parts"]) if a else "the game's own", path)
+    now = a.get("parts", ["lumen"]) if a else []
+    off, nanite = wanted_off(s, appid), str(appid) not in s["nanite_off"]
     return {"ue5": major == 5, "choice": s["games"].get(str(appid), "default"), "off": off,
-            "applied": str(appid) in s["applied"], "pending": major == 5 and off and not path}
+            "applied": "lumen" in now, "pending": major == 5 and off and not path,
+            "nanite": nanite, "nanite_applied": "nanite" in now,
+            "nanite_pending": major == 5 and nanite and not path}
 
 
 def get(appid: int | None, engine_of) -> dict:
@@ -274,6 +344,14 @@ def set_choice(appid: int | None, value, engine_of) -> dict:
         s["games"].pop(str(appid), None)
     else:
         s["games"][str(appid)] = value
+    _save(s)
+    return get(appid, engine_of)
+
+
+def set_nanite(appid: int, on: bool, engine_of) -> dict:
+    """Whether the game gets the Nanite fix (on unless turned off for it)."""
+    s = _load()
+    s["nanite_off"] = [a for a in s["nanite_off"] if a != str(appid)] + ([] if on else [str(appid)])
     _save(s)
     return get(appid, engine_of)
 

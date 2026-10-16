@@ -16,7 +16,8 @@ settings that worked to the Kettle game database, where other players find and a
   Proton version).
 - **Kettle fixes**: the game fixes Welcome applies (`shared/gameFixes.ts`), shown for the games they
   are for and can be turned off or back on.
-- **FEX, Graphics, Proton**: every option in the catalog, each "Default" until chosen.
+- **FEX, Graphics, Proton**: every option in the catalog, each "Default" until chosen (one for some
+  engines only, such as Unreal Engine's graphics API, is listed for games on them).
 - **Engine**: what the game is built on, found from the files in its install folder
   (`shared/gameengine.py`): the engine (`shared/engines.json`: Unity IL2CPP or Mono, Unreal,
   Source, Godot, GameMaker, RPG Maker, .NET, ...), whether Steam installed a Windows build (run
@@ -51,6 +52,12 @@ help text, choices, and target, one of:
 | `{"env": "NAME"}` | `NAME=value` |
 | `{"flags": "NAME", "flag": "f"}` | `f` in the comma-separated `NAME` (`TU_DEBUG`, `VKD3D_CONFIG`) |
 | `{"dxvk": "key"}` | `key=value` in `DXVK_CONFIG` |
+| `{"args": ["-a", "-b", ...]}` | the value (each choice's is one argument, such as `-dx12`) after `%command%`, which Steam passes to the game; first every argument in the list is taken out, so the game never gets two of a group that excludes each other (Unreal aborts with both `-dx11` and `-dx12`). Matched without case, quoted words never |
+
+An option can have `"for": {"engines": [...], "platforms": [...], "archs": [...]}` like a preset
+(ids from `shared/engines.json`): the panel then lists it only for games `gameengine.py` found
+matching, or where the profile already has it. It's a display rule only: a profile applies the
+option to any game, and the server takes it for any game.
 
 The plugin, its backend and the server all validate against this one file, so the database can
 only hold options Game Settings offers; a new option needs a plugin update and a server deploy.

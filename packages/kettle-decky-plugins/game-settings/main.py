@@ -1,6 +1,7 @@
 # Game Settings: per-game compatibility profiles. A profile is a set of options from the catalog
 # (shared/game-options.json, installed next to this file): FEX, DXVK, vkd3d-proton, Turnip and
-# Proton settings the frontend writes into the game's launch options, plus custom variables, DLL
+# Proton settings (and an Unreal Engine game's graphics API, an argument after %command%) the
+# frontend writes into the game's launch options, plus custom variables, DLL
 # overrides and the Proton version (Steam's compatibility tool). Each game's profile is kept in
 # games.json, with which launch option entries the plugin wrote (so it only ever takes out its
 # own); profiles the user saves by name to reuse on other games are in profiles.json.
@@ -19,8 +20,8 @@
 #
 # Beside the compatibility profiles, the panel's other tabs set a game's other settings, each in
 # its own module: Performance (fan, CPU cores and caps, Auto TDP: kettle-powerd's per-game
-# settings, powerd.py; the game's own refresh rate, refresh.py; and Lumen off in Unreal Engine 5
-# games, lumen.py), Upscaling (OptiScaler, upscaling.py) and Frame Gen (the kettle-framegen
+# settings, powerd.py; the game's own refresh rate, refresh.py; and in Unreal Engine 5 games,
+# Lumen off and the Nanite fix for DirectX 12, lumen.py), Upscaling (OptiScaler, upscaling.py) and Frame Gen (the kettle-framegen
 # layer, framegen.py). Beside the game fixes in the Compatibility tab are config fixes, values
 # set in a game's own config file for games with no launch option for them (configfix.py: Path of
 # Exile 2 in DirectX 12). "All games" in the game
@@ -59,7 +60,7 @@ def _up(fn, *args):
         return fn(*args)
 
 
-# Lumen's Engine.ini edits and lumen.json, one at a time (a sync at start or after a game exits
+# The UE5 Engine.ini edits (Lumen, the Nanite fix) and lumen.json, one at a time (a sync at start or after a game exits
 # can overlap a change in the panel)
 _lumen_lock = threading.Lock()
 
@@ -128,8 +129,10 @@ def _catalog() -> dict:
         choices = {o["id"]: {ch["value"] for ch in o["choices"]} for o in c["options"]}
         managed = set(c["custom"]["env_reserved"])
         for o in c["options"]:
-            t = o["target"]
-            managed.add(t.get("env") or t.get("flags") or "DXVK_CONFIG")
+            t = o["target"]  # env, flags or dxvk: a variable; args: game arguments, none
+            name = t.get("env") or t.get("flags") or ("DXVK_CONFIG" if t.get("dxvk") else None)
+            if name:
+                managed.add(name)
         _cat = {**c, "choices": choices, "managed": managed,
                 "dll_modes_set": {m["value"] for m in c["custom"]["dll_modes"]}}
     return _cat
@@ -665,13 +668,18 @@ class Plugin:
 
     async def lumen_get(self, appid: int | None) -> dict:
         """appid None: whether Lumen is off in UE5 games by default; else the game's state
-        (ue5: it's a UE5 game; choice: default, off or on; off: what applies; applied: our lines
-        are in its Engine.ini; pending: it has no prefix yet, from its next launch)."""
+        (ue5: it's a UE5 game; choice: default, off or on; off: what applies; applied: our Lumen
+        lines are in its Engine.ini; pending: Lumen off, but it has no config yet, from its next
+        launch; nanite, nanite_applied, nanite_pending: the same for the Nanite fix)."""
         return await asyncio.to_thread(_lumen, lumen.get, appid)
 
     async def lumen_set(self, appid: int | None, value) -> dict:
         """appid None: value is the all-games default (bool); else default, off or on."""
         return await asyncio.to_thread(_lumen, lumen.set_choice, appid, value)
+
+    async def lumen_set_nanite(self, appid: int, on: bool) -> dict:
+        """The game's Nanite fix on (the default) or off."""
+        return await asyncio.to_thread(_lumen, lumen.set_nanite, appid, bool(on))
 
     async def lumen_sync(self):
         """After a game exits: its prefix may be new (first launch), or the game rewrote its config."""

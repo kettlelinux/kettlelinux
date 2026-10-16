@@ -2,10 +2,12 @@
 // validates against too) and how a profile turns into launch options.
 import raw from "../../shared/game-options.json";
 import {
+  argValue,
   dllOverride,
   dxvkOption,
   envValue,
   hasEnvFlag,
+  withArg,
   withDllOverride,
   withDxvkOption,
   withEnv,
@@ -13,11 +15,13 @@ import {
 } from "../../shared/launchOptions";
 
 export type Choice = { value: string; label: string };
-export type Target = { env?: string; flags?: string; flag?: string; dxvk?: string };
-export type Option = { id: string; section: string; label: string; help: string; target: Target; choices: Choice[] };
-export type Section = { id: string; title: string; help: string };
-// for: shown only as a suggestion for games it matches (gameengine.py's engine, platform, arch)
+// args: game arguments after %command% that exclude each other (each choice's value is one)
+export type Target = { env?: string; flags?: string; flag?: string; dxvk?: string; args?: string[] };
+// for (options and presets): only for games it matches (gameengine.py's engine, platform, arch).
+// An option with one is listed for those games, or where the profile has it set.
 export type PresetFor = { engines?: string[]; platforms?: string[]; archs?: string[] };
+export type Option = { id: string; section: string; label: string; help: string; target: Target; choices: Choice[]; for?: PresetFor };
+export type Section = { id: string; title: string; help: string };
 export type Preset = { id: string; label: string; help: string; section?: string; for?: PresetFor; settings: Record<string, string> };
 type Catalog = {
   sections: Section[];
@@ -40,12 +44,20 @@ export const OPTIONS = CATALOG.options;
 // the Presets list: the ones for any game
 export const PRESETS = CATALOG.presets.filter((p) => !p.for);
 
-export function presetsFor(e: { engine: string; platform: string; arch: string }): Preset[] {
+type EngineInfo = { engine: string; platform: string; arch: string };
+const forGame = (f: PresetFor, e: EngineInfo) => {
   const ok = (list: string[] | undefined, v: string) => !list || list.includes(v);
-  return CATALOG.presets.filter(
-    (p) => p.for && ok(p.for.engines, e.engine) && ok(p.for.platforms, e.platform) && ok(p.for.archs, e.arch),
-  );
+  return ok(f.engines, e.engine) && ok(f.platforms, e.platform) && ok(f.archs, e.arch);
+};
+
+export function presetsFor(e: EngineInfo): Preset[] {
+  return CATALOG.presets.filter((p) => p.for && forGame(p.for, e));
 }
+
+// Whether the panel lists an option for this game: one for some engines only once the game is
+// known to be built on one of them, or when the profile has it (from the database, a preset)
+export const optionShown = (o: Option, e: EngineInfo | null, p: Profile) =>
+  !o.for || p.settings[o.id] !== undefined || (e !== null && forGame(o.for, e));
 export const optionById = new Map(OPTIONS.map((o) => [o.id, o]));
 
 export type Profile = {
@@ -64,7 +76,7 @@ export const NOTHING_OWNED: Owned = { options: {}, env: {}, dlls: {} };
 // variables the catalog's options (and the other Kettle plugins) manage: not for custom entries
 const MANAGED = new Set([
   ...CATALOG.custom.env_reserved,
-  ...OPTIONS.map((o) => o.target.env ?? o.target.flags ?? "DXVK_CONFIG"),
+  ...OPTIONS.flatMap((o) => o.target.env ?? o.target.flags ?? (o.target.dxvk ? "DXVK_CONFIG" : [])),
 ]);
 
 export function envError(name: string, value: string): string | null {
@@ -84,6 +96,7 @@ function setTarget(opts: string, t: Target, value: string | null): string {
   if (t.env) return withEnv(opts, t.env, value);
   if (t.flags && t.flag) return withEnvFlag(opts, t.flags, t.flag, value !== null);
   if (t.dxvk) return withDxvkOption(opts, t.dxvk, value);
+  if (t.args) return withArg(opts, t.args, value);
   return opts;
 }
 
@@ -91,6 +104,7 @@ function targetValue(opts: string, t: Target): string | null {
   if (t.env) return envValue(opts, t.env);
   if (t.flags && t.flag) return hasEnvFlag(opts, t.flags, t.flag) ? "1" : null;
   if (t.dxvk) return dxvkOption(opts, t.dxvk);
+  if (t.args) return argValue(opts, t.args);
   return null;
 }
 
