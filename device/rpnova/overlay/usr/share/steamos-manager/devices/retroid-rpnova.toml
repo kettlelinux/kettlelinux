@@ -1,9 +1,9 @@
 # steamos-manager device config for the Retroid Pocket Nova. The power controls themselves
 # (TDP, performance profiles, GPU clock, fan control) are kettle-powerd's, relayed through
 # remotes.d/kettle-power.toml: configuring them here would make steamos-manager write the same
-# cpufreq/devfreq files and fight it. Booted by the ROCKNIX ABL there is no SMBIOS, so it
-# matches on the devicetree only. The charge limit stays with the firmware's end threshold
-# (packages/kettle-power/rpnova.toml), so no remotes.d/kettle-power-charge.toml yet.
+# cpufreq/devfreq files and fight it. Booted by the ROCKNIX ABL there is no SMBIOS (checked on a
+# unit), so it matches on the devicetree only. Steam's charge limit is kettle-powerd's too
+# (remotes.d/kettle-power-charge.toml).
 [[device]]
 dt.compatible = "retroidpocket,rpnova"
 device = "retroid_pocket_nova"

@@ -1,6 +1,7 @@
 # kettle-powerd's description of the Retroid Pocket Nova (QCS8550). Written before the device
 # arrived: the SoC is the Portal's and the Thor's, so the sysfs paths, the CPU clusters and the
-# GPU table are theirs; the TDP range is a placeholder until measured on a unit. Caps between
+# GPU table are theirs; the TDP range is a placeholder until measured on a unit. The charging
+# figures were tested on a unit. Caps between
 # steps round down.
 
 [cpu]
@@ -39,11 +40,24 @@ charger_efficiency = 0.9
 tdp_min = 4
 tdp_max = 18
 # Charging: the Nova's ADSP image is the Odin 2's (packages/kettle-firmware-ayn), the same as
-# its own Android's, whose battery manager takes constant_charge_current (40-kettle/1190) on the
-# Portal and Thor (7 A at boot on a Nova). Until it is tried on a Nova on a charger, Steam's
-# charge limit is the charger's end threshold (the default) and there are no charge speeds;
-# remotes.d/kettle-power-charge.toml (device overlay) is left out for the same reason.
+# its own Android's, and its battery manager takes a charge current as the Portal's and Thor's
+# do (constant_charge_current, kernel patch 40-kettle/1190). Tested on a Nova (2026-10-16, 9 V PD
+# charger, 99%): a 0.3 A cap took the battery from 566 to 277 mA within 2 s, and 7 A again brought
+# it straight back. kettle-powerd holds Steam's charge limit with it, as on the Portal: 0 at the
+# limit, where the charger powers the system and the battery sits idle, and charging again 5%
+# below. Steam's setting comes through remotes.d/kettle-power-charge.toml (device/rpnova).
+charge_limit = "current"
 charge_limit_min = 55
+# The firmware's own charge current, uA (BATT_CHG_CTRL_LIM at boot on a Nova; it takes up to
+# 10 A): what charging returns to when kettle-powerd stops
+charge_current = 7000000
+# Device Settings' charge speeds, the first the default. These cap what goes into the
+# battery; a weaker charger gives it less than the cap.
+charge_speed = [
+  { name = "Fast", ua = 7000000 },
+  { name = "Balanced", ua = 3000000 },
+  { name = "Slow", ua = 1500000 },
+]
 
 # Steam's performance profiles (Quick Access > Performance). Caps in kHz / MHz; a cluster
 # left out runs up to its highest frequency. The Portal's and Thor's.
