@@ -70,11 +70,16 @@ ROCKNIX does on the Nova:
   Up), which ours leaves to the kernel, so it made a second controller that raced ours for the
   pad (seen on 20261016.4).
 - **Firmware**: `kettle-firmware-rpnova` (in `packages/kettle-firmware-ayn`) installs the Odin 2's
-  ADSP and amplifier files, the paths the dts asks for, as ROCKNIX ships them.
-- **Charging**: no charge speeds or `current` charge limit yet. The ADSP image is the Odin 2's,
-  whose battery manager takes `constant_charge_current` on the Portal and Thor, but its battery
-  profile is the Odin 2's 8000 mAh pack and the Nova's real charge current isn't known. Until a
-  unit is measured, Steam's charge limit is the charger's end threshold.
+  ADSP and amplifier files, the paths the dts asks for, as ROCKNIX ships them. They are what the
+  Nova's own Android runs (compared on a unit, 2026-10-16): its `modem_a` partition's
+  `adsp_dtb` has the same loadable segment as the Odin 2's `adsp_dtb.mbn` (only the Qualcomm
+  test-key signature differs), the `.jsn` files are identical, and its `adsp` names the same
+  battery profile, Quectel's SG8550 reference `6690134_QUECTEL_SG8550_8000MAH`. So the battery
+  reads as an 8155 mAh design (`charge_full` learned 7232 mAh) on the Nova's 5000 mAh pack under
+  Android too, and the firmware's charge current is 7 A (`constant_charge_current`, 10 A max).
+- **Charging**: no charge speeds or `current` charge limit yet: the battery manager is the
+  Portal's and Thor's, which takes `constant_charge_current`, but that hasn't been tried on a
+  Nova on a charger. Until then, Steam's charge limit is the charger's end threshold.
 
 ## Still to check, by hand
 - Boot: the ABL flash from Android (root), whether ABL v1.2's Device model list has the Nova,
@@ -95,10 +100,10 @@ ROCKNIX does on the Nova:
   colours themselves.
 - Audio: the speakers with the Odin 2's amplifier tuning (`aw883xx_acf.bin`), the headphone jack
   and its detection, the microphone.
-- Battery and charging: what `charge_now`/`charge_full` read (the Odin 2's profile), charge
-  current from a PD charger, whether `constant_charge_current` is taken, the end threshold.
-  pocknix testers reported charging stopping after a kernel update. If the readings are wrong,
-  try the unit's own ADSP files from its Android partitions (`/vendor/firmware_mnt/image`).
+- Battery and charging: charge current from a PD charger, whether `constant_charge_current` is
+  taken (then the Portal's `current` charge limit and speeds), the end threshold, and how far
+  the percentage drifts on the 8000 mAh profile (does it shut down early?). pocknix testers
+  reported charging stopping after a kernel update.
 - Fan: does it spin up with the trips, its noise, and whether `fan1_input` (tach) reads.
 - Motion: whether the Sensor Core on the Odin 2's ADSP image finds the Nova's IMU from its
   own `persist` registry, and the axis matrix (`packages/kettle-motion/devices.conf`, identity

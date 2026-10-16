@@ -38,12 +38,11 @@ charger_efficiency = 0.9
 # Placeholder: the Portal's and Thor's range; the Nova's smaller body and fan may need a lower top
 tdp_min = 4
 tdp_max = 18
-# Charging: the Nova's ADSP image is the Odin 2's (packages/kettle-firmware-ayn), whose battery
-# manager takes constant_charge_current (40-kettle/1190) on the Portal and Thor. Its battery
-# profile is the Odin 2's, though, and the Nova's own charge current is not known: until a unit
-# shows what the firmware does, Steam's charge limit is the charger's end threshold (the default)
-# and there are no charge speeds. remotes.d/kettle-power-charge.toml (device overlay) is left
-# out for the same reason.
+# Charging: the Nova's ADSP image is the Odin 2's (packages/kettle-firmware-ayn), the same as
+# its own Android's, whose battery manager takes constant_charge_current (40-kettle/1190) on the
+# Portal and Thor (7 A at boot on a Nova). Until it is tried on a Nova on a charger, Steam's
+# charge limit is the charger's end threshold (the default) and there are no charge speeds;
+# remotes.d/kettle-power-charge.toml (device overlay) is left out for the same reason.
 charge_limit_min = 55
 
 # Steam's performance profiles (Quick Access > Performance). Caps in kHz / MHz; a cluster
