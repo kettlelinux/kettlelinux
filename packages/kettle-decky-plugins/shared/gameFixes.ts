@@ -1,7 +1,9 @@
 // Game fixes: launch options a game needs to run, or to run well, on this hardware. Welcome
 // applies each once (welcome/src/fixes.ts); Game Settings shows the ones for the selected game
 // and can take one off or put it back.
-import { hasEnv, hasWrapper, withEnv, withWrapper, withoutWrapper } from "./launchOptions";
+import {
+  hasDllOverride, hasEnv, hasWrapper, withDllOverride, withEnv, withWrapper, withoutWrapper,
+} from "./launchOptions";
 
 export type GameFix = {
   id: string;
@@ -58,6 +60,19 @@ export const GAME_FIXES: GameFix[] = [
     applied: (opts) => hasWrapper(opts, "kettle-affinity"),
     edit: (opts) => withWrapper(opts, "kettle-affinity"),
     undo: (opts) => withoutWrapper(opts, "kettle-affinity"),
+  },
+  {
+    // Titan Quest II's THQ Nordic overlay (wrapper/THQNOnline/overlay) hooks IDXGISwapChain::Present
+    // by patching x86 code into dxgi.dll, which is ARM64EC under Proton ARM64: the RHI thread dies
+    // with EXCEPTION_ILLEGAL_INSTRUCTION at the first real frame, right after shader compiling.
+    // The game runs without the overlay (Wine applies basename overrides to DLLs outside system32).
+    id: "tq2-no-thqn-overlay",
+    appid: 1154030,
+    title: "Turn off the THQ Nordic overlay",
+    description: "The overlay's DirectX hook crashes the game on ARM as soon as shaders are done.",
+    applied: (opts) => hasDllOverride(opts, "OverlayEnginex64"),
+    edit: (opts) => withDllOverride(withDllOverride(opts, "OverlayReleasex64", "d"), "OverlayEnginex64", "d"),
+    undo: (opts) => withDllOverride(withDllOverride(opts, "OverlayReleasex64", null), "OverlayEnginex64", null),
   },
 ];
 
