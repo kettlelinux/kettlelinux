@@ -80,10 +80,10 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   `sm8750-konkr-pf-elite-fan.dtsi`: active trips at 50/60/70 C on the CPU clusters and the GPU,
   as `qcs8550-ayn-fan.dtsi` does for the AYN boards.
 - **Controls**: InputPlumber joins the two MCU devices into one Deck controller
-  (`40-kettle-pocketfitelite.yaml`). The KONKR key is Steam and the front-top-left button is
-  Quick Access. The extra shoulder buttons are L4/R4, and the two other front buttons L5/R5.
-  The rear buttons send nothing (ROCKNIX: the MCU reports neither). The face buttons are
-  Xbox-labelled. The d-pad is a hat, which the desktop controller now takes too.
+  (`40-kettle-pocketfitelite.yaml`). The KONKR key is Steam and the front button beside it Quick
+  Access. The extra shoulder buttons are L4/R4, and the two front top buttons L5 (above the left
+  stick) and R5. The rear buttons send nothing unless set in Device Settings' Buttons tab. The
+  face buttons are Xbox-labelled. The d-pad is a hat, which the desktop controller now takes too.
 - **Steam UI scale**: Game Mode reports the Portal's panel size (`GAMESCOPE_INTERNAL_PHYSICAL_SIZE`),
   as the RP5 and Thor do. The real 6" makes the UI far too large.
 - **Headphone jack**: `61-kettle-pocketfitelite-jack.rules` keeps the WCD9395's SoundWire buses
@@ -199,7 +199,8 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
 - Button map (2026-10-17, build 20261016.24, read from the virtual Deck controller's hidraw, as
   Steam gets it): A/B/X/Y, d-pad, LB/RB, LT/RT, L3/R3, View, Menu as labelled; the KONKR key is
   Steam, front top-left Quick Access, front top-right L5, front bottom-right R5, the extra
-  shoulders L4/R4. Volume up comes from gpio-keys, volume down from pmic_resin. The rear buttons
+  shoulders L4/R4. Then moved, as the user asked (tested the same day): front bottom-right, beside
+  the KONKR key, is Quick Access, front top-left L5, front top-right R5. Volume up comes from gpio-keys, volume down from pmic_resin. The rear buttons
   send nothing until set: the MCU only offers them (and the extra shoulders) as remaps onto other
   buttons (`key_{lc,rc}_{back,shoulder}` on its serial device; factory-blank `255 255`).
 - Rear buttons (2026-10-17, by hand): Device Settings' Buttons tab sets each to Nothing or a

@@ -21,8 +21,8 @@ mapping:
       gamepad:
         button: Guide
 
-  # the gamepad's front-top-left extra button (BTN_MODE): Quick Access, like the AYN devices'
-  # button below the right stick
+  # the front top buttons: L5 (the gamepad's BTN_MODE, above the left stick) and R5, bindable in
+  # Steam Input (Quick Access is on the button beside the KONKR key, as the user asked 2026-10-17)
   - name: Front Top Left
     source_events:
       - evdev:
@@ -31,7 +31,7 @@ mapping:
           value_type: button
     target_event:
       gamepad:
-        button: QuickAccess
+        button: LeftPaddle2
 
   # the extra shoulder buttons: L4/R4
   - name: Left Extra Shoulder
@@ -54,7 +54,6 @@ mapping:
       gamepad:
         button: RightPaddle1
 
-  # the two other front buttons: L5/R5, bindable in Steam Input
   - name: Front Top Right
     source_events:
       - evdev:
@@ -63,8 +62,9 @@ mapping:
           value_type: button
     target_event:
       gamepad:
-        button: LeftPaddle2
+        button: RightPaddle2
 
+  # front bottom-right, beside the KONKR key (Steam): Quick Access
   - name: Front Bottom Right
     source_events:
       - evdev:
@@ -73,6 +73,6 @@ mapping:
           value_type: button
     target_event:
       gamepad:
-        button: RightPaddle2
+        button: QuickAccess
 
 filtered_events: []
