@@ -239,12 +239,16 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   7.2.9's ath12k built against 7.3 held, so it was ath12k itself; a bisect of the 54 ath12k
   commits in 7.2..7.3-rc7 (5-minute download + scan stress per step) found upstream 58aeb412495a,
   which doubled the MAC RX buffer ring to 4096. 7.3-rc7's ath12k with only that line set back to
-  2048 passed two 5-minute runs; kernel 1466 does that, on every device.
+  2048 passed two 5-minute runs; kernel 1466 does that, on every device. On image 20261017.28:
+  a 3.7 GB copy and another 5-minute run clean, and iris decodes H.264 (its firmware loads now).
+- Gyro in a game (20261017.28): kettle-motiond streamed, but Steam's Deck controller carried
+  zeros: 40-kettle-pocketfitelite.yaml had no Kettle Motion Sensors source. inputplumber 6 adds
+  it; gyro works in a game with that file in /etc/inputplumber/devices.d.
+- Headphone jack (20261017.28, kernel 1465): plugging a headset in moves the sound to it and
+  unplugging moves it back to the speakers, both ways twice.
 
 ## Still to check, by hand
-- Gyro in a game, from an image with `kettle-motion`.
 - The intermittent WCN7860 loss above; suspend over many cycles; the DisplayPort unplug freeze
   and the GPI DMA errors above; Steam's charge limit and charge speeds end to end.
-- Headphone jack, from an image with kernel 1465: a headset plugged in moves the sound to it.
-  Its mic: never detected yet (see above).
+- The headset mic: never detected yet (see above).
 - Wi-Fi on a 7.3 image with kernel 1466, over a longer download.
