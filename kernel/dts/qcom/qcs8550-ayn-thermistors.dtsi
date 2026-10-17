@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Board thermistors on the PMK8550 ADC5 Gen3 for the AYN Odin 2 Portal and Thor: xo_therm on
+ * PMK8550 AMUX1 and usb_therm on PM8550B AMUX4, as in the "KalamaP SG HHG" overlay of AYN's
+ * Android dtbo (the handheld reference design; its fan trips key on usb-therm). Which overlay
+ * AYN's ABL picks isn't confirmed and the readings aren't checked on hardware yet, so these
+ * zones only report: a passive trip with no cooling device, no critical trip.
+ */
+
+&pmk8550_vadc {
+	channel@44 {
+		reg = <ADC5_GEN3_AMUX1_THM_100K_PU(0)>;
+		label = "pmk8550_xo_therm";
+		qcom,ratiometric;
+		qcom,hw-settle-time = <200>;
+		qcom,pre-scaling = <1 1>;
+		qcom,adc-tm;
+	};
+
+	channel@747 {
+		reg = <ADC5_GEN3_AMUX4_THM_100K_PU(7)>;
+		label = "pm8550b_usb_therm";
+		qcom,ratiometric;
+		qcom,hw-settle-time = <200>;
+		qcom,pre-scaling = <1 1>;
+		qcom,adc-tm;
+	};
+};
+
+&{/thermal-zones} {
+	xo-thermal {
+		thermal-sensors = <&pmk8550_vadc ADC5_GEN3_AMUX1_THM_100K_PU(0)>;
+
+		trips {
+			trip-point0 {
+				temperature = <125000>;
+				hysteresis = <1000>;
+				type = "passive";
+			};
+		};
+	};
+
+	usb-thermal {
+		thermal-sensors = <&pmk8550_vadc ADC5_GEN3_AMUX4_THM_100K_PU(7)>;
+
+		trips {
+			trip-point0 {
+				temperature = <125000>;
+				hysteresis = <1000>;
+				type = "passive";
+			};
+		};
+	};
+};

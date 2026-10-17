@@ -69,6 +69,13 @@ and stopped every s2idle); and the SM8750 USB controller became a `wakeup-source
 on the Pocket FIT Elite. The ICNA35XX panels also name their board compatible first, as 7.3's
 `chipone,icna3512` binding requires (our driver matches the chip fallback).
 
+New with 7.3: the PMK8550 ADC5 Gen3 driver (`QCOM_SPMI_ADC5_GEN3`, `QCOM_SPMI_ADC_TM5_GEN3`)
+gives the QCS8550 boards' PM8550/PM8550B/PM8550VE temp alarms real die temperatures
+(`qcs8550-ayn-common.dtsi`), and the Portal and Thor `xo-thermal` and `usb-thermal` zones
+(`qcs8550-ayn-thermistors.dtsi`, report-only until the readings are checked on hardware).
+The Pocket FIT Elite's iris video codec is enabled (linux-firmware's `vpu35_p4.mbn`, which
+Armada runs on the Odin 3).
+
 Config: `USERFAULTFD` on (it came off with the imported base config; Wine's write watches
 can use it). `PROC_SYSCTL` is gone (proc sysctl builds with `SYSCTL`); the Qualcomm RNG moved
 from `CRYPTO_DEV_QCOM_RNG` to `HW_RANDOM_QCOM`.
