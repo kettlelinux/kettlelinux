@@ -123,8 +123,24 @@ newer release, and `--restore-stock`. Without `--abl` it works on the kind insta
 images are 520 KiB (ROCKNIX's 252 KiB): one bigger than an `abl` partition is refused. Device
 Settings' System tab offers *Install OpenABL* over either.
 
+**Internal installs need FAT16 efi partitions.** OpenABL starts steamcl through the device's own
+UEFI (XBL's), whose FAT driver goes by the cluster count. `kettle-install-internal` used to format
+`efi-A`/`efi-B` as FAT32, which on the UFS's 4 KiB sectors gives 64 MiB only ~16k clusters (a
+FAT32 needs 65525), so XBL didn't read them: steamcl started from `kettle-esp`, found neither
+slot and returned `EFI_NOT_FOUND` ("returned: error 14" in OpenABL's log), while the SD card
+(512-byte sectors) booted. U-Boot and the ROCKNIX ABL (`\KERNEL`) never read them through XBL.
+The installer now formats them FAT16 (one sector a cluster). `kettle-efi-fat16` converts an
+older install's in place: the same files, label and volume ID (nothing refers to the volume ID:
+GRUB finds the root by its own UUID, the partsets name PARTUUIDs), after a raw copy to
+`/home/.kettle/efi-fat32-backup`, which is written back if anything fails; the booted slot's
+`/efi` is unmounted for the few seconds. It runs at every boot (`kettle-efi-fat16.service`,
+nothing to do once both are FAT16) and from `kettle-abl-update` before it writes OpenABL, which
+stops without writing if the conversion fails.
+
 Checked in a harness (fake slot files, 2026-10-17): install over stock, a switch to the ROCKNIX ABL
-and back, and a restore that brought both slots back byte for byte. Not yet installed on a device.
+and back, and a restore that brought both slots back byte for byte. On the Portal (2026-10-17,
+20261017.23, internal install): installed over the stock bootloader; the
+internal install failed with error 14 until its efi-A/B were made FAT16, then booted.
 
 ## Research notes (2026-10)
 

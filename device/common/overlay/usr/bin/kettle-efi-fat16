@@ -1,0 +1,134 @@
+#!/bin/bash
+# kettle-efi-fat16: makes an internal install's efi-A/efi-B readable by the device's own UEFI.
+#
+# kettle-install-internal used to format efi-A/B (64 MiB each, GRUB and the slot's partsets) as
+# FAT32. On the UFS's 4 KiB sectors that is ~16k clusters, too few for FAT32: FAT drivers go by
+# the cluster count, and Qualcomm's UEFI (XBL) refuses such a volume. U-Boot and Linux read it,
+# so nothing noticed until OpenABL, which starts steamcl through XBL's UEFI: steamcl then sees
+# neither slot's efi partition and fails with EFI_NOT_FOUND ("returned: error 14"), and the
+# internal install doesn't boot (the SD card's, with 512-byte sectors, is fine).
+#
+# This rewrites each such partition as FAT16 with the same files, label and volume ID (GRUB finds
+# the root by its own UUID; the partsets name partitions by PARTUUID, which doesn't change). A
+# raw copy of each is kept in /home/.kettle/efi-fat32-backup first; if anything fails after the
+# partition was wiped, that copy is written back. The booted slot's efi (/efi) is unmounted for
+# the seconds it takes and mounted again.
+#
+# Runs at every boot (kettle-efi-fat16.service: nothing to do takes a few reads), and from
+# kettle-abl-update before it writes OpenABL, which needs it.
+#
+# Usage: kettle-efi-fat16 [--check]
+#   --check  only list what would be converted (exit 0: nothing, 3: something)
+set -euo pipefail
+. /usr/lib/kettle/ufs-lib.sh
+
+CHECK=0
+case "${1:-}" in
+  --check) CHECK=1 ;;
+  "") ;;
+  *) echo "usage: $0 [--check]" >&2; exit 2 ;;
+esac
+need_root
+BK=/home/.kettle/efi-fat32-backup
+FAT32_MIN=65525   # clusters: fewer is FAT16 (or FAT12) to every FAT driver, whatever the BPB says
+
+# No internal storage, or no internal install: nothing to do
+[ -b "$DISK" ] && is_ufs_block "/sys/block/${DISK##*/}" || exit 0
+
+# u <dev> <offset> <bytes>: an unsigned little-endian number from the boot sector
+u() { od -An -t u"$3" -j "$2" -N "$3" "$1" | tr -d ' '; }
+# clusters <dev>: data clusters of the FAT file system on it
+clusters() {
+  local d=$1 bps spc rs nf root ts spf
+  bps=$(u "$d" 11 2) spc=$(u "$d" 13 1) rs=$(u "$d" 14 2) nf=$(u "$d" 16 1) root=$(u "$d" 17 2)
+  ts=$(u "$d" 19 2); [ "$ts" != 0 ] || ts=$(u "$d" 32 4)
+  spf=$(u "$d" 22 2); [ "$spf" != 0 ] || spf=$(u "$d" 36 4)
+  echo $(( (ts - rs - nf * spf - (root * 32 + bps - 1) / bps) / spc ))
+}
+# needs <dev>: a FAT32 (BPB: no 16-bit FAT size) with too few clusters for one
+needs() {
+  [ "$(blkid -c /dev/null -s TYPE -o value "$1")" = vfat ] || return 1
+  [ "$(u "$1" 22 2)" = 0 ] || return 1
+  [ "$(clusters "$1")" -lt $FAT32_MIN ]
+}
+
+todo=()
+for l in efi-A efi-B; do
+  d=$(part_by_label $l)
+  [ -n "$d" ] && needs "$d" && todo+=("$l:$d")
+done
+if [ "$CHECK" = 1 ]; then
+  [ ${#todo[@]} -gt 0 ] || { echo "efi-A/B: nothing to convert"; exit 0; }
+  for t in "${todo[@]}"; do echo "${t#*:} (${t%%:*}): FAT32 with $(clusters "${t#*:}") clusters, would become FAT16"; done
+  exit 3
+fi
+[ ${#todo[@]} -gt 0 ] || exit 0
+
+start_log efi-fat16
+exec 9>/run/kettle-efi-fat16.lock; flock 9
+# not while an update writes the other slot's efi
+op=$(busctl get-property de.pengutronix.rauc / de.pengutronix.rauc.Installer Operation 2>/dev/null |
+     awk '{print $2}' | tr -d '"' || true)
+[ -z "$op" ] || [ "$op" = idle ] || die "an update is being installed ($op): nothing changed, try again after it"
+
+# a stop half way would leave a slot's efi partition empty
+trap '' INT TERM HUP
+mkdir -p -m 0700 "$BK"
+stamp=$(date +%Y%m%d-%H%M%S)
+W=$(mktemp -d /run/kettle-efi-fat16.XXXXXX)
+
+for t in "${todo[@]}"; do
+  l=${t%%:*} d=${t#*:}
+  lab=$(blkid -c /dev/null -s LABEL -o value "$d") vid=$(blkid -c /dev/null -s UUID -o value "$d" | tr -d -)
+  img=$BK/$l-$stamp.img files=$BK/$l-$stamp-files
+  say "$l ($d): FAT32 with $(clusters "$d") clusters, which the device's UEFI can't read: rewriting it as FAT16"
+
+  # where it's mounted (the booted slot's is /efi), to put it back afterwards
+  target=$(findmnt -rno TARGET --source "$d" | head -1 || true) opts="" unit=""
+  if [ -n "$target" ]; then
+    opts=$(findmnt -rno OPTIONS --source "$d" | head -1)
+    unit=$(systemd-escape -p --suffix=mount "$target")
+    systemctl is-active -q "$unit" || unit=""
+  fi
+  remount() {
+    [ -n "$target" ] || return 0
+    if [ -n "$unit" ]; then systemctl start "$unit"; else mount -o "$opts" "$d" "$target"; fi
+  }
+
+  dd if="$d" of="$img" bs=1M iflag=direct status=none || { rm -f "$img"; die "couldn't save $d to $img (disk full?): nothing changed"; }
+  sha=$(sha256sum "$img" | cut -d' ' -f1); echo "$sha  ${img##*/}" >"$img.sha256"
+  [ "$(dd if="$d" bs=1M iflag=direct status=none | sha256sum | cut -d' ' -f1)" = "$sha" ] ||
+    die "$d read differently twice: nothing changed"
+  if [ -n "$target" ]; then
+    if [ -n "$unit" ]; then systemctl stop "$unit"; else umount "$target"; fi
+  fi
+  mkdir -p "$W/m" "$files"
+  mount -o ro "$d" "$W/m"; cp -a "$W/m/." "$files/"; umount "$W/m"
+
+  # from here on, any failure puts the saved copy back
+  restore() {
+    umount "$W/m" 2>/dev/null || true
+    if dd if="$img" of="$d" bs=1M conv=fsync status=none &&
+       [ "$(dd if="$d" bs=1M iflag=direct status=none | sha256sum | cut -d' ' -f1)" = "$sha" ]; then
+      remount || true
+      die "$l: $1; it was put back as it was (FAT32)"
+    fi
+    die "$l: $1, and putting it back failed too: its copy is $img (dd it back from the SD card system). Ask for help before rebooting"
+  }
+  # one sector a cluster, or more on small sectors, so the count stays in FAT16's range
+  ts=$(blockdev --getsz "$d") ss=$(blockdev --getss "$d") spc=1
+  while [ $(( ts * 512 / ss / spc )) -ge 65000 ]; do spc=$((spc * 2)); done
+  wipefs -aq "$d" || restore "wiping it failed"
+  mkfs.vfat -F 16 -s $spc -n "$lab" -i "$vid" "$d" >/dev/null || restore "mkfs.vfat failed"
+  mount "$d" "$W/m" || restore "the new file system didn't mount"
+  cp -r "$files/." "$W/m/" && sync -f "$W/m" || restore "copying the files back failed"
+  diff -r "$files" "$W/m" >/dev/null || restore "the files read back differently"
+  umount "$W/m" || restore "unmounting it failed"
+  fsck.fat -n "$d" >/dev/null || restore "fsck.fat found errors"
+  ! needs "$d" || restore "it still isn't a FAT16"
+  [ "$(blkid -c /dev/null -s UUID -o value "$d" | tr -d -)" = "$vid" ] || restore "its volume ID changed"
+  remount || die "$l is FAT16 now, but mounting it at $target again failed (a reboot mounts it)"
+  rm -rf "$files"
+  say "$l: FAT16 now, $(clusters "$d") clusters (the FAT32 copy: $img)"
+done
+rm -rf "$W"

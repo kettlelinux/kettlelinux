@@ -1,0 +1,16 @@
+[Unit]
+Description=Make the internal install's efi partitions readable by the device's UEFI (kettle-efi-fat16)
+# Internal installs made before kettle-install-internal formatted efi-A/B as FAT16 have FAT32s
+# the device's own UEFI can't read, so OpenABL couldn't boot them. Once both are FAT16 this only
+# reads two boot sectors.
+RequiresMountsFor=/home
+After=efi.mount home.mount
+Before=atomupd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/kettle-efi-fat16
+TimeoutStartSec=5min
+
+[Install]
+WantedBy=multi-user.target

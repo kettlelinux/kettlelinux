@@ -309,6 +309,14 @@ if [ "$YES" = 0 ]; then
   [[ "$r" =~ ^[yY] ]] || done_ cancelled "nothing changed"
 fi
 
+# OpenABL starts steamcl through the device's own UEFI, which can't read an internal install's
+# efi-A/B formatted FAT32 by older installers: steamcl then finds no slot. Convert them first
+# (kettle-efi-fat16, from the image); if that fails, the bootloader isn't touched.
+if [ "$FLAVOR" = openabl ] && [ "$MODE" != restore ] && [ -x /usr/bin/kettle-efi-fat16 ]; then
+  /usr/bin/kettle-efi-fat16 >&2 ||
+    die "the internal install's efi partitions couldn't be made readable for OpenABL (log: /var/log/kettle/efi-fat16-*.log): nothing was written"
+fi
+
 # on_disk <dev> <bytes>: the SHA-256 of the device's first <bytes>, read with direct I/O
 on_disk() { dd if="$1" bs=4096 count=$(($2 / 4096)) iflag=direct status=none | sha256sum | cut -d' ' -f1; }
 put() { dd if="$1" of="$2" bs=4096 conv=fsync,notrunc status=none && blockdev --flushbufs "$2"; }
