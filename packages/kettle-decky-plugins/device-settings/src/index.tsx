@@ -1,13 +1,14 @@
 import { ButtonItem, DropdownItem, Field, Focusable, Navigation, PanelSection, PanelSectionRow, SidebarNavigation, SliderField, ToggleField, staticClasses } from "@decky/ui";
 import { addEventListener, callable, definePlugin, removeEventListener, routerHook, toaster } from "@decky/api";
 import { ReactElement, useEffect, useMemo, useState } from "react";
-import { FaBatteryHalf, FaBolt, FaCog, FaDesktop, FaLightbulb, FaTabletAlt, FaTools, FaHdd, FaInfoCircle, FaMemory, FaMicrochip, FaTachometerAlt, FaThermometerHalf, FaWifi, FaCube } from "react-icons/fa";
+import { FaBatteryHalf, FaBolt, FaCog, FaDesktop, FaLightbulb, FaTabletAlt, FaTools, FaHdd, FaInfoCircle, FaMemory, FaMicrochip, FaTachometerAlt, FaThermometerHalf, FaWifi, FaCube, FaGamepad } from "react-icons/fa";
 import { runningAppId } from "../../shared/GamePicker";
 import { MdScreenRotation } from "react-icons/md";
 import { Tab, Tabs } from "../../shared/Tabs";
 import { startSteamSync } from "./steamSync";
 import { LightsTab } from "./lights";
 import { GyroTab } from "./gyro";
+import { ButtonsTab } from "./buttons";
 import { ScreensTab } from "./screens";
 import { SystemTab } from "./system";
 
@@ -53,7 +54,7 @@ type DiagSection = { title: string; rows: [string, string][] };
 const info = callable<[], Info>("info");
 const status = callable<[], Status>("status");
 const diagnostics = callable<[], DiagSection[]>("diagnostics");
-type Has = { lights: boolean; gyro: boolean; screens: boolean };
+type Has = { lights: boolean; gyro: boolean; screens: boolean; buttons: boolean };
 const deviceTabs = callable<[], Has>("tabs");
 const setActive = callable<[appid: number | null], void>("set_active");
 const setChargeLimit = callable<[limit: number], void>("set_charge_limit");
@@ -339,6 +340,7 @@ const ALL_TABS: Tab[] = [
   { id: "power", label: "Power", icon: <FaBolt /> },
   { id: "lights", label: "Lights", icon: <FaLightbulb /> },
   { id: "gyro", label: "Gyro", icon: <MdScreenRotation /> },
+  { id: "buttons", label: "Buttons", icon: <FaGamepad /> },
   { id: "screens", label: "Screens", icon: <FaTabletAlt /> },
   { id: "system", label: "System", icon: <FaTools /> },
 ];
@@ -349,7 +351,7 @@ function Content() {
   const [have, setHave] = useState(has);
   const [tab, setTab] = useState(lastTab);
   useEffect(() => {
-    if (!has) deviceTabs().then((h) => setHave((has = h))).catch(() => setHave({ lights: false, gyro: false, screens: false }));
+    if (!has) deviceTabs().then((h) => setHave((has = h))).catch(() => setHave({ lights: false, gyro: false, screens: false, buttons: false }));
   }, []);
   if (!have) return null;
   const tabs = ALL_TABS.filter((t) => t.id === "power" || t.id === "system" || have[t.id as keyof Has]);
@@ -362,6 +364,7 @@ function Content() {
       {shown === "power" && <PowerTab />}
       {shown === "lights" && <LightsTab />}
       {shown === "gyro" && <GyroTab />}
+      {shown === "buttons" && <ButtonsTab />}
       {shown === "screens" && <ScreensTab />}
       {shown === "system" && <SystemTab />}
       <PanelSection>

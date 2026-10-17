@@ -23,6 +23,7 @@ import re
 import signal
 import subprocess
 
+import buttons
 import decky
 import gyro
 import inotify
@@ -448,6 +449,12 @@ class Plugin:
     async def gyro_set_mode(self, mode: str) -> dict:
         return await gyro.set_mode(mode)
 
+    async def buttons_get(self) -> dict:
+        return await asyncio.to_thread(buttons.get)
+
+    async def buttons_set(self, side: str, target: str) -> dict:
+        return await asyncio.to_thread(buttons.set_button, side, target)
+
     async def screens_get(self) -> dict:
         return screens.get()
 
@@ -486,11 +493,11 @@ class Plugin:
 
     async def tabs(self) -> dict:
         """Which tabs this device has: lights and gyro only where their service answers, screens
-        where there's a bottom screen."""
+        where there's a bottom screen, buttons where the rear buttons can be set."""
         led = await lights.get()
         motion = await gyro.get(quiet=True)
         return {"lights": bool(led.get("available") or led.get("power_available")), "gyro": motion["service"],
-                "screens": screens.available()}
+                "screens": screens.available(), "buttons": buttons.available()}
 
     async def _main(self):
         try:

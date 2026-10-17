@@ -4,8 +4,8 @@
   "flags": [],
   "api_version": 1,
   "publish": {
-    "tags": ["power", "battery", "lights", "gyro"],
-    "description": "The device's own settings, a tab each: battery and screen refresh rate, the stick lights, the motion sensors, and a diagnostics window.",
+    "tags": ["power", "battery", "lights", "gyro", "buttons"],
+    "description": "The device's own settings, a tab each: battery and screen refresh rate, the stick lights, the motion sensors, the rear buttons, and a diagnostics window.",
     "image": ""
   }
 }
