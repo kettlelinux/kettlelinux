@@ -2,7 +2,13 @@
 """kettle-ledd: the RGB lights on Kettle Linux's handhelds.
 
 Stick lights: the Odin 2 Portal, the Thor, the Retroid Pocket 5 and the Retroid Pocket Nova have
-four RGB LEDs round each stick, each a kernel multicolor group: rgb:l1..l4 and rgb:r1..r4. Modes:
+four RGB LEDs round each stick, each a kernel multicolor group: rgb:l1..l4 and rgb:r1..r4. The
+KONKR Pocket FIT Elite has one group for both rings, konkr:rgb:joysticks (its MCU, kernel
+22-sm8750/0069), so both sticks always show the left stick's color. Its MCU draws breathing and
+the rainbow itself (the LED's "effect" attribute): each color write is four UART frames 40 ms
+apart, so frames from here at 10 a second made the rings flash. There, breathe is the MCU's breath
+(its own pace), rainbow its rainbow (its own pace and brightness), and charging pulses with breath.
+Modes:
 
   off       dark
   solid     a color, both sticks the same or each its own
@@ -127,6 +133,18 @@ class Led:
             self.top = [self.max] * len(self.order)
         self.last: str | None = None     # what was written last: not written again
         self.full = False                # brightness at its top (see above)
+        # effects the LED's own controller draws (the KONKR's MCU: "breath R G B", "rainbow")
+        self.effects = os.path.exists(os.path.join(path, "effect"))
+        self.effect: str | None = None   # the effect written last, None: static or unknown
+
+    def run(self, effect: str):
+        """Hand the LED to its controller's effect (self.effects only)."""
+        if self.effect == effect:
+            return
+        with open(os.path.join(self.path, "effect"), "w") as f:
+            f.write(effect)
+        self.effect = effect
+        self.last = None
 
     def set(self, rgb: tuple[int, int, int], level: float):
         """rgb 0-255 each, level 0-1 of the LED's full brightness."""
@@ -139,6 +157,12 @@ class Led:
                 with open(os.path.join(self.path, "brightness"), "w") as f:
                     f.write(str(self.max))
             self.full = True
+        if self.effects and self.effect != "static":
+            # back from an effect (or not known to be static) to brightness/multi_intensity
+            with open(os.path.join(self.path, "effect"), "w") as f:
+                f.write("static")
+            self.effect = "static"
+            self.last = None
         if self.last == intensity:
             return
         with open(os.path.join(self.path, "multi_intensity"), "w") as f:
@@ -153,6 +177,13 @@ def find_leds() -> tuple[dict[str, list[Led]], Led | None]:
         for p in sorted(glob.glob(os.path.join(LEDS, f"rgb:{side}[0-9]"))):
             try:
                 sticks[side].append(Led(p))
+            except (OSError, ValueError) as e:
+                log(f"{p} unusable: {e}")
+    if not any(sticks.values()):
+        # one group for both sticks (the KONKR's): drawn as the left stick
+        for p in sorted(glob.glob(os.path.join(LEDS, "*:rgb:joysticks"))):
+            try:
+                sticks["l"].append(Led(p))
             except (OSError, ValueError) as e:
                 log(f"{p} unusable: {e}")
     power = None
@@ -251,6 +282,7 @@ class Daemon:
             self.error = f"Can't set the lights: {e.strerror or e}"
             led.last = None
             led.full = False
+            led.effect = None
 
     def paint(self, frame):
         """frame(side, i) -> (rgb, level) for each stick LED."""
@@ -260,6 +292,27 @@ class Daemon:
 
     def off(self):
         self.paint(lambda side, i: ((0, 0, 0), 0.0))
+
+    def effects(self) -> bool:
+        """The sticks' controller draws breathing and the rainbow itself (the KONKR's MCU)."""
+        leds = [led for v in self.sticks.values() for led in v]
+        return bool(leds) and all(led.effects for led in leds)
+
+    def run_effect(self, frame):
+        """frame(side) -> the effect for each stick LED (Daemon.effects())."""
+        for side, leds in self.sticks.items():
+            for led in leds:
+                try:
+                    led.run(frame(side))
+                    self.error = None
+                except OSError as e:
+                    if self.error is None:
+                        log(f"writing {led.name}: {e}")
+                    self.error = f"Can't set the lights: {e.strerror or e}"
+                    led.effect = None
+
+    def breath(self, rgb, level) -> str:
+        return "breath " + " ".join(str(round(c * level)) for c in rgb)
 
     def render_sticks(self, t: float) -> float | None:
         """The sticks' frame for time t; how long until the next (None: until the setting changes)."""
@@ -277,6 +330,12 @@ class Daemon:
             return None
         if mode == "solid":
             self.paint(lambda side, i: (rgb(side), level))
+            return None
+        if mode == "breathe" and self.effects():
+            self.run_effect(lambda side: self.breath(rgb(side), level))
+            return None
+        if mode == "rainbow" and self.effects():
+            self.run_effect(lambda side: "rainbow")
             return None
         if mode == "breathe":
             period = 8 - 6.5 * speed                      # 8 s slowest, 1.5 s fastest
@@ -299,6 +358,9 @@ class Daemon:
             on = int(t * 2) % 2 == 0                      # blinking once a second
             self.paint(lambda side, i: ((255, 0, 0), level if on else 0.0))
             return 0.5 - (t % 0.5)
+        if status == "Charging" and self.effects():
+            self.run_effect(lambda side: self.breath(battery_rgb(cap), level))
+            return BATTERY_POLL
         if status == "Charging":
             k = pulse(t)
             self.paint(lambda side, i: (battery_rgb(cap), level * k))
@@ -446,6 +508,10 @@ class Daemon:
         return json.dumps({**self.state,
                            "available": any(self.sticks.values()),
                            "leds": sum(len(v) for v in self.sticks.values()),
+                           # one color for both sticks (no right stick of its own)
+                           "shared": bool(self.sticks["l"]) and not self.sticks["r"],
+                           # breathe and rainbow at the controller's own pace (no Speed)
+                           "effects": self.effects(),
                            "power_available": self.power is not None,
                            "error": self.error})
 

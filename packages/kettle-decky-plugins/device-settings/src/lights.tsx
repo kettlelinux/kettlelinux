@@ -18,9 +18,11 @@ type State = {
   power: Power;
   available: boolean;
   power_available: boolean;
+  shared?: boolean; // one light for both sticks (the KONKR's): one color, no "Same color" switch
+  effects?: boolean; // breathe and rainbow drawn by the lights' controller at its own pace and brightness
   error: string | null;
 };
-type Settings = Omit<State, "available" | "power_available" | "error" | "power">;
+type Settings = Omit<State, "available" | "power_available" | "shared" | "effects" | "error" | "power">;
 type Changes = Partial<Settings> & { power?: Partial<Power> };
 
 const get = callable<[], State>("lights_get");
@@ -125,7 +127,8 @@ export function LightsTab() {
   };
   const p = s.power;
   const colored = s.mode === "solid" || s.mode === "breathe";
-  const animated = s.mode === "breathe" || s.mode === "rainbow";
+  const animated = !s.effects && (s.mode === "breathe" || s.mode === "rainbow");
+  const sync = s.sync || !!s.shared;
 
   return (
     <>
@@ -144,7 +147,7 @@ export function LightsTab() {
                 </div>
               </PanelSectionRow>
             )}
-            {s.mode !== "off" && (
+            {s.mode !== "off" && !(s.effects && s.mode === "rainbow") && (
               <PanelSectionRow>
                 <SliderField label="Brightness" value={s.brightness} min={5} max={100} step={5} showValue valueSuffix="%"
                   onChange={(brightness) => update({ brightness })} />
@@ -156,7 +159,7 @@ export function LightsTab() {
                   onChange={(speed) => update({ speed })} />
               </PanelSectionRow>
             )}
-            {colored && (
+            {colored && !s.shared && (
               <PanelSectionRow>
                 <ToggleField label="Same color on both sticks" checked={s.sync}
                   onChange={(sync) => update({ sync })} />
@@ -169,12 +172,12 @@ export function LightsTab() {
             )}
           </PanelSection>
           {colored && (
-            <PanelSection title={s.sync ? "Color" : "Left stick"}>
-              <ColorPicker title={s.sync ? "Both sticks" : "Left stick"} color={s.left}
+            <PanelSection title={sync ? "Color" : "Left stick"}>
+              <ColorPicker title={sync ? "Both sticks" : "Left stick"} color={s.left}
                 onChange={(left) => update({ left })} />
             </PanelSection>
           )}
-          {colored && !s.sync && (
+          {colored && !sync && (
             <PanelSection title="Right stick">
               <ColorPicker title="Right stick" color={s.right} onChange={(right) => update({ right })} />
             </PanelSection>
