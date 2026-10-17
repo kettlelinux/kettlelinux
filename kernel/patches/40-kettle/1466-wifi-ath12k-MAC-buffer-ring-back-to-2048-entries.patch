@@ -1,0 +1,23 @@
+From: Kettle Linux
+Subject: [PATCH] wifi: ath12k: MAC buffer ring back to 2048 entries
+
+Upstream 58aeb412495a ("wifi: ath12k: change MAC buffer ring size to
+4096", 7.3) doubled the per-MAC RX buffer ring. On the KONKR Pocket FIT
+Elite's WCN7860 the link dies within about a minute of sustained
+download: "failed to flush transmit queue, data pkts pending 1", then
+every WPA 4-way handshake times out until the module reloads. A bisect
+of the 7.2..7.3-rc7 ath12k commits (5-minute download + scan stress per
+step) found this commit, and 7.3-rc7's ath12k with only this line
+reverted holds. Go back to 2048, the size 7.2 used.
+---
+--- a/drivers/net/wireless/ath/ath12k/dp.h
++++ b/drivers/net/wireless/ath/ath12k/dp.h
+@@ -206,7 +206,7 @@
+ #define DP_REO_CMD_RING_SIZE		256
+ #define DP_REO_STATUS_RING_SIZE		2048
+ #define DP_RXDMA_BUF_RING_SIZE		4096
+-#define DP_RX_MAC_BUF_RING_SIZE		4096
++#define DP_RX_MAC_BUF_RING_SIZE		2048
+ #define DP_RXDMA_REFILL_RING_SIZE	2048
+ #define DP_RXDMA_ERR_DST_RING_SIZE	1024
+ #define DP_RXDMA_MON_STATUS_RING_SIZE	1024
