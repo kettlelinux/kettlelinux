@@ -196,11 +196,16 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   `usbc-audio-supported = <0>`. Open: the headset mic; and 0063 uses the USB-C audio routing
   (`TYPEC_MODE_AUDIO`), which also switches the USB D+/D- lines to the codec's HPH outputs while
   a plug is in, where the downstream jack mode leaves them on USB.
+- Button map (2026-10-17, build 20261016.24, read from the virtual Deck controller's hidraw, as
+  Steam gets it): A/B/X/Y, d-pad, LB/RB, LT/RT, L3/R3, View, Menu as labelled; the KONKR key is
+  Steam, front top-left Quick Access, front top-right L5, front bottom-right R5, the extra
+  shoulders L4/R4. Volume up comes from gpio-keys, volume down from pmic_resin. The rear buttons
+  send nothing: the MCU only offers them (and the extra shoulders) as remaps onto other buttons
+  (`key_{lc,rc}_{back,shoulder}` on the LED's device, all still factory-blank `255 255`).
 
 ## Still to check, by hand
 - Desktop Mode rotation (KWin `Rotated270`), the refresh rates in use.
 - Fan noise.
-- The button map against the physical buttons.
 - Gyro in a game, from an image with `kettle-motion` and the dts's non-secure ADSP fastrpc
   device (by hand it was tested on `/dev/fastrpc-adsp-secure`, see above).
 - The intermittent WCN7860 loss above; suspend over many cycles; DisplayPort out and its audio, the USB-C orientation GPIO (marked TODO in the
