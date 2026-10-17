@@ -288,6 +288,16 @@
 };
 /delete-node/ &cpusys_vm_mem;
 
+/*
+ * The crypto engine (QCE) has no driver from Linux 7.3 on (CRYPTO_DEV_QCE depends on BROKEN).
+ * Left enabled, the node never probes, so the interconnect providers it uses never reach
+ * sync_state and keep DDR voted at its maximum: DDR stays at its top clock and the SoC never
+ * reaches CX, AOSS or DDR collapse in s2idle.
+ */
+&crypto {
+	status = "disabled";
+};
+
 &apps_rsc {
 	regulators-0 {
 		compatible = "qcom,pm8550-rpmh-regulators";
