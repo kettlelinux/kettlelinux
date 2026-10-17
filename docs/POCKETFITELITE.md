@@ -225,10 +225,16 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   1920x1080 desktop at 150%, upright as held, with touch landing under the finger. KWin offers
   144/120/90/60 Hz; each measured at its rate on the DPU's vsync counter (`encoder-0/status`,
   with vkcube drawing: an idle desktop sends no frames, so the counter stands still).
+- Power light (2026-10-17, a test dtb in `\KERNEL`): an RGB LED left of the power button, on the
+  PMIC's LPG channels 1-3 (the stock fdt's `qcom,tri-led` with AYANEO's `ar02/ar06` brightness
+  properties), as the AYN boards' `power-led`; the fan is channel 4. Red, green and blue checked;
+  kettle-ledd drives it as the power light. The ROCKNIX ABL takes the devicetree from `\KERNEL`
+  (the dtbs `kettle-boot-legacy` appends), not GRUB's `devicetree`: a dtb test goes there.
+- Gyro on the non-secure ADSP fastrpc device (the same test dtb): hexagonrpcd on
+  `/dev/fastrpc-adsp`, started at boot, gets the accelerometer streaming.
 
 ## Still to check, by hand
-- Gyro in a game, from an image with `kettle-motion` and the dts's non-secure ADSP fastrpc
-  device (by hand it was tested on `/dev/fastrpc-adsp-secure`, see above).
+- Gyro in a game, from an image with `kettle-motion`.
 - The intermittent WCN7860 loss above; suspend over many cycles; the DisplayPort unplug freeze
   and the GPI DMA errors above; Steam's charge limit and charge speeds end to end.
 - Headphone jack, from an image with kernel 1465: a headset plugged in moves the sound to it.

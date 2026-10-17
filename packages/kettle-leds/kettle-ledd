@@ -17,8 +17,9 @@ Modes:
   breathe   the color fading in and out
   rainbow   the colors going round each ring
 
-Power light: the Portal's RGB LED by the power button, power-led (the PMIC's LPG; on the Thor the
-same channels light nothing, and its device tree drops the node). Modes:
+Power light: the Portal's and the Pocket FIT Elite's RGB LED by the power button, power-led (the
+PMIC's LPG; on the Thor the same channels light nothing, and its device tree drops the node).
+Modes:
 
   battery   on while the device is, in the battery's color as the sticks' battery mode shows it
   charging  orange while charging, green when full or held at the charge limit; dark on battery
