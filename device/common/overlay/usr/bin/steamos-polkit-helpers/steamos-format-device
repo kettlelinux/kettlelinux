@@ -1,0 +1,8 @@
+#!/bin/bash
+# Kettle Linux: Steam's Settings > Storage > Format (and the format offered when a new card goes
+# in). Steam runs this itself ("adopt-drive"), not steamos-manager's FormatDevice: without it the
+# format failed at once (exit 127). Runs format-device.sh as root; polkit lets the active local
+# user do it without a password (org.kettle.format-device, 50-kettle-steamos-helpers.rules), as
+# Game Mode can't show one. format-device.sh only takes a microSD card Kettle doesn't run from.
+#   steamos-format-device --device <disk> --label <label> [--skip-validation]
+exec pkexec /usr/lib/hwsupport/format-device.sh "$@"
