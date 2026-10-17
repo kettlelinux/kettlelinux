@@ -13,17 +13,19 @@ do: the vote holds while a CPU runs and drops when the apps subsystem
 power-collapses.
 
 ---
+diff --git a/arch/arm64/boot/dts/qcom/sm8250.dtsi b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+index 206c5986c..b060dfeca 100644
 --- a/arch/arm64/boot/dts/qcom/sm8250.dtsi
 +++ b/arch/arm64/boot/dts/qcom/sm8250.dtsi
-@@ -11,6 +11,7 @@
- #include <dt-bindings/clock/qcom,rpmh.h>
+@@ -12,6 +12,7 @@
  #include <dt-bindings/dma/qcom-gpi.h>
+ #include <dt-bindings/firmware/qcom,scm.h>
  #include <dt-bindings/gpio/gpio.h>
 +#include <dt-bindings/interconnect/qcom,icc.h>
  #include <dt-bindings/interconnect/qcom,osm-l3.h>
  #include <dt-bindings/interconnect/qcom,sm8250.h>
  #include <dt-bindings/mailbox/qcom-ipcc.h>
-@@ -107,7 +108,7 @@
+@@ -108,7 +109,7 @@ cpu0: cpu@0 {
  			power-domain-names = "psci";
  			qcom,freq-domain = <&cpufreq_hw 0>;
  			operating-points-v2 = <&cpu0_opp_table>;
@@ -32,7 +34,7 @@ power-collapses.
  					<&epss_l3 MASTER_OSM_L3_APPS &epss_l3 SLAVE_OSM_L3>;
  			#cooling-cells = <2>;
  			l2_0: l2-cache {
-@@ -138,7 +139,7 @@
+@@ -139,7 +140,7 @@ cpu1: cpu@100 {
  			power-domain-names = "psci";
  			qcom,freq-domain = <&cpufreq_hw 0>;
  			operating-points-v2 = <&cpu0_opp_table>;
@@ -41,7 +43,7 @@ power-collapses.
  					<&epss_l3 MASTER_OSM_L3_APPS &epss_l3 SLAVE_OSM_L3>;
  			#cooling-cells = <2>;
  			l2_100: l2-cache {
-@@ -163,7 +164,7 @@
+@@ -164,7 +165,7 @@ cpu2: cpu@200 {
  			power-domain-names = "psci";
  			qcom,freq-domain = <&cpufreq_hw 0>;
  			operating-points-v2 = <&cpu0_opp_table>;
@@ -50,7 +52,7 @@ power-collapses.
  					<&epss_l3 MASTER_OSM_L3_APPS &epss_l3 SLAVE_OSM_L3>;
  			#cooling-cells = <2>;
  			l2_200: l2-cache {
-@@ -188,7 +189,7 @@
+@@ -189,7 +190,7 @@ cpu3: cpu@300 {
  			power-domain-names = "psci";
  			qcom,freq-domain = <&cpufreq_hw 0>;
  			operating-points-v2 = <&cpu0_opp_table>;
@@ -59,7 +61,7 @@ power-collapses.
  					<&epss_l3 MASTER_OSM_L3_APPS &epss_l3 SLAVE_OSM_L3>;
  			#cooling-cells = <2>;
  			l2_300: l2-cache {
-@@ -213,7 +214,7 @@
+@@ -214,7 +215,7 @@ cpu4: cpu@400 {
  			power-domain-names = "psci";
  			qcom,freq-domain = <&cpufreq_hw 1>;
  			operating-points-v2 = <&cpu4_opp_table>;
@@ -68,7 +70,7 @@ power-collapses.
  					<&epss_l3 MASTER_OSM_L3_APPS &epss_l3 SLAVE_OSM_L3>;
  			#cooling-cells = <2>;
  			l2_400: l2-cache {
-@@ -238,7 +239,7 @@
+@@ -239,7 +240,7 @@ cpu5: cpu@500 {
  			power-domain-names = "psci";
  			qcom,freq-domain = <&cpufreq_hw 1>;
  			operating-points-v2 = <&cpu4_opp_table>;
@@ -77,7 +79,7 @@ power-collapses.
  					<&epss_l3 MASTER_OSM_L3_APPS &epss_l3 SLAVE_OSM_L3>;
  			#cooling-cells = <2>;
  			l2_500: l2-cache {
-@@ -263,7 +264,7 @@
+@@ -264,7 +265,7 @@ cpu6: cpu@600 {
  			power-domain-names = "psci";
  			qcom,freq-domain = <&cpufreq_hw 1>;
  			operating-points-v2 = <&cpu4_opp_table>;
@@ -86,7 +88,7 @@ power-collapses.
  					<&epss_l3 MASTER_OSM_L3_APPS &epss_l3 SLAVE_OSM_L3>;
  			#cooling-cells = <2>;
  			l2_600: l2-cache {
-@@ -288,7 +289,7 @@
+@@ -289,7 +290,7 @@ cpu7: cpu@700 {
  			power-domain-names = "psci";
  			qcom,freq-domain = <&cpufreq_hw 2>;
  			operating-points-v2 = <&cpu7_opp_table>;

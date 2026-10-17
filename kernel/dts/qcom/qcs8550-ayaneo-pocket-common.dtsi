@@ -18,6 +18,8 @@
 /delete-node/ &camera_mem;
 /delete-node/ &ipa_fw_mem;
 /delete-node/ &ipa_gsi_mem;
+/* 7.3: the (disabled) IPA node points at ipa_fw_mem; no modem here */
+/delete-node/ &ipa;
 /delete-node/ &mpss_dsm_mem;
 /delete-node/ &mpss_mem;
 /delete-node/ &q6_mpss_dtb_mem;
@@ -1370,8 +1372,9 @@
 	status = "okay";
 };
 
-&pcieport0 {
-	wake-gpios = <&tlmm 96 GPIO_ACTIVE_HIGH>;
+&pcie0_port0 {
+	/* No wake-gpios: Linux 7.3 arms it as a wakeup IRQ, enabled by default, and nothing
+	 * here wants Wi-Fi to wake the device (it never did on 7.2). */
 	reset-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
 
 	wifi@0 {
@@ -1405,7 +1408,8 @@
 };
 
 &pcie1_port0 {
-	wake-gpios = <&tlmm 99 GPIO_ACTIVE_HIGH>;
+	/* No wake-gpios: Linux 7.3 arms it as a wakeup IRQ, enabled by default, and nothing
+	 * here wants Wi-Fi to wake the device (it never did on 7.2). */
 	reset-gpios = <&tlmm 97 GPIO_ACTIVE_LOW>;
 
 	/* Renesas μPD720201 PCIe USB3.0 HOST CONTROLLER */

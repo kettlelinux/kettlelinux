@@ -5,10 +5,11 @@ KERN_INFO (ROCKNIX uses KERN_DEBUG): off the console at the default
 loglevel, but still in the journal's normal priorities if a real
 initramfs failure needs looking into.
 
-diff -rupbN linux.orig/init/initramfs.c linux/init/initramfs.c
---- linux.orig/init/initramfs.c	2026-07-28 15:53:35.261634269 +0000
-+++ linux/init/initramfs.c	2026-07-28 15:56:55.329082848 +0000
-@@ -728,7 +728,7 @@ static void __init do_populate_rootfs(vo
+diff --git a/init/initramfs.c b/init/initramfs.c
+index 3cee8b50a..79fe650c6 100644
+--- a/init/initramfs.c
++++ b/init/initramfs.c
+@@ -737,7 +737,7 @@ static void __init unpack_initramfs(async_cookie_t cookie)
  #ifdef CONFIG_BLK_DEV_RAM
  		populate_initrd_image(err);
  #else
@@ -16,4 +17,4 @@ diff -rupbN linux.orig/init/initramfs.c linux/init/initramfs.c
 +		printk(KERN_INFO "Initramfs unpacking failed: %s\n", err);
  #endif
  	}
- 
+ }

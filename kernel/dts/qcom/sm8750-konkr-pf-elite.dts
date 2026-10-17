@@ -1051,6 +1051,13 @@
 	firmware-name = "qcom/sm8750/gen80000_zap.mbn";
 };
 
+/* Video decode/encode (Steam Remote Play, V4L2). Firmware: the driver's default
+ * qcom/vpu/vpu35_p4.mbn from linux-firmware (the same file ROCKNIX ships), which
+ * Armada runs on the AYN Odin 3 (SM8750-class) with this node enabled. */
+&iris {
+	status = "okay";
+};
+
 /* ===================================================================== *
  *  Storage (UFS) — required to boot
  * ===================================================================== */
@@ -1385,6 +1392,9 @@
  *  USB
  * ===================================================================== */
 &usb {
+	/* Linux 7.3 made the SM8750 USB controller a wakeup source; keep 7.2's behaviour */
+	/delete-property/ wakeup-source;
+
 	status = "okay";
 };
 
@@ -1683,8 +1693,9 @@
 };
 
 &pcieport0 {
-	/* Kettle (from Armada): WAKE# is active-low */
-	wake-gpios = <&tlmm 104 GPIO_ACTIVE_LOW>;
+	/* WAKE# is gpio104, active low (Armada). */
+	/* No wake-gpios: Linux 7.3 arms it as a wakeup IRQ, enabled by default, and nothing
+	 * here wants Wi-Fi to wake the device (it never did on 7.2). */
 	reset-gpios = <&tlmm 102 GPIO_ACTIVE_LOW>;
 
 	wifi@0 {

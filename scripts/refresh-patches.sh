@@ -9,7 +9,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/kernel/kernel.conf"
 WORK="$ROOT/build/refresh"
 
-TAR="$ROOT/cache/linux-$KERNEL_VERSION.tar.xz"
+TAR="$ROOT/cache/${KERNEL_SOURCE_URL##*/}"
 [ -f "$TAR" ] || { echo "no $TAR; run scripts/build-kernel.sh prepare"; exit 1; }
 # the pinned source, as build-kernel.sh checks it
 echo "$KERNEL_SOURCE_SHA256  $TAR" | sha256sum -c --quiet || { echo "checksum mismatch: $TAR"; exit 1; }

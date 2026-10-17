@@ -26,9 +26,11 @@ need no extra hold and remain untouched.
 Signed-off-by: gh123man <gh123man@users.noreply.github.com>
 [ portareOS projects/PortareOS/devices/SM8550/patches/linux/1011, regenerated for our stack ]
 ---
+diff --git a/drivers/ufs/core/ufshcd.c b/drivers/ufs/core/ufshcd.c
+index ca8329052..8037afda0 100644
 --- a/drivers/ufs/core/ufshcd.c
 +++ b/drivers/ufs/core/ufshcd.c
-@@ -11339,6 +11339,10 @@
+@@ -11403,6 +11403,10 @@ void ufshcd_resume_complete(struct device *dev)
  {
  	struct ufs_hba *hba = dev_get_drvdata(dev);
  
@@ -39,7 +41,7 @@ Signed-off-by: gh123man <gh123man@users.noreply.github.com>
  	if (hba->complete_put) {
  		ufshcd_rpm_put(hba);
  		hba->complete_put = false;
-@@ -11369,6 +11373,7 @@
+@@ -11433,6 +11437,7 @@ static bool ufshcd_rpm_ok_for_spm(struct ufs_hba *hba)
  int __ufshcd_suspend_prepare(struct device *dev, bool rpm_ok_for_spm)
  {
  	struct ufs_hba *hba = dev_get_drvdata(dev);
@@ -47,7 +49,7 @@ Signed-off-by: gh123man <gh123man@users.noreply.github.com>
  	int ret;
  
  	/*
-@@ -11380,17 +11385,28 @@
+@@ -11444,17 +11449,28 @@ int __ufshcd_suspend_prepare(struct device *dev, bool rpm_ok_for_spm)
  	if (hba->ufs_device_wlun) {
  		/* Prevent runtime suspend */
  		ufshcd_rpm_get_noresume(hba);
@@ -77,18 +79,20 @@ Signed-off-by: gh123man <gh123man@users.noreply.github.com>
  		}
  		hba->complete_put = true;
  	}
+diff --git a/include/ufs/ufshcd.h b/include/ufs/ufshcd.h
+index dfd302f2d..417d4e6e8 100644
 --- a/include/ufs/ufshcd.h
 +++ b/include/ufs/ufshcd.h
-@@ -1056,6 +1056,8 @@
+@@ -1065,6 +1065,8 @@ enum ufshcd_mcq_opr {
   * @nr_queues: number of Queues of different queue types
   * @complete_put: whether or not to call ufshcd_rpm_put() from inside
   *	ufshcd_resume_complete()
 + * @complete_clkgate_hold: whether ufshcd_resume_complete() must release
 + *	clock-gating hold acquired by ufshcd_suspend_prepare()
+  * @scsi_host_added: indicates that scsi_add_host() has been called
   * @mcq_sup: is mcq supported by UFSHC
-  * @mcq_enabled: is mcq ready to accept requests
-  * @mcq_esi_enabled: is mcq ESI configured
-@@ -1237,6 +1239,7 @@
+  * @lsdb_sup: LSDBS capability
+@@ -1250,6 +1252,7 @@ struct ufs_hba {
  	unsigned int nr_hw_queues;
  	unsigned int nr_queues[HCTX_MAX_TYPES];
  	bool complete_put;

@@ -19,6 +19,8 @@
 /delete-node/ &camera_mem;
 /delete-node/ &ipa_fw_mem;
 /delete-node/ &ipa_gsi_mem;
+/* 7.3: the (disabled) IPA node points at ipa_fw_mem; no modem here */
+/delete-node/ &ipa;
 /delete-node/ &mpss_dsm_mem;
 /delete-node/ &mpss_mem;
 /delete-node/ &q6_mpss_dtb_mem;
@@ -1092,8 +1094,9 @@
 	status = "okay";
 };
 
-&pcieport0 {
-	wake-gpios = <&tlmm 96 GPIO_ACTIVE_LOW>;
+&pcie0_port0 {
+	/* No wake-gpios: Linux 7.3 arms it as a wakeup IRQ, enabled by default, and nothing
+	 * here wants Wi-Fi to wake the device (it never did on 7.2). */
 	reset-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
 
 	wifi@0 {
@@ -1762,4 +1765,44 @@
 
 &xo_board {
 	clock-frequency = <76800000>;
+};
+
+/*
+ * PMIC die temperatures from the PMK8550 ADC5 Gen3 (Linux 7.3), so the temp alarms report
+ * real readings instead of their stage estimates. SIDs as on the SM8550 QRD and in AYN's
+ * Android DT (pm8550 1, pm8550ve 5, pm8550b 7); the pm8550vs PMICs stay disabled here.
+ */
+&pmk8550_vadc {
+	channel@103 {
+		reg = <ADC5_GEN3_DIE_TEMP(1)>;
+		label = "pm8550_die_temp";
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@503 {
+		reg = <ADC5_GEN3_DIE_TEMP(PMK8550VE_SID)>;
+		label = "pm8550ve_die_temp";
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@703 {
+		reg = <ADC5_GEN3_DIE_TEMP(7)>;
+		label = "pm8550b_die_temp";
+		qcom,pre-scaling = <1 1>;
+	};
+};
+
+&pm8550_temp_alarm {
+	io-channels = <&pmk8550_vadc ADC5_GEN3_DIE_TEMP(1)>;
+	io-channel-names = "thermal";
+};
+
+&pm8550ve_temp_alarm {
+	io-channels = <&pmk8550_vadc ADC5_GEN3_DIE_TEMP(PMK8550VE_SID)>;
+	io-channel-names = "thermal";
+};
+
+&pm8550b_temp_alarm {
+	io-channels = <&pmk8550_vadc ADC5_GEN3_DIE_TEMP(7)>;
+	io-channel-names = "thermal";
 };
