@@ -1,0 +1,28 @@
+#!/bin/bash
+# Kettle Linux: the Pocket FIT Elite's rear buttons, for Device Settings' Buttons tab, run through
+# pkexec (org.kettle.rear-buttons, 50-kettle-rear-buttons.rules: no password, which Game Mode
+# can't ask for). The MCU reports no rear button of its own but can make each press a gamepad
+# button; its driver (kernel 22-sm8750/0069) takes "<func> <target>" in key_lc_back and
+# key_rc_back, root only. This writes only those two, and only func 1 with a button code 1-16
+# (A B X Y View Menu, d-pad up down left right, LB RB, L3 R3, LT RT), or "0 0" for nothing.
+#   kettle-rear-buttons left|right none|1-16
+set -eu
+[ "$(id -u)" = 0 ] || { echo "kettle-rear-buttons: run it as root" >&2; exit 1; }
+case "${1:-}" in
+  left) attr=key_lc_back ;;
+  right) attr=key_rc_back ;;
+  *) echo "usage: kettle-rear-buttons left|right none|1-16" >&2; exit 2 ;;
+esac
+case "${2:-}" in
+  none) value="0 0" ;;
+  [1-9]|1[0-6]) value="1 $2" ;;
+  *) echo "usage: kettle-rear-buttons left|right none|1-16" >&2; exit 2 ;;
+esac
+for d in /sys/bus/serial/drivers/konkr_sysbtn/*/; do
+  if [ -e "$d$attr" ]; then
+    echo "$value" > "$d$attr"
+    exit 0
+  fi
+done
+echo "kettle-rear-buttons: no rear buttons on this device" >&2
+exit 1

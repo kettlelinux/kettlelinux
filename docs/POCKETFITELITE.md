@@ -200,8 +200,14 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   Steam gets it): A/B/X/Y, d-pad, LB/RB, LT/RT, L3/R3, View, Menu as labelled; the KONKR key is
   Steam, front top-left Quick Access, front top-right L5, front bottom-right R5, the extra
   shoulders L4/R4. Volume up comes from gpio-keys, volume down from pmic_resin. The rear buttons
-  send nothing: the MCU only offers them (and the extra shoulders) as remaps onto other buttons
-  (`key_{lc,rc}_{back,shoulder}` on the LED's device, all still factory-blank `255 255`).
+  send nothing until set: the MCU only offers them (and the extra shoulders) as remaps onto other
+  buttons (`key_{lc,rc}_{back,shoulder}` on its serial device; factory-blank `255 255`).
+- Rear buttons (2026-10-17, by hand): Device Settings' Buttons tab sets each to Nothing or a
+  gamepad button, through `kettle-rear-buttons` (pkexec, `org.kettle.rear-buttons`; Decky's
+  backend runs without the user's groups). MCU codes checked on the unit: 1 A, 7-10 d-pad up,
+  down, left, right, 15 LT, `0 0` nothing; 17 (a stick direction) moves nothing, so the tab stops
+  at 16. Set from the tab in Game Mode and pressed. A read of a setting sometimes times out while
+  buttons are pressed (the backend retries); once a read gave `255 255` just after a write.
 
 ## Still to check, by hand
 - Desktop Mode rotation (KWin `Rotated270`), the refresh rates in use.
