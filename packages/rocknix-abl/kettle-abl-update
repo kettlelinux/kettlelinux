@@ -1,13 +1,21 @@
 #!/bin/bash
-# kettle-abl-update: installs the ROCKNIX ABL, keeps it up to date, and puts the stock bootloader
-# back.
+# kettle-abl-update: installs an open ABL (ROCKNIX's, or OpenABL), keeps it up to date, and puts
+# the stock bootloader back.
 #
 # Kettle starts either through U-Boot (fastboot mode's default boot set to Loader) or, on devices
-# whose stock bootloader has no Loader choice, through the ROCKNIX ABL (docs/INSTALL.md). The
-# ROCKNIX release to write is the one in /usr/share/kettle/rocknix-abl, in both abl slots.
+# whose stock bootloader has no Loader choice, through an ABL that boots Linux: the ROCKNIX ABL
+# (docs/INSTALL.md) or OpenABL (github.com/kettlelinux/OpenABL, a fork of the Open Handheld
+# Collective's, with a graphical boot menu and standard Linux boot). The release to write is the
+# image's, in both abl slots: /usr/share/kettle/rocknix-abl (packages/rocknix-abl) or
+# /usr/share/kettle/openabl (packages/openabl), each with its releases.tsv.
 #
-#   (default)        update: replaces a ROCKNIX ABL it recognises with this image's release, never
-#                    with an older one, and never touches a stock bootloader
+#   --abl rocknix|openabl  which one to install or update to. Without it: the one installed (in
+#                    either slot), else the ROCKNIX ABL. --install --abl openabl over a ROCKNIX ABL
+#                    (or the other way round) switches: the stock bootloader saved when the first
+#                    was installed stays the one --restore-stock puts back.
+#
+#   (default)        update: replaces a release it recognises with this image's newer one, never
+#                    with an older one, and never touches a stock bootloader or the other kind
 #   --install        also replaces a stock bootloader (both slots, or the one an Android update put
 #                    back), after saving each stock slot whole to /var/lib/kettle/abl-backups (and a
 #                    copy on the SD card's esp, /esp/kettle-abl-backups)
@@ -15,24 +23,26 @@
 #                    slot's newest backup, else the newest of the other slot, from either place
 #                    (after a factory reset, which formats /var, the esp's copies)
 #
-# Recognised: a release listed in releases.tsv (the SHA-256 of the partition's first <size>
-# bytes). An ABL signed with qtestsign's test keys (as ROCKNIX's are; stock ones are signed by
-# Qualcomm/the vendor) but not listed, such as 1.1.9, whose files were deleted, is replaced only
-# with --force. Stock: anything else, which must be an ELF file (an ABL) to be saved and replaced.
+# Recognised: a release listed in either releases.tsv (the SHA-256 of the partition's first <size>
+# bytes). An ABL signed with qtestsign's test keys (as ROCKNIX's and OpenABL's are; stock ones are
+# signed by Qualcomm/the vendor) but not listed, such as ROCKNIX's 1.1.9, whose files were deleted,
+# or a self-built OpenABL, is replaced only with --force. Stock: anything else, which must be an
+# ELF file (an ABL) to be saved and replaced.
 #
-# Usage: kettle-abl-update [--install | --restore-stock [--stock-image FILE]] [--check] [--yes]
-#                          [--force] [--porcelain]
+# Usage: kettle-abl-update [--install | --restore-stock [--stock-image FILE]] [--abl rocknix|openabl]
+#                          [--check] [--yes] [--force] [--porcelain]
 #   --check        only say what is installed and what would be done
 #   --yes          don't ask before writing
-#   --force        also replace a test-signed ABL that isn't a known ROCKNIX release
+#   --force        also replace a test-signed ABL that isn't a release Kettle knows
 #   --stock-image  with --restore-stock: write FILE (a stock ABL, such as ROCKNIX's
 #                  backup_abl.sh's abl_a.img) instead of a saved backup
-#   --porcelain    also print, for programs (Device Settings' System tab): "slot <a|b> <version |
-#                  test-signed | other>", "image <version>", "backup <yes|no>" (a stock backup to
-#                  restore), and last "result <code>", one of no-build, no-partitions,
-#                  not-installed, stock, unknown, newer, up-to-date, would-update, would-install,
-#                  is-stock, no-backup, would-restore, low-battery, cancelled, not-confirmed,
-#                  updated, installed, restored (errors: exit 1, the message on stderr)
+#   --porcelain    also print, for programs (Device Settings' System tab): "slot <a|b> <rocknix:V |
+#                  openabl:V | test-signed | other>", "image <rocknix|openabl>:<version>", "backup
+#                  <yes|no>" (a stock backup to restore), and last "result <code>", one of no-build,
+#                  no-partitions, not-installed, stock, other-abl, unknown, newer, up-to-date,
+#                  would-update, would-install, is-stock, no-backup, would-restore, low-battery,
+#                  cancelled, not-confirmed, updated, installed, restored (errors: exit 1, the
+#                  message on stderr)
 #
 # Device Settings runs it through pkexec (org.kettle.abl-update: allowed for Decky's plugin
 # backends, 50-kettle-abl-update.rules), with --check, then --yes to write. Through pkexec (no
@@ -41,15 +51,16 @@
 # --force and --stock-image are refused: those take sudo, in a terminal.
 set -euo pipefail
 
-SHARE=/usr/share/kettle/rocknix-abl
-CATALOG=$SHARE/releases.tsv
+# the kinds of ABL Kettle can write: <name> <folder with its images and releases.tsv>
+declare -A ABL_NAME=([rocknix]="ROCKNIX ABL" [openabl]="OpenABL")
+declare -A ABL_SHARE=([rocknix]=/usr/share/kettle/rocknix-abl [openabl]=/usr/share/kettle/openabl)
 BACKUPS=/var/lib/kettle/abl-backups
 ESP_BACKUPS=/esp/kettle-abl-backups
 MIN_BATTERY=30                     # % needed without the charger
-MODE=update CHECK=0 YES=0 FORCE=0 PORCELAIN=0 STOCK_IMAGE=""
+MODE=update CHECK=0 YES=0 FORCE=0 PORCELAIN=0 STOCK_IMAGE="" FLAVOR=""
 
 usage() {
-  echo "usage: kettle-abl-update [--install | --restore-stock [--stock-image FILE]] [--check] [--yes] [--force] [--porcelain]" >&2
+  echo "usage: kettle-abl-update [--install | --restore-stock [--stock-image FILE]] [--abl rocknix|openabl] [--check] [--yes] [--force] [--porcelain]" >&2
   exit 2
 }
 while [ $# -gt 0 ]; do
@@ -57,6 +68,7 @@ while [ $# -gt 0 ]; do
     --install) [ "$MODE" = update ] || usage; MODE=install ;;
     --restore-stock) [ "$MODE" = update ] || usage; MODE=restore ;;
     --stock-image) [ $# -ge 2 ] || usage; STOCK_IMAGE=$(realpath -e -- "$2") || usage; shift ;;
+    --abl) [ $# -ge 2 ] && [ -n "${ABL_NAME[$2]:-}" ] || usage; FLAVOR=$2; shift ;;
     --check) CHECK=1 ;;
     --yes) YES=1 ;;
     --force) FORCE=1 ;;
@@ -73,6 +85,7 @@ fi
 ARGS=()
 [ "$MODE" = update ] || ARGS+=("--${MODE/restore/restore-stock}")
 [ -z "$STOCK_IMAGE" ] || ARGS+=(--stock-image "$STOCK_IMAGE")
+[ -z "$FLAVOR" ] || ARGS+=(--abl "$FLAVOR")
 [ "$CHECK" = 0 ] || ARGS+=(--check)
 [ "$YES" = 0 ] || ARGS+=(--yes)
 [ "$FORCE" = 0 ] || ARGS+=(--force)
@@ -100,26 +113,17 @@ if ! flock -n 9; then
   flock -w 30 9 || die "already running"
 fi
 
-# The device's SoC (device.conf ABL_SOC): which of ROCKNIX's builds it takes; and which device it
-# is (MODEL): the Portal and the Thor share an SoC, not a stock ABL
+# The device's SoC (device.conf ABL_SOC): which builds it takes; and which device it is (MODEL):
+# the Portal and the Thor share an SoC, not a stock ABL
 ABL_SOC="" MODEL=""
 . /usr/lib/kettle/device.conf
-[ -n "$ABL_SOC" ] || done_ no-build "no ROCKNIX ABL build for this device"
+[ -n "$ABL_SOC" ] || done_ no-build "no open ABL build for this device"
 [ -n "$MODEL" ] || die "no MODEL in /usr/lib/kettle/device.conf"
-payload=$SHARE/abl_signed-$ABL_SOC.elf
-[ -f "$payload" ] || die "missing $payload"
 compat=$(tr '\0' '\n' </sys/firmware/devicetree/base/compatible)
 grep -qix "qcom,${ABL_SOC,,}" <<<"$compat" ||
   die "this device isn't an $ABL_SOC (devicetree compatible), refusing"
 
-size=$(stat -c %s "$payload")
-# read back with direct I/O (not the page cache), in whole 4 KiB blocks
-[ $((size % 4096)) = 0 ] || die "$payload isn't a whole number of 4 KiB blocks"
-want=$(sha256sum "$payload" | cut -d' ' -f1)
-NEW=$(awk -F'\t' -v s="$ABL_SOC" -v z="$size" -v h="$want" '$2 == s && $3 == z && $4 == h { print $1 }' "$CATALOG")
-[ -n "$NEW" ] || die "$payload isn't a release listed in $CATALOG"
-
-# Both slots: different partitions of the same disk, each big enough
+# Both slots: different partitions of the same disk
 slot_dev() { readlink -f "/dev/disk/by-partlabel/abl_$1" 2>/dev/null || true; }
 A=$(slot_dev a) B=$(slot_dev b)
 [ -b "$A" ] && [ -b "$B" ] || done_ no-partitions "no abl_a/abl_b partitions"
@@ -128,21 +132,32 @@ A=$(slot_dev a) B=$(slot_dev b)
 declare -A PSIZE
 for s in a b; do
   PSIZE[$s]=$(blockdev --getsize64 "$(slot_dev $s)")
-  [ "${PSIZE[$s]}" -ge "$size" ] || die "abl_$s is smaller than the ABL"
   [ $((PSIZE[$s] % 4096)) = 0 ] || die "abl_$s isn't a whole number of 4 KiB blocks"
 done
 
-# What a slot (or a saved image) holds: a ROCKNIX release's version, "test-signed" or "other"
-# (stock or unknown)
+# What a slot (or a saved image) holds: "<kind>:<version>" for a release listed in a releases.tsv
+# (rocknix:1.2, openabl:1.0-kettle.1), "test-signed" or "other" (stock or unknown)
+TEST_SIGNED_SPAN=1048576   # where the qtestsign CA's name is looked for: the ELF's signature
 identify() {
-  local dev=$1 z h v
-  for z in $(awk -F'\t' -v s="$ABL_SOC" '$2 == s { print $3 }' "$CATALOG" | sort -u); do
-    h=$(head -c "$z" "$dev" | sha256sum | cut -d' ' -f1)
-    v=$(awk -F'\t' -v s="$ABL_SOC" -v z="$z" -v h="$h" '$2 == s && $3 == z && $4 == h { print $1 }' "$CATALOG")
-    [ -n "$v" ] && { echo "$v"; return; }
+  local dev=$1 f cat z h v
+  for f in "${!ABL_SHARE[@]}"; do
+    cat=${ABL_SHARE[$f]}/releases.tsv
+    [ -f "$cat" ] || continue
+    for z in $(awk -F'\t' -v s="$ABL_SOC" '$2 == s { print $3 }' "$cat" | sort -u); do
+      h=$(head -c "$z" "$dev" | sha256sum | cut -d' ' -f1)
+      v=$(awk -F'\t' -v s="$ABL_SOC" -v z="$z" -v h="$h" '$2 == s && $3 == z && $4 == h { print $1 }' "$cat")
+      [ -n "$v" ] && { echo "$f:$v"; return; }
+    done
   done
   # grep -c reads to the end: with -q it would stop early, and pipefail would fail on head's SIGPIPE
-  if head -c "$size" "$dev" | grep -ac 'qtestsign Root CA' >/dev/null; then echo test-signed; else echo other; fi
+  if head -c "$TEST_SIGNED_SPAN" "$dev" | grep -ac 'qtestsign Root CA' >/dev/null; then echo test-signed; else echo other; fi
+}
+describe() {   # a slot's contents for people
+  case $1 in
+    other) echo "the stock bootloader (or one Kettle doesn't know)" ;;
+    test-signed) echo "a test-signed ABL that isn't a release Kettle knows (ROCKNIX 1.1.9, or a self-built one?)" ;;
+    *) echo "${ABL_NAME[${1%%:*}]} ${1#*:}" ;;
+  esac
 }
 newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }   # $1 > $2
 is_elf() { [ "$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')" = 7f454c46 ]; }
@@ -155,7 +170,7 @@ saved_ok() {
   grep -qxF "model=$MODEL" "$f.info" || return 1
   [ "$(sha256sum "$f" | cut -d' ' -f1)" = "$(cut -d' ' -f1 "$f.sha256")" ]
 }
-# One that can go back into a slot: also an ELF file (an ABL), and not a ROCKNIX one
+# One that can go back into a slot: also an ELF file (an ABL), and not an open ABL
 backup_ok() { saved_ok "$1" "$2" && is_elf "$1" && [ "$(identify "$1")" = other ]; }
 # Saved stock images named stock-abl_<$1>-<date>-<time>.img, newest first, from /var and the esp
 # (only root can read or write either: the esp is mounted umask=0077). A factory reset formats /var
@@ -180,20 +195,38 @@ declare -A HAS
 for s in a b; do
   dev=$(slot_dev $s); HAS[$s]=$(identify "$dev")
   machine "slot $s ${HAS[$s]}"
-  say "abl_$s: $(case ${HAS[$s]} in
-    other) echo "not a ROCKNIX ABL (the stock bootloader, or unknown)" ;;
-    test-signed) echo "a test-signed ABL that isn't a known ROCKNIX release (1.1.9?)" ;;
-    *) echo "ROCKNIX ABL ${HAS[$s]}" ;; esac)"
+  say "abl_$s: $(describe "${HAS[$s]}")"
 done
-say "this image has ROCKNIX ABL $NEW ($ABL_SOC)"
-machine "image $NEW"
+
+# Which kind to write: --abl, else the one installed (abl_a's first), else the ROCKNIX ABL
+if [ -z "$FLAVOR" ]; then
+  for s in b a; do case ${HAS[$s]} in *:*) FLAVOR=${HAS[$s]%%:*} ;; esac; done
+  FLAVOR=${FLAVOR:-rocknix}
+fi
+NAME=${ABL_NAME[$FLAVOR]} CATALOG=${ABL_SHARE[$FLAVOR]}/releases.tsv
+OPT=$([ "$FLAVOR" = rocknix ] || echo " --abl $FLAVOR")   # for the commands suggested below
+payload=${ABL_SHARE[$FLAVOR]}/abl_signed-$ABL_SOC.elf
+NEW=""
+if [ -f "$payload" ] && [ -f "$CATALOG" ]; then
+  size=$(stat -c %s "$payload")
+  # read back with direct I/O (not the page cache), in whole 4 KiB blocks
+  [ $((size % 4096)) = 0 ] || die "$payload isn't a whole number of 4 KiB blocks"
+  want=$(sha256sum "$payload" | cut -d' ' -f1)
+  NEW=$(awk -F'\t' -v s="$ABL_SOC" -v z="$size" -v h="$want" '$2 == s && $3 == z && $4 == h { print $1 }' "$CATALOG")
+  [ -n "$NEW" ] || die "$payload isn't a release listed in $CATALOG"
+  for s in a b; do [ "${PSIZE[$s]}" -ge "$size" ] || die "abl_$s is smaller than $NAME $NEW"; done
+  say "this image has $NAME $NEW ($ABL_SOC)"
+  machine "image $FLAVOR:$NEW"
+elif [ "$MODE" != restore ]; then
+  done_ no-build "no $NAME build for this device in this image"
+fi
 if [ -z "$STOCK_IMAGE" ]; then
   [ -n "$(stock_for a)" ] && [ -n "$(stock_for b)" ] && has_backup=yes || has_backup=no
   machine "backup $has_backup"
 fi
 
 # What to write where: todo (slots), with SRC[slot] (the image) and SAVE[slot]=1 (stock: save it first)
-todo=() todo_text=""
+todo=() todo_text="" nsave=0   # nsave: stock slots to save first (${#SAVE[@]} trips set -u while empty)
 declare -A SRC SAVE
 case $MODE in
   update|install)
@@ -204,32 +237,36 @@ case $MODE in
         other)
           if [ "$MODE" = update ]; then
             # (an Android update rewrites one slot's ABL with the stock one: then only one slot is)
-            [ $nstock = 2 ] && done_ not-installed "no ROCKNIX ABL installed: sudo kettle-abl-update --install installs it"
-            done_ stock "abl_$s isn't a ROCKNIX ABL (an Android update can put the stock one back): sudo kettle-abl-update --install puts the ROCKNIX ABL back in it"
+            [ $nstock = 2 ] && done_ not-installed "no $NAME installed: sudo kettle-abl-update --install$OPT installs it"
+            done_ stock "abl_$s has the stock bootloader (an Android update can put it back): sudo kettle-abl-update --install$OPT puts $NAME back in it"
           fi
           is_elf "$(slot_dev $s)" || [ "$FORCE" = 1 ] ||
             done_ unknown "abl_$s holds no ELF file, so not a bootloader Kettle knows; sudo kettle-abl-update --install --force replaces it"
-          SAVE[$s]=1 ;;
+          SAVE[$s]=1; nsave=$((nsave + 1)) ;;
         test-signed) [ "$FORCE" = 1 ] || done_ unknown "not replacing an ABL it can't identify; sudo kettle-abl-update --force replaces it" ;;
-        "$NEW") ;;
-        *) newer "${HAS[$s]}" "$NEW" && done_ newer "abl_$s is newer than this image's: left as it is" ;;
+        "$FLAVOR:$NEW") ;;
+        "$FLAVOR":*) newer "${HAS[$s]#*:}" "$NEW" && done_ newer "abl_$s is newer than this image's: left as it is" ;;
+        *)  # the other kind (rocknix <-> openabl): only an --install switches, and there's no stock
+            # bootloader in it to save (the one saved when it was installed stays the one to restore)
+            [ "$MODE" = install ] ||
+              done_ other-abl "abl_$s has $(describe "${HAS[$s]}"), not $NAME: sudo kettle-abl-update --install$OPT switches to it" ;;
       esac
     done
     for s in a b; do
-      [ "${HAS[$s]}" = "$NEW" ] || { todo+=("$s"); SRC[$s]=$payload; }
+      [ "${HAS[$s]}" = "$FLAVOR:$NEW" ] || { todo+=("$s"); SRC[$s]=$payload; }
     done
     [ ${#todo[@]} -gt 0 ] || done_ up-to-date "up to date"
-    if [ "$MODE" = install ] && [ ${#SAVE[@]} -gt 0 ]; then
-      todo_text="install ROCKNIX ABL $NEW in $(printf 'abl_%s ' "${todo[@]}")(the stock bootloader is saved first)"
+    if [ "$MODE" = install ] && [ $nsave -gt 0 ]; then
+      todo_text="install $NAME $NEW in $(printf 'abl_%s ' "${todo[@]}")(the stock bootloader is saved first)"
       [ "$CHECK" = 0 ] || done_ would-install "would $todo_text"
     else
-      todo_text="update $(printf 'abl_%s ' "${todo[@]}")to ROCKNIX ABL $NEW"
+      todo_text="$([ "$MODE" = install ] && echo "switch" || echo "update") $(printf 'abl_%s ' "${todo[@]}")to $NAME $NEW"
       [ "$CHECK" = 0 ] || done_ would-update "would $todo_text"
     fi ;;
   restore)
     if [ -n "$STOCK_IMAGE" ]; then
       is_elf "$STOCK_IMAGE" || die "$STOCK_IMAGE isn't an ELF file (an ABL)"
-      [ "$(identify "$STOCK_IMAGE")" = other ] || die "$STOCK_IMAGE is a ROCKNIX (test-signed) ABL, not a stock one"
+      [ "$(identify "$STOCK_IMAGE")" = other ] || die "$STOCK_IMAGE is $(describe "$(identify "$STOCK_IMAGE")"), not a stock one"
       z=$(stat -c %s "$STOCK_IMAGE")
       for s in a b; do [ "$z" -le "${PSIZE[$s]}" ] || die "$STOCK_IMAGE is bigger than abl_$s"; done
       [ $((z % 4096)) = 0 ] || die "$STOCK_IMAGE isn't a whole number of 4 KiB blocks"
@@ -237,7 +274,7 @@ case $MODE in
     for s in a b; do
       [ "${HAS[$s]}" = other ] && continue
       SRC[$s]=$(stock_for $s)
-      [ -n "${SRC[$s]}" ] || done_ no-backup "no saved stock bootloader for abl_$s (Kettle saves it when it installs the ROCKNIX ABL); with one saved elsewhere, such as ROCKNIX's backup_abl.sh's abl_$s.img: sudo kettle-abl-update --restore-stock --stock-image FILE"
+      [ -n "${SRC[$s]}" ] || done_ no-backup "no saved stock bootloader for abl_$s (Kettle saves it when it installs an open ABL); with one saved elsewhere, such as ROCKNIX's backup_abl.sh's abl_$s.img: sudo kettle-abl-update --restore-stock --stock-image FILE"
       todo+=("$s")
     done
     [ ${#todo[@]} -gt 0 ] || done_ is-stock "both slots already hold a stock bootloader"
@@ -259,8 +296,8 @@ if [ "$ac" = 0 ] && [ -n "$bat" ] && [ "$bat" -lt "$MIN_BATTERY" ]; then
 fi
 
 case $MODE in
-  update) what="Update the bootloader to ROCKNIX ABL $NEW" ;;
-  install) what="Install ROCKNIX ABL $NEW as the bootloader" ;;
+  update) what="Update the bootloader to $NAME $NEW" ;;
+  install) what="Install $NAME $NEW as the bootloader" ;;
   restore) what="Put the stock bootloader back" ;;
 esac
 if [ -n "${PKEXEC_UID:-}" ] && [ "$CHECK" = 0 ]; then
@@ -333,13 +370,16 @@ for s in "${todo[@]}"; do
   die "abl_$s didn't read back as written, and putting its old contents back failed too $saved. Don't turn the device off: keep it running and ask for help (docs/BOOTLOADER.md)"
 done
 case $MODE in
-  update) say "ROCKNIX ABL $NEW installed in ${written[*]}"; machine "result updated" ;;
+  update) say "$NAME $NEW installed in ${written[*]}"; machine "result updated" ;;
   install)
-    if [ ${#SAVE[@]} -gt 0 ]; then
-      say "ROCKNIX ABL $NEW installed in ${written[*]}. On the next start, hold Vol- for its menu and set Device model, Boot source and Boot mode: Linux (docs/INSTALL.md)"
+    if [ $nsave -gt 0 ]; then
+      case $FLAVOR in
+        rocknix) say "ROCKNIX ABL $NEW installed in ${written[*]}. On the next start, hold Vol- for its menu and set Device model, Boot source and Boot mode: Linux (docs/INSTALL.md)" ;;
+        openabl) say "OpenABL $NEW installed in ${written[*]}. It starts Linux from the next start (Boot source Auto: internal storage first, then the SD card); hold Volume Down at power-on for its menu (docs/BOOTLOADER.md)" ;;
+      esac
       machine "result installed"
     else
-      say "ROCKNIX ABL $NEW installed in ${written[*]}"; machine "result updated"
+      say "$NAME $NEW installed in ${written[*]}"; machine "result updated"
     fi ;;
   restore) say "the stock bootloader is back in ${written[*]}"; machine "result restored" ;;
 esac

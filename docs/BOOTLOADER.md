@@ -1,4 +1,4 @@
-# Bootloaders: the vendors' U-Boot and the ROCKNIX ABL
+# Bootloaders: the vendors' U-Boot, the ROCKNIX ABL and OpenABL
 
 Every device starts Kettle the same way once its bootloader is running:
 
@@ -103,6 +103,28 @@ Open:
     `kettle-abl-update` says so and does nothing.
   - Booting with the kernel's `gpt` option would make it use the backup GPT. That is
     untested, and it is not yet known whether every RP5 has this.
+
+## OpenABL
+[OpenABL](https://github.com/kettlelinux/OpenABL) is Kettle's fork of the Open Handheld
+Collective's OpenABL: Qualcomm's ABL with a graphical boot menu (Volume Down at power-on) and
+standard Linux boot. With *Boot source: Auto* it starts each drive's default file,
+`\EFI\BOOT\BOOTAA64.EFI` (steamcl), from the internal storage first, then the SD card, so Kettle
+keeps its A/B fallback, and needs no device model set: GRUB loads the devicetree from `boot.conf`.
+Volume Up starts Android. The fork's release `v1.0-kettle.1` is upstream main at `52205b8` plus
+Kettle's boot order (each drive's default file before any extlinux label: otherwise an
+`extlinux.conf` left for U-Boot would start the kernel without steamcl). Its GitHub Actions build
+every chip from the tag, with the complete source next to the images.
+
+`packages/openabl` ships that release's SM8250, SM8550 and SM8750 images and its `releases.tsv`
+in `/usr/share/kettle/openabl`. `kettle-abl-update --abl openabl` handles it as it does the ROCKNIX
+ABL: `--install` over a stock bootloader (saved first, as above) or a ROCKNIX ABL (a switch: the
+stock copy saved when that was installed stays the one `--restore-stock` puts back), updates to a
+newer release, and `--restore-stock`. Without `--abl` it works on the kind installed. OpenABL's
+images are 520 KiB (ROCKNIX's 252 KiB): one bigger than an `abl` partition is refused. Device
+Settings' System tab offers *Install OpenABL* over either.
+
+Checked in a harness (fake slot files, 2026-10-17): install over stock, a switch to the ROCKNIX ABL
+and back, and a restore that brought both slots back byte for byte. Not yet installed on a device.
 
 ## Research notes (2026-10)
 
