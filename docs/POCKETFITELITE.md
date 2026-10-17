@@ -180,12 +180,17 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   PD charger still charges (~4 A) with the controller asleep. dwc3-qcom logs `port-1 HS-PHY not
   in L2` at each suspend. The WCN7860 (`17cb:110e`) on DMA-FQ (`60-kettle-ath12k-iommu-fq.rules`)
   downloads at ~30 MB/s with no SMMU or ath12k errors.
+- Stick lights (2026-10-17, by hand): `konkr:rgb:joysticks` lights both rings, channels red
+  green blue as `multi_index` says. kettle-ledd draws it as one light for both sticks, and hands
+  breathe, rainbow and the charging pulse to the MCU's own `breath` and `rainbow` (the LED's
+  `effect`): each color write is four UART frames 40 ms apart, so 10 frames a second from
+  kettle-ledd made the rings flash. Solid, breathe, rainbow and battery (pulsing while charging,
+  steady on unplug) checked on the rings.
 
 ## Still to check, by hand
 - Desktop Mode rotation (KWin `Rotated270`), the refresh rates in use.
 - Fan noise.
-- The button map against the physical buttons; the stick RGB in `kettle-leds` (one multicolor
-  LED for both rings, where the AYN devices have `rgb:{l,r}N`).
+- The button map against the physical buttons.
 - Gyro in a game, from an image with `kettle-motion` and the dts's non-secure ADSP fastrpc
   device (by hand it was tested on `/dev/fastrpc-adsp-secure`, see above).
 - The intermittent WCN7860 loss above; suspend over many cycles; DisplayPort out and its audio, the USB-C orientation GPIO (marked TODO in the
