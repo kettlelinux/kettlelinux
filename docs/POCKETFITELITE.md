@@ -221,9 +221,12 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
 - Fan (2026-10-17, by hand, kettle-powerd paused): its tachometer works, 25/50/75/100% PWM run
   at ~1960/3020/5250/6800 rpm. No whine or rattle at any speed, only air noise; loud at 100%,
   which the dts curve (64/128/255 at 50/60/70 C) reaches in demanding games.
+- Desktop Mode (2026-10-17, 20261016.24): the panel rotated 270 (kscreen rotation 8), a
+  1920x1080 desktop at 150%, upright as held, with touch landing under the finger. KWin offers
+  144/120/90/60 Hz; each measured at its rate on the DPU's vsync counter (`encoder-0/status`,
+  with vkcube drawing: an idle desktop sends no frames, so the counter stands still).
 
 ## Still to check, by hand
-- Desktop Mode rotation (KWin `Rotated270`), the refresh rates in use.
 - Gyro in a game, from an image with `kettle-motion` and the dts's non-secure ADSP fastrpc
   device (by hand it was tested on `/dev/fastrpc-adsp-secure`, see above).
 - The intermittent WCN7860 loss above; suspend over many cycles; the DisplayPort unplug freeze
