@@ -4,3 +4,7 @@
 kettle-firmware-pocketfitelite
 # ALSA UCM profile for the "SM8750-KONKR" card (packages/kettle-ucm-konkr)
 kettle-ucm-pocketfitelite
+# gyro and accelerometer for Steam Input: the ADSP's Sensor Core (hexagonrpc, libssc) as the Deck
+# controller's motion (packages/kettle-motion, packages/inputplumber 0001), as on the Portal, Thor
+# and Nova; needs the non-secure ADSP fastrpc device the dts adds
+kettle-motion
