@@ -234,9 +234,17 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
 - Gyro on the non-secure ADSP fastrpc device (the same test dtb): hexagonrpcd on
   `/dev/fastrpc-adsp`, started at boot, gets the accelerometer streaming.
 
+- Wi-Fi on kernel 7.3-rc7 (2026-10-17): the link died within about a minute of steady download
+  ("failed to flush transmit queue, data pkts pending 1", then every WPA handshake timed out).
+  7.2.9's ath12k built against 7.3 held, so it was ath12k itself; a bisect of the 54 ath12k
+  commits in 7.2..7.3-rc7 (5-minute download + scan stress per step) found upstream 58aeb412495a,
+  which doubled the MAC RX buffer ring to 4096. 7.3-rc7's ath12k with only that line set back to
+  2048 passed two 5-minute runs; kernel 1466 does that, on every device.
+
 ## Still to check, by hand
 - Gyro in a game, from an image with `kettle-motion`.
 - The intermittent WCN7860 loss above; suspend over many cycles; the DisplayPort unplug freeze
   and the GPI DMA errors above; Steam's charge limit and charge speeds end to end.
 - Headphone jack, from an image with kernel 1465: a headset plugged in moves the sound to it.
   Its mic: never detected yet (see above).
+- Wi-Fi on a 7.3 image with kernel 1466, over a longer download.
