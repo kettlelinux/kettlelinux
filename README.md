@@ -1,7 +1,8 @@
 # Kettle Linux
 
-A SteamOS-like Linux distro for the **AYN Odin 2 Portal** and the **AYN Thor** (Snapdragon 8 Gen 2,
-SM8550/QCS8550), and the **Retroid Pocket 5** (Snapdragon 865, SM8250).
+A SteamOS-like Linux distro for the **AYN Odin 2 Portal**, the **AYN Thor** and the **Retroid
+Pocket Nova** (Snapdragon 8 Gen 2, SM8550/QCS8550), the **KONKR Pocket FIT Elite** (Snapdragon 8
+Elite, SM8750), and the **Retroid Pocket 5** (Snapdragon 865, SM8250).
 
 Kettle combines a patched mainline kernel with the aarch64 userspace from Valve's SteamOS
 "deckard" (Steam Frame). You get Valve's arm64 Steam client, a handheld Game Mode and a
@@ -19,11 +20,13 @@ own *Check for updates*.
 > [docs/RP5.md](docs/RP5.md) for what has been tested, and [docs/INSTALL-RP5.md](docs/INSTALL-RP5.md)
 > to install it.
 >
-> **KONKR Pocket FIT Elite** (Snapdragon 8 Elite, SM8750): port in progress, not yet run on
-> hardware. See [docs/POCKETFITELITE.md](docs/POCKETFITELITE.md).
+> **KONKR Pocket FIT Elite** (Snapdragon 8 Elite, SM8750): first public test build, 20261016.24.
+> It starts through ROCKNIX's ABL. See [docs/POCKETFITELITE.md](docs/POCKETFITELITE.md) for how it
+> boots and what has been tested.
 >
-> **Retroid Pocket Nova** (QCS8550, the Portal's SoC, 4:3 screen): port in progress, not yet run
-> on hardware. See [docs/RPNOVA.md](docs/RPNOVA.md).
+> **Retroid Pocket Nova** (QCS8550, the Portal's SoC, 4:3 screen): first public test build,
+> 20261016.25. It starts through ROCKNIX's ABL. See [docs/RPNOVA.md](docs/RPNOVA.md) for how it
+> boots and what has been tested.
 >
 > Each device gets its own image and its own updates;
 > [docs/PORTING.md](docs/PORTING.md) has how devices are kept apart and how to add one.
