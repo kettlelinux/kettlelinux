@@ -109,13 +109,19 @@ ROCKNIX does on the Nova:
 - The gyro in a game; its axes were swapped with the identity matrix guessed before the unit
   came. Held upright in landscape, the Sensor Core puts gravity on +X (`ssccli --sensor
   accelerometer`), so the Nova takes the Portal's and Thor's rotation.
+- The internal install, booting from UFS; an A/B update (rauc, slot B).
+- Screen: switching between 120 and 60 Hz and back.
+- Fan: every cooling level spins it and `fan1_input` reads, 1127 rpm at level 1 (pwm 30) to
+  4463 rpm at level 7 (pwm 150 of 255, the dts' top; the fan may have more above it).
+- Profiles: Performance, Balanced and Powersave each set their CPU and GPU caps (`steamosctl
+  set-performance-profile`).
+- Sleep: a 60 s RTC-woken s2idle reaches CX, AOSS and DDR collapse (`qcom_stats`, 59.9 of the
+  60 s) and wakes cleanly, with Wi-Fi, Bluetooth, the ADSP and the gyro in a game after resume.
 
 ## Still to check, by hand
 - Boot: a ROCKNIX ABL install from Android needs root, which Retroid's user build lacks (this
-  unit already had 1.2); the internal install with *Boot source: Internal*.
-- Screen: 60 Hz and switching between 60 and 120 Hz
-  (if it sticks at a low frame rate or a wrong rate after a switch, limit it to 120 Hz as
-  `20-sm8550/1021` does for the RP6). Steam's UI scale and the desktop's.
+  unit already had 1.2).
+- Screen: Steam's UI scale and the desktop's.
 - Brightness: the lowest levels (pocknix found the lowest Plasma brightness turns the panel
   fully dark), for a floor like `40-kettle/1120`'s on the Portal.
 - Controls: the sticks' centring and the trigger deadzones in games, and the desktop
@@ -127,11 +133,8 @@ ROCKNIX does on the Nova:
   kernel update.
 - `kettle-adsp-firmware`: the vendor copy on a fresh install from an SD card, and the fallback
   without one.
-- Fan: does it spin up with the trips, its noise, and whether `fan1_input` (tach) reads.
-- Motion: the new axis matrix in a game (`packages/kettle-motion/devices.conf`), and the gyro
-  after sleep.
-- Power: the TDP range (4-18 W, a placeholder), the profiles, idle and sleep drain, s2idle and
-  wake: the SM8550 deep sleep (PCIe GDSCs off, `40-kettle/1463`, no PCIe suspend floor) reaches
-  CX/AOSS/DDR collapse on the Portal and Thor; check that the Nova does and wakes, Wi-Fi/BT after resume.
+- Fan: the curve under a game's heat, and its noise (the Nova's fan is smaller than AYN's).
+- Power: the TDP range (4-18 W, a placeholder) under a game, idle drain, and the sleep drain over
+  a long sleep (the Portal 24 mA, the Thor 27 mA over 8 h).
 - AYN-specific tuning in the common dtsi (regulators, PCIe, audio rails): the Nova runs it as
   ROCKNIX does, but none of our fixes on top of it have been tried on Retroid's board.
