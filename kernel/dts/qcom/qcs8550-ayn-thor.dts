@@ -169,7 +169,7 @@
 };
 
 &display_panel {
-	compatible = "chipone,icna3520";
+	compatible = "ayntec,thor-panel-top", "chipone,icna3520";
 
 	pinctrl-0 = <&dsi_s_rst_active>, <&dsi_s_te_active>;
 	pinctrl-1 = <&dsi_s_rst_suspend>, <&dsi_s_te_suspend>;
@@ -487,3 +487,4 @@
 };
 
 #include "qcs8550-ayn-fan.dtsi"
+#include "qcs8550-ayn-thermistors.dtsi"

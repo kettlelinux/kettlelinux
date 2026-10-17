@@ -24,6 +24,8 @@ that never reaches D3 therefore keeps the vote, which holds SN0 and SN3
 (and SH0, SH1, MC0) in the sleep set and avoids the hang at the cost of
 the deeper sleep states.
 ---
+diff --git a/drivers/remoteproc/qcom_q6v5_pas.c b/drivers/remoteproc/qcom_q6v5_pas.c
+index a005546c2..10524069b 100644
 --- a/drivers/remoteproc/qcom_q6v5_pas.c
 +++ b/drivers/remoteproc/qcom_q6v5_pas.c
 @@ -10,9 +10,11 @@
@@ -38,26 +40,26 @@ the deeper sleep states.
  #include <linux/module.h>
  #include <linux/of.h>
  #include <linux/of_address.h>
-@@ -20,6 +22,7 @@
+@@ -21,6 +23,7 @@
  #include <linux/platform_device.h>
  #include <linux/pm_domain.h>
  #include <linux/pm_runtime.h>
 +#include <linux/regmap.h>
+ #include <linux/firmware/qcom/qcom_pas.h>
  #include <linux/firmware/qcom/qcom_scm.h>
  #include <linux/regulator/consumer.h>
- #include <linux/remoteproc.h>
-@@ -61,6 +64,7 @@
- 	bool region_assign_shared;
+@@ -64,6 +67,7 @@ struct qcom_pas_data {
  	int region_assign_vmid;
  	bool early_boot;
+ 	bool needs_tzmem;
 +	bool boot_bus_vote;
  };
  
  struct qcom_pas {
-@@ -118,6 +122,12 @@
+@@ -123,6 +127,12 @@ struct qcom_pas {
  
- 	struct qcom_scm_pas_context *pas_ctx;
- 	struct qcom_scm_pas_context *dtb_pas_ctx;
+ 	struct qcom_pas_context *pas_ctx;
+ 	struct qcom_pas_context *dtb_pas_ctx;
 +
 +	/* Bus vote for an image the bootloader left running, see boot_bus_vote */
 +	struct icc_path *boot_path;
@@ -67,7 +69,7 @@ the deeper sleep states.
  };
  
  static void qcom_pas_segment_dump(struct rproc *rproc,
-@@ -378,10 +388,72 @@
+@@ -388,10 +398,72 @@ static int qcom_pas_start(struct rproc *rproc)
  	return ret;
  }
  
@@ -140,7 +142,7 @@ the deeper sleep states.
  	if (pas->px_supply)
  		regulator_disable(pas->px_supply);
  	if (pas->cx_supply)
-@@ -880,6 +952,12 @@
+@@ -908,6 +980,12 @@ static int qcom_pas_probe(struct platform_device *pdev)
  		goto unassign_mem;
  	pas->proxy_pd_count = ret;
  
@@ -153,7 +155,7 @@ the deeper sleep states.
  	ret = qcom_q6v5_init(&pas->q6v5, pdev, rproc, desc->crash_reason_smem,
  			     desc->load_state, qcom_pas_handover);
  	if (ret)
-@@ -958,6 +1036,24 @@
+@@ -979,6 +1057,24 @@ static void qcom_pas_remove(struct platform_device *pdev)
  	device_init_wakeup(pas->dev, false);
  }
  
@@ -178,7 +180,7 @@ the deeper sleep states.
  static const struct qcom_pas_data adsp_resource_init = {
  	.crash_reason_smem = 423,
  	.firmware_name = "adsp.mdt",
-@@ -1220,6 +1316,25 @@
+@@ -1241,6 +1337,25 @@ static const struct qcom_pas_data sc8280xp_nsp1_resource = {
  	.ssctl_id = 0x20,
  };
  
@@ -204,7 +206,7 @@ the deeper sleep states.
  static const struct qcom_pas_data x1e80100_adsp_resource = {
  	.crash_reason_smem = 423,
  	.firmware_name = "adsp.mdt",
-@@ -1712,6 +1827,7 @@
+@@ -1906,6 +2021,7 @@ static const struct of_device_id qcom_pas_of_match[] = {
  	{ .compatible = "qcom,sm8650-cdsp-pas", .data = &sm8650_cdsp_resource },
  	{ .compatible = "qcom,sm8650-mpss-pas", .data = &sm8650_mpss_resource },
  	{ .compatible = "qcom,sm8750-mpss-pas", .data = &sm8750_mpss_resource },
@@ -212,7 +214,7 @@ the deeper sleep states.
  	{ .compatible = "qcom,x1e80100-adsp-pas", .data = &x1e80100_adsp_resource },
  	{ .compatible = "qcom,x1e80100-cdsp-pas", .data = &x1e80100_cdsp_resource },
  	{ },
-@@ -1724,6 +1840,7 @@
+@@ -1918,6 +2034,7 @@ static struct platform_driver qcom_pas_driver = {
  	.driver = {
  		.name = "qcom_q6v5_pas",
  		.of_match_table = qcom_pas_of_match,

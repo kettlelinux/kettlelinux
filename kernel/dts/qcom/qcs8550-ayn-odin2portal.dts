@@ -94,7 +94,7 @@
 };
 
 &display_panel {
-	compatible = "chipone,icna3512";
+	compatible = "ayntec,odin2portal-panel", "chipone,icna3512";
 
 	pinctrl-0 = <&dsi_p_rst_active>, <&dsi_p_te_active>;
 	pinctrl-1 = <&dsi_p_rst_suspend>, <&dsi_p_te_suspend>;
@@ -331,3 +331,4 @@
 };
 
 #include "qcs8550-ayn-fan.dtsi"
+#include "qcs8550-ayn-thermistors.dtsi"
