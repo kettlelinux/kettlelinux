@@ -164,14 +164,24 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   22 s into a boot and once after a resume, and iwd crashed with it; other boots and resumes
   were fine. Haptics (no node in the dts). One early power-key suspend didn't wake (during a
   boot with that failure; not seen since).
+- Gyro (2026-10-17, build 20261016.24, by hand): an ICM-4x6xx (plus a magnetometer) on the
+  ADSP's Sensor Core, as on the Portal and Thor; Android's persist partition has its registry
+  and factory calibration, and both the ROCKNIX and the stock ADSP firmware carry the driver.
+  `sm8750.dtsi` makes the ADSP's fastrpc device secure only (`/dev/fastrpc-adsp-secure`), so
+  the dts adds `qcom,non-secure-domain` for kettle-motion's `/dev/fastrpc-adsp`. With
+  hexagonrpcd on the secure node and kettle-motion-setup's files, the accelerometer and
+  magnetometer stream (`ssccli`); the light sensor doesn't register. hexagonrpcd has to be
+  there soon after the ADSP boots: started 1.4 s after it, the sensors came up; started three
+  hours into a boot, the registry answered but no physical sensor ever registered. Held
+  upright in landscape, gravity is on +X: the Portal's matrix.
 
 ## Still to check, by hand
 - Desktop Mode rotation (KWin `Rotated270`), the refresh rates in use.
 - Fan noise.
 - The button map against the physical buttons; the stick RGB in `kettle-leds` (one multicolor
   LED for both rings, where the AYN devices have `rgb:{l,r}N`).
-- Gyro: there is no IMU node in the dts, so it is probably the ADSP's Sensor Core as on the
-  Portal and Thor (`kettle-motion` would need a `[konkr,pocket-fit-elite]` matrix).
+- Gyro in a game, from an image with `kettle-motion` and the dts's non-secure ADSP fastrpc
+  device (by hand it was tested on `/dev/fastrpc-adsp-secure`, see above).
 - The intermittent WCN7860 loss above; suspend over many cycles; DisplayPort out and its audio, the USB-C orientation GPIO (marked TODO in the
   dts), the headphone jack, Steam's charge limit and charge speeds end to end.
 - `60-kettle-usb-power.rules` and `60-kettle-ath12k-iommu-fq.rules` match SM8550's USB controller

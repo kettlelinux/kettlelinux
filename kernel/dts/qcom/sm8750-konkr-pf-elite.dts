@@ -1730,6 +1730,15 @@
 	firmware-name = "qcom/sm8750/konkr/pfe/adsp.mbn",
 			"qcom/sm8750/konkr/pfe/adsp_dtb.mbn";
 	status = "okay";
+
+	/* Kettle: a non-secure ADSP fastrpc device (/dev/fastrpc-adsp), as sm8550.dtsi has, for
+	 * hexagonrpcd to serve the sensors process its files (kettle-motion: the gyro). sm8750.dtsi
+	 * leaves it secure only (/dev/fastrpc-adsp-secure). */
+	glink-edge {
+		fastrpc {
+			qcom,non-secure-domain;
+		};
+	};
 };
 
 /* Kettle: the CDSP is off. On the first boot (20261015.2) its firmware hit a fatal error in
