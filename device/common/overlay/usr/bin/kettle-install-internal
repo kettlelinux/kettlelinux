@@ -15,7 +15,7 @@
 #   ...Android partitions...   untouched (checked after partitioning; any change is undone)
 #   userdata (Android)         shrunk to --android-size (--android-minimal: 16 GiB)
 #   kettle-esp  512 MiB  FAT32: steamcl and the slots' boot state
-#   efi-A/B      64 MiB  FAT32: each slot's GRUB
+#   efi-A/B      64 MiB  FAT16: each slot's GRUB
 #   rootfs-A/B   12 GiB  slot A: a copy of this system image (read-only btrfs); B: empty until
 #                        the first update
 #   var-A/B     256 MiB  /var and the /etc overlay (copied: Wi-Fi, passwords, settings)
@@ -311,8 +311,12 @@ ROOT_FSUUID=$(fsuuid) VARA_FSUUID=$(fsuuid)
 say "formatting the Kettle partitions"
 wipefs -aq "$ESP" "$EFIA" "$EFIB" "$ROOT" "$ROOTB" "$VARA" "$VARB" "$HOME_P"
 mkfs.vfat -F 32 -n SPINTERNAL "$ESP" >/dev/null
-mkfs.vfat -F 32 -n EFI-A "$EFIA" >/dev/null
-mkfs.vfat -F 32 -n EFI-B "$EFIB" >/dev/null
+# efi-A/B as FAT16: on UFS's 4 KiB sectors 64 MiB holds ~16k clusters, too few for FAT32, and
+# the firmware's FAT driver (XBL UEFI, behind OpenABL) refuses such a FAT32 (U-Boot reads it),
+# so steamcl finds no slot and fails with EFI_NOT_FOUND. One sector a cluster: mkfs.vfat's own
+# choice (16 KiB) leaves ~4k clusters, just above where FAT16 ends and FAT12 starts
+mkfs.vfat -F 16 -s 1 -n EFI-A "$EFIA" >/dev/null
+mkfs.vfat -F 16 -s 1 -n EFI-B "$EFIB" >/dev/null
 mkfs.ext4 -F -q -L var -U "$VARA_FSUUID" -E discard "$VARA"
 mkfs.ext4 -F -q -L var -E discard "$VARB"
 mkfs.ext4 -F -q -L home -E discard "$HOME_P"

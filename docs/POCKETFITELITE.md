@@ -105,8 +105,9 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   `\KERNEL` from `kettle-esp` (*Boot source: Internal*) and the system runs from UFS. The UFS
   tools needed `ufs-lib.sh` to find the LUNs by SCSI host (the SM8750 node is `ufs@`, not
   `ufshc@`). The install's `efi-A`/`efi-B` (64 MiB on 4K-sector UFS) come out as FAT32 with
-  16316 clusters, under FAT32's minimum: not read on this boot path, but a strict FAT driver
-  (UEFI) would take them for FAT16.
+  16316 clusters, under FAT32's minimum: not read on this boot path, but XBL's UEFI refuses
+  them, so OpenABL couldn't boot such an install (seen on the Portal, 2026-10-17). The installer
+  now makes them FAT16, and `kettle-efi-fat16` converts older installs (docs/BOOTLOADER.md).
 - Suspend soak on the internal install (20261015.3): 20/20 `systemctl suspend` cycles with RTC
   wake, no UFS errors, `/home` writable after, Wi-Fi back each time with no ath12k `-108`. Every
   suspend logs `dwc3-qcom a600000.usb: port-1 HS-PHY not in L2` (no effect seen).

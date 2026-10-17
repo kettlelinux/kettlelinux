@@ -13,7 +13,7 @@
 # (scripts/build-packages.sh) and pinned by hash. releases.tsv identifies installed releases.
 pkgname=rocknix-abl
 pkgver=1.2
-pkgrel=5
+pkgrel=6
 pkgdesc='ROCKNIX ABL builds, and kettle-abl-update to install, update or remove an open ABL (ROCKNIX, OpenABL)'
 arch=(any)
 url='https://github.com/ROCKNIX/abl'
