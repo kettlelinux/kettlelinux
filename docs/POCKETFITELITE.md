@@ -218,10 +218,12 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   stopping a channel (`CH STOP ... ret:-5`), and the devices it serves time out with it: the
   gamepad MCU's SPI (`mcu-joystick spi0.0: SPI transfer timed out`) and the I2C at `a90000`
   (`GPI transfer failed: -110`). They recover; the freeze's best lead.
+- Fan (2026-10-17, by hand, kettle-powerd paused): its tachometer works, 25/50/75/100% PWM run
+  at ~1960/3020/5250/6800 rpm. No whine or rattle at any speed, only air noise; loud at 100%,
+  which the dts curve (64/128/255 at 50/60/70 C) reaches in demanding games.
 
 ## Still to check, by hand
 - Desktop Mode rotation (KWin `Rotated270`), the refresh rates in use.
-- Fan noise.
 - Gyro in a game, from an image with `kettle-motion` and the dts's non-secure ADSP fastrpc
   device (by hand it was tested on `/dev/fastrpc-adsp-secure`, see above).
 - The intermittent WCN7860 loss above; suspend over many cycles; the DisplayPort unplug freeze
