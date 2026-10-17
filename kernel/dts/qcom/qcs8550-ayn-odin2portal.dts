@@ -331,3 +331,4 @@
 };
 
 #include "qcs8550-ayn-fan.dtsi"
+#include "qcs8550-ayn-thermistors.dtsi"

@@ -1051,6 +1051,13 @@
 	firmware-name = "qcom/sm8750/gen80000_zap.mbn";
 };
 
+/* Video decode/encode (Steam Remote Play, V4L2). Firmware: the driver's default
+ * qcom/vpu/vpu35_p4.mbn from linux-firmware (the same file ROCKNIX ships), which
+ * Armada runs on the AYN Odin 3 (SM8750-class) with this node enabled. */
+&iris {
+	status = "okay";
+};
+
 /* ===================================================================== *
  *  Storage (UFS) — required to boot
  * ===================================================================== */
