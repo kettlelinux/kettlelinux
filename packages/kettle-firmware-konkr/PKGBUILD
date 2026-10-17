@@ -5,7 +5,7 @@
 #    Upstream linux-firmware has no WCN7860 files yet.
 #  - Arch linux-firmware-qcom (Valve's deckard mirror): A830 GPU (gen80000 SQE/GMU/AQE and the
 #    SM8750 zap, signed with Qualcomm's test key, so the same on every SM8750 board) and the
-#    iris video firmware (vpu35_p4)
+#    iris video firmware (vpu35_p4: a link to vpu35_p4_s7, both extracted)
 #  - Armada (pinned commit): the SoCCP image, soccp.mbn, from the unit's own Android modem
 #    partition. The kernel reloads it so the SoCCP parks itself (40-kettle/1451), which the
 #    SoC's deep sleep needs; ROCKNIX's set has no SoCCP image.
@@ -15,7 +15,7 @@ _extra_rev=8834a0c80f5b24fee5ed9e18c1560dc48a6f1bd9
 _linux_fw=20260221-1
 _armada_rev=f1e1a0848b95672df48503ada5e70d019372577b
 pkgver=${_linux_fw%-*}.${_extra_rev:0:8}
-pkgrel=2
+pkgrel=3
 pkgdesc='Firmware for the KONKR Pocket FIT Elite (DSPs, audio, GPU, video, Wi-Fi, Bluetooth)'
 arch=(any)
 url='https://github.com/ROCKNIX/extra-firmware'
@@ -50,6 +50,7 @@ package() {
     'usr/lib/firmware/qcom/gen80000_*' \
     usr/lib/firmware/qcom/sm8750/gen80000_zap.mbn.zst \
     usr/lib/firmware/qcom/vpu/vpu35_p4.mbn.zst \
+    usr/lib/firmware/qcom/vpu/vpu35_p4_s7.mbn.zst \
     'usr/share/licenses/linux-firmware-qcom/*'
   find "$pkgdir" -type d -exec chmod 755 {} + && find "$fw" -type f -exec chmod 644 {} +
 }
