@@ -28,7 +28,7 @@ source=("rocknix-abl-v$pkgver.tar.gz::https://github.com/ROCKNIX/abl/releases/do
         LICENSE)
 sha256sums=('64034fb076ea0bb858beaa2f29dbef635e97d29f3e3d32c13bce61bd4af4cff7'
             '3d72c8ac7ef9076135f7ad84b48c29a6b6380acf95481b06f6016d2592c6ebde'
-            '0c286c51c3fe09ba7fc8acd8bda7a1e5e4937283b5b9382e97aec19a314ca2fe'
+            'd14654705a31e481245b6ae81e83345c704cd226f786cd58b870e0ef7f818b74'
             '8277e689549581a09bdca85e4606bba6921efcf2b7ae427e3836585699dd12fc'
             '9eae899bf27ece7348b075c1fd133d0f7f16f2ed8cca8f169a057594066cc3de'
             '85c4d9a67a22b9658ac18fd375d2e1e42d41364776c694c955b2b252756df5cc')
