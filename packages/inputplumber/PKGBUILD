@@ -19,7 +19,7 @@
 # the snapshot's 1.78.
 pkgname=inputplumber
 pkgver=0.82.0
-pkgrel=4
+pkgrel=5
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Input router and remapper daemon (Steam Deck controller emulation for AYN handhelds)'
