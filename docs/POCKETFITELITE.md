@@ -174,6 +174,12 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   there soon after the ADSP boots: started 1.4 s after it, the sensors came up; started three
   hours into a boot, the registry answered but no physical sensor ever registered. Held
   upright in landscape, gravity is on +X: the Portal's matrix.
+- USB and Wi-Fi power rules (2026-10-17, by hand, now matching SM8750 and the WCN7860): with
+  the USB controller's runtime PM on (`60-kettle-usb-power.rules`) it suspends 5 s after the
+  last cable, wakes into host role for a USB Wi-Fi adapter (enumerated at high speed), and a
+  PD charger still charges (~4 A) with the controller asleep. dwc3-qcom logs `port-1 HS-PHY not
+  in L2` at each suspend. The WCN7860 (`17cb:110e`) on DMA-FQ (`60-kettle-ath12k-iommu-fq.rules`)
+  downloads at ~30 MB/s with no SMMU or ath12k errors.
 
 ## Still to check, by hand
 - Desktop Mode rotation (KWin `Rotated270`), the refresh rates in use.
@@ -184,5 +190,3 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   device (by hand it was tested on `/dev/fastrpc-adsp-secure`, see above).
 - The intermittent WCN7860 loss above; suspend over many cycles; DisplayPort out and its audio, the USB-C orientation GPIO (marked TODO in the
   dts), the headphone jack, Steam's charge limit and charge speeds end to end.
-- `60-kettle-usb-power.rules` and `60-kettle-ath12k-iommu-fq.rules` match SM8550's USB controller
-  and WCN7850 only. Extend them to SM8750/WCN7860 once tested.
