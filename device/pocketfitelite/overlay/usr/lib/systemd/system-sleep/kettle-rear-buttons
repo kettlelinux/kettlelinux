@@ -1,0 +1,8 @@
+#!/bin/bash
+# Kettle Linux, Pocket FIT Elite: after a wake-up, put back the rear buttons, which the MCU
+# forgot while kernel 1446 had it powered off. Off the resume path: its driver needs about a
+# second to bring the MCU back first.
+[ "$1" = post ] || exit 0
+[ -f /var/lib/kettle/rear-buttons ] || exit 0
+systemd-run --no-block --collect --unit=kettle-rear-buttons-resume /usr/lib/kettle/kettle-rear-buttons restore >/dev/null 2>&1
+exit 0

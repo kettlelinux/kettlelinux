@@ -1,6 +1,7 @@
 # The Buttons tab: what the rear buttons do, on the devices whose controller lets them copy another
 # button. The KONKR Pocket FIT Elite's MCU reports no rear button of its own; it can make each one
-# press a regular button instead, stored in the MCU (it survives power cycles). The
+# press a regular button instead. The MCU forgets it whenever it loses power (shutdown, suspend),
+# so kettle-rear-buttons also saves it and puts it back at boot and after a wake. The
 # driver (kernel 22-sm8750/0069) has key_lc_back and key_rc_back on its serial device: "<func>
 # <target>", func 1 = a gamepad button, target its code (1-16 below, checked on a unit), "0 0"
 # nothing, "255 255" as it left the factory (nothing too). They're root's, and Decky runs this as

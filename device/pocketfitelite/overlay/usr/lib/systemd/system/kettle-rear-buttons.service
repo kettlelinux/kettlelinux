@@ -1,0 +1,10 @@
+# Pocket FIT Elite: put back the rear buttons Device Settings set (kettle-rear-buttons restore),
+# which the MCU forgets when it loses power. Enabled by the device overlay (multi-user.target.wants).
+[Unit]
+Description=Put back the rear button settings
+ConditionPathExists=/var/lib/kettle/rear-buttons
+After=systemd-modules-load.service local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/kettle/kettle-rear-buttons restore
