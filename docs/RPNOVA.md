@@ -104,6 +104,11 @@ ROCKNIX does on the Nova:
 - Every button, the paddles and Volume Up, with the face buttons by their labels.
 - The charge current cap (Charging, above), and the gyro and battery profile on the Nova's own
   ADSP firmware (above).
+- `kettle-adsp-firmware` on an A/B update (20261016.6): it copied the firmware from `vendor_a`
+  and the ADSP was up 7.2 s into boot, with audio, the battery's own profile and the gyro.
+- The gyro in a game; its axes were swapped with the identity matrix guessed before the unit
+  came. Held upright in landscape, the Sensor Core puts gravity on +X (`ssccli --sensor
+  accelerometer`), so the Nova takes the Portal's and Thor's rotation.
 
 ## Still to check, by hand
 - Boot: a ROCKNIX ABL install from Android needs root, which Retroid's user build lacks (this
@@ -120,12 +125,11 @@ ROCKNIX does on the Nova:
   firmware latches "Not charging" after a 0 cap until a replug), and the percentage on the
   Nova's own profile over a full discharge. pocknix testers reported charging stopping after a
   kernel update.
-- `kettle-adsp-firmware` in an image: the ADSP's late start (audio, battery data and the gyro
-  about a second later than on the other devices), the vendor copy on a fresh install, and the
-  fallback without one.
+- `kettle-adsp-firmware`: the vendor copy on a fresh install from an SD card, and the fallback
+  without one.
 - Fan: does it spin up with the trips, its noise, and whether `fan1_input` (tach) reads.
-- Motion: the axis matrix in a game (`packages/kettle-motion/devices.conf`, identity for now),
-  and the gyro after sleep.
+- Motion: the new axis matrix in a game (`packages/kettle-motion/devices.conf`), and the gyro
+  after sleep.
 - Power: the TDP range (4-18 W, a placeholder), the profiles, idle and sleep drain, s2idle and
   wake: the SM8550 deep sleep (PCIe GDSCs off, `40-kettle/1463`, no PCIe suspend floor) reaches
   CX/AOSS/DDR collapse on the Portal and Thor; check that the Nova does and wakes, Wi-Fi/BT after resume.
