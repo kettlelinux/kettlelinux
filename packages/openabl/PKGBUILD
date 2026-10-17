@@ -1,0 +1,43 @@
+# OpenABL (github.com/kettlelinux/OpenABL, Kettle's fork of the Open Handheld Collective's
+# OpenABL): Qualcomm's Android bootloader (ABL) with a graphical boot menu and standard Linux
+# boot, which starts Kettle's steamcl (\EFI\BOOT\BOOTAA64.EFI) from the internal storage or the SD
+# card, so updates keep their A/B fallback. This package only ships the release's images and its
+# catalogue for the SoCs Kettle runs on; kettle-abl-update (packages/rocknix-abl) installs it over
+# the stock bootloader (saving that first) or a ROCKNIX ABL, keeps it up to date and puts the stock
+# one back (--abl openabl), and Device Settings' System tab offers that (behind both volume keys).
+#
+# v1.0-kettle.1: upstream main at 52205b8 (boot entries, larger ABL sizes, display parking) plus
+# Kettle's boot order: each drive's default file before any extlinux label, so OpenABL starts
+# steamcl rather than an extlinux.conf left for U-Boot. Built by the fork's GitHub Actions from its
+# tag; the release also carries the complete source (openabl-v1.0-kettle.1-source.tar.xz).
+# releases.tsv: each image's size and SHA-256, from the release tarball, for every SoC it builds.
+pkgname=openabl
+pkgver=1.0.kettle.1
+_tag=v1.0-kettle.1
+pkgrel=1
+pkgdesc='OpenABL: Qualcomm ABL with a boot menu and standard Linux boot, for kettle-abl-update to install'
+arch=(any)
+url='https://github.com/kettlelinux/OpenABL'
+license=(GPL-3.0-or-later)
+depends=(rocknix-abl)  # kettle-abl-update
+options=(!strip)
+source=("openabl-$_tag.tar.gz::$url/releases/download/$_tag/openabl-$_tag.tar.gz"
+        releases.tsv)
+sha256sums=('ea9accb778bca8f27499615eedae80cbfd7315f08115e7b1559d7ee5b6954ad2'
+            '26747c61502aa0fec7188a843ff0fe77b3e9c6e65a3094333f30957c65e86f41')
+_socs=(SM8250 SM8550 SM8750)   # the SoCs Kettle's devices have (device.conf ABL_SOC)
+
+package() {
+  local d="$pkgdir/usr/share/kettle/openabl" s f
+  install -d "$d"
+  for s in "${_socs[@]}"; do
+    f="$srcdir/openabl-$_tag/$s/abl_signed-$s.elf"
+    # the tarball's own checksum, and the catalogue's, must agree
+    (cd "${f%/*}" && sha256sum -c --quiet "${f##*/}.sha256")
+    grep -qP "^[^\t]+\t$s\t$(stat -c %s "$f")\t$(sha256sum "$f" | cut -d' ' -f1)$" releases.tsv
+    install -m644 "$f" "$d/"
+  done
+  install -m644 releases.tsv "$d/"
+  install -Dm644 "$srcdir/openabl-$_tag/LICENSE" "$srcdir/openabl-$_tag/LICENSES.md" -t "$pkgdir/usr/share/licenses/$pkgname"
+  cp -r "$srcdir/openabl-$_tag/LICENSES" "$pkgdir/usr/share/licenses/$pkgname/"
+}

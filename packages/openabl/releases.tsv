@@ -1,0 +1,12 @@
+# OpenABL releases (github.com/kettlelinux/OpenABL): the SHA-256 of the first <size> bytes of an
+# abl partition holding that release, from the release tarball (kettle-abl-update reads it).
+version	soc	size	sha256
+1.0-kettle.1	SDM845	532480	cd5663c0a8bed7d4845ed138fd8d65e5c68929fe6ae42eb740f681230faf6f89
+1.0-kettle.1	SM4450	532480	8a8497561667ca33ecf617290b8cf0263fc648ff2dcb12f6f92ef8228a60dff5
+1.0-kettle.1	SM6115	532480	ec23720b33e177ae5e0a1bb008de7d8b1d59b40f34d4a1c7e5ba2040048e8739
+1.0-kettle.1	SM6450	532480	660eb7da13c07344d4debfd0c9e1f653483bbdcf08155d0f899dc2c8ddfa3340
+1.0-kettle.1	SM7675	532480	defbfbb0712df949ebc66fa1b8a03db6edd4aecd6f31a204ef1c625e33e7633b
+1.0-kettle.1	SM8250	532480	8700f3ef0f17067132698ebc5851fd1da671745f51c8fa81f84d6df1d55088b8
+1.0-kettle.1	SM8550	532480	a7deb411c5dfdc8ef879aafef1aada0993cce29f75582a6413adb424ad6e2bb9
+1.0-kettle.1	SM8650	532480	22dd77df5a6e31ccb931fd12cff937345218c884c00d41bdcb8a4583d1529df7
+1.0-kettle.1	SM8750	532480	03f39adae99ce3435f4637248a0c0bc695674f61d582827f92c65dbd04038351

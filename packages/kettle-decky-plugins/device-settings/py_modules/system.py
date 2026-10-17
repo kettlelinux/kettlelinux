@@ -122,9 +122,9 @@ def reset(what: str):
 
 
 def _abl(*args: str, timeout: int) -> dict:
-    """kettle-abl-update --porcelain: {"slots": {"a": version | "test-signed" | "other", ...},
-    "image": version, "backup": a saved stock bootloader to put back, "result": code}; raises with
-    its message on an error."""
+    """kettle-abl-update --porcelain: {"slots": {"a": "rocknix:1.2" | "openabl:1.0-kettle.1" |
+    "test-signed" | "other", ...}, "image": "<kind>:<version>" (what it would write), "backup": a
+    saved stock bootloader to put back, "result": code}; raises with its message on an error."""
     r = subprocess.run(["pkexec", ABL_UPDATE, "--porcelain", *args], capture_output=True, text=True,
                        timeout=timeout)
     out = {"slots": {}, "image": None, "backup": False, "result": None}
@@ -149,7 +149,19 @@ _abl_lock = threading.Lock()  # each call runs in its own thread (asyncio.to_thr
 # what kettle-abl-update --check can't act on: no ROCKNIX build for this SoC, or no abl partitions
 # Linux can see (the RP5's)
 ABL_NONE = ("no-build", "no-partitions")
-ABL_MODES = {"update": (), "install": ("--install",), "restore": ("--restore-stock",)}
+# update and install: the kind installed (else the ROCKNIX ABL); install-openabl: OpenABL, over the
+# stock bootloader or a ROCKNIX ABL
+ABL_MODES = {"update": (), "install": ("--install",), "install-openabl": ("--install", "--abl", "openabl"),
+             "restore": ("--restore-stock",)}
+
+
+def _kind(slots: dict) -> str | None:
+    """The open ABL installed (in abl_a, else abl_b): "rocknix", "openabl", or None (stock)."""
+    for s in ("a", "b"):
+        v = slots.get(s, "")
+        if ":" in v:
+            return v.split(":", 1)[0]
+    return None
 
 
 def abl_status() -> dict:
@@ -164,20 +176,29 @@ def abl_status() -> dict:
         return {"available": False, "installed": False}
     try:
         s = _abl("--check", timeout=60)
+        # what installing OpenABL would do (its own image for this SoC, or no-build)
+        try:
+            o = _abl("--check", "--install", "--abl", "openabl", timeout=60)
+            openabl = {"image": o["image"], "check": o["result"]} if o["result"] not in ABL_NONE else None
+        except RuntimeError as e:
+            decky.logger.warning("kettle-abl-update --check --install --abl openabl: %s", e)
+            openabl = None
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as e:
         decky.logger.warning("kettle-abl-update --check: %s", e)
         return {"available": False, "installed": False}
     # check: what can be done now; result: the same, or (abl_update) what was just done
-    s = {**s, "check": s["result"], "available": s["result"] not in ABL_NONE,
-         "installed": any(v != "other" for v in s["slots"].values())}
+    s = {**s, "check": s["result"], "available": s["result"] not in ABL_NONE or openabl is not None,
+         "installed": any(v != "other" for v in s["slots"].values()), "kind": _kind(s["slots"]),
+         "openabl": openabl}
     _abl_write["last"] = s
     return s
 
 
 def abl_update(mode: str = "update") -> dict:
-    """Writes the bootloader: "update" a recognised, older ROCKNIX ABL, "install" the ROCKNIX ABL
-    over a stock one (saving it first), or "restore" the saved stock one. The result as
-    abl_status's, after a fresh check."""
+    """Writes the bootloader: "update" the open ABL installed to the image's newer release,
+    "install" it (the ROCKNIX ABL where none is) over a stock one (saving it first),
+    "install-openabl" OpenABL over a stock bootloader (saving it first) or a ROCKNIX ABL, or
+    "restore" the saved stock one. The result as abl_status's, after a fresh check."""
     if mode not in ABL_MODES:
         raise ValueError(f"unknown mode {mode!r}")
     with _abl_lock:
@@ -194,7 +215,8 @@ def abl_update(mode: str = "update") -> dict:
     s = abl_status()
     if not s["available"]:  # the check failed: what the write saw
         s = {**r, "check": None, "available": True,
-             "installed": any(v != "other" for v in r["slots"].values())}
+             "installed": any(v != "other" for v in r["slots"].values()), "kind": _kind(r["slots"]),
+             "openabl": None}
     return {**s, "result": r["result"]}
 
 
