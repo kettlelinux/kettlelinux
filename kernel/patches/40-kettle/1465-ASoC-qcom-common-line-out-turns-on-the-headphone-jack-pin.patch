@@ -1,0 +1,29 @@
+From: Kettle Linux
+Subject: [PATCH] ASoC: qcom: common: line out turns on the Headphone Jack pin
+
+The WCD codecs' MBHC reports a plug whose mic contact reads above the
+headset threshold as SND_JACK_LINEOUT (MBHC_PLUG_TYPE_HIGH_HPH). The
+"Headset Jack" takes that type, but its "Headphone Jack" pin only
+matches SND_JACK_HEADPHONE, so the Headphone Jack control stays off,
+UCM's Headphones device reads unplugged, and the sound stays on the
+speakers. On the KONKR Pocket FIT Elite (WCD9395 behind its USBSS
+switch) a four-pole headset reads this way at every plug: the
+earpieces measure 33/35 ohms, stereo, and play once the Headphones
+device is enabled. Let line out turn the Headphone Jack pin on too.
+---
+--- a/sound/soc/qcom/common.c
++++ b/sound/soc/qcom/common.c
+@@ -179,8 +179,12 @@
+ 		.mask = SND_JACK_MICROPHONE,
+ 	},
+ 	{
++		/*
++		 * Kettle: a plug MBHC reports as line out (its mic contact reads
++		 * open) is still played to through the headphone path
++		 */
+ 		.pin = "Headphone Jack",
+-		.mask = SND_JACK_HEADPHONE,
++		.mask = SND_JACK_HEADPHONE | SND_JACK_LINEOUT,
+ 	},
+ };
+ 

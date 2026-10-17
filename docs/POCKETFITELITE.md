@@ -186,6 +186,16 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   `effect`): each color write is four UART frames 40 ms apart, so 10 frames a second from
   kettle-ledd made the rings flash. Solid, breathe, rainbow and battery (pulsing while charging,
   steady on unplug) checked on the rings.
+- Headphone jack (2026-10-17, by hand, a four-pole headset): the WCD9395's MBHC sees every plug
+  and measures the earpieces (33/35 ohm, stereo), but reads the mic contact as open (once as a
+  ground/mic cross connection) and reports line out, which the "Headphone Jack" control didn't
+  take (kernel 1465 now does), so the sound stayed on the speakers. With UCM's Headphones device
+  enabled by hand, both channels play cleanly. The mic read open with the USBSS switch in every
+  routing tried, including Qualcomm's downstream headset-jack mode (`WCD_USBSS_HSJ_CONNECT`:
+  mic MG2, ground MG1, charge pump on); Android's sound node has `wcd939x-i2c-handle` and
+  `usbc-audio-supported = <0>`. Open: the headset mic; and 0063 uses the USB-C audio routing
+  (`TYPEC_MODE_AUDIO`), which also switches the USB D+/D- lines to the codec's HPH outputs while
+  a plug is in, where the downstream jack mode leaves them on USB.
 
 ## Still to check, by hand
 - Desktop Mode rotation (KWin `Rotated270`), the refresh rates in use.
@@ -194,4 +204,6 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
 - Gyro in a game, from an image with `kettle-motion` and the dts's non-secure ADSP fastrpc
   device (by hand it was tested on `/dev/fastrpc-adsp-secure`, see above).
 - The intermittent WCN7860 loss above; suspend over many cycles; DisplayPort out and its audio, the USB-C orientation GPIO (marked TODO in the
-  dts), the headphone jack, Steam's charge limit and charge speeds end to end.
+  dts), Steam's charge limit and charge speeds end to end.
+- Headphone jack, from an image with kernel 1465: a headset plugged in moves the sound to it.
+  Its mic: never detected yet (see above).
