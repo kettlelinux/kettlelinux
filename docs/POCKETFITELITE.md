@@ -209,13 +209,23 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   down, left, right, 15 LT, `0 0` nothing; 17 (a stick direction) moves nothing, so the tab stops
   at 16. Set from the tab in Game Mode and pressed. A read of a setting sometimes times out while
   buttons are pressed (the backend retries); once a read gave `255 255` just after a write.
+- DisplayPort out (2026-10-17, 20261016.24, a 2560x1600 USB-C display, orientation `normal`):
+  picture at 2560x1600@60, and its audio (UCM's HDMI / DisplayPort device, which PipeWire picks on
+  plug). Unplugging hands the picture back to the panel in ~30 ms, in the Steam UI and in a game
+  (Satisfactory). Once the unit froze about 2 s after an unplug, right after a game segfaulted;
+  the journal stops there, no pstore. Three more unplugs, one in a game, with the logs streamed
+  off the unit, were fine. At every plug and unplug the QUP DMA engine (`gpi a00000`) times out
+  stopping a channel (`CH STOP ... ret:-5`), and the devices it serves time out with it: the
+  gamepad MCU's SPI (`mcu-joystick spi0.0: SPI transfer timed out`) and the I2C at `a90000`
+  (`GPI transfer failed: -110`). They recover; the freeze's best lead.
 
 ## Still to check, by hand
 - Desktop Mode rotation (KWin `Rotated270`), the refresh rates in use.
 - Fan noise.
 - Gyro in a game, from an image with `kettle-motion` and the dts's non-secure ADSP fastrpc
   device (by hand it was tested on `/dev/fastrpc-adsp-secure`, see above).
-- The intermittent WCN7860 loss above; suspend over many cycles; DisplayPort out and its audio, the USB-C orientation GPIO (marked TODO in the
-  dts), Steam's charge limit and charge speeds end to end.
+- The intermittent WCN7860 loss above; suspend over many cycles; DisplayPort with the USB-C
+  cable flipped (the orientation GPIO is marked TODO in the dts); the DisplayPort unplug freeze
+  and the GPI DMA errors above; Steam's charge limit and charge speeds end to end.
 - Headphone jack, from an image with kernel 1465: a headset plugged in moves the sound to it.
   Its mic: never detected yet (see above).
