@@ -209,8 +209,8 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   down, left, right, 15 LT, `0 0` nothing; 17 (a stick direction) moves nothing, so the tab stops
   at 16. Set from the tab in Game Mode and pressed. A read of a setting sometimes times out while
   buttons are pressed (the backend retries); once a read gave `255 255` just after a write.
-- DisplayPort out (2026-10-17, 20261016.24, a 2560x1600 USB-C display, orientation `normal`):
-  picture at 2560x1600@60, and its audio (UCM's HDMI / DisplayPort device, which PipeWire picks on
+- DisplayPort out (2026-10-17, 20261016.24, a 2560x1600 USB-C display): picture at 2560x1600@60
+  with the cable either way round (flipped several times), and its audio (UCM's HDMI / DisplayPort device, which PipeWire picks on
   plug). Unplugging hands the picture back to the panel in ~30 ms, in the Steam UI and in a game
   (Satisfactory). Once the unit froze about 2 s after an unplug, right after a game segfaulted;
   the journal stops there, no pstore. Three more unplugs, one in a game, with the logs streamed
@@ -224,8 +224,7 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
 - Fan noise.
 - Gyro in a game, from an image with `kettle-motion` and the dts's non-secure ADSP fastrpc
   device (by hand it was tested on `/dev/fastrpc-adsp-secure`, see above).
-- The intermittent WCN7860 loss above; suspend over many cycles; DisplayPort with the USB-C
-  cable flipped (the orientation GPIO is marked TODO in the dts); the DisplayPort unplug freeze
+- The intermittent WCN7860 loss above; suspend over many cycles; the DisplayPort unplug freeze
   and the GPI DMA errors above; Steam's charge limit and charge speeds end to end.
 - Headphone jack, from an image with kernel 1465: a headset plugged in moves the sound to it.
   Its mic: never detected yet (see above).
