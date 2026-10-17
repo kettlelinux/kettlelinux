@@ -210,6 +210,10 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
   down, left, right, 15 LT, `0 0` nothing; 17 (a stick direction) moves nothing, so the tab stops
   at 16. Set from the tab in Game Mode and pressed. A read of a setting sometimes times out while
   buttons are pressed (the backend retries); once a read gave `255 255` just after a write.
+  The MCU does not keep them: after a reboot both read `255 255` (factory) again. So
+  `kettle-rear-buttons` saves each setting in /var/lib/kettle/rear-buttons and `restore` writes
+  them back (kettle-rear-buttons.service at boot, system-sleep/kettle-rear-buttons after a wake,
+  as kernel 1446 powers the MCU off in suspend). Left = A held over a reboot on 20261017.28.
 - DisplayPort out (2026-10-17, 20261016.24, a 2560x1600 USB-C display): picture at 2560x1600@60
   with the cable either way round (flipped several times), and its audio (UCM's HDMI / DisplayPort device, which PipeWire picks on
   plug). Unplugging hands the picture back to the panel in ~30 ms, in the Steam UI and in a game

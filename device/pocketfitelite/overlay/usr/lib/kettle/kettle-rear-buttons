@@ -5,24 +5,61 @@
 # button; its driver (kernel 22-sm8750/0069) takes "<func> <target>" in key_lc_back and
 # key_rc_back, root only. This writes only those two, and only func 1 with a button code 1-16
 # (A B X Y View Menu, d-pad up down left right, LB RB, L3 R3, LT RT), or "0 0" for nothing.
+# The MCU forgets them whenever it loses power (every shutdown, and every suspend: kernel 1446
+# powers it off), so each setting is kept in $SAVED too, and "restore" writes them back
+# (kettle-rear-buttons.service at boot, system-sleep/kettle-rear-buttons after a wake).
 #   kettle-rear-buttons left|right none|1-16
+#   kettle-rear-buttons restore
 set -eu
+SAVED=/var/lib/kettle/rear-buttons
+usage() { echo "usage: kettle-rear-buttons left|right none|1-16, or restore" >&2; exit 2; }
 [ "$(id -u)" = 0 ] || { echo "kettle-rear-buttons: run it as root" >&2; exit 1; }
-case "${1:-}" in
-  left) attr=key_lc_back ;;
-  right) attr=key_rc_back ;;
-  *) echo "usage: kettle-rear-buttons left|right none|1-16" >&2; exit 2 ;;
-esac
-case "${2:-}" in
-  none) value="0 0" ;;
-  [1-9]|1[0-6]) value="1 $2" ;;
-  *) echo "usage: kettle-rear-buttons left|right none|1-16" >&2; exit 2 ;;
-esac
-for d in /sys/bus/serial/drivers/konkr_sysbtn/*/; do
-  if [ -e "$d$attr" ]; then
-    echo "$value" > "$d$attr"
-    exit 0
-  fi
-done
-echo "kettle-rear-buttons: no rear buttons on this device" >&2
-exit 1
+
+device() {
+  for d in /sys/bus/serial/drivers/konkr_sysbtn/*/; do
+    [ -e "${d}key_lc_back" ] && { echo "$d"; return 0; }
+  done
+  return 1
+}
+
+attr_of() {
+  case "$1" in
+    left) echo key_lc_back ;;
+    right) echo key_rc_back ;;
+    *) return 1 ;;
+  esac
+}
+
+value_of() {
+  case "$1" in
+    none) echo "0 0" ;;
+    [1-9]|1[0-6]) echo "1 $1" ;;
+    *) return 1 ;;
+  esac
+}
+
+if [ "${1:-}" = restore ]; then
+  [ -f "$SAVED" ] || exit 0
+  # the MCU's driver comes up a moment after boot, and about a second after a wake
+  for i in $(seq 1 20); do d="$(device)" && break; sleep 0.5; done
+  [ -n "${d:-}" ] || { echo "kettle-rear-buttons: no rear buttons on this device" >&2; exit 1; }
+  status=0
+  while read -r side target; do
+    attr="$(attr_of "$side")" && value="$(value_of "$target")" || continue
+    # each write asks the MCU over its UART; just after power-on it can miss the first ones
+    for i in 1 2 3 4 5; do
+      echo "$value" > "$d$attr" 2>/dev/null && continue 2
+      sleep 0.5
+    done
+    echo "kettle-rear-buttons: couldn't put back the $side rear button" >&2; status=1
+  done < "$SAVED"
+  exit $status
+fi
+
+attr="$(attr_of "${1:-}")" || usage
+value="$(value_of "${2:-}")" || usage
+d="$(device)" || { echo "kettle-rear-buttons: no rear buttons on this device" >&2; exit 1; }
+echo "$value" > "$d$attr"
+mkdir -p "${SAVED%/*}"
+{ [ -f "$SAVED" ] && grep -v "^$1 " "$SAVED" || true; echo "$1 $2"; } > "$SAVED.new"
+mv "$SAVED.new" "$SAVED"
