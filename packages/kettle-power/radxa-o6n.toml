@@ -1,0 +1,46 @@
+# kettle-powerd's description of the Radxa Orion O6N (CIX P1): picked by the image's device name,
+# the board having no devicetree (UEFI and ACPI). A desktop board: no [power] (no battery, no
+# charger, so no charge limit and no power reading for a TDP limit) and no [fan] (its fan is the
+# firmware's, in quiet/balanced/performance modes: the cix-sky1-fan platform profile).
+
+[cpu]
+# cpufreq policies (cppc_cpufreq: no frequency table, so caps in 100 MHz steps from 0.8 GHz).
+# Names other than mid/prime: no core parking. Cortex-A720s at up to 2.6/2.3/2.2/2.5 GHz, the
+# four Cortex-A520s (CPUs 2-5, which games don't get: GAME_CPU_AFFINITY) at 1.8 GHz.
+clusters = [
+  { name = "little", policy = 2, cpus = [2, 3, 4, 5] },
+  { name = "big", policy = 0, cpus = [0, 1] },
+  { name = "a720_6_7", policy = 6, cpus = [6, 7] },
+  { name = "a720_8_9", policy = 8, cpus = [8, 9] },
+  { name = "a720_10_11", policy = 10, cpus = [10, 11] },
+]
+
+[gpu]
+# Mali-G720 (Panthor); no busy percentage to read
+devfreq = "/sys/class/devfreq/CIXH5000:00"
+# lowest clock offered for a fixed (manual) GPU clock, MHz
+manual_min_mhz = 216
+auto_max_mhz = 1000
+
+# Steam's performance profiles (Quick Access > Performance). Caps in kHz / MHz; a cluster left
+# out runs up to its highest frequency. Powersave is 06n-arch's power-saver: CPUs at 1.8 GHz,
+# the GPU at 600 MHz.
+[[profile]]
+name = "Performance"
+
+[[profile]]
+name = "Balanced"
+big = 2200000
+a720_6_7 = 2000000
+a720_8_9 = 2000000
+a720_10_11 = 2200000
+gpu_mhz = 800
+
+[[profile]]
+name = "Powersave"
+little = 1800000
+big = 1800000
+a720_6_7 = 1800000
+a720_8_9 = 1800000
+a720_10_11 = 1800000
+gpu_mhz = 600
