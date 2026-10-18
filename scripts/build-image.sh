@@ -300,7 +300,8 @@ systemctl enable kettle-powerd >/dev/null 2>&1
 # kettle-crashd: a crash report for each coredump (device dumps come through udev)
 systemctl enable kettle-crashd >/dev/null 2>&1
 # kettle-ledd: the stick lights (Device Settings' Lights tab), in Game Mode and Desktop Mode
-systemctl enable kettle-ledd >/dev/null 2>&1
+# (not where the device's packages.txt leaves kettle-leds out: no stick lights)
+[ ! -e /usr/lib/systemd/system/kettle-ledd.service ] || systemctl enable kettle-ledd >/dev/null 2>&1
 # Decky Loader (Game Mode plugins); its unit name is fixed by the loader itself
 systemctl enable plugin_loader >/dev/null 2>&1
 systemctl --global enable steamos-manager.service kettle-steam-bootstrap.service \
