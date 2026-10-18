@@ -1,0 +1,10 @@
+# steamos-manager device config for the Radxa Orion O6N. Its EDK2 firmware has SMBIOS, so it
+# matches on DMI (seen in a boot log: "Radxa Computer (Shenzhen) Co., Ltd." / "Radxa Orion O6N",
+# BIOS 1.3.1). No TDP or GPU sections: the power controls are kettle-powerd's (remotes.d), and the
+# board has no battery or charger.
+[[device]]
+dmi.sys_vendor = "Radxa Computer (Shenzhen) Co., Ltd."
+dmi.product_name = "Radxa Orion O6N"
+device = "radxa_orion_o6n"
+variant = "O6N"
+friendly_name = "Radxa Orion O6N"

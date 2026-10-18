@@ -1,0 +1,5 @@
+# The O6N's two RTL8125 2.5 GbE ports stay out of runtime suspend. An unplugged one in D3hot is
+# fatal: the Realtek PHY's hwmon reads the PHY over MDIO without waking the NIC, and on arm64 that
+# access to a D3hot device is an SError (a kernel panic). KDE's ksystemstats reads it at login,
+# so every login panicked the board (06n-arch, kernel log in its .cache/panic-dmesg.txt).
+ACTION=="add|bind", SUBSYSTEM=="pci", DRIVER=="r8169", ATTR{power/control}="on"
