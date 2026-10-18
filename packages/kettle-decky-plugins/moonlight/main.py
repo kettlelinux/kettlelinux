@@ -54,8 +54,9 @@ DEFAULTS = {
     "swap_buttons": False,
     # Moonlight reads the device's own controller (InputPlumber's virtual Steam Deck pad) rather
     # than Steam Input's virtual Xbox pad: the gyro reaches the PC, which then emulates a DS4 or
-    # DualSense with motion (Sunshine/Apollo's motion_as_ds4); Steam Input layouts don't apply
-    "raw_pad": True,
+    # DualSense with motion (Sunshine/Apollo's motion_as_ds4); Steam Input layouts don't apply.
+    # Off until moonlight's SDL drives InputPlumber's pad (28de:12f0, which SDL doesn't list)
+    "raw_pad": False,
 }
 CODECS = ("auto", "H.264", "HEVC")  # AV1: iris has a decoder, moonlight-qt no v4l2m2m entry for it
 AUDIO = ("stereo", "5.1-surround", "7.1-surround")

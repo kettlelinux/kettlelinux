@@ -5,7 +5,7 @@
 # without that file nothing is changed. Today only the KONKR Pocket FIT Elite lists wifi-l1ss.
 pkgname=kettle-moonlight
 pkgver=0.1.0
-pkgrel=3
+pkgrel=4
 pkgdesc='Kettle Linux: Moonlight game streaming launcher with per-device stream tuning'
 arch=(any)
 license=(BSD-3-Clause)

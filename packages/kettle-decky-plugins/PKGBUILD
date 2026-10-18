@@ -80,7 +80,7 @@ pkgname=(kettle-decky-welcome kettle-decky-device-settings
          kettle-decky-crash kettle-decky-game-settings
          kettle-decky-stores kettle-decky-moonlight)
 pkgver=1.12.0
-pkgrel=63
+pkgrel=64
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
