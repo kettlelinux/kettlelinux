@@ -49,12 +49,15 @@
 # 0027 (ours) scans out on the display controller when the Vulkan GPU has no KMS: a render-only GPU
 #   beside a separate display controller (Panthor and linlondp on the Radxa Orion O6N), where
 #   gamescope opened the GPU's node and gave up ("is not a KMS device").
+# 0028 (ours) makes the scanout images the display controller's own buffers there, imported into
+#   Vulkan, as Mesa's kmsro does for GL: the GPU's exported memory, which Panthor maps cached on
+#   the O6N, showed stale cache lines on screen (dashes) through the non-snooping linlondp.
 #
 # To follow a newer deckard gamescope, move _commit to the one its `gamescopectl version`
 # names and drop whichever patches it already contains.
 pkgname=gamescope
 pkgver=3.16.30
-pkgrel=1.5
+pkgrel=1.7
 _commit=ad2763da1c48860f649abfe842a087188dcb6e20
 pkgdesc='gaming shell based on Xwayland, powered by Vulkan and DRM (deckard + Kettle Linux, SGSR 1)'
 arch=(aarch64)
@@ -87,7 +90,8 @@ source=("git+https://github.com/ValveSoftware/gamescope.git#commit=$_commit"
         0024-steamcompmgr-add-auto_refresh_max_hz-a-ceiling-while.patch
         0025-steamcompmgr-publish-the-frame-rate-limit-in-effect.patch
         0026-DRM-offer-refresh-rate-aliases-for-frame-rate-limits.patch
-        0027-DRM-scan-out-on-the-display-controller-when-the-Vulk.patch)
+        0027-DRM-scan-out-on-the-display-controller-when-the-Vulk.patch
+        0028-DRM-scan-out-of-the-display-controller-s-buffers-whe.patch)
 sha256sums=('SKIP'
             'SKIP'
             'a34b30f8c58881f29a632ae1b4c8d7fbd7ba8c1ae6509d2b85afe362cad6de93'
@@ -108,7 +112,8 @@ sha256sums=('SKIP'
             'ada2309bea24c4034e5c09cb252bc5f85d1af31f9fd1d483fcd65d5ef10baa34'
             'da34621c94f087d8eb34a6a1a8f48763a7a772d40bfac16caf8946c8dd5623d8'
             'acb907f8352eb6879141d2b2ccda79ec92a37465e043043375ec9008745e0f90'
-            '0f0d17b6840c2e5f000478f94eaef67767cb25e7139336009b41502e6f106d1a')
+            '0f0d17b6840c2e5f000478f94eaef67767cb25e7139336009b41502e6f106d1a'
+            '0959c91dba5d29ec83686333280eeded88fbdb14b4177d42165b9779d73af896')
 
 prepare() {
   cd gamescope
