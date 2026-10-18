@@ -1,0 +1,16 @@
+From: Kettle Linux
+Subject: [PATCH] joystick: InputPlumber's Generic Steam Controller (28de:12f0) is a Steam Deck
+
+InputPlumber's deck target (ProductId::Generic) emulates the Steam Deck
+controller with Valve's generic product id: the same reports, gyro and
+accelerometer included, and the same lizard-mode feature reports. With it
+listed, the HIDAPI Steam Deck driver opens it, sensors and all.
+---
+--- a/src/joystick/controller_list.h	2026-10-18 15:40:17.154103304 -0500
++++ b/src/joystick/controller_list.h	2026-10-18 15:40:17.165612073 -0500
+@@ -598,4 +598,5 @@
+ 	{ MAKE_CONTROLLER_ID( 0x28de, 0x1201 ), k_eControllerType_SteamControllerV2, NULL },	// Valve wired Steam Controller (HEADCRAB)
+ 	{ MAKE_CONTROLLER_ID( 0x28de, 0x1202 ), k_eControllerType_SteamControllerV2, NULL },	// Valve Bluetooth Steam Controller (HEADCRAB)
+ 	{ MAKE_CONTROLLER_ID( 0x28de, 0x1205 ), k_eControllerType_SteamDeck, NULL },	// Valve Steam Deck Builtin Controller
++	{ MAKE_CONTROLLER_ID( 0x28de, 0x12f0 ), k_eControllerType_SteamDeck, NULL },	// InputPlumber's Generic Steam Controller (Steam Deck reports)
+ };

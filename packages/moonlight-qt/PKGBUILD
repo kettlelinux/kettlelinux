@@ -11,39 +11,71 @@
 # (Arch's 6.338 predates FFmpeg 8.1, and it decodes nothing on iris).
 #
 # The release's source tarball carries moonlight-common-c, qmdnsengine and h264bitstream.
+#
+# moonlight gets its own SDL2, upstream 2.30.2 (the version of Valve's) with two patches, so its
+# HIDAPI Steam Deck driver, the one with the gyro and accelerometer, opens InputPlumber's virtual
+# controller on every Kettle handheld: sdl2-0001 lists it ("Generic Steam Controller", 28de:12f0,
+# which no SDL lists) as a Steam Deck controller, and sdl2-0002 (from upstream hidapi, as in SDL 3)
+# keeps it in HIDAPI's device list: it's a uhid device on the USB bus without a USB parent, which
+# 2.30 dropped. It's in /usr/lib/moonlight-qt, found through moonlight's
+# rpath only: everything else keeps Valve's SDL2. (SDL2_ttf asks for the same soname, which is
+# loaded by then.)
 pkgname=moonlight-qt
 pkgver=6.2.0
-pkgrel=2
+pkgrel=4
 pkgdesc='GameStream client for Sunshine and Apollo hosts, with V4L2 hardware decoding'
 arch=(aarch64)
 url='https://moonlight-stream.org'
 # moonlight-qt and moonlight-common-c: GPL 3 (no "or later" notice); h264bitstream LGPL 2.1;
-# qmdnsengine, ENet and nanors MIT; SDL_GameControllerDB zlib
+# qmdnsengine, ENet and nanors MIT; SDL_GameControllerDB and SDL2 zlib
 license=(GPL-3.0-only LGPL-2.1-only MIT Zlib)
 depends=(ffmpeg-v4l2 libdrm libglvnd openssl opus qt6-base qt6-declarative qt6-svg qt6-wayland
          sdl2 sdl2_ttf wayland libx11)
-makedepends=(pkgconf)
-source=("https://github.com/moonlight-stream/moonlight-qt/releases/download/v$pkgver/MoonlightSrc-$pkgver.tar.gz")
+makedepends=(pkgconf git cmake ninja alsa-lib libpulse libpipewire wayland-protocols libxkbcommon
+             libdecor libxi libxfixes libxrandr libxss libxcursor libxinerama)
+_sdl2=2.30.2
+source=("https://github.com/moonlight-stream/moonlight-qt/releases/download/v$pkgver/MoonlightSrc-$pkgver.tar.gz"
+        "git+https://github.com/libsdl-org/SDL.git#tag=release-$_sdl2"
+        sdl2-0001-joystick-inputplumber-generic-steam-controller.patch
+        sdl2-0002-hidapi-linux-keep-uhid-usb-devices.patch)
 noextract=("MoonlightSrc-$pkgver.tar.gz")
-sha256sums=('217afac54e4f8734f3d97b32cb8c8b46b677e87f25b77c945343dd06f359e189')
+sha256sums=('217afac54e4f8734f3d97b32cb8c8b46b677e87f25b77c945343dd06f359e189'
+            'SKIP'
+            'a5eba2a019c5df989c5a893efc866a9f5342312efe35aea28e2a256471bc165f'
+            '8c3053e63a547cbe271008457ff53fd9d9d42973a695124b214b072de66a1d5c')
 
 prepare() {
   mkdir -p moonlight-qt
   bsdtar -xf "MoonlightSrc-$pkgver.tar.gz" -C moonlight-qt
+  for p in sdl2-0*.patch; do patch -d SDL -p1 --fuzz=0 <"$p"; done
 }
 
 build() {
+  # backends are loaded at run time, as in Valve's SDL2. 2.30.2's PipeWire backend passes a
+  # pw_node pointer where newer PipeWire headers declare another type: an error in GCC 14 only
+  CFLAGS+=" -Wno-error=incompatible-pointer-types" \
+  cmake -S SDL -B sdl-build -G Ninja -DCMAKE_BUILD_TYPE=None -DCMAKE_INSTALL_PREFIX=/usr \
+    -DSDL_STATIC=OFF -DSDL_TEST=OFF -DSDL_RPATH=OFF -DSDL_SNDIO=OFF -DSDL_JACK=OFF
+  cmake --build sdl-build
+
   cd moonlight-qt
   export PKG_CONFIG_PATH=/usr/lib/ffmpeg-v4l2/pkgconfig
   qmake6 PREFIX=/usr \
     CONFIG+=disable-libva CONFIG+=disable-libvdpau CONFIG+=disable-mmal \
     CONFIG+=disable-libplacebo \
-    QMAKE_LFLAGS+="-Wl,-rpath,/usr/lib/ffmpeg-v4l2" \
+    QMAKE_LFLAGS+="-Wl,-rpath,/usr/lib/moonlight-qt:/usr/lib/ffmpeg-v4l2" \
     moonlight-qt.pro
   make
 }
 
 package() {
+  # the patched SDL2: the library under its soname only (no headers, nothing builds against it)
+  local so
+  so=$(readlink sdl-build/libSDL2-2.0.so.0)
+  install -Dm755 "sdl-build/$so" "$pkgdir/usr/lib/moonlight-qt/$so"
+  ln -s "$so" "$pkgdir/usr/lib/moonlight-qt/libSDL2-2.0.so.0"
+  install -Dm644 SDL/LICENSE.txt "$pkgdir/usr/share/licenses/$pkgname/SDL2-LICENSE"
+
   cd moonlight-qt
   make INSTALL_ROOT="$pkgdir" install
   local l="$pkgdir/usr/share/licenses/$pkgname"

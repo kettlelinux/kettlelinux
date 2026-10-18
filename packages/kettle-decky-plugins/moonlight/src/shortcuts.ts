@@ -3,7 +3,7 @@
 // runs, so no restart is needed.
 import { boxart, rememberShortcut, shortcutInfo } from "./api";
 
-declare const appStore: { GetAppOverviewByAppID(appid: number): { m_gameid?: string; display_name?: string } | null };
+declare const appStore: { GetAppOverviewByAppID(appid: number): { m_gameid?: string; display_name?: string } | null; allApps?: unknown[] };
 
 export const overview = (appid: number | null) => {
   try {
@@ -18,12 +18,23 @@ export const inLibrary = (appid: number | null) => !!overview(appid);
 // Steam's custom artwork types: the portrait capsule (grid) is what a host's box art is
 const GRID = 0;
 
+// Steam Input keeps a shortcut's controller layout by its name: an app named like another entry
+// (Sunshine's "Desktop" and Kettle's nested desktop, whose layout drives the mouse) gets the PC's
+// name too, and a layout of its own
+function title(appName: string, host: string, self: number | null): string {
+  const taken = ((appStore as any).allApps ?? []).some(
+    (a: any) => a.appid !== self && String(a.display_name ?? "").toLowerCase() === appName.toLowerCase(),
+  );
+  return taken ? `${appName} (${host})` : appName;
+}
+
 export async function addShortcut(uuid: string, appName: string, appId: number, existing: number | null): Promise<number> {
   const info = await shortcutInfo(uuid, appName);
   const isNew = !inLibrary(existing);
-  const sid = isNew ? await SteamClient.Apps.AddShortcut(info.title, info.exe, info.dir, "") : existing!;
+  const name = title(info.title, info.host, isNew ? null : existing);
+  const sid = isNew ? await SteamClient.Apps.AddShortcut(name, info.exe, info.dir, "") : existing!;
   if (!sid) throw new Error("Steam didn't add the shortcut");
-  SteamClient.Apps.SetShortcutName(sid, info.title);
+  SteamClient.Apps.SetShortcutName(sid, name);
   SteamClient.Apps.SetShortcutExe(sid, `"${info.exe}"`);
   SteamClient.Apps.SetShortcutStartDir(sid, `"${info.dir}"`);
   SteamClient.Apps.SetShortcutLaunchOptions(sid, info.launch);

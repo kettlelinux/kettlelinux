@@ -1,0 +1,40 @@
+From: Kettle Linux
+Subject: [PATCH] hidapi/linux: keep uhid USB devices (backport from hidapi)
+
+A virtual HID device made through uhid with the USB bus type has no USB
+parent in sysfs, and 2.30 dropped it from the enumeration. InputPlumber's
+virtual controllers are such devices. Upstream hidapi (and SDL 3) keep them,
+with no manufacturer and the HID name as the product string.
+---
+--- a/src/hidapi/linux/hid.c	2026-10-18 17:01:14.161788166 -0500
++++ b/src/hidapi/linux/hid.c	2026-10-18 17:01:14.170902241 -0500
+@@ -611,22 +611,14 @@
+ 							"usb",
+ 							"usb_device");
+ 
++					/* uhid USB devices
++					 * Since this is a virtual hid interface, no USB information will
++					 * be available. */
+ 					if (!usb_dev) {
+-						/* Free this device */
+-						free(cur_dev->serial_number);
+-						free(cur_dev->path);
+-						free(cur_dev);
+-
+-						/* Take it off the device list. */
+-						if (prev_dev) {
+-							prev_dev->next = NULL;
+-							cur_dev = prev_dev;
+-						}
+-						else {
+-							cur_dev = root = NULL;
+-						}
+-
+-						goto next;
++						/* Manufacturer and Product strings */
++						cur_dev->manufacturer_string = utf8_to_wchar_t("");
++						cur_dev->product_string = utf8_to_wchar_t(product_name_utf8);
++						break;
+ 					}
+ 
+ 					/* Manufacturer and Product strings */
