@@ -158,12 +158,12 @@ kettle-wallpaper
 # the Welcome plugin adds
 kettle-desktop-art
 
-# Game Mode plugins (built by us, packages/): Decky Loader (native aarch64, no self-update)
-# with Welcome (first-boot tour, setup checklist, optional components downloaded from upstream
+# Game Mode plugins (built by us, packages/): Remora, our plugin loader that runs Decky plugins
+# (kettlelinux/remora; it provides decky-loader, so the plugin packages get it), with Welcome (first-boot tour, setup checklist, optional components downloaded from upstream
 # on request) preinstalled. Frame generation (our own kettle-framegen layer) and upscaling
 # (per-game gamescope FSR 1, and SGSR 2 through our ARM64EC OptiScaler build) are tabs of the
 # Game Settings plugin, listed below with what else it needs
-decky-loader
+remora
 kettle-framegen
 optiscaler-arm64ec
 kettle-decky-welcome

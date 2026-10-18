@@ -360,7 +360,7 @@ def _diagnostics() -> list[dict]:
     rel = _os()
     soc = "/sys/bus/soc/devices/soc0"
     gpu = _gpu()
-    pkgs = _packages("linux-kettle", "deckard-mesa", "mesa", "gamescope", "steam", "decky-loader", "fex-emu-wine",
+    pkgs = _packages("linux-kettle", "deckard-mesa", "mesa", "gamescope", "steam", "remora", "decky-loader", "fex-emu-wine",
                      "kettle-power")
     slot = _slot()
     device = [
@@ -379,7 +379,7 @@ def _diagnostics() -> list[dict]:
         ["Vulkan", gpu.get("apiVersion", "")],
     ]
     for label, name in (("gamescope", "gamescope"), ("Steam bootstrap", "steam"), ("FEX", "fex-emu-wine"),
-                        ("Decky Loader", "decky-loader"), ("kettle-power", "kettle-power")):
+                        ("Remora", "remora"), ("Decky Loader", "decky-loader"), ("kettle-power", "kettle-power")):
         if name in pkgs:
             software.append([label, pkgs[name]])
     sections = [

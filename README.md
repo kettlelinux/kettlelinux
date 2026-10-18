@@ -76,7 +76,7 @@ opens the same tour in Welcome. These are from an Odin 2 Portal.
   controller. In Desktop Mode the gamepad works as mouse and keyboard, with an on-screen keyboard.
 - **The desktop in Game Mode**: Desktop in Steam's library opens the Plasma desktop inside Game
   Mode, without a session switch, with the desktop's controls. ([docs/NESTED-DESKTOP.md](docs/NESTED-DESKTOP.md))
-- **Game Mode plugins** (Decky Loader), in Quick Access:
+- **Game Mode plugins** ([Remora](https://github.com/kettlelinux/remora), our loader for Decky plugins), in Quick Access:
   - **Game Settings**: everything set per game, a tab each, all off until enabled for a game
     (except in Unreal Engine 5 games: Lumen, off unless turned back on, and the Nanite fix).
     **Compat**: FEX, DXVK, vkd3d, Turnip and Proton options, the graphics API an Unreal Engine
@@ -188,7 +188,8 @@ Kettle Linux is built on the work of many projects and people. Thank you all.
 **Controls, overlays and plugins**
 - [InputPlumber](https://github.com/ShadowBlip/InputPlumber) by ShadowBlip
 - [MangoHud](https://github.com/flightlessmango/MangoHud)
-- [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) by SteamDeckHomebrew
+- [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) by SteamDeckHomebrew: the plugin API Remora
+  runs, and [@decky/ui](https://github.com/SteamDeckHomebrew/decky-frontend-lib), which it loads unmodified
 - [Sloptiscaler](https://github.com/justradical/Sloptiscaler), a fork of [OptiScaler](https://github.com/optiscaler/OptiScaler)
 - [Snapdragon GSR](https://github.com/SnapdragonStudios/snapdragon-gsr) (Qualcomm),
   [Arm ASR](https://github.com/arm/accuracy-super-resolution-generic-library) and
