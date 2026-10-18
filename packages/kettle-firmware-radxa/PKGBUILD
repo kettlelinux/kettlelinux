@@ -1,0 +1,44 @@
+# Firmware for Radxa's CIX P1 board (the Orion O6N), only the files its drivers ask for:
+#  - Arch linux-firmware-other (Valve's deckard mirror): the Mali-G720's CSF firmware
+#    (arm/mali/arch12.8), which Panthor loads
+#  - Arch linux-firmware-realtek (same): the two RTL8125B 2.5 GbE ports' rtl_nic/rtl8125b-2.fw
+#    (r8169), redistributable as linux-firmware's WHENCE says
+#  - CIX's VPU firmware (github.com/cixtech/cix_opensource__vpu_driver, pinned commit, the
+#    driver's own repo; the driver is the cix kernel's 40-kettle/3007): one image per codec,
+#    firmware-binaries/*.fwb. The repo's only licence statement (debian/copyright) puts every file
+#    in it, these too, under GPL-2+ (© CIX); it is installed with them.
+# Valve's own linux-firmware-deckard is ignored (image/pacman.conf); these files are ours alone.
+pkgname=kettle-firmware-radxa-o6n
+_linux_fw=20260221-1
+_vpu_rev=51d1ec01c0952d1d3a8b6ef2fc34a0ca84fe9436
+pkgver=${_linux_fw%-*}.${_vpu_rev:0:8}
+pkgrel=1
+pkgdesc='Firmware for the Radxa Orion O6N (Mali GPU, VPU, 2.5 GbE)'
+arch=(any)
+url='https://github.com/cixtech/cix_opensource__vpu_driver'
+license=(LicenseRef-linux-firmware GPL-2.0-or-later)
+makedepends=(git)
+# firmware images, not ELF binaries: nothing to strip
+options=(!strip)
+_mirror=https://steamdeck-packages.steamos.cloud/archlinux-deckard/archlinux/mash-20260305/core/os/aarch64
+source=("cix-vpu::git+https://github.com/cixtech/cix_opensource__vpu_driver.git#commit=$_vpu_rev"
+        "$_mirror/linux-firmware-other-$_linux_fw-any.pkg.tar.zst"
+        "$_mirror/linux-firmware-realtek-$_linux_fw-any.pkg.tar.zst")
+noextract=("linux-firmware-other-$_linux_fw-any.pkg.tar.zst"
+           "linux-firmware-realtek-$_linux_fw-any.pkg.tar.zst")
+sha256sums=('SKIP'
+            '0cab80b21991081e7c06ecad16f322feac4a0d10cffad92aa436aebcd7cceb92'
+            'f85c9d3dfb60fa91437d1edc5df00f1e70712914d8b6afb985784cd407e6f6fe')
+
+package() {
+  local fw="$pkgdir/usr/lib/firmware"
+  install -Dm644 -t "$fw" "$srcdir"/cix-vpu/firmware-binaries/*.fwb
+  install -Dm644 "$srcdir/cix-vpu/debian/copyright" "$pkgdir/usr/share/licenses/$pkgname/copyright.cix-vpu"
+
+  bsdtar -xf "$srcdir/linux-firmware-other-$_linux_fw-any.pkg.tar.zst" -C "$pkgdir" \
+    'usr/lib/firmware/arm/mali/arch12.8/*' \
+    usr/share/licenses/linux-firmware-other/LICENCE.mali_csffw
+  bsdtar -xf "$srcdir/linux-firmware-realtek-$_linux_fw-any.pkg.tar.zst" -C "$pkgdir" \
+    usr/lib/firmware/rtl_nic/rtl8125b-2.fw.zst
+  find "$pkgdir" -type d -exec chmod 755 {} + && find "$fw" -type f -exec chmod 644 {} +
+}
