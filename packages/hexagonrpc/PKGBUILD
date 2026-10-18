@@ -6,9 +6,11 @@
 # at every start (the Retroid Pocket Nova's) do so in a writable copy of persist's sensors
 # directory (kettle-motion-setup): file writes there only (0002), messages over 256 bytes (0003,
 # the registry itself) and methods numbered from 31 on (0004, its rename). Tested on a Nova.
+# 0005 answers a request it can't serve with its error and keeps listening: the Pocket FIT
+# Elite's sensors process asks for apps_std method 36, and unanswered it kept the ADSP awake.
 pkgname=hexagonrpc
 pkgver=0.5.0
-pkgrel=3
+pkgrel=4
 pkgdesc='FastRPC server for Qualcomm DSPs (starts the ADSP sensors process)'
 arch=(aarch64)
 url='https://github.com/linux-msm/hexagonrpc'
@@ -20,9 +22,11 @@ source=("$pkgname-$pkgver.tar.gz::https://github.com/linux-msm/hexagonrpc/archiv
         0002-hexagonrpcd-a-writable-persist-sensors-directory.patch
         0003-hexagonrpcd-fetch-large-input-buffers.patch
         0004-hexagonrpcd-methods-from-31-on.patch
+        0005-hexagonrpcd-answer-a-request-it-cannot-serve.patch
         hexagonrpc.sysusers
         hexagonrpc.udev)
 sha256sums=('2173985932ab68d8ac593f9954357123bdbbbe9ba5f1b17a098d9cbcec22c5d5'
+            SKIP
             SKIP
             SKIP
             SKIP
@@ -35,6 +39,7 @@ prepare() {
   patch -d "$pkgname-$pkgver" -Np1 -i ../0002-hexagonrpcd-a-writable-persist-sensors-directory.patch
   patch -d "$pkgname-$pkgver" -Np1 -i ../0003-hexagonrpcd-fetch-large-input-buffers.patch
   patch -d "$pkgname-$pkgver" -Np1 -i ../0004-hexagonrpcd-methods-from-31-on.patch
+  patch -d "$pkgname-$pkgver" -Np1 -i ../0005-hexagonrpcd-answer-a-request-it-cannot-serve.patch
 }
 
 build() {
