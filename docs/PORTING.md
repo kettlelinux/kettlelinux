@@ -33,6 +33,7 @@ setting instead, from the device's `device.conf` or one of its overlay's files.
 | `overlay/etc/skel/.config/kwinoutputconfig.json` | the desktop's screen layout and rotation | KWin, for new users |
 | `overlay/usr/share/steamos-manager/devices/<name>.toml` | the device as Steam sees it (steamos-manager) | steamos-manager |
 | `overlay/usr/lib/kettle/hwcheck-device` | the device's own `kettle-hwcheck` checks (optional) | `kettle-hwcheck` |
+| `overlay/usr/lib/kettle/game-env` | `KEY=value` lines added to the games' environment, after Valve's (optional; the O6N's DXVK settings) | `steam.service.d/kettle.conf` (gfx.txt) |
 
 `device.conf` on the device: shell scripts source `/usr/lib/kettle/device.conf`, and Python
 scripts in `/usr/lib/kettle` read it with `import kettle_device` (`kettle_device.conf["PAD_NAME"]`).
