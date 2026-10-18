@@ -1,28 +1,43 @@
 #!/usr/bin/env bash
-# Build the Kettle Linux kernel: pinned kernel.org source + kernel/patches/*/ (in
-# order, --fuzz=0) + kernel/dts + base.config merged with the $FRAGMENTS below.
-# Cross-compiles with LLVM; no GCC cross toolchain needed.
+# Build a Kettle Linux kernel: pinned kernel.org source + the flavour's patches/*/ (in order,
+# --fuzz=0) + its dts + its base.config merged with its $FRAGMENTS. Cross-compiles with LLVM;
+# no GCC cross toolchain needed.
+#
+# One kernel per SoC family (scripts/lib.sh kernel_flavour): qcom, the default, is kernel/ and
+# goes to out/kernel; another flavour is kernel/<flavour>/ and goes to out/kernel-<flavour>.
+# The flavour is KERNEL_FLAVOUR, else KETTLE_DEVICE's (its device.conf), else qcom.
 #
 # Usage: scripts/build-kernel.sh [prepare|config|build|all]   (default: all)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-source "$ROOT/kernel/kernel.conf"
+. "$ROOT/scripts/lib.sh"
+if [ -z "${KERNEL_FLAVOUR:-}" ] && [ -n "${KETTLE_DEVICE:-}" ]; then
+  [ -f "$ROOT/device/$KETTLE_DEVICE/device.conf" ] || die "no device '$KETTLE_DEVICE'"
+  KERNEL_FLAVOUR="$(. "$ROOT/device/$KETTLE_DEVICE/device.conf"; echo "${KERNEL_FLAVOUR:-qcom}")"
+fi
+kernel_flavour "${KERNEL_FLAVOUR:-qcom}"
+# Merged in order over base.config; the qcom kernel serves every Qualcomm device, so each SoC
+# adds its own. A flavour's kernel.conf sets its own FRAGMENTS.
+FRAGMENTS=(steamos.config qcom.config sm8250.config sm8750.config)
+source "$KDIR/kernel.conf"
 
 CACHE="$ROOT/cache"
 KSRC="$ROOT/build/linux-$KERNEL_VERSION-kettle"
-OUT="$ROOT/out/kernel"
-. "$ROOT/scripts/lib.sh"
+[ "$KFLAVOUR" = qcom ] || KSRC+="-$KFLAVOUR"
+OUT="$KOUT"
 be_nice   # sets JOBS
 KMAKE=(make -C "$KSRC" ARCH=arm64 LLVM=1 -j"$JOBS")
-# Merged in order over base.config; one kernel serves every device, so each SoC adds its own.
-FRAGMENTS=(steamos.config sm8250.config sm8750.config)
 
 # The kernel needs bc; fall back to the timeconst-only shim if the host lacks it.
 command -v bc >/dev/null || export PATH="$ROOT/tools:$PATH"
 
-log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
-die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+# a fragment from the flavour's config/, else the shared kernel/config/
+fragment() {
+  if [ -f "$KDIR/config/$1" ]; then echo "$KDIR/config/$1"; else echo "$ROOT/kernel/config/$1"; fi
+}
+# the flavour's own Qualcomm device trees (only qcom has any)
+our_dts() { (shopt -s nullglob; for d in "$KDIR"/dts/qcom/*.dts; do echo "$d"; done); }
 
 fetch() {
   local tar="$CACHE/${KERNEL_SOURCE_URL##*/}"
@@ -33,14 +48,15 @@ fetch() {
 
 prepare() {
   fetch
-  log "extracting linux-$KERNEL_VERSION (fresh tree)"
+  log "extracting linux-$KERNEL_VERSION (fresh tree, $KFLAVOUR)"
   rm -rf "$KSRC"
-  mkdir -p "$ROOT/build"
-  tar -xf "$CACHE/${KERNEL_SOURCE_URL##*/}" -C "$ROOT/build"
-  mv "$ROOT/build/linux-$KERNEL_VERSION" "$KSRC"
+  mkdir -p "$ROOT/build/$KFLAVOUR.extract"
+  tar -xf "$CACHE/${KERNEL_SOURCE_URL##*/}" -C "$ROOT/build/$KFLAVOUR.extract"
+  mv "$ROOT/build/$KFLAVOUR.extract/linux-$KERNEL_VERSION" "$KSRC"
+  rmdir "$ROOT/build/$KFLAVOUR.extract"
 
   local dir p n=0
-  for dir in "$ROOT"/kernel/patches/*/; do
+  for dir in "$KDIR"/patches/*/; do
     for p in "$dir"*.patch; do
       [ -f "$p" ] || continue
       patch -d "$KSRC" -p1 -N --fuzz=0 --no-backup-if-mismatch -s <"$p" \
@@ -50,10 +66,11 @@ prepare() {
   done
   log "applied $n patches"
 
+  [ -d "$KDIR/dts" ] || return 0
   log "installing device trees"
-  cp -r "$ROOT"/kernel/dts/. "$KSRC/arch/arm64/boot/dts/"
+  cp -r "$KDIR"/dts/. "$KSRC/arch/arm64/boot/dts/"
   local mk="$KSRC/arch/arm64/boot/dts/qcom/Makefile" dts name
-  for dts in "$ROOT"/kernel/dts/qcom/*.dts; do
+  for dts in $(our_dts); do
     name="$(basename "$dts" .dts)"
     grep -q "$name.dtb" "$mk" || echo "dtb-\$(CONFIG_ARCH_QCOM)	+= $name.dtb" >>"$mk"
   done
@@ -61,30 +78,32 @@ prepare() {
 
 config() {
   [ -d "$KSRC" ] || die "no source tree; run: $0 prepare"
-  log "merging base.config + ${FRAGMENTS[*]}"
-  cp "$ROOT/kernel/config/base.config" "$KSRC/.config"
-  (cd "$KSRC" && ARCH=arm64 LLVM=1 scripts/kconfig/merge_config.sh -m .config \
-     "${FRAGMENTS[@]/#/$ROOT/kernel/config/}" >/dev/null)
+  log "merging base.config + ${FRAGMENTS[*]} ($KFLAVOUR)"
+  cp "$KDIR/config/base.config" "$KSRC/.config"
+  local frags=() frag
+  for frag in "${FRAGMENTS[@]}"; do frags+=("$(fragment "$frag")"); done
+  (cd "$KSRC" && ARCH=arm64 LLVM=1 scripts/kconfig/merge_config.sh -m .config "${frags[@]}" >/dev/null)
   "${KMAKE[@]}" olddefconfig >/dev/null
 
   # olddefconfig silently drops symbols whose dependencies are unmet: assert.
-  local frag line bad=0
-  for frag in "${FRAGMENTS[@]}"; do
+  local line bad=0
+  for frag in "${frags[@]}"; do
     while IFS= read -r line; do
       case "$line" in CONFIG_*=*) ;; *) continue ;; esac
-      grep -qxF "$line" "$KSRC/.config" || { echo "  not applied ($frag): $line"; bad=1; }
-    done <"$ROOT/kernel/config/$frag"
+      grep -qxF "$line" "$KSRC/.config" || { echo "  not applied (${frag##*/}): $line"; bad=1; }
+    done <"$frag"
   done
   [ "$bad" = 0 ] || die "config fragment options dropped by olddefconfig"
-  cp "$KSRC/.config" "$ROOT/kernel/config/generated.config"
+  cp "$KSRC/.config" "$KDIR/config/generated.config"
 }
 
 # Re-run dtc at W=1 strength on our boards' preprocessed sources (kbuild keeps them): a warning
 # in one of our kernel/dts files fails the build; upstream dtsi noise is only counted.
 dtc_check() {
+  [ -n "$(our_dts)" ] || return 0
   local qcom="$KSRC/arch/arm64/boot/dts/qcom" ours dts name out line bad=0 noise=0
-  ours="$(cd "$ROOT/kernel/dts/qcom" && ls | sed 's/[.]/[.]/g' | paste -sd'|')"
-  for dts in "$ROOT"/kernel/dts/qcom/*.dts; do
+  ours="$(cd "$KDIR/dts/qcom" && ls | sed 's/[.]/[.]/g' | paste -sd'|')"
+  for dts in $(our_dts); do
     name="$(basename "$dts" .dts)"
     out="$(cd "$KSRC" && scripts/dtc/dtc -o /dev/null -b 0 -i arch/arm64/boot/dts/qcom/ \
       -i scripts/dtc/include-prefixes -Wno-unique_unit_address -Wunique_unit_address_if_enabled \
@@ -101,18 +120,20 @@ dtc_check() {
 
 build() {
   [ -f "$KSRC/.config" ] || config
-  log "building Image, modules, dtbs ($JOBS jobs)"
-  "${KMAKE[@]}" Image modules dtbs
+  local targets=(Image modules)
+  [ -z "$(our_dts)" ] || targets+=(dtbs)
+  log "building ${targets[*]} ($KFLAVOUR, $JOBS jobs)"
+  "${KMAKE[@]}" "${targets[@]}"
   dtc_check
 
   local rel; rel="$("${KMAKE[@]}" -s kernelrelease)"
-  log "staging $rel into out/kernel"
+  log "staging $rel into ${OUT#"$ROOT"/}"
   rm -rf "$OUT"; mkdir -p "$OUT/boot/dtbs/qcom"
   cp "$KSRC/arch/arm64/boot/Image" "$OUT/boot/Image"
   cp "$KSRC/.config" "$OUT/boot/config-$rel"
   cp "$KSRC/System.map" "$OUT/boot/System.map-$rel"
   local dts name
-  for dts in "$ROOT"/kernel/dts/qcom/*.dts; do
+  for dts in $(our_dts); do
     name="$(basename "$dts" .dts)"
     cp "$KSRC/arch/arm64/boot/dts/qcom/$name.dtb" "$OUT/boot/dtbs/qcom/" \
       || die "dtb not built: $name"
@@ -121,8 +142,9 @@ build() {
     DEPMOD=/bin/true >/dev/null
   depmod -b "$OUT/usr" "$rel"
   echo "$rel" >"$OUT/kernelrelease"
-  kernel_src_hash >"$OUT/.source-hash"   # build-image.sh warns when kernel/ changed since
-  log "done: $OUT (kernelrelease $rel)"
+  echo "$KFLAVOUR" >"$OUT/flavour"
+  kernel_src_hash "$KFLAVOUR" >"$OUT/.source-hash"   # build-image.sh warns when its tree changed since
+  log "done: ${OUT#"$ROOT"/} (kernelrelease $rel)"
 }
 
 case "${1:-all}" in
