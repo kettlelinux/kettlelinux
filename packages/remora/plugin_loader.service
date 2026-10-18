@@ -1,0 +1,22 @@
+# Decky's unit name, which plugins restart and stop the loader by.
+[Unit]
+Description=Remora (Game Mode plugins)
+After=network.target
+# keep restarting however often it fails quickly: a loader that gave up is worse
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+Restart=always
+RestartSec=2
+# mixed: SIGTERM to the loader, which stops its plugins; after the timeout everything left is killed
+KillMode=mixed
+TimeoutStopSec=15
+ExecStart=/usr/lib/remora/remora-start
+Environment=LOG_LEVEL=INFO
+# root approvals come from the device: hold Volume Up + Volume Down (Kettle's own checker)
+Environment=REMORA_CONFIRM_COMMAND=/usr/lib/kettle/confirm-keys
+
+[Install]
+WantedBy=multi-user.target
