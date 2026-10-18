@@ -5,6 +5,8 @@ PartOf=graphical-session.target
 After=plasma-kwin_wayland.service
 
 [Service]
+# only with a built-in gamepad (PAD_NAME in device.conf; a desktop machine has none)
+ExecCondition=/bin/sh -c '. /usr/lib/kettle/device.conf; [ -n "$${PAD_NAME:-}" ]'
 # InputPlumber holds the pad in Game Mode and stops with it; in case that stop didn't happen
 # (session teardown), make sure it has let go before taking the pad here
 ExecStartPre=-/usr/bin/systemctl stop inputplumber.service

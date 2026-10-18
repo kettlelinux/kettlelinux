@@ -26,8 +26,8 @@ setting instead, from the device's `device.conf` or one of its overlay's files.
 ## What a device directory holds
 | File | What it is | Read by |
 |---|---|---|
-| `device.conf` | `MODEL`, `DTB`, `ABL_DTBS`, `RAUC_COMPATIBLE`, `PAD_NAME`, `FACE_BUTTONS` (all required); `DTB_ALT`, `CMDLINE_EXTRA`, `ADSP_FIRMWARE_FALLBACK` (optional) | `scripts/build-image.sh`; installed in the image as `/usr/lib/kettle/device.conf` |
-| `packages.txt` | packages only this device's image gets, added to `image/packages.txt` | `scripts/build-image.sh` |
+| `device.conf` | `MODEL`, `RAUC_COMPATIBLE` (required); `DTB`, `ABL_DTBS` (required unless `BOOT=uefi`); `PAD_NAME` and with it `FACE_BUTTONS` (a built-in gamepad); `BOOT`, `KERNEL_FLAVOUR`, `DTB_ALT`, `CMDLINE_SOC`, `CMDLINE_EXTRA`, `REPART`, `GAME_CPU_AFFINITY`, `ADSP_FIRMWARE_FALLBACK` (optional) | `scripts/build-image.sh`; installed in the image as `/usr/lib/kettle/device.conf` |
+| `packages.txt` | packages only this device's image gets, added to `image/packages.txt`; a `-name` line drops a shared one (another GPU's Mesa) | `scripts/build-image.sh` |
 | `overlay/` | files copied over `device/common/overlay` | `scripts/build-image.sh` |
 | `overlay/usr/lib/kettle/gamescope.conf` | Game Mode's screen: `GAMESCOPE_ORIENTATION`, `GAMESCOPE_OUTPUT`, a second screen's `GAMESCOPE_LEASE_*` (required) | `gamescope-session` |
 | `overlay/etc/skel/.config/kwinoutputconfig.json` | the desktop's screen layout and rotation | KWin, for new users |
@@ -54,7 +54,23 @@ Devicetree settings (the image build copies them into `/usr/lib/kettle/boot.conf
 - `CMDLINE_EXTRA`: kernel options for this device only, appended to boot.conf's shared `CMDLINE`
   (the SM8550 devices' `pcie_ports=compat`).
 - `PAD_NAME` also goes into the udev rule that keeps the pad a joystick
-  (`60-input-kettle-gamepad.rules`).
+  (`60-input-kettle-gamepad.rules`). Without one (a desktop machine, controllers only over USB
+  or Bluetooth) the image has no such rule and the built-in pad's services (desktop controller,
+  Quick Access button) don't start.
+
+Machines that aren't Qualcomm handhelds:
+- `BOOT`: `abl` (the default: the phone bootloader chain, a devicetree, `\KERNEL` and extlinux)
+  or `uefi`: a UEFI firmware that starts steamcl from `\EFI\BOOT\BOOTAA64.EFI` itself and
+  describes the hardware (ACPI). No `DTB` or `ABL_DTBS` then, and no `\KERNEL` or extlinux.
+- `KERNEL_FLAVOUR`: the kernel the device's images get (default `qcom`, `kernel/`). Another SoC
+  family's is `kernel/<flavour>/`, built with `KETTLE_DEVICE=<name> scripts/build-kernel.sh` into
+  `out/kernel-<flavour>`; see "Adding one".
+- `CMDLINE_SOC`: kernel options in place of boot.conf's Qualcomm ones (`irqaffinity=0-2` for
+  the SM8550's little cores, the UFS timeout, ...); empty for none.
+- `REPART=disk`: the first boot partitions whichever disk the image booted from (rootfs-B,
+  growing /home), not only an SD card: for a machine whose disks are all Kettle's (NVMe, USB).
+- `GAME_CPU_AFFINITY`: the CPUs Steam starts games on, as a hex mask (`game-cpu-affinity`), for
+  a machine with no devicetree to tell the SoC by.
 
 ## Per-device parts of shared packages
 Some packages carry a file for each device. Two patterns, and which to use:
@@ -76,11 +92,14 @@ stop taking updates.
 
 ## Adding one
 1. **Kernel**: its device tree in `kernel/dts/qcom/` (ROCKNIX's, where there is one), built by
-   `scripts/build-kernel.sh`. There is one kernel for every device: a new SoC adds its patches
-   as `kernel/patches/2N-<soc>/` and its drivers as a `kernel/config/<soc>.config` fragment in
-   `build-kernel.sh`'s `FRAGMENTS` (`21-sm8250`, `sm8250.config`), checked like
+   `scripts/build-kernel.sh`. There is one kernel for every Qualcomm device: a new SoC adds its
+   patches as `kernel/patches/2N-<soc>/` and its drivers as a `kernel/config/<soc>.config`
+   fragment in `build-kernel.sh`'s `FRAGMENTS` (`21-sm8250`, `sm8250.config`), checked like
    `steamos.config`. Patches its hardware needs go in `kernel/patches/`, shared if they
-   are drivers.
+   are drivers. Another SoC family gets a kernel flavour of its own, `kernel/<flavour>/`:
+   `kernel.conf` (the source pin and `FRAGMENTS`), `patches/`, and `config/base.config`; its
+   fragments come from its `config/` or the shared `kernel/config/` (`steamos.config`, which
+   holds nothing SoC-specific). Its devices set `KERNEL_FLAVOUR`.
 2. **`device/<name>/`**: `device.conf` (a new `RAUC_COMPATIBLE`), `packages.txt`, and the overlay
    files above.
 3. **Firmware and audio**: a `kettle-firmware-<name>` and `kettle-ucm-<name>`, added to the

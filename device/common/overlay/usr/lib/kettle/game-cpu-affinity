@@ -7,6 +7,15 @@
 # tells games they have that many CPUs (WINE_CPU_TOPOLOGY from its affinity), so they get 5.
 # The Snapdragon 8 Elite (SM8750) has no little cores: six Oryon cores and two prime ones, so
 # its games get all eight (Oblivion Remastered refuses to start with fewer than 6).
+# A device without a devicetree (a UEFI machine) says its own: GAME_CPU_AFFINITY in device.conf,
+# a hex CPU mask.
+. /usr/lib/kettle/device.conf 2>/dev/null
+if [[ ${GAME_CPU_AFFINITY:-} =~ ^0x[0-9a-fA-F]+$ ]]; then
+	echo STEAM_LAUNCH_WRAPPER_AFFINITY_LIST=$GAME_CPU_AFFINITY
+	echo STEAM_DESKTOP_APP_AFFINITY_LIST=$GAME_CPU_AFFINITY
+	exit 0
+fi
+[[ -r /proc/device-tree/compatible ]] || exit 0
 while IFS= read -r -d '' c; do
 	case $c in
 	qcom,sm8750)

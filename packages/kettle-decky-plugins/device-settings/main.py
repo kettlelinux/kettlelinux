@@ -364,7 +364,7 @@ def _diagnostics() -> list[dict]:
                      "kettle-power")
     slot = _slot()
     device = [
-        ["Model", _read("/proc/device-tree/model") or rel.get("VARIANT", "")],
+        ["Model", _read("/proc/device-tree/model") or _read("/sys/class/dmi/id/product_name") or rel.get("VARIANT", "")],
         ["Chip", " ".join(filter(None, (_read(f"{soc}/family"), _read(f"{soc}/machine"))))
          + (f" rev {_read(f'{soc}/revision')}" if _read(f"{soc}/revision") else "")],
         ["GPU", gpu.get("deviceName", "")],

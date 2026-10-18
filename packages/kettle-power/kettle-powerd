@@ -87,9 +87,22 @@ def log(msg):
     print(msg, file=sys.stderr, flush=True)
 
 
+def image_device():
+    """The device this image was built for (DEVICE= in /usr/lib/kettle/device.conf), or ""."""
+    try:
+        with open(ROOT + "/usr/lib/kettle/device.conf") as f:
+            for line in f:
+                if line.startswith("DEVICE="):
+                    return line.split("=", 1)[1].strip().strip("\"'")
+    except OSError:
+        pass
+    return ""
+
+
 def config_path():
     """The device's description: KETTLE_POWER_CONFIG, else the file named after the device tree's
-    first compatible that has one ("ayn,thor" -> thor.toml)."""
+    first compatible that has one ("ayn,thor" -> thor.toml), else, on a machine without a device
+    tree (UEFI and ACPI), the one named after the image's device ("radxa-o6n.toml")."""
     if os.environ.get("KETTLE_POWER_CONFIG"):
         return os.environ["KETTLE_POWER_CONFIG"]
     try:
@@ -97,11 +110,14 @@ def config_path():
             compatible = f.read().decode(errors="replace").split("\0")
     except OSError:
         compatible = []
-    for c in compatible:
-        path = f"{CONFIG_DIR}/{c.split(',')[-1]}.toml"
-        if c and os.path.exists(path):
+    names = [c.split(",")[-1] for c in compatible if c]
+    if not names and image_device():
+        names = [image_device()]
+    for name in names:
+        path = f"{CONFIG_DIR}/{name}.toml"
+        if os.path.exists(path):
             return path
-    sys.exit(f"kettle-powerd: no description for this device ({', '.join(filter(None, compatible))}) in {CONFIG_DIR}")
+    sys.exit(f"kettle-powerd: no description for this device ({', '.join(names)}) in {CONFIG_DIR}")
 
 
 def load_config():

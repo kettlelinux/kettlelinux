@@ -155,7 +155,7 @@ def system_info():
         slot = None
     return {
         "os": os_release(),
-        "model": read("/proc/device-tree/model").rstrip("\0\n"),
+        "model": read("/proc/device-tree/model").rstrip("\0\n") or read("/sys/class/dmi/id/product_name").strip(),
         "kernel": os.uname().release,
         "slot": slot,
         "uptime_s": int(float(read("/proc/uptime", "0").split()[0])),

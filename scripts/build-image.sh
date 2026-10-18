@@ -6,7 +6,8 @@
 # namespace-local binfmt_misc entry for tools/qemu-aarch64-static, so pacman can
 # install into an aarch64 root and run package scriptlets/hooks in a chroot.
 #
-# Inputs: out/kernel (scripts/build-kernel.sh), our local repo (scripts/build-packages.sh)
+# Inputs: out/kernel or the device's kernel flavour's out/kernel-<flavour> (scripts/build-kernel.sh),
+#         our local repo (scripts/build-packages.sh)
 # Output: out/kettle-<buildid>-<device>.img     SD card image (SteamOS partition layout, slot A)
 #         out/kettle-<buildid>-<device>.raucb   update bundle (RAUC, casync), with its chunk
 #         out/kettle-<buildid>-<device>.castr/  store; publish with scripts/publish-update.sh
@@ -28,7 +29,7 @@
 #   KETTLE_RAUC_KEY/_CERT  release signing key and certificate (default: a development key in
 #                          cache/keys/, made on first use)
 #   KETTLE_NO_BUNDLE=1     skip the update bundle (faster; the image only)
-#   KETTLE_STRICT_STALE=1  stop, rather than warn, when out/kernel or a package in out/repo was
+#   KETTLE_STRICT_STALE=1  stop, rather than warn, when the kernel or a package in out/repo was
 #                          built from an older kernel/ or packages/<name> than the one here
 #   KETTLE_KEEP_BUILDS     how many of this device's builds stay in out/, newest by build ID
 #                          (default 3; 0 keeps all); older ones are deleted after a build
@@ -51,10 +52,20 @@ WORK="$ROOT/build/image-$VARIANT"
 RFS="$WORK/rootfs"
 STAGE="$WORK/stage"
 . "$DEVICE/device.conf"
-for v in MODEL DTB ABL_DTBS RAUC_COMPATIBLE PAD_NAME FACE_BUTTONS; do
+# BOOT: abl, a phone bootloader (the ABL, or U-Boot from it) that needs a devicetree and \KERNEL
+# or extlinux; uefi, a UEFI firmware that starts steamcl itself and describes the hardware (ACPI)
+BOOT="${BOOT:-abl}"
+[[ "$BOOT" =~ ^(abl|uefi)$ ]] || die "device/$VARIANT/device.conf: BOOT is abl or uefi"
+req=(MODEL RAUC_COMPATIBLE)
+[ "$BOOT" = uefi ] || req+=(DTB ABL_DTBS)
+# a built-in gamepad (PAD_NAME) is optional: a desktop machine has none
+[ -z "${PAD_NAME:-}" ] || req+=(FACE_BUTTONS)
+for v in "${req[@]}"; do
   [ -n "${!v:-}" ] || die "device/$VARIANT/device.conf: $v not set (docs/PORTING.md)"
 done
-[[ "$FACE_BUTTONS" =~ ^(xbox|nintendo)$ ]] || die "device/$VARIANT/device.conf: FACE_BUTTONS is xbox or nintendo"
+[ -z "${PAD_NAME:-}" ] || [[ "$FACE_BUTTONS" =~ ^(xbox|nintendo)$ ]] ||
+  die "device/$VARIANT/device.conf: FACE_BUTTONS is xbox or nintendo"
+kernel_flavour "${KERNEL_FLAVOUR:-qcom}"   # KOUT: the kernel this device's images get
 # no Portal defaults for another device's screen: each device says how Game Mode drives it
 [ -f "$DEVICE/overlay/usr/lib/kettle/gamescope.conf" ] ||
   die "device/$VARIANT has no overlay/usr/lib/kettle/gamescope.conf (docs/PORTING.md)"
@@ -84,7 +95,7 @@ NAME="kettle-$BUILD_ID-$VARIANT"
 IMG="$ROOT/out/$NAME.img"
 
 if [ "${KETTLE_IN_NS:-}" != 1 ]; then
-  [ -f "$ROOT/out/kernel/boot/Image" ] || die "no kernel; run scripts/build-kernel.sh"
+  [ -f "$KOUT/boot/Image" ] || die "no $KFLAVOUR kernel; run KETTLE_DEVICE=$VARIANT scripts/build-kernel.sh"
   [ -f "$LOCAL_REPO/kettle.db" ] || die "no local repo; run scripts/build-packages.sh"
   [[ "$BUILD_ID" =~ ^[0-9]{8}(\.[0-9]+)?$ ]] || die "KETTLE_BUILD_ID must be YYYYMMDD.N"
 fi
@@ -98,9 +109,11 @@ lock "$WORK.lock"
 # a kernel or package built from an older tree than the one here: listed, as an image made now
 # wouldn't have the change (KETTLE_STRICT_STALE=1 stops)
 stale=() unknown=()
-k="$(cat "$ROOT/out/kernel/.source-hash" 2>/dev/null || true)"
+k="$(cat "$KOUT/.source-hash" 2>/dev/null || true)"
 if [ -z "$k" ]; then unknown+=(kernel)
-elif [ "$k" != "$(kernel_src_hash)" ]; then stale+=("kernel: kernel/ changed since out/kernel was built (scripts/build-kernel.sh)"); fi
+elif [ "$k" != "$(kernel_src_hash "$KFLAVOUR")" ]; then
+  stale+=("kernel: ${KDIR#"$ROOT"/} changed since ${KOUT#"$ROOT"/} was built (KETTLE_DEVICE=$VARIANT scripts/build-kernel.sh)")
+fi
 for d in "$ROOT"/packages/*/; do
   d="$(basename "$d")"
   if [ ! -f "$ROOT/out/repo/.source/$d" ]; then unknown+=("$d")
@@ -145,7 +158,15 @@ rm -rf "$WORK"
 mkdir -p "$RFS" "$STAGE" "$PKG_CACHE"
 chroot_mount "$RFS"
 
-mapfile -t PKGS < <(sed -e 's/#.*//' -e '/^\s*$/d' "$ROOT/image/packages.txt" "$DEVICE/packages.txt")
+# a device's packages.txt adds packages, and drops shared ones with a -name line (another GPU's
+# Mesa, a gamepad's services)
+mapfile -t PKGS < <(sed -e 's/#.*//' -e 's/\s*$//' -e '/^\s*$/d' "$ROOT/image/packages.txt" "$DEVICE/packages.txt" |
+  awk '/^-/ { drop[substr($0, 2)] = 1; next } { p[n++] = $0 }
+       END { for (i = 0; i < n; i++) if (!(p[i] in drop)) print p[i] }')
+for p in $(sed -n 's/^-\([^#[:space:]]*\).*/\1/p' "$DEVICE/packages.txt"); do
+  grep -qx "$p" <(sed -e 's/#.*//' -e 's/\s*$//' "$ROOT/image/packages.txt") ||
+    die "device/$VARIANT/packages.txt: -$p is not in image/packages.txt"
+done
 log "installing ${#PKGS[@]} packages for the $MODEL (kettle + deckard mash-20240428.1 + release-0.5 hotfixes)"
 lock "$ROOT/out/repo.lock" -s   # not while build-packages.sh is adding to the repo
 pacman_root "$RFS" --logfile "$WORK/pacman.log" -Sy --needed "${PKGS[@]}"
@@ -157,12 +178,12 @@ for d in "$RFS"/var/lib/pacman/local/*/desc; do
   sed -i '/^%INSTALLED_DB%$/,/^$/d' "$d"
 done
 
-KVER="$(cat "$ROOT/out/kernel/kernelrelease")"
-log "installing kernel $KVER and modules"
-cp -a --no-preserve=ownership "$ROOT/out/kernel/usr/lib/modules/." "$RFS/usr/lib/modules/"
-install -d "$RFS/boot/dtbs/qcom"
-install -m 0644 "$ROOT/out/kernel/boot/Image" "$RFS/boot/Image"
-install -m 0644 "$ROOT"/out/kernel/boot/dtbs/qcom/*.dtb "$RFS/boot/dtbs/qcom/"
+KVER="$(cat "$KOUT/kernelrelease")"
+log "installing kernel $KVER ($KFLAVOUR) and modules"
+cp -a --no-preserve=ownership "$KOUT/usr/lib/modules/." "$RFS/usr/lib/modules/"
+install -d "$RFS/boot/dtbs"
+install -m 0644 "$KOUT/boot/Image" "$RFS/boot/Image"
+cp -r --no-preserve=ownership "$KOUT/boot/dtbs/." "$RFS/boot/dtbs/"
 
 log "applying overlays: common, $VARIANT"
 # --no-preserve=ownership: new files become root-owned; never chown -R package dirs
@@ -174,21 +195,31 @@ chmod 0750 "$RFS/etc/sudoers.d"; chmod 0440 "$RFS"/etc/sudoers.d/*
   echo "DEVICE=$VARIANT"
   cat "$DEVICE/device.conf"; } >"$RFS/usr/lib/kettle/device.conf"
 chmod 0644 "$RFS/usr/lib/kettle/device.conf"
-# the built-in gamepad's name, for the rule that keeps it a joystick
-sed -i "s|@PAD_NAME@|$PAD_NAME|" "$RFS/usr/lib/udev/rules.d/60-input-kettle-gamepad.rules"
-grep -qF "ATTRS{name}==\"$PAD_NAME\"" "$RFS/usr/lib/udev/rules.d/60-input-kettle-gamepad.rules" ||
-  die "60-input-kettle-gamepad.rules: PAD_NAME not set"
+# the built-in gamepad's name, for the rule that keeps it a joystick (no rule without one)
+if [ -n "${PAD_NAME:-}" ]; then
+  sed -i "s|@PAD_NAME@|$PAD_NAME|" "$RFS/usr/lib/udev/rules.d/60-input-kettle-gamepad.rules"
+  grep -qF "ATTRS{name}==\"$PAD_NAME\"" "$RFS/usr/lib/udev/rules.d/60-input-kettle-gamepad.rules" ||
+    die "60-input-kettle-gamepad.rules: PAD_NAME not set"
+else
+  rm "$RFS/usr/lib/udev/rules.d/60-input-kettle-gamepad.rules"
+fi
 # this device's devicetree for GRUB and extlinux, its alternatives, and the ABL's set
+DTB="${DTB:-}" ABL_DTBS="${ABL_DTBS:-}"
 sed -i -e "s|^DTB=@DTB@\$|DTB=$DTB|" -e "s|^DTB_ALT=\"@DTB_ALT@\"\$|DTB_ALT=\"${DTB_ALT:-}\"|" \
   -e "s|^ABL_DTBS=\"@ABL_DTBS@\"\$|ABL_DTBS=\"$ABL_DTBS\"|" \
   -e "s|^CMDLINE_DEVICE=\"@CMDLINE_DEVICE@\"\$|CMDLINE_DEVICE=\"${CMDLINE_EXTRA:-}\"|" "$RFS/usr/lib/kettle/boot.conf"
 grep -qx "DTB=$DTB" "$RFS/usr/lib/kettle/boot.conf" || die "boot.conf: DTB not set"
 grep -qxF "ABL_DTBS=\"$ABL_DTBS\"" "$RFS/usr/lib/kettle/boot.conf" || die "boot.conf: ABL_DTBS not set"
 grep -qxF "CMDLINE_DEVICE=\"${CMDLINE_EXTRA:-}\"" "$RFS/usr/lib/kettle/boot.conf" || die "boot.conf: CMDLINE_DEVICE not set"
+# a SoC family's own kernel options, in place of the Qualcomm ones, if the device sets them
+if [ -n "${CMDLINE_SOC+x}" ]; then
+  sed -i "s|^CMDLINE_SOC=\".*\"\$|CMDLINE_SOC=\"$CMDLINE_SOC\"|" "$RFS/usr/lib/kettle/boot.conf"
+  grep -qxF "CMDLINE_SOC=\"$CMDLINE_SOC\"" "$RFS/usr/lib/kettle/boot.conf" || die "boot.conf: CMDLINE_SOC not set"
+fi
 for alt in $DTB $(printf '%s\n' ${DTB_ALT:-} | cut -d: -f2); do
-  [ -f "$RFS/boot/dtbs/$alt" ] || die "no $alt in out/kernel"
+  [ -f "$RFS/boot/dtbs/$alt" ] || die "no $alt in ${KOUT#"$ROOT"/}"
 done
-(shopt -s nullglob; set -- $(cd "$RFS/boot/dtbs" && echo $ABL_DTBS)
+[ "$BOOT" = uefi ] || (shopt -s nullglob; set -- $(cd "$RFS/boot/dtbs" && echo $ABL_DTBS)
  [ $# -gt 0 ] && [ -f "$RFS/boot/dtbs/$1" ]) || die "ABL_DTBS ($ABL_DTBS) matches no dtb"
 # this device's update compatible (RAUC) and update variant (steamos-atomupd, which also offers
 # the variants in client.conf); steamos-customizations-kettle ships the Portal's
@@ -303,7 +334,7 @@ ROOT_FSUUID=$(uuid) VARA_FSUUID=$(uuid) VARB_FSUUID=$(uuid) HOME_FSUUID=$(uuid)
 volid() { printf '%08X' $((RANDOM << 16 | RANDOM)); }
 ESP_MB=512 EFI_MB=64 ROOTFS_MB=12288 VAR_MB=256
 
-log "boot: steamcl, slot A's GRUB, \\KERNEL and extlinux"
+log "boot: steamcl, slot A's GRUB$([ "$BOOT" = uefi ] || echo ', \\KERNEL and extlinux')"
 mkdir -p "$STAGE"/{esp,efi-A,var-A} "$RFS/mnt/stage"
 mount --bind "$STAGE" "$RFS/mnt/stage"
 chroot "$RFS" /bin/bash -euo pipefail -s <<EOF
@@ -315,7 +346,7 @@ mkdir -p /mnt/stage/esp/SteamOS/conf
 holo-bootconf --conf-dir /mnt/stage/esp/SteamOS/conf create --image A >/dev/null
 holo-bootconf --conf-dir /mnt/stage/esp/SteamOS/conf config --image A \
   --set title "Kettle Linux-A-$VERSION-$BUILD_ID" --set comment "$BUILD_ID" >/dev/null
-kettle-boot-legacy --root / --esp /mnt/stage/esp --efi-partuuid $EFIA_PARTUUID
+[ "$BOOT" = uefi ] || kettle-boot-legacy --root / --esp /mnt/stage/esp --efi-partuuid $EFIA_PARTUUID
 EOF
 umount "$RFS/mnt/stage"; rmdir "$RFS/mnt/stage"
 
