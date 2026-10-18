@@ -1,0 +1,62 @@
+# Remora (Game Mode plugin loader, kettlelinux/remora), in Decky Loader's place: it runs the same
+# plugins with the same layout, so the image's plugin packages depend on decky-loader and get it.
+# The backend runs on the system Python with its dependencies pinned and hash-checked
+# (packaging/requirements.txt in the source) in a private site dir, /usr/lib/remora. They are
+# wheels for the chroot's Python (compiled where there are some: yarl, multidict, aiohttp),
+# hence aarch64.
+# remora-start is decky-loader-start's layout: plugins/ and loader.json in root's
+# /home/.kettle/decky, the image's plugins (/usr/share/decky/plugins) linked in.
+pkgname=remora
+pkgver=0.1.0
+pkgrel=7
+_commit=0319017fd1d6faf347f43ced2be3350d156eaee6
+pkgdesc='Plugin loader for Steam Game Mode that runs Decky Loader plugins (Kettle Linux build)'
+arch=(aarch64)
+url='https://github.com/kettlelinux/remora'
+# the frontend bundle includes @decky/ui, which is LGPL-2.1
+license=(MIT LGPL-2.1-only)
+# python-cryptography: signatures of store sources with pinned keys (python3 -P sees the system
+# site-packages next to /usr/lib/remora)
+depends=(python python-cryptography lsof util-linux)
+makedepends=(nodejs npm python-pip)
+provides=(decky-loader=3.3.0)
+conflicts=(decky-loader)
+source=("$pkgname-$_commit.tar.gz::$url/archive/$_commit.tar.gz"
+        remora-start
+        plugin_loader.service
+        kettle-compat.json)
+sha256sums=('b5f0f15c9574e783cd67a1f3c06259fd3a64c52e020eeb34fae7ccbc18416121'
+            'bf70e3106975cbe9df3323cc01ece9616e51db9274f6d7ebd6eb1c4521fa02b3'
+            'd1b747dcf715a569904fbd1023331f97d5acf3d0bb3a2d77e72e294169623634'
+            '76a07abd1d28bb3e75ba6007d28e55412579d44368ffe85ca52cfc8b02d2be3f')
+
+_site=usr/lib/remora
+
+build() {
+  cd $pkgname-$_commit/frontend
+  npx --yes pnpm@10 install --frozen-lockfile --ignore-scripts
+  npx --yes pnpm@10 run build          # -> backend/remora/static
+}
+
+package() {
+  cd $pkgname-$_commit
+  local site="$pkgdir/$_site"
+  python -m pip install --no-cache-dir --no-compile --disable-pip-version-check \
+    --require-hashes --no-deps --only-binary=:all: --target "$site" -r packaging/requirements.txt
+  rm -rf "$site/bin"
+  cp -r backend/remora "$site/"
+  find "$site" -name __pycache__ -prune -exec rm -rf {} +
+  python -m compileall -q -d "/$_site" "$site"
+
+  install -Dm755 "$srcdir/remora-start" "$site/remora-start"
+  install -Dm644 "$srcdir/plugin_loader.service" -t "$pkgdir/usr/lib/systemd/system"
+  install -d "$pkgdir/usr/share/decky/plugins"
+  # what plugins do on Kettle devices, over Remora's built-in requirement list
+  install -Dm644 "$srcdir/kettle-compat.json" "$pkgdir/usr/share/remora/compat.d/kettle.json"
+  # `remora call` / `remora dev` for plugin work on the device
+  install -d "$pkgdir/usr/bin"
+  printf '#!/bin/sh\nPYTHONPATH=/%s exec /usr/bin/python3 -P -m remora "$@"\n' "$_site" >"$pkgdir/usr/bin/remora"
+  chmod 755 "$pkgdir/usr/bin/remora"
+  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+  install -Dm644 frontend/node_modules/@decky/ui/LICENSE "$pkgdir/usr/share/licenses/$pkgname/decky-ui-LICENSE"
+}
