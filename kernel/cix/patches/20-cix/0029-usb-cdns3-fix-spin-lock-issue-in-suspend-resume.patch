@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Thu, 21 May 2026 18:00:39 +0800
+Subject: usb: cdns3: fix spin lock issue in suspend/resume
+
+[o6n: ported to 7.2: cdnsp-pci.c in 7.2 is a PCI-to-platform wrapper
+with no PM callbacks (PM goes through cdns3-plat.c), so its hunk was
+dropped; the cdns3-plat.c and cdnsp-plat.c hunks apply unchanged]
+---
+ drivers/usb/cdns3/cdns3-plat.c | 4 +++-
+ drivers/usb/cdns3/cdnsp-plat.c | 4 +++-
+ 2 files changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/cdns3/cdns3-plat.c b/drivers/usb/cdns3/cdns3-plat.c
+index e3f32c3e9..dd95761b6 100644
+--- a/drivers/usb/cdns3/cdns3-plat.c
++++ b/drivers/usb/cdns3/cdns3-plat.c
+@@ -292,8 +292,10 @@ static int cdns3_controller_resume(struct device *dev, pm_message_t msg)
+ 
+ 	cdns3_set_platform_suspend(cdns->dev, false, false);
+ 
+-	spin_lock_irqsave(&cdns->lock, flags);
++	/* cdns_resume() may sleep; do not invoke it under cdns->lock. */
+ 	cdns_resume(cdns);
++
++	spin_lock_irqsave(&cdns->lock, flags);
+ 	cdns->in_lpm = false;
+ 	spin_unlock_irqrestore(&cdns->lock, flags);
+ 	cdns_set_active(cdns, !PMSG_IS_AUTO(msg));
+diff --git a/drivers/usb/cdns3/cdnsp-plat.c b/drivers/usb/cdns3/cdnsp-plat.c
+index 7a45e9964..204cddbc4 100644
+--- a/drivers/usb/cdns3/cdnsp-plat.c
++++ b/drivers/usb/cdns3/cdnsp-plat.c
+@@ -349,8 +349,10 @@ static int cdnsp_controller_resume(struct device *dev, pm_message_t msg)
+ 
+ 	cdnsp_set_platform_suspend(cdns->dev, false, false);
+ 
+-	spin_lock_irqsave(&cdns->lock, flags);
++	/* cdns_resume() may sleep; do not invoke it under cdns->lock. */
+ 	cdns_resume(cdns);
++
++	spin_lock_irqsave(&cdns->lock, flags);
+ 	cdns->in_lpm = false;
+ 	spin_unlock_irqrestore(&cdns->lock, flags);
+ 	cdns_set_active(cdns, !PMSG_IS_AUTO(msg));

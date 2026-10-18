@@ -1,0 +1,209 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: 06n-arch <gennro2004@gmail.com>
+Date: Tue, 29 Sep 2026 06:22:16 -0500
+Subject: platform/arm64: add CIX Sky1 fan mode platform profile driver
+
+The Radxa Orion O6N has no EC: its fan is driven by the CIX PM firmware,
+which runs a closed loop over the SoC's FAN_OUT/FAN_TACH pins with three
+RPM-vs-temperature curves. The DSDT lets the OS pick the curve with
+\_SB.SPFM (mute), \_SB.SPFA (auto) and \_SB.SPFP (performance), which
+send a vendor message over the PM mailbox (\_SB.PMMX.SFMD), but no Linux
+driver calls them, so the fan is stuck on the boot default. Neither the
+mode nor the fan speed can be read back.
+
+Bind to the PM mailbox device (CIXHA000, otherwise unclaimed) and expose
+the three curves as an ACPI platform profile, quiet/balanced/performance,
+so power-profiles-daemon, tuned and desktop power menus can switch them.
+The driver doesn't write anything at probe (the firmware boots in auto,
+reported as balanced) and re-applies a non-default mode after system
+resume.
+---
+ drivers/platform/arm64/Kconfig        |  11 ++
+ drivers/platform/arm64/Makefile       |   1 +
+ drivers/platform/arm64/cix-sky1-fan.c | 144 ++++++++++++++++++++++++++
+ 3 files changed, 156 insertions(+)
+
+diff --git a/drivers/platform/arm64/Kconfig b/drivers/platform/arm64/Kconfig
+index e32e01b2a..0d8527e80 100644
+--- a/drivers/platform/arm64/Kconfig
++++ b/drivers/platform/arm64/Kconfig
+@@ -16,6 +16,17 @@ menuconfig ARM64_PLATFORM_DEVICES
+ 
+ if ARM64_PLATFORM_DEVICES
+ 
++config CIX_SKY1_FAN
++	tristate "CIX Sky1 fan mode platform profile"
++	depends on ARCH_CIX || COMPILE_TEST
++	depends on ACPI
++	select ACPI_PLATFORM_PROFILE
++	help
++	  Say M here to pick the fan curve of the PM firmware on CIX Sky1
++	  boards without an EC, such as the Radxa Orion O6N, through the
++	  ACPI platform profile interface: quiet (mute), balanced (auto) or
++	  performance.
++
+ config EC_ACER_ASPIRE1
+ 	tristate "Acer Aspire 1 Embedded Controller driver"
+ 	depends on ARCH_QCOM || COMPILE_TEST
+diff --git a/drivers/platform/arm64/Makefile b/drivers/platform/arm64/Makefile
+index 7681be4a4..d5dad1e82 100644
+--- a/drivers/platform/arm64/Makefile
++++ b/drivers/platform/arm64/Makefile
+@@ -5,6 +5,7 @@
+ # This dir should only include drivers for EC-like devices.
+ #
+ 
++obj-$(CONFIG_CIX_SKY1_FAN)	+= cix-sky1-fan.o
+ obj-$(CONFIG_EC_ACER_ASPIRE1)	+= acer-aspire1-ec.o
+ obj-$(CONFIG_EC_HUAWEI_GAOKUN)	+= huawei-gaokun-ec.o
+ obj-$(CONFIG_EC_LENOVO_YOGA_C630) += lenovo-yoga-c630.o
+diff --git a/drivers/platform/arm64/cix-sky1-fan.c b/drivers/platform/arm64/cix-sky1-fan.c
+new file mode 100644
+index 000000000..f27073679
+--- /dev/null
++++ b/drivers/platform/arm64/cix-sky1-fan.c
+@@ -0,0 +1,144 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * CIX Sky1 fan mode as a platform profile.
++ *
++ * On Sky1 boards without an EC (Radxa Orion O6N) the fan curve runs in the
++ * PM firmware, which drives the SoC's FAN_OUT/FAN_TACH pins itself. The OS
++ * can only pick one of the firmware's curves: the DSDT sends the mode over
++ * the PM mailbox (\_SB.PMMX.SFMD) through three wrappers, \_SB.SPFM (mute),
++ * \_SB.SPFA (auto) and \_SB.SPFP (performance). The firmware can't report
++ * the current mode or the fan speed back.
++ */
++
++#include <linux/acpi.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/platform_profile.h>
++#include <linux/pm.h>
++
++struct sky1_fan {
++	enum platform_profile_option profile;
++};
++
++static const char * const sky1_fan_methods[PLATFORM_PROFILE_LAST] = {
++	[PLATFORM_PROFILE_QUIET]	= "\\_SB.SPFM",
++	[PLATFORM_PROFILE_BALANCED]	= "\\_SB.SPFA",
++	[PLATFORM_PROFILE_PERFORMANCE]	= "\\_SB.SPFP",
++};
++
++static int sky1_fan_apply(struct device *dev,
++			  enum platform_profile_option profile)
++{
++	const char *method = sky1_fan_methods[profile];
++	acpi_status status;
++
++	status = acpi_evaluate_object(NULL, (acpi_string)method, NULL, NULL);
++	if (ACPI_FAILURE(status)) {
++		dev_err(dev, "%s failed: %s\n", method,
++			acpi_format_exception(status));
++		return -EIO;
++	}
++
++	return 0;
++}
++
++static int sky1_fan_probe_choices(void *drvdata, unsigned long *choices)
++{
++	set_bit(PLATFORM_PROFILE_QUIET, choices);
++	set_bit(PLATFORM_PROFILE_BALANCED, choices);
++	set_bit(PLATFORM_PROFILE_PERFORMANCE, choices);
++
++	return 0;
++}
++
++static int sky1_fan_profile_get(struct device *dev,
++				enum platform_profile_option *profile)
++{
++	struct sky1_fan *fan = dev_get_drvdata(dev);
++
++	*profile = fan->profile;
++
++	return 0;
++}
++
++static int sky1_fan_profile_set(struct device *dev,
++				enum platform_profile_option profile)
++{
++	struct sky1_fan *fan = dev_get_drvdata(dev);
++	int ret;
++
++	ret = sky1_fan_apply(dev, profile);
++	if (ret)
++		return ret;
++
++	fan->profile = profile;
++
++	return 0;
++}
++
++static const struct platform_profile_ops sky1_fan_profile_ops = {
++	.probe = sky1_fan_probe_choices,
++	.profile_get = sky1_fan_profile_get,
++	.profile_set = sky1_fan_profile_set,
++};
++
++static int sky1_fan_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct device *ppdev;
++	struct sky1_fan *fan;
++	int i;
++
++	for (i = 0; i < PLATFORM_PROFILE_LAST; i++)
++		if (sky1_fan_methods[i] &&
++		    !acpi_has_method(NULL, (acpi_string)sky1_fan_methods[i]))
++			return -ENODEV;
++
++	fan = devm_kzalloc(dev, sizeof(*fan), GFP_KERNEL);
++	if (!fan)
++		return -ENOMEM;
++
++	/*
++	 * The firmware boots in auto. Don't send anything until userspace
++	 * picks a profile, so loading the driver never changes the fan.
++	 */
++	fan->profile = PLATFORM_PROFILE_BALANCED;
++	platform_set_drvdata(pdev, fan);
++
++	ppdev = devm_platform_profile_register(dev, "cix-sky1-fan", fan,
++					       &sky1_fan_profile_ops);
++	return PTR_ERR_OR_ZERO(ppdev);
++}
++
++static int sky1_fan_resume(struct device *dev)
++{
++	struct sky1_fan *fan = dev_get_drvdata(dev);
++
++	/* The PM firmware may come back from system suspend in auto. */
++	if (fan->profile != PLATFORM_PROFILE_BALANCED)
++		return sky1_fan_apply(dev, fan->profile);
++
++	return 0;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(sky1_fan_pm_ops, NULL, sky1_fan_resume);
++
++static const struct acpi_device_id sky1_fan_acpi_ids[] = {
++	{ "CIXHA000" },		/* PM mailbox (\_SB.PMMX) */
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, sky1_fan_acpi_ids);
++
++static struct platform_driver sky1_fan_driver = {
++	.probe = sky1_fan_probe,
++	.driver = {
++		.name = "cix-sky1-fan",
++		.acpi_match_table = sky1_fan_acpi_ids,
++		.pm = pm_sleep_ptr(&sky1_fan_pm_ops),
++	},
++};
++module_platform_driver(sky1_fan_driver);
++
++MODULE_DESCRIPTION("CIX Sky1 PM firmware fan mode as a platform profile");
++MODULE_LICENSE("GPL");

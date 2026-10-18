@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: 06n-arch <gennro2004@gmail.com>
+Date: Tue, 29 Sep 2026 06:21:08 -0500
+Subject: drm/panthor: Sky1: register the GPU Energy Model from SCMI
+
+CIX's 0063 adds cix_scmi_register_em(), which builds an Energy Model for
+the GPU from the SCMI perf domain's power estimates, but nothing calls
+it. The devfreq cooling device is therefore registered without an EM,
+and the power_allocator governor that CIX's ACPI thermal zones are
+tuned for (SSTP sustainable power, SWIT switch-on trip) refuses the GPU
+zone:
+
+  thermal thermal_zone4: power_allocator: devfreq-CIXH5000:00 is not a power actor
+  thermal thermal_zone4: power_allocator: binding failed
+
+so TZGT stays on step_wise and throttles the GPU from its 70 C
+switch-on trip rather than managing it against a power budget.
+
+When DVFS goes through the SCMI perf genpd, register the EM before the
+cooling device. On a Radxa Orion O6N the firmware reports 0.96 W at
+72 MHz up to 10.7 W at 1 GHz, and TZGT then accepts power_allocator.
+---
+ drivers/gpu/drm/panthor/panthor_devfreq.c | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/drivers/gpu/drm/panthor/panthor_devfreq.c b/drivers/gpu/drm/panthor/panthor_devfreq.c
+index 6d0778eb4..c7f0932dc 100644
+--- a/drivers/gpu/drm/panthor/panthor_devfreq.c
++++ b/drivers/gpu/drm/panthor/panthor_devfreq.c
+@@ -4,10 +4,12 @@
+ #include <linux/clk.h>
+ #include <linux/devfreq.h>
+ #include <linux/devfreq_cooling.h>
++#include <linux/energy_model.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_domain.h>
+ #include <linux/pm_opp.h>
+ #include <linux/scmi_perf_domain.h>
++#include <linux/cix/cix_scmi_em.h>
+ 
+ #include <drm/drm_managed.h>
+ #include <drm/drm_print.h>
+@@ -277,6 +279,11 @@ static void panthor_devfreq_perf_dev_release(struct drm_device *ddev, void *arg)
+ 	}
+ }
+ 
++static void panthor_devfreq_em_release(void *dev)
++{
++	em_dev_unregister_perf_domain(dev);
++}
++
+ int panthor_devfreq_init(struct panthor_device *ptdev)
+ {
+ 	/* There's actually 2 regulators (mali and sram), but the OPP core only
+@@ -433,6 +440,22 @@ int panthor_devfreq_init(struct panthor_device *ptdev)
+ 		return ret;
+ 	}
+ 
++	/*
++	 * With SCMI DVFS the firmware knows the GPU's power at each OPP. Give
++	 * the device an Energy Model built from it so the devfreq cooling
++	 * device is a power actor; without one the power_allocator governor
++	 * refuses to bind the GPU thermal zone.
++	 */
++	if (IS_REACHABLE(CONFIG_CIX_SCMI_ENERGY_MODEL) &&
++	    pdevfreq->opp_dev && !em_pd_get(dev)) {
++		ret = cix_scmi_register_em(dev);
++		if (!ret)
++			ret = devm_add_action_or_reset(dev, panthor_devfreq_em_release,
++						       dev);
++		if (ret)
++			DRM_DEV_INFO(dev, "No GPU Energy Model: %d\n", ret);
++	}
++
+ 	cooling = devfreq_cooling_em_register(pdevfreq->devfreq, NULL);
+ 	if (IS_ERR(cooling))
+ 		DRM_DEV_INFO(dev, "Failed to register cooling device\n");
