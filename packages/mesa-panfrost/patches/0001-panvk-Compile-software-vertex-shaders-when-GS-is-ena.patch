@@ -1,0 +1,257 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Faith Ekstrand <faith.ekstrand@collabora.com>
+Date: Thu, 6 Nov 2025 13:51:06 -0500
+Subject: [PATCH 01/57] panvk: Compile software vertex shaders when GS is
+ enabled
+
+For geometry shaders, we'll need to run the VS as a compute shader and
+the actual hardware VS will come from the geometry or tessellation
+shader.
+
+(cherry picked from commit 4df5d3b359daf4cd44e811001e20879a7f9032d0)
+---
+ meson.build                                   |   1 +
+ .../compiler/bifrost/bifrost_compile.c        |   3 +-
+ src/panfrost/vulkan/meson.build               |   1 +
+ src/panfrost/vulkan/panvk_shader.h            |  11 +-
+ src/panfrost/vulkan/panvk_vX_shader.c         | 109 +++++++++++++++++-
+ 5 files changed, 119 insertions(+), 6 deletions(-)
+
+diff --git a/meson.build b/meson.build
+index df0241e1af0..a9280455b91 100644
+--- a/meson.build
++++ b/meson.build
+@@ -1062,6 +1062,7 @@ with_llvm = with_llvm \
+ with_poly = [
+   with_gallium_asahi, with_asahi_vk, with_tools.contains('asahi'),
+   with_kosmickrisp_vk,
++  with_panfrost_vk,
+ ].contains(true)
+ 
+ dep_clc = null_dep
+diff --git a/src/panfrost/compiler/bifrost/bifrost_compile.c b/src/panfrost/compiler/bifrost/bifrost_compile.c
+index 4b7eb174629..3a5373db8e6 100644
+--- a/src/panfrost/compiler/bifrost/bifrost_compile.c
++++ b/src/panfrost/compiler/bifrost/bifrost_compile.c
+@@ -1497,7 +1497,8 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
+       break;
+ 
+    case nir_intrinsic_load_attr_pan:
+-      assert(stage == MESA_SHADER_VERTEX);
++      assert(stage == MESA_SHADER_VERTEX ||
++             stage == MESA_SHADER_COMPUTE);
+       bi_emit_load_attr(b, instr);
+       break;
+ 
+diff --git a/src/panfrost/vulkan/meson.build b/src/panfrost/vulkan/meson.build
+index 7c87fe4a101..588ba0ead92 100644
+--- a/src/panfrost/vulkan/meson.build
++++ b/src/panfrost/vulkan/meson.build
+@@ -174,6 +174,7 @@ foreach arch : [6, 7, 10, 11, 12, 13, 14]
+       inc_panfrost,
+       inc_panvk_per_arch,
+     ],
++    link_with : [libpoly_nir],
+     dependencies : [
+       idep_nir_headers,
+       idep_pan_packers,
+diff --git a/src/panfrost/vulkan/panvk_shader.h b/src/panfrost/vulkan/panvk_shader.h
+index fabb9a94920..cf43d1b286d 100644
+--- a/src/panfrost/vulkan/panvk_shader.h
++++ b/src/panfrost/vulkan/panvk_shader.h
+@@ -150,6 +150,11 @@ struct panvk_graphics_sysvals {
+       } scale, offset;
+    } viewport;
+ 
++   struct {
++      /* Address of input assembly buffer if geom/tess is used, else 0 */
++      uint64_t vertex_params;
++   } poly;
++
+    struct {
+ #if PAN_ARCH < 9
+       int32_t raw_vertex_offset;
+@@ -441,6 +446,9 @@ enum panvk_vs_variant {
+    /* Hardware vertex shader, when next stage is fragment */
+    PANVK_VS_VARIANT_HW,
+ 
++   /* Hardware compute shader, when next is geometry/tessellation */
++   PANVK_VS_VARIANT_SW,
++
+    PANVK_VS_VARIANTS,
+ };
+ 
+@@ -462,7 +470,8 @@ panvk_shader_num_variants(mesa_shader_stage stage)
+ }
+ 
+ static const char *panvk_vs_shader_variant_name[] = {
+-   [PANVK_VS_VARIANT_HW] = NULL,
++   [PANVK_VS_VARIANT_HW] = "Hardware",
++   [PANVK_VS_VARIANT_SW] = "Software",
+ };
+ 
+ static const char *
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index 678462e8bfb..04500be3d64 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -31,6 +31,7 @@
+ #include "nir_builder.h"
+ #include "nir_conversion_builder.h"
+ #include "nir_deref.h"
++#include "poly/nir/poly_nir.h"
+ 
+ #include "shader_enums.h"
+ #include "vk_graphics_state.h"
+@@ -210,6 +211,10 @@ panvk_lower_sysvals(nir_builder *b, nir_instr *instr, void *data)
+       val = nir_imm_int64(b, PAN_SHADER_OOB_ADDRESS);
+       break;
+ 
++   case nir_intrinsic_load_vertex_param_buffer_poly:
++      val = load_sysval(b, graphics, bit_size, poly.vertex_params);
++      break;
++
+    default:
+       return false;
+    }
+@@ -976,10 +981,12 @@ panvk_lower_nir_io(nir_shader *nir)
+ 
+    /* nir_lower_io just computes offsets based on the original deref and
+     * lower_indirect_derefs ensures that the array derefs have a constant
+-    * index.  Constant-fold to get us actual constants in in load/store
+-    * instructions.
++    * index.  Constant-fold and copy-prop to get us actual constants in
++    * load/store instructions, which poly_nir_lower_sw_vs() also needs.
+     */
++   NIR_PASS(_, nir, nir_opt_copy_prop);
+    NIR_PASS(_, nir, nir_opt_constant_folding);
++   NIR_PASS(_, nir, nir_opt_dce);
+ 
+    pan_nir_lower_mediump_io(nir);
+ }
+@@ -1387,6 +1394,72 @@ panvk_shader_destroy(struct vk_device *vk_dev, struct vk_shader *vk_shader,
+ 
+ static const struct vk_shader_ops panvk_shader_ops;
+ 
++static void
++panvk_nir_make_compute_shader(nir_shader *nir)
++{
++   if (nir == NULL)
++      return;
++
++   nir->info.stage = MESA_SHADER_COMPUTE;
++   nir->info.workgroup_size[0] = 1;
++   nir->info.workgroup_size[1] = 1;
++   nir->info.workgroup_size[2] = 1;
++   memset(&nir->info.cs, 0, sizeof(nir->info.cs));
++
++   nir->xfb_info = NULL;
++}
++
++static bool
++lower_compute_vs_id_intrin(struct nir_builder *b,
++                           nir_intrinsic_instr *intr, void *data)
++{
++   nir_def *global_id;
++   switch (intr->intrinsic) {
++   case nir_intrinsic_load_vertex_id_zero_base:
++      b->cursor = nir_before_instr(&intr->instr);
++      global_id = nir_load_global_invocation_id(b, 32);
++      nir_def_replace(&intr->def, nir_channel(b, global_id, 0));
++      return true;
++
++   case nir_intrinsic_load_instance_id:
++      b->cursor = nir_before_instr(&intr->instr);
++      global_id = nir_load_global_invocation_id(b, 32);
++      nir_def_replace(&intr->def, nir_channel(b, global_id, 1));
++      return true;
++
++   default:
++      return false;
++   }
++}
++
++static void
++panvk_nir_lower_compute_vs(nir_shader *nir)
++{
++   /* We need to lower VS inputs now, before we call the libpoly passes so
++    * that they're already tied into gl_VertexID as needed.  There's no need
++    * to worry about double-lowering inputs here because this shader will be
++    * treated as a compute shader by panvk_compile_nir() and it won't lower
++    * any I/O for us.
++    */
++   NIR_PASS(_, nir, nir_shader_intrinsics_pass,
++            panvk_lower_load_vs_input,
++            nir_metadata_control_flow, NULL);
++
++   /* panvk_lower_load_vs_input() produces a LOT of load_vertex_id intrinsics
++    * which will become control-flow.
++    */
++   NIR_PASS(_, nir, nir_opt_cse);
++
++   NIR_PASS(_, nir, poly_nir_lower_sw_vs);
++   NIR_PASS(_, nir, poly_nir_lower_vs_before_gs);
++   NIR_PASS(_, nir, poly_nir_lower_sysvals);
++
++   panvk_nir_make_compute_shader(nir);
++
++   NIR_PASS(_, nir, nir_shader_intrinsics_pass, lower_compute_vs_id_intrin,
++            nir_metadata_control_flow, NULL);
++}
++
+ static VkResult
+ panvk_compile_shader(struct panvk_device *dev,
+                      struct vk_shader_compile_info *info,
+@@ -1426,7 +1499,31 @@ panvk_compile_shader(struct panvk_device *dev,
+ 
+    switch (info->stage) {
+    case MESA_SHADER_VERTEX: {
+-      const enum panvk_vs_variant last_variant = PANVK_VS_VARIANT_HW;
++      VkShaderStageFlags next_stage_mask = info->next_stage_mask;
++
++      /* Transform feedback is layered on top of geometry shaders. If there
++       * is not a geometry shader in the pipeline, we will compile a geometry
++       * shader for the purpose. Update the next_stage mask accordingly.
++       */
++      if (info->nir->xfb_info != NULL)
++         next_stage_mask |= VK_SHADER_STAGE_GEOMETRY_BIT;
++
++      /* If this VS might get paired with a geometry or tessellation shader
++       * then we'll use the compute version in that case.
++       */
++      const bool needs_compute_vs =
++         (next_stage_mask & (VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
++                             VK_SHADER_STAGE_GEOMETRY_BIT));
++
++      panvk_lower_nir(dev, info->nir, info->set_layout_count,
++                      info->set_layouts, info->robustness,
++                      state, &shader->desc_info);
++
++      STATIC_ASSERT(PANVK_VS_VARIANT_HW == 0);
++      STATIC_ASSERT(PANVK_VS_VARIANT_SW == 1);
++      const enum panvk_vs_variant last_variant =
++         needs_compute_vs ? PANVK_VS_VARIANT_SW : PANVK_VS_VARIANT_HW;
++
+       for (enum panvk_vs_variant v = 0; v <= last_variant; v++) {
+          struct panvk_shader_variant *variant = &shader->variants[v];
+ 
+@@ -1442,7 +1539,8 @@ panvk_compile_shader(struct panvk_device *dev,
+                          state, &shader->desc_info, false);
+ 
+ #if PAN_ARCH >= 10 && PAN_ARCH < 14
+-         if (inputs.view_mask) {
++         /* TODO: We need a new plan for GS + multiview */
++         if (v == PANVK_VS_VARIANT_HW && inputs.view_mask) {
+             nir_lower_multiview_options options = {
+                .view_mask = inputs.view_mask,
+                .allowed_per_view_outputs = ~0
+@@ -1488,6 +1586,9 @@ panvk_compile_shader(struct panvk_device *dev,
+             inputs.varying_layout = &varying_layout;
+          }
+ 
++         if (v == PANVK_VS_VARIANT_SW)
++            panvk_nir_lower_compute_vs(nir);
++
+          variant->own_bin = true;
+ 
+          result = panvk_compile_nir(dev, nir, info->flags, &inputs, state,

@@ -1,0 +1,179 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Faith Ekstrand <faith.ekstrand@collabora.com>
+Date: Thu, 20 Nov 2025 11:22:19 -0500
+Subject: [PATCH 16/57] panvk/csf: Support indirect draws with geometry shaders
+
+From mesa!38401 (draft geometry shader support), originally titled "indirect".
+(cherry picked from commit e79595b76814a7157e8e7a348afbe76a20815d05)
+---
+ src/panfrost/libpan/geometry.cl             | 28 +++++++++
+ src/panfrost/libpan/meson.build             |  1 +
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c | 70 +++++++++++++++++++--
+ 3 files changed, 93 insertions(+), 6 deletions(-)
+ create mode 100644 src/panfrost/libpan/geometry.cl
+
+diff --git a/src/panfrost/libpan/geometry.cl b/src/panfrost/libpan/geometry.cl
+new file mode 100644
+index 00000000000..88e82b52baf
+--- /dev/null
++++ b/src/panfrost/libpan/geometry.cl
+@@ -0,0 +1,28 @@
++/*
++ * Copyright 2025 Collabora Ltd.
++ * SPDX-License-Identifier: MIT
++ */
++
++#include "poly/cl/restart.h"
++#include "poly/geometry.h"
++
++#if PAN_ARCH >= 10
++KERNEL(1)
++panlib_gs_setup_indirect(global struct poly_vertex_params *vp /* output */,
++                         global struct poly_geometry_params *gp /* output */,
++                         global struct poly_heap *heap,
++                         uint64_t index_buffer,
++                         uint32_t index_size_B /* 0 if no index bffer */,
++                         uint32_t index_buffer_range_el,
++                         constant uint *draw,
++                         uint64_t vs_outputs /* Vertex (TES) output mask */,
++                         uint prim /* Input primitive type, mesa_prim */,
++                         uint is_prefix_summing,
++                         uint max_indices,
++                         uint shape /* poly_gs_shape */)
++{
++   poly_gs_setup_indirect(index_buffer, draw, vp, gp, heap, vs_outputs,
++                          index_size_B, index_buffer_range_el, prim,
++                          is_prefix_summing, max_indices, shape);
++}
++#endif
+diff --git a/src/panfrost/libpan/meson.build b/src/panfrost/libpan/meson.build
+index f035f4ad06c..6489f9e4735 100644
+--- a/src/panfrost/libpan/meson.build
++++ b/src/panfrost/libpan/meson.build
+@@ -7,6 +7,7 @@ libpan_shader_files = files(
+   'query_pool.cl',
+   'draw_helper.cl',
+   'indirect_dispatch.cl',
++  'geometry.cl',
+ )
+ 
+ idep_libpan_per_arch = {}
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index 9ee7c662511..648ba74221f 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -821,6 +821,14 @@ prepare_poly(struct panvk_cmd_buffer *cmdbuf,
+    const bool indirect_draw = draw->indirect.buffer_dev_addr ||
+                               draw->index.restart_enable || tes;
+ 
++   if (indirect_draw || gsi->shape == POLY_GS_SHAPE_DYNAMIC_INDEXED) {
++      VkResult result = panvk_per_arch(cmd_init_poly_heap)(cmdbuf);
++      if (result != VK_SUCCESS) {
++         vk_command_buffer_set_error(&cmdbuf->vk, result);
++         return result;
++      }
++   }
++
+    enum mesa_prim prim = draw->prim;
+    if (draw->index.restart_enable)
+       prim = u_decomposed_prim(prim);
+@@ -830,7 +838,7 @@ prepare_poly(struct panvk_cmd_buffer *cmdbuf,
+ 
+    if (indirect_draw) {
+       if (gsi->shape == POLY_GS_SHAPE_DYNAMIC_INDEXED) {
+-         UNREACHABLE("TODO");
++         /* Nothing for us to do here */
+       } else {
+          gp->draw.index_count =
+             poly_gs_rast_vertices(gsi->shape, gsi->max_indices, 1, 0);
+@@ -3372,9 +3380,40 @@ launch_gs(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+    struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
+    const struct panvk_shader_variant *vs =
+       panvk_sw_vs_variant(cmdbuf->state.gfx.vs.shader);
+-   const struct poly_vertex_params *vp = &cmdbuf->state.gfx.poly.vp;
++   const struct panvk_shader *gs = cmdbuf->state.gfx.gs.shader;
++   const struct poly_gs_info *gsi = &gs->gs_info;
++
++   assert(!cmdbuf->state.gfx.tes.shader);
++   const struct panvk_shader_variant *tes = NULL;
++
++   if (draw.indirect.buffer_dev_addr) {
++      struct panlib_gs_setup_indirect_args setup = {
++         .vp = cmdbuf->state.gfx.poly.vp_addr,
++         .gp = cmdbuf->state.gfx.poly.gp_addr,
++         .heap = dev->poly_heap.state_addr,
++         .draw = draw.indirect.buffer_dev_addr,
++         .vs_outputs = tes ? tes->info.outputs_written
++                           : vs->info.outputs_written,
++         .prim = draw.prim,
++         .is_prefix_summing = gsi->prefix_sum,
++         .max_indices = gsi->max_indices,
++         .shape = gsi->shape,
++      };
++
++      if (draw.index.index_size) {
++         setup.index_buffer = draw.index.buffer_dev_addr;
++         setup.index_size_B = draw.index.index_size;
++         setup.index_buffer_range_el =
++            draw.index.buffer_size / draw.index.index_size;
++      }
++
++      struct panvk_precomp_ctx ctx = panvk_per_arch(precomp_cs)(cmdbuf);
++      panlib_gs_setup_indirect_struct(&ctx, panlib_1d(1),
++                                      PANLIB_BARRIER_CSF_WAIT, setup);
++   }
+ 
+    if (vs->bin_size) {
++      const struct poly_vertex_params *vp = &cmdbuf->state.gfx.poly.vp;
+       struct panvk_dispatch_info vs_disp;
+       if (draw.indirect.buffer_dev_addr) {
+          vs_disp = (struct panvk_dispatch_info) {
+@@ -3395,9 +3434,7 @@ launch_gs(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+                     cmdbuf->state.gfx.vs.push_uniforms, &vs_disp);
+    }
+ 
+-   const struct panvk_shader *gs = cmdbuf->state.gfx.gs.shader;
+    const struct poly_geometry_params *gp = &cmdbuf->state.gfx.poly.gp;
+-   const struct poly_gs_info *gsi = &gs->gs_info;
+    const struct panvk_shader_variant *main = panvk_main_gs_variant(gs);
+    const struct panvk_shader_variant *count = panvk_count_gs_variant(gs);
+    const struct panvk_shader_variant *pre = panvk_pre_gs_variant(gs);
+@@ -3434,7 +3471,21 @@ launch_gs(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+ 
+    if (poly_gs_indexed(gsi->shape)) {
+       if (draw.indirect.buffer_dev_addr) {
+-         UNREACHABLE("TODO");
++         return (struct panvk_draw_info) {
++            /* Poly will use first_index to specify the offset into the heap
++             * buffer.  We just need to provide the buffer here.
++             */
++            .index.buffer_dev_addr = dev->poly_heap_buffer->addr.dev,
++            .index.buffer_size = dev->poly_heap_buffer->bo->size,
++            .index.index_size = poly_gs_index_size(gsi->shape),
++            .index.restart_enable = true,
++            .indirect.buffer_dev_addr =
++               cmdbuf->state.gfx.poly.gp_addr +
++               offsetof(struct poly_geometry_params, draw),
++            .indirect.draw_count = 1,
++            .prim = gs->gs_info.mode,
++            .need_cs_sync = true,
++         };
+       } else {
+          return (struct panvk_draw_info) {
+             .index.buffer_dev_addr = gp->output_index_buffer,
+@@ -3450,7 +3501,14 @@ launch_gs(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+       }
+    } else {
+       if (draw.indirect.buffer_dev_addr) {
+-         UNREACHABLE("TODO");
++         return (struct panvk_draw_info) {
++            .indirect.buffer_dev_addr =
++               cmdbuf->state.gfx.poly.gp_addr +
++               offsetof(struct poly_geometry_params, draw),
++            .indirect.draw_count = 1,
++            .prim = gs->gs_info.mode,
++            .need_cs_sync = true,
++         };
+       } else {
+          return (struct panvk_draw_info) {
+             .vertex.count = gp->draw.vertex_count,

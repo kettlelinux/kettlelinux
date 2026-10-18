@@ -1,0 +1,463 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: 06n-arch <gennro2004@gmail.com>
+Date: Mon, 28 Sep 2026 20:56:32 -0500
+Subject: [PATCH 48/57] panvk: Fold replicating geometry shaders by replaying
+ the draw (06n-arch)
+
+Unreal Engine 4 under D3D12 (Deep Rock Galactic, vkd3d-proton) also has
+a GS that emits each input triangle 6 times, one copy per cube face,
+with gl_Layer and one more output set to the copy index. 0019 refuses
+it, the pipeline fails and UE4's D3D12 RHI treats that as fatal ("out
+of memory").
+
+Generalize the pass-through matcher: the GS may emit the input
+primitive up to 8 times, ended between copies, and each output may be
+a constant that only depends on the copy instead of a copy of the
+vertex's input. The folded VS computes those constants from a copy
+index (load_invocation_id, lowered to a new vs.gs_copy sysval), the VS
+shader records the copy count (serialized with it), and panvk_cmd_draw
+replays each draw that many times with the copy index set. That is what
+the GS did: every copy of every primitive, each on its own layer, for
+the same amount of vertex shading. Indirect draws are replayed the same
+way.
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c |  17 +-
+ src/panfrost/vulkan/panvk_cmd_draw.h        |   3 +
+ src/panfrost/vulkan/panvk_shader.h          |   6 +
+ src/panfrost/vulkan/panvk_vX_cmd_draw.c     |   1 +
+ src/panfrost/vulkan/panvk_vX_shader.c       | 172 +++++++++++++++-----
+ 5 files changed, 155 insertions(+), 44 deletions(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index 9edf1d7d9a4..b4d84d7aa8b 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -4716,7 +4716,7 @@ panvk_cmd_launch_xfb(struct panvk_cmd_buffer *cmdbuf,
+ }
+ 
+ static void
+-panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
++panvk_cmd_draw_one(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+ {
+    struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
+    VkResult result;
+@@ -4823,6 +4823,21 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+       panvk_cmd_launch_xfb(cmdbuf, &draw);
+ }
+ 
++/* 06n-arch: a VS with a replicating GS folded in (see
++ * analyze_passthrough_gs()) draws each copy of the primitives as a separate
++ * draw, with the copy index in the vs.gs_copy sysval. */
++static void
++panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
++{
++   const struct panvk_shader *vs = cmdbuf->state.gfx.vs.shader;
++   uint32_t copies = vs && vs->gs_copies > 1 ? vs->gs_copies : 1;
++
++   for (uint32_t copy = 0; copy < copies; copy++) {
++      draw.gs_copy = copy;
++      panvk_cmd_draw_one(cmdbuf, draw);
++   }
++}
++
+ VkResult
+ panvk_per_arch(cmd_prepare_exec_cmd_for_draws)(
+    struct panvk_cmd_buffer *primary,
+diff --git a/src/panfrost/vulkan/panvk_cmd_draw.h b/src/panfrost/vulkan/panvk_cmd_draw.h
+index 5c66918dc0d..8cbe53fd2cd 100644
+--- a/src/panfrost/vulkan/panvk_cmd_draw.h
++++ b/src/panfrost/vulkan/panvk_cmd_draw.h
+@@ -543,6 +543,9 @@ struct panvk_draw_info {
+       uint32_t count;
+    } instance;
+ 
++   /* 06n-arch: copy index when replaying for a folded replicating GS */
++   uint32_t gs_copy;
++
+    struct {
+       uint64_t buffer_dev_addr;
+       uint64_t count_buffer_dev_addr;
+diff --git a/src/panfrost/vulkan/panvk_shader.h b/src/panfrost/vulkan/panvk_shader.h
+index 0bc4dfbfe9e..dc3d59dd8f8 100644
+--- a/src/panfrost/vulkan/panvk_shader.h
++++ b/src/panfrost/vulkan/panvk_shader.h
+@@ -187,6 +187,8 @@ struct panvk_graphics_sysvals {
+       int32_t first_vertex;
+       int32_t base_instance;
+       uint32_t noperspective_varyings;
++      /* 06n-arch: copy index of a replayed draw, see panvk_shader::gs_copies */
++      uint32_t gs_copy;
+    } vs;
+ 
+    struct {
+@@ -534,6 +536,10 @@ struct panvk_shader {
+    /* 06n-arch: a GS folded into its VS, which is bound as no GS at all. */
+    bool gs_folded_stub;
+ 
++   /* 06n-arch: VS with a replicating GS folded in; each draw is replayed
++    * this many times with vs.gs_copy set to the copy index. 0 or 1: none. */
++   uint32_t gs_copies;
++
+    struct panvk_shader_variant variants[];
+ };
+ 
+diff --git a/src/panfrost/vulkan/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/panvk_vX_cmd_draw.c
+index 4a55037f6c7..56fc51f1760 100644
+--- a/src/panfrost/vulkan/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/panvk_vX_cmd_draw.c
+@@ -847,6 +847,7 @@ panvk_per_arch(cmd_prepare_draw_sysvals)(struct panvk_cmd_buffer *cmdbuf,
+                   noperspective_varyings);
+    set_gfx_sysval(cmdbuf, dirty_sysvals, vs.first_vertex, info->vertex.base);
+    set_gfx_sysval(cmdbuf, dirty_sysvals, vs.base_instance, info->instance.base);
++   set_gfx_sysval(cmdbuf, dirty_sysvals, vs.gs_copy, info->gs_copy);
+ 
+ #if PAN_ARCH < 9
+    set_gfx_sysval(cmdbuf, dirty_sysvals, vs.raw_vertex_offset,
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index 024a3428413..70e3ca6286d 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -95,6 +95,12 @@ panvk_lower_sysvals(nir_builder *b, nir_instr *instr, void *data)
+    case nir_intrinsic_load_base_instance:
+       val = load_sysval(b, graphics, bit_size, vs.base_instance);
+       break;
++   case nir_intrinsic_load_invocation_id:
++      /* 06n-arch: copy index of a VS with a replicating GS folded in. */
++      if (b->shader->info.stage != MESA_SHADER_VERTEX)
++         return false;
++      val = load_sysval(b, graphics, bit_size, vs.gs_copy);
++      break;
+    case nir_intrinsic_load_noperspective_varyings_pan:
+       /* TODO: use a VS epilog specialized on constant noperspective_varyings
+        * with VK_EXT_graphics_pipeline_libraries and VK_EXT_shader_object */
+@@ -2079,19 +2085,30 @@ panvk_per_arch(create_shader_from_binary)(struct panvk_device *dev,
+  */
+ 
+ #define GS_PT_MAX_OUTPUTS 32
++#define GS_PT_MAX_COPIES 8
++
++/* Where one output component comes from: an input of the same vertex, or a
++ * constant that only depends on which copy of the primitive is emitted. */
++struct gs_pt_src {
++   bool is_const;
++   nir_variable *in_var;
++   uint8_t comp;
++   uint8_t vertex;
++   uint32_t value;
++};
+ 
+ struct gs_pt_output {
+    nir_variable *var;
+    uint8_t mask;
+-   struct {
+-      nir_variable *in_var;
+-      uint8_t comp;
+-      uint8_t vertex;
+-   } src[4];
++   struct gs_pt_src src[4];
++   uint32_t values[4][GS_PT_MAX_COPIES];
+ };
+ 
+ struct gs_passthrough {
+    unsigned count;
++   /* How many times the input primitive is emitted, each to be replayed as
++    * a separate draw with the copy index in a sysval. */
++   unsigned copies;
+    struct gs_pt_output outs[GS_PT_MAX_OUTPUTS];
+ };
+ 
+@@ -2120,16 +2137,19 @@ gs_pt_is_per_primitive(const nir_variable *var)
+           var->data.location == VARYING_SLOT_VIEWPORT;
+ }
+ 
+-/* Checks the outputs written before an EmitVertex() and folds them into
+- * the mapping all vertices must share. */
++/* Checks the outputs written before an EmitVertex() (vertex `vertex` of copy
++ * `copy`) and folds them into the mapping all vertices must share. */
+ static bool
+ gs_pt_add_vertex(struct gs_passthrough *pt, const struct gs_passthrough *cur,
+-                 unsigned vertex)
++                 unsigned copy, unsigned vertex)
+ {
+    for (unsigned i = 0; i < cur->count; i++) {
+       const struct gs_pt_output *o = &cur->outs[i];
+ 
+       u_foreach_bit(c, o->mask) {
++         if (o->src[c].is_const)
++            continue;
++
+          bool per_prim = gs_pt_is_per_primitive(o->var);
+          if (per_prim ? (vertex == 0 && o->src[c].vertex != 0)
+                       : o->src[c].vertex != vertex)
+@@ -2137,30 +2157,43 @@ gs_pt_add_vertex(struct gs_passthrough *pt, const struct gs_passthrough *cur,
+       }
+    }
+ 
+-   if (vertex == 0) {
+-      *pt = *cur;
+-      return true;
+-   }
+-
+-   if (cur->count != pt->count)
++   bool first = copy == 0 && vertex == 0;
++   if (!first && cur->count != pt->count)
+       return false;
+ 
+    for (unsigned i = 0; i < cur->count; i++) {
+       const struct gs_pt_output *o = &cur->outs[i];
+-      const struct gs_pt_output *ref = NULL;
++      struct gs_pt_output *ref;
+ 
+-      for (unsigned j = 0; j < pt->count; j++) {
+-         if (pt->outs[j].var == o->var)
+-            ref = &pt->outs[j];
++      if (first) {
++         ref = &pt->outs[pt->count++];
++         *ref = *o;
++      } else {
++         ref = NULL;
++         for (unsigned j = 0; j < pt->count; j++) {
++            if (pt->outs[j].var == o->var)
++               ref = &pt->outs[j];
++         }
++         if (!ref || ref->mask != o->mask)
++            return false;
+       }
+ 
+-      if (!ref || ref->mask != o->mask)
+-         return false;
+-
+       u_foreach_bit(c, o->mask) {
+-         if (ref->src[c].in_var != o->src[c].in_var ||
+-             ref->src[c].comp != o->src[c].comp)
++         const struct gs_pt_src *s = &o->src[c];
++
++         if (s->is_const != ref->src[c].is_const)
+             return false;
++
++         if (s->is_const) {
++            /* Constant per copy: the same on every vertex of a copy. */
++            if (vertex == 0)
++               ref->values[c][copy] = s->value;
++            else if (ref->values[c][copy] != s->value)
++               return false;
++         } else if (ref->src[c].in_var != s->in_var ||
++                    ref->src[c].comp != s->comp) {
++            return false;
++         }
+       }
+    }
+ 
+@@ -2190,8 +2223,11 @@ analyze_passthrough_gs(nir_shader *gs, struct gs_passthrough *pt)
+       return false;
+    }
+ 
+-   if (gs->info.gs.output_primitive != strip ||
+-       gs->info.gs.vertices_out != nverts || gs->info.gs.invocations > 1 ||
++   unsigned copies = gs->info.gs.vertices_out / nverts;
++   if (gs->info.gs.output_primitive != strip || copies == 0 ||
++       copies > GS_PT_MAX_COPIES ||
++       gs->info.gs.vertices_out != copies * nverts ||
++       gs->info.gs.invocations > 1 ||
+        (gs->info.gs.active_stream_mask & ~1) || gs->xfb_info ||
+        gs->info.has_transform_feedback_varyings)
+       return false;
+@@ -2202,7 +2238,11 @@ analyze_passthrough_gs(nir_shader *gs, struct gs_passthrough *pt)
+ 
+    struct gs_passthrough cur = {0};
+    unsigned emitted = 0;
+-   bool ended = false;
++   /* A strip continues across copies unless the primitive is ended. */
++   bool strip_open = false;
++
++   memset(pt, 0, sizeof(*pt));
++   pt->copies = copies;
+ 
+    nir_foreach_instr(instr, nir_start_block(impl)) {
+       if (instr->type != nir_instr_type_intrinsic)
+@@ -2217,9 +2257,10 @@ analyze_passthrough_gs(nir_shader *gs, struct gs_passthrough *pt)
+       case nir_intrinsic_store_deref: {
+          nir_deref_instr *dst = nir_src_as_deref(intr->src[0]);
+ 
+-         if (ended || dst->deref_type != nir_deref_type_var ||
++         if (dst->deref_type != nir_deref_type_var ||
+              !nir_deref_mode_is(dst, nir_var_shader_out) ||
+-             !glsl_type_is_vector_or_scalar(dst->var->type))
++             !glsl_type_is_vector_or_scalar(dst->var->type) ||
++             glsl_get_bit_size(dst->var->type) != 32)
+             return false;
+ 
+          struct gs_pt_output *out = gs_pt_get_output(&cur, dst->var);
+@@ -2228,6 +2269,16 @@ analyze_passthrough_gs(nir_shader *gs, struct gs_passthrough *pt)
+ 
+          u_foreach_bit(c, nir_intrinsic_write_mask(intr)) {
+             nir_scalar sc = nir_scalar_resolved(intr->src[1].ssa, c);
++            struct gs_pt_src *s = &out->src[c];
++
++            out->mask |= BITFIELD_BIT(c);
++            memset(s, 0, sizeof(*s));
++
++            if (nir_scalar_is_const(sc)) {
++               s->is_const = true;
++               s->value = nir_scalar_as_uint(sc);
++               continue;
++            }
+ 
+             if (!nir_def_is_intrinsic(sc.def) ||
+                 nir_scalar_intrinsic_op(sc) != nir_intrinsic_load_deref)
+@@ -2246,27 +2297,32 @@ analyze_passthrough_gs(nir_shader *gs, struct gs_passthrough *pt)
+                    parent->var->type)))
+                return false;
+ 
+-            out->mask |= BITFIELD_BIT(c);
+-            out->src[c].in_var = parent->var;
+-            out->src[c].comp = sc.comp;
+-            out->src[c].vertex = nir_src_as_uint(src->arr.index);
++            s->in_var = parent->var;
++            s->comp = sc.comp;
++            s->vertex = nir_src_as_uint(src->arr.index);
+          }
+          break;
+       }
+ 
+-      case nir_intrinsic_emit_vertex:
+-         if (ended || nir_intrinsic_stream_id(intr) != 0 ||
+-             emitted == nverts || !gs_pt_add_vertex(pt, &cur, emitted))
++      case nir_intrinsic_emit_vertex: {
++         unsigned copy = emitted / nverts, vertex = emitted % nverts;
++
++         if (nir_intrinsic_stream_id(intr) != 0 || copy == copies ||
++             (vertex == 0 && strip_open && nverts > 1) ||
++             !gs_pt_add_vertex(pt, &cur, copy, vertex))
+             return false;
+ 
+          emitted++;
++         strip_open = true;
+          memset(&cur, 0, sizeof(cur));
+          break;
++      }
+ 
+       case nir_intrinsic_end_primitive:
+-         if (nir_intrinsic_stream_id(intr) != 0)
++         /* Only between copies, each copy being a whole primitive. */
++         if (nir_intrinsic_stream_id(intr) != 0 || emitted % nverts != 0)
+             return false;
+-         ended = true;
++         strip_open = false;
+          break;
+ 
+       default:
+@@ -2278,11 +2334,12 @@ analyze_passthrough_gs(nir_shader *gs, struct gs_passthrough *pt)
+       }
+    }
+ 
+-   return emitted == nverts && pt->count > 0;
++   return emitted == copies * nverts && pt->count > 0;
+ }
+ 
+ /* Makes the VS write the GS outputs: each one copied from the VS output
+- * the GS read it from. The VS's own outputs become temporaries. */
++ * the GS read it from, or selected by the copy index. The VS's own outputs
++ * become temporaries. */
+ static bool
+ fold_passthrough_gs_into_vs(nir_shader *vs, const nir_shader *gs,
+                             const struct gs_passthrough *pt)
+@@ -2294,6 +2351,9 @@ fold_passthrough_gs_into_vs(nir_shader *vs, const nir_shader *gs,
+       const struct gs_pt_output *o = &pt->outs[i];
+ 
+       u_foreach_bit(c, o->mask) {
++         if (o->src[c].is_const)
++            continue;
++
+          const nir_variable *in = o->src[c].in_var;
+          const struct glsl_type *in_elem = glsl_get_array_element(in->type);
+ 
+@@ -2321,11 +2381,14 @@ fold_passthrough_gs_into_vs(nir_shader *vs, const nir_shader *gs,
+    nir_function_impl *impl = nir_shader_get_entrypoint(vs);
+    nir_builder b = nir_builder_at(nir_after_impl(impl));
+ 
++   /* The copy index: lowered to the vs.gs_copy sysval, the draw being
++    * replayed once per copy. load_invocation_id means nothing else in a VS. */
++   nir_def *copy = pt->copies > 1 ? nir_load_invocation_id(&b) : NULL;
++
+    for (unsigned i = 0; i < pt->count; i++) {
+       const struct gs_pt_output *o = &pt->outs[i];
+       nir_variable *var = nir_variable_clone(o->var, vs);
+       unsigned ncomps = glsl_get_vector_elements(var->type);
+-      unsigned bit_size = glsl_get_bit_size(var->type);
+       nir_def *comps[4];
+ 
+       var->data.mode = nir_var_shader_out;
+@@ -2333,11 +2396,21 @@ fold_passthrough_gs_into_vs(nir_shader *vs, const nir_shader *gs,
+       nir_shader_add_variable(vs, var);
+ 
+       for (unsigned c = 0; c < ncomps; c++) {
+-         if (o->mask & BITFIELD_BIT(c)) {
++         if (!(o->mask & BITFIELD_BIT(c))) {
++            comps[c] = nir_undef(&b, 1, 32);
++         } else if (o->src[c].is_const) {
++            const uint32_t *v = o->values[c];
++            nir_def *val = nir_imm_int(&b, v[pt->copies - 1]);
++
++            for (int g = pt->copies - 2; g >= 0; g--) {
++               if (v[g] != v[pt->copies - 1])
++                  val = nir_bcsel(&b, nir_ieq_imm(&b, copy, g),
++                                  nir_imm_int(&b, v[g]), val);
++            }
++            comps[c] = val;
++         } else {
+             nir_def *val = nir_load_var(&b, srcs[i][c]);
+             comps[c] = nir_channel(&b, val, o->src[c].comp);
+-         } else {
+-            comps[c] = nir_undef(&b, 1, bit_size);
+          }
+       }
+ 
+@@ -2402,6 +2475,7 @@ compile_shaders(struct vk_device *vk_dev, uint32_t shader_count,
+     * (libpoly). gs_idx is the index of a folded GS, or -1.
+     */
+    int32_t gs_idx = -1;
++   unsigned gs_copies = 1;
+    for (i = 0; i < shader_count; i++) {
+       if (infos[i].stage != MESA_SHADER_GEOMETRY)
+          continue;
+@@ -2412,6 +2486,7 @@ compile_shaders(struct vk_device *vk_dev, uint32_t shader_count,
+           analyze_passthrough_gs(infos[i].nir, &pt) &&
+           fold_passthrough_gs_into_vs(infos[i - 1].nir, infos[i].nir, &pt)) {
+          gs_idx = i;
++         gs_copies = pt.copies;
+          infos[i - 1].next_stage_mask = infos[i].next_stage_mask;
+          mesa_logw_once("panvk: folded a pass-through geometry shader into "
+                         "its vertex shader (06n-arch)");
+@@ -2476,6 +2551,11 @@ compile_shaders(struct vk_device *vk_dev, uint32_t shader_count,
+       if (result != VK_SUCCESS)
+          goto err_cleanup;
+ 
++      if (i == gs_idx - 1) {
++         container_of(shaders_out[i], struct panvk_shader, vk)->gs_copies =
++            gs_copies;
++      }
++
+       /* Clean up NIR for the current shader */
+       ralloc_free(infos[i].nir);
+    }
+@@ -2724,6 +2804,9 @@ panvk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
+ 
+    shader->gs_info = gs_info;
+ 
++   if (stage == MESA_SHADER_VERTEX)
++      shader->gs_copies = blob_read_uint32(blob);
++
+    result = shader_desc_info_deserialize(device, blob, shader);
+    if (result != VK_SUCCESS) {
+       panvk_shader_destroy(vk_dev, &shader->vk, pAllocator);
+@@ -2847,6 +2930,9 @@ panvk_shader_serialize(struct vk_device *vk_dev,
+       blob_write_bytes(blob, &shader->gs_info, sizeof(shader->gs_info));
+    }
+ 
++   if (vk_shader->stage == MESA_SHADER_VERTEX)
++      blob_write_uint32(blob, shader->gs_copies);
++
+    shader_desc_info_serialize(blob, shader);
+ 
+    panvk_shader_foreach_variant(shader, variant) {

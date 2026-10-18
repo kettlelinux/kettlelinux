@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Thu, 1 Oct 2026 15:17:15 -0500
+Subject: [PATCH 55/57] panvk/csf: Apply firstIndex to direct indexed draws
+ with a geometry shader
+
+For direct draws, prepare_poly() handed the software input assembly the
+bound index buffer without the draw's firstIndex, so every indexed
+draw read its indices from the start of the buffer. Indirect draws are
+fine: poly_gs_setup_indirect() applies the offset on the GPU.
+
+Offset the index buffer and shrink its range like hk does.
+
+Assisted-by: LLM
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c | 18 ++++++++++++++++--
+ 1 file changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index b4d84d7aa8b..96943f1395f 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -790,10 +790,24 @@ prepare_poly(struct panvk_cmd_buffer *cmdbuf,
+    poly_vertex_params_init(vp, vs->info.outputs_written, wg_size);
+ 
+    if (draw->index.index_size) {
++      const uint32_t size_el =
++         draw->index.buffer_size / draw->index.index_size;
++
+       vp->index_size_B = draw->index.index_size;
+       vp->index_buffer = draw->index.buffer_dev_addr;
+-      vp->index_buffer_range_el =
+-         draw->index.buffer_size / draw->index.index_size;
++      vp->index_buffer_range_el = size_el;
++
++      /* For indirect draws, poly_gs_setup_indirect() applies firstIndex.
++       * For direct draws, the software input assembly has to start at
++       * firstIndex too.
++       */
++      if (!draw->indirect.buffer_dev_addr) {
++         if (draw->index.offset < size_el)
++            vp->index_buffer +=
++               (uint64_t)draw->index.offset * draw->index.index_size;
++         vp->index_buffer_range_el =
++            poly_index_buffer_range_el(size_el, draw->index.offset);
++      }
+    }
+ 
+    if (!draw->indirect.buffer_dev_addr) {

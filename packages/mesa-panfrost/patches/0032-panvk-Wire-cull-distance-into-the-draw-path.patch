@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Gmeiner <cgmeiner@igalia.com>
+Date: Mon, 20 Jul 2026 16:47:03 +0200
+Subject: [PATCH 32/57] panvk: Wire cull distance into the draw path
+
+Extend the fragment prolog activation, the prolog cache key, the varying
+requirement, and the coverage handling from clip to clip-or-cull. A
+fragment shaderless draw binds the standalone prolog for cull too. Guard
+the clip-distance packing assert so a cull-only shader does not trip it.
+
+Fold the repeated clip-or-cull test into a vs_has_clip_or_cull(..) helper.
+
+Signed-off-by: Christian Gmeiner <cgmeiner@igalia.com>
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c | 36 +++++++++++++--------
+ 1 file changed, 23 insertions(+), 13 deletions(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index 4a59820c541..6fef72bd7ab 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -2553,6 +2553,13 @@ err_oom:
+    return NULL;
+ }
+ 
++static bool
++vs_has_clip_or_cull(const struct panvk_shader_variant *vs)
++{
++   return vs && (vs->info.vs.clip_distance_array_size > 0 ||
++                 vs->info.vs.cull_distance_array_size > 0);
++}
++
+ static uint64_t
+ link_fs_prolog(struct panvk_cmd_buffer *cmdbuf,
+                const struct panvk_shader_variant *fs)
+@@ -2560,19 +2567,23 @@ link_fs_prolog(struct panvk_cmd_buffer *cmdbuf,
+    const struct panvk_shader_variant *vs =
+       panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
+ 
+-   if (!vs || vs->info.vs.clip_distance_array_size == 0)
++   if (!vs_has_clip_or_cull(vs))
+       return 0;
+ 
+-   /* The cache key only holds the clip distance count, which is enough
+-    * because clip distances always pack first in the varying buffer. */
+-   ASSERTED const struct pan_varying_slot *clip_slot =
+-      pan_varying_layout_find_slot(&vs->info.varyings.formats,
+-                                   VARYING_SLOT_CLIP_DIST0);
+-   assert(clip_slot && clip_slot->offset == 0);
++   /* The cache key only holds the clip and cull distance counts, which is
++    * enough because clip distances always pack first in the varying buffer,
++    * followed by the cull quantities. */
++   if (vs->info.vs.clip_distance_array_size > 0) {
++      ASSERTED const struct pan_varying_slot *clip_slot =
++         pan_varying_layout_find_slot(&vs->info.varyings.formats,
++                                      VARYING_SLOT_CLIP_DIST0);
++      assert(clip_slot && clip_slot->offset == 0);
++   }
+ 
+    struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
+    const struct pan_fs_prolog_key prolog_key = {
+       .clip_distance_array_size = vs->info.vs.clip_distance_array_size,
++      .cull_distance_array_size = vs->info.vs.cull_distance_array_size,
+    };
+ 
+    if (!fs) {
+@@ -2940,8 +2951,8 @@ build_dcd_flags(struct panvk_cmd_buffer *cmdbuf,
+ 
+    const struct panvk_shader_variant *vs =
+       panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
+-   bool has_fs_prolog = vs && vs->info.vs.clip_distance_array_size > 0 &&
+-                           !rs->rasterizer_discard_enable;
++   bool has_fs_prolog =
++      vs_has_clip_or_cull(vs) && !rs->rasterizer_discard_enable;
+ 
+    if (fs) {
+       out->rt_written = color_attachment_written_mask(fs, &dyns->cal);
+@@ -3215,7 +3226,7 @@ prepare_dcd(struct panvk_cmd_buffer *cmdbuf,
+       fs_user_dirty(cmdbuf) || gfx_state_dirty(cmdbuf, RENDER_STATE) ||
+       gfx_state_dirty(cmdbuf, IDVS) ||
+       gfx_state_dirty(cmdbuf, OQ) ||
+-      /* has_fs_prolog depends on the VS clip distance config */
++      /* has_fs_prolog depends on the VS clip and cull distance config */
+       gfx_state_dirty(cmdbuf, VS) || dcd2_dirty;
+    bool dcd1_dirty = dyn_gfx_state_dirty(cmdbuf, MS_RASTERIZATION_SAMPLES) ||
+                      dyn_gfx_state_dirty(cmdbuf, MS_SAMPLE_MASK) ||
+@@ -3284,10 +3295,9 @@ set_tiler_idvs_flags(struct cs_builder *b, struct panvk_cmd_buffer *cmdbuf,
+    bool extended_fifo = writes_point_size || vs->info.vs.needs_extended_fifo;
+    bool writes_prim_id = vs->info.outputs_written & VARYING_BIT_PRIMITIVE_ID;
+    bool fs_reads_prim_id = fs ? fs->info.fs.reads_primitive_id : false;
+-   /* The clip prolog reads the clip distance varyings even without a main FS */
++   /* The prolog reads the clip or cull distance varyings even without a main FS */
+    bool needs_varyings =
+-      fs != NULL || (vs->info.vs.clip_distance_array_size > 0 &&
+-                     !rs->rasterizer_discard_enable);
++      fs != NULL || (vs_has_clip_or_cull(vs) && !rs->rasterizer_discard_enable);
+ 
+    bool dirty = gfx_state_dirty(cmdbuf, VS) || fs_user_dirty(cmdbuf) ||
+                 gfx_state_dirty(cmdbuf, IDVS) ||

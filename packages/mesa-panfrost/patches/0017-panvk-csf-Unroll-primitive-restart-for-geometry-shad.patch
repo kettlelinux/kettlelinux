@@ -1,0 +1,128 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Faith Ekstrand <faith.ekstrand@collabora.com>
+Date: Sat, 15 Nov 2025 21:29:47 -0500
+Subject: [PATCH 17/57] panvk/csf: Unroll primitive restart for geometry
+ shaders
+
+From mesa!38401 (draft geometry shader support), originally titled "restart".
+(cherry picked from commit 54e459d71794168da099e24e516d3f5e14363bb6)
+---
+ src/panfrost/libpan/geometry.cl             | 19 ++++++
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c | 66 ++++++++++++++++++++-
+ 2 files changed, 84 insertions(+), 1 deletion(-)
+
+diff --git a/src/panfrost/libpan/geometry.cl b/src/panfrost/libpan/geometry.cl
+index 88e82b52baf..7229dee24cb 100644
+--- a/src/panfrost/libpan/geometry.cl
++++ b/src/panfrost/libpan/geometry.cl
+@@ -7,6 +7,25 @@
+ #include "poly/geometry.h"
+ 
+ #if PAN_ARCH >= 10
++KERNEL(16)
++panlib_unroll_restart(global uint32_t *out_draw,
++                      global struct poly_heap *heap,
++                      constant uint *in_draw,
++                      uint64_t index_buffer,
++                      uint32_t index_buffer_range_el,
++                      uint32_t index_size_log2,
++                      uint32_t restart_index,
++                      uint32_t flatshade_first,
++                      uint mode__11)
++{
++   const uint32_t index_size_B = 1 << index_size_log2;
++   const enum mesa_prim mode = poly_uncompact_prim(mode__11);
++
++   poly_unroll_restart(out_draw, heap, in_draw, index_buffer,
++                       index_buffer_range_el, index_size_B, restart_index,
++                       flatshade_first, mode, NULL);
++}
++
+ KERNEL(1)
+ panlib_gs_setup_indirect(global struct poly_vertex_params *vp /* output */,
+                          global struct poly_geometry_params *gp /* output */,
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index 648ba74221f..a6fd55d6b53 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -3374,6 +3374,65 @@ launch_gfx_cs(struct panvk_cmd_buffer *cmdbuf,
+    compute_state_set_dirty(cmdbuf, PUSH_UNIFORMS);
+ }
+ 
++static struct panvk_draw_info
++unroll_restart(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
++{
++   struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
++
++   assert(draw.index.index_size);
++   if (!draw.indirect.buffer_dev_addr) {
++      /* If it's not indirect yet, make it indirect */
++      const VkDrawIndexedIndirectCommand cmd = {
++         .indexCount = draw.vertex.count,
++         .instanceCount = draw.instance.count,
++         .firstIndex = draw.index.offset,
++         .vertexOffset = draw.vertex.base,
++         .firstInstance = draw.instance.base,
++      };
++
++      draw.indirect.buffer_dev_addr =
++         panvk_cmd_upload_dev_mem(cmdbuf, desc, &cmd, sizeof(cmd), 4).gpu;
++      draw.indirect.draw_count = 1;
++      draw.indirect.stride = 0;
++   }
++
++   struct pan_ptr indirect = panvk_cmd_alloc_dev_mem(
++      cmdbuf, desc, sizeof(VkDrawIndexedIndirectCommand), 4);
++   if (!indirect.gpu)
++      return (struct panvk_draw_info) { .vertex.count = 0 };
++
++   const struct vk_dynamic_graphics_state *dyns =
++      &cmdbuf->vk.dynamic_graphics_state;
++
++   struct panlib_unroll_restart_args unroll = {
++      .out_draw = indirect.gpu,
++      .heap = dev->poly_heap.state_addr,
++      .in_draw = draw.indirect.buffer_dev_addr,
++      .index_buffer = draw.index.buffer_dev_addr,
++      .index_buffer_range_el =
++         draw.index.buffer_size / draw.index.index_size,
++      .index_size_log2 = util_logbase2(draw.index.index_size),
++      .restart_index = u_uintN_max(draw.index.index_size * 8),
++      .flatshade_first =
++         dyns->rs.provoking_vertex == VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT,
++   };
++
++   struct panvk_precomp_ctx ctx = panvk_per_arch(precomp_cs)(cmdbuf);
++   panlib_unroll_restart_struct(&ctx, panlib_1d(1),
++                                PANLIB_BARRIER_CSF_WAIT, unroll,
++                                poly_compact_prim(draw.prim));
++
++   return (struct panvk_draw_info) {
++      .index.index_size = draw.index.index_size,
++      .index.buffer_dev_addr = dev->poly_heap_buffer->addr.dev,
++      .index.buffer_size = dev->poly_heap_buffer->bo->size,
++      .indirect.buffer_dev_addr = indirect.gpu,
++      .indirect.draw_count = 1,
++      .prim = u_decomposed_prim(draw.prim),
++      .need_cs_sync = true,
++   };
++}
++
+ static struct panvk_draw_info
+ launch_gs(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+ {
+@@ -3961,8 +4020,13 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+    const struct panvk_shader *gs = cmdbuf->state.gfx.gs.shader;
+    assert(cmdbuf->state.gfx.tcs.shader == NULL);
+ 
+-   if (gs)
++   if (gs) {
++      /* The polygon pipeline requires restarts to be unrolled first */
++      if (draw.index.restart_enable)
++         draw = unroll_restart(cmdbuf, draw);
++
+       draw = launch_gs(cmdbuf, draw);
++   }
+ 
+    if (draw.need_cs_sync) {
+       const struct panvk_cs_deps deps = {

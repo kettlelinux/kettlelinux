@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ryan Zhang <ryan.zhang@nxp.com>
+Date: Fri, 31 Jul 2026 17:29:46 +0800
+Subject: [PATCH 39/57] panvk: advertise VK_EXT_transform_feedback extension
+
+Declare VK_EXT_transform_feedback support for PAN_ARCH >= 10 (CSF).
+Report features (transformFeedback=true, geometryStreams=false) and
+properties (maxBuffers=4, maxStreams=1, queries=true, draw=false).
+
+Signed-off-by: Ryan Zhang <ryan.zhang@nxp.com>
+---
+ src/panfrost/vulkan/panvk_vX_physical_device.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/src/panfrost/vulkan/panvk_vX_physical_device.c b/src/panfrost/vulkan/panvk_vX_physical_device.c
+index 618430f3af7..1931a2477d7 100644
+--- a/src/panfrost/vulkan/panvk_vX_physical_device.c
++++ b/src/panfrost/vulkan/panvk_vX_physical_device.c
+@@ -200,6 +200,7 @@ panvk_per_arch(get_physical_device_extensions)(
+       .EXT_private_data = true,
+       .EXT_primitive_topology_list_restart = true,
+       .EXT_provoking_vertex = true,
++      .EXT_transform_feedback = PAN_ARCH >= 10,
+       .EXT_queue_family_foreign = true,
+       .EXT_rasterization_order_attachment_access = PAN_ARCH >= 10,
+       .EXT_rgba10x6_formats = PAN_ARCH >= 11,
+@@ -610,6 +611,10 @@ panvk_per_arch(get_physical_device_features)(
+       .provokingVertexLast = true,
+       .transformFeedbackPreservesProvokingVertex = false,
+ 
++      /* VK_EXT_transform_feedback */
++      .transformFeedback = PAN_ARCH >= 10,
++      .geometryStreams = false,
++
+       /* v7 doesn't support AFBC(BGR). We need to tweak the texture swizzle to
+        * make it work, which forces us to apply the same swizzle on the border
+        * color, meaning we need to know the format when preparing the border
+@@ -1289,6 +1294,18 @@ panvk_per_arch(get_physical_device_properties)(
+       .provokingVertexModePerPipeline = false,
+       .transformFeedbackPreservesTriangleFanProvokingVertex = false,
+ 
++      /* VK_EXT_transform_feedback */
++      .maxTransformFeedbackStreams = 1,
++      .maxTransformFeedbackBuffers = 4,
++      .maxTransformFeedbackBufferSize = (2u << 27),
++      .maxTransformFeedbackStreamDataSize = 512,
++      .maxTransformFeedbackBufferDataSize = 512,
++      .maxTransformFeedbackBufferDataStride = 512,
++      .transformFeedbackQueries = true,
++      .transformFeedbackStreamsLinesTriangles = false,
++      .transformFeedbackRasterizationStreamSelect = false,
++      .transformFeedbackDraw = false,
++
+       /* VK_EXT_shader_tile_image */
+       .shaderTileImageCoherentReadAccelerated = PAN_ARCH >= 9,
+       .shaderTileImageReadSampleFromPixelRateInvocation = PAN_ARCH >= 9,

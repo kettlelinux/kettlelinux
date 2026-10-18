@@ -1,0 +1,288 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ryan Zhang <ryan.zhang@nxp.com>
+Date: Mon, 28 Sep 2026 20:39:13 -0500
+Subject: [PATCH 41/57] panvk: compile XFB vertex shader variant as compute
+ shader
+
+For VS with XFB decorations, compile a second variant as a compute
+shader that writes XFB outputs to global memory via store_global.
+
+The compilation pipeline:
+1. Lower output derefs to store_output intrinsics
+2. Add XFB annotations from SPIR-V decorations
+3. Run pan_nir_lower_xfb to convert XFB store_outputs to store_global
+4. Replace vertex intrinsics with compute equivalents
+   (vertex_id -> global_invocation_id.x, instance_id -> .y)
+5. Remove remaining store_output (gl_Position etc.)
+6. Switch stage to MESA_SHADER_COMPUTE with wg_size=(1,1,1)
+
+Also gather XFB info in preprocess_nir before output variables are
+lowered to temporaries, and serialize xfb_strides in the pipeline
+cache to ensure correct operation on cache-hit runs.
+
+Signed-off-by: Ryan Zhang <ryan.zhang@nxp.com>
+---
+ src/panfrost/vulkan/panvk_vX_shader.c | 174 ++++++++++++++++++++++++--
+ 1 file changed, 161 insertions(+), 13 deletions(-)
+
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index c49ef8f2a97..6ca04513f91 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -32,6 +32,7 @@
+ #include "nir_conversion_builder.h"
+ #include "nir_deref.h"
+ #include "poly/nir/poly_nir.h"
++#include "nir_xfb_info.h"
+ 
+ #include "shader_enums.h"
+ #include "vk_graphics_state.h"
+@@ -233,6 +234,18 @@ panvk_lower_sysvals(nir_builder *b, nir_instr *instr, void *data)
+       val = nir_ior_imm(b, val, 0xc0ffee000);
+       break;
+ 
++#if PAN_ARCH >= 10
++   case nir_intrinsic_load_xfb_address: {
++      uint32_t buf = nir_intrinsic_base(intr);
++      assert(buf < 4);
++      val = load_sysval(b, graphics, 64, xfb.buffers[buf]);
++      break;
++   }
++   case nir_intrinsic_load_num_vertices:
++      val = load_sysval(b, graphics, bit_size, xfb.num_vertices);
++      break;
++#endif
++
+    default:
+       return false;
+    }
+@@ -462,6 +475,17 @@ panvk_preprocess_nir(struct vk_physical_device *vk_pdev,
+    if (nir->info.stage == MESA_SHADER_FRAGMENT)
+       NIR_PASS(_, nir, nir_opt_vectorize_io_vars, nir_var_shader_out);
+ 
++   /* Gather XFB info before nir_lower_io_vars_to_temporaries converts
++    * output vars to temporaries, losing the explicit_xfb_buffer
++    * decoration that nir_shader_gather_xfb_info relies on.
++    */
++   if ((nir->info.stage == MESA_SHADER_VERTEX ||
++        nir->info.stage == MESA_SHADER_TESS_EVAL ||
++        nir->info.stage == MESA_SHADER_GEOMETRY) &&
++       nir->info.has_transform_feedback_varyings) {
++      nir_shader_gather_xfb_info(nir);
++   }
++
+    NIR_PASS(_, nir, nir_lower_io_vars_to_temporaries,
+             nir_shader_get_entrypoint(nir), nir_var_shader_out);
+ 
+@@ -1283,7 +1307,7 @@ panvk_shader_upload(struct panvk_device *dev,
+       }
+    } else {
+ #if PAN_ARCH >= 12
+-      shader->spds.all_points =
++       shader->spds.all_points =
+          panvk_pool_alloc_desc(&dev->mempools.rw, SHADER_PROGRAM);
+       if (!panvk_priv_mem_check_alloc(shader->spds.all_points))
+          return panvk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+@@ -1369,6 +1393,11 @@ panvk_shader_upload(struct panvk_device *dev,
+    }
+ #endif
+ 
++   /* XFB variant: stage is MESA_SHADER_COMPUTE, so panvk_shader_upload
++    * already allocated shader->spd with COMPUTE stage above.
++    * No separate xfb_spd needed.
++    */
++
+    return VK_SUCCESS;
+ }
+ 
+@@ -1553,30 +1582,35 @@ panvk_compile_shader(struct panvk_device *dev,
+ 
+    switch (info->stage) {
+    case MESA_SHADER_VERTEX: {
+-      VkShaderStageFlags next_stage_mask = info->next_stage_mask;
+-
+-      /* Transform feedback is layered on top of geometry shaders. If there
+-       * is not a geometry shader in the pipeline, we will compile a geometry
+-       * shader for the purpose. Update the next_stage mask accordingly.
+-       */
+-      if (info->nir->xfb_info != NULL)
+-         next_stage_mask |= VK_SHADER_STAGE_GEOMETRY_BIT;
+-
+       /* If this VS might get paired with a geometry or tessellation shader
+        * then we'll use the compute version in that case.
++       *
++       * 06n-arch: transform feedback has its own compute variant (XFB), it
++       * isn't layered on top of geometry shaders.
+        */
+       const bool needs_compute_vs =
+-         (next_stage_mask & (VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+-                             VK_SHADER_STAGE_GEOMETRY_BIT));
++         (info->next_stage_mask & (VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
++                                   VK_SHADER_STAGE_GEOMETRY_BIT));
++#if PAN_ARCH >= 10
++      const bool needs_xfb_vs = info->nir->info.has_transform_feedback_varyings;
++#else
++      UNUSED const bool needs_xfb_vs = false;
++#endif
+ 
+       STATIC_ASSERT(PANVK_VS_VARIANT_HW == 0);
+       STATIC_ASSERT(PANVK_VS_VARIANT_SW == 1);
+       const enum panvk_vs_variant last_variant =
++#if PAN_ARCH >= 10
++         needs_xfb_vs ? PANVK_VS_VARIANT_XFB :
++#endif
+          needs_compute_vs ? PANVK_VS_VARIANT_SW : PANVK_VS_VARIANT_HW;
+ 
+       for (enum panvk_vs_variant v = 0; v <= last_variant; v++) {
+          struct panvk_shader_variant *variant = &shader->variants[v];
+ 
++         if (v == PANVK_VS_VARIANT_SW && !needs_compute_vs)
++            continue;
++
+          /* Each variant gets its own NIR. To save an extra clone, we use the
+           * original NIR for the last stage.
+           */
+@@ -1635,7 +1669,113 @@ panvk_compile_shader(struct panvk_device *dev,
+          }
+ 
+          nir_assign_io_var_locations(nir, nir_var_shader_out);
+-         panvk_lower_nir_io(nir);
++
++#if PAN_ARCH >= 10
++         /* XFB variant: lower outputs to intrinsics, add XFB annotations,
++          * then convert XFB store_outputs to global memory stores.
++          */
++         if (v == PANVK_VS_VARIANT_XFB) {
++            /* Split array outputs and lower deref IO to intrinsics
++             * before the XFB lowering (which requires store_output).
++             */
++            NIR_PASS(_, nir, nir_lower_var_copies);
++            NIR_PASS(_, nir,
++                     nir_lower_io_array_vars_to_elements_no_indirects,
++                     nir_var_shader_out);
++            NIR_PASS(_, nir, nir_lower_io, nir_var_shader_out,
++                     glsl_type_size,
++                     nir_lower_io_use_interpolated_input_intrinsics);
++            NIR_PASS(_, nir, nir_opt_constant_folding);
++
++            /* Skip XFB variant if xfb_info is unavailable (e.g. shaders
++             * with XFB only on built-in outputs).
++             */
++            if (!nir->xfb_info) {
++               if (clone_nir)
++                  ralloc_free(nir);
++               continue;
++            }
++
++            NIR_PASS(_, nir, nir_io_add_intrinsic_xfb_info);
++
++            /* Save XFB strides before lowering removes the info */
++            for (unsigned si = 0; si < MAX_XFB_BUFFERS; si++)
++               variant->xfb_strides[si] = nir->info.xfb_stride[si] * 4;
++
++            /* 06n-arch: upstream's pan_nir_lower_xfb() is this pass here. */
++            static const nir_lower_xfb_to_stores_options xfb_options = {
++               .address_format = nir_address_format_64bit_global,
++            };
++            NIR_PASS(_, nir, nir_lower_xfb_to_stores, &xfb_options);
++
++            /* Replace vertex intrinsics with compute equivalents:
++             * vertex_id -> global_invocation_id.x
++             * instance_id -> global_invocation_id.y
++             */
++            nir_builder xfb_b =
++               nir_builder_create(nir_shader_get_entrypoint(nir));
++            nir_foreach_function_impl(impl, nir) {
++               nir_foreach_block(block, impl) {
++                  nir_foreach_instr_safe(instr, block) {
++                     if (instr->type != nir_instr_type_intrinsic)
++                        continue;
++                     nir_intrinsic_instr *intrin =
++                        nir_instr_as_intrinsic(instr);
++
++                     if (intrin->intrinsic == nir_intrinsic_load_raw_vertex_id) {
++                        xfb_b.cursor = nir_before_instr(instr);
++                        nir_def *gid =
++                           nir_load_global_invocation_id(&xfb_b, 32);
++                        nir_def *x = nir_channel(&xfb_b, gid, 0);
++                        nir_def_replace(&intrin->def, x);
++                     } else if (intrin->intrinsic ==
++                                nir_intrinsic_load_instance_id) {
++                        xfb_b.cursor = nir_before_instr(instr);
++                        nir_def *gid =
++                           nir_load_global_invocation_id(&xfb_b, 32);
++                        nir_def *y = nir_channel(&xfb_b, gid, 1);
++                        nir_def_replace(&intrin->def, y);
++                     } else if (intrin->intrinsic ==
++                                nir_intrinsic_load_raw_vertex_offset) {
++                        /* Dispatched as compute: vertex_id is zero-based. */
++                        xfb_b.cursor = nir_before_instr(instr);
++                        nir_def *zero = nir_imm_int(&xfb_b, 0);
++                        nir_def_replace(&intrin->def, zero);
++                     }
++                  }
++               }
++            }
++
++            /* Remove remaining store_output (gl_Position etc.). */
++            nir_foreach_function_impl(impl, nir) {
++               nir_foreach_block(block, impl) {
++                  nir_foreach_instr_safe(instr, block) {
++                     if (instr->type != nir_instr_type_intrinsic)
++                        continue;
++                     nir_intrinsic_instr *intrin =
++                        nir_instr_as_intrinsic(instr);
++                     if (intrin->intrinsic == nir_intrinsic_store_output)
++                        nir_instr_remove(instr);
++                  }
++               }
++            }
++
++            /* Switch to compute stage. */
++            nir->info.stage = MESA_SHADER_COMPUTE;
++            nir->info.workgroup_size[0] = 1;
++            nir->info.workgroup_size[1] = 1;
++            nir->info.workgroup_size[2] = 1;
++            nir->info.has_transform_feedback_varyings = false;
++
++            /* Outputs are already lowered; only lower inputs here. */
++            NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in,
++                     glsl_type_size,
++                     nir_lower_io_use_interpolated_input_intrinsics);
++         } else
++#endif
++         {
++            panvk_lower_nir_io(nir);
++         }
+          /* This somehow folds the location for multi-slot nir_load/nir_store */
+          NIR_PASS(_, nir, nir_opt_constant_folding);
+ 
+@@ -1647,6 +1787,12 @@ panvk_compile_shader(struct panvk_device *dev,
+             inputs.varying_layout = &varying_layout;
+          }
+ 
++#if PAN_ARCH >= 10
++         /* XFB variant: compiled as compute, no IDVS */
++         if (v == PANVK_VS_VARIANT_XFB)
++            inputs.no_idvs = true;
++#endif
++
+          inputs.clip_distance_array_size = nir->info.clip_distance_array_size;
+          inputs.cull_distance_array_size =
+             lowered_cull ? nir->info.cull_distance_array_size : 0;
+@@ -2442,6 +2588,7 @@ panvk_deserialize_shader_variant(struct vk_device *vk_dev,
+ 
+    shader->info = info;
+    blob_copy_bytes(blob, &shader->fau, sizeof(shader->fau));
++   blob_copy_bytes(blob, &shader->xfb_strides, sizeof(shader->xfb_strides));
+ 
+    switch (shader->info.stage) {
+    case MESA_SHADER_COMPUTE:
+@@ -2617,6 +2764,7 @@ panvk_shader_serialize_variant(struct vk_device *vk_dev,
+ {
+    blob_write_bytes(blob, &shader->info, sizeof(shader->info));
+    blob_write_bytes(blob, &shader->fau, sizeof(shader->fau));
++   blob_write_bytes(blob, &shader->xfb_strides, sizeof(shader->xfb_strides));
+ 
+    switch (shader->info.stage) {
+    case MESA_SHADER_COMPUTE:

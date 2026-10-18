@@ -1,0 +1,181 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Wed, 30 Sep 2026 21:16:00 -0500
+Subject: [PATCH 12/57] panvk: build fixes for the GS port on current upstream
+
+- launch_gfx_cs() takes the push uniforms now: the SW VS reuses the ones
+  prepared for it, the GS gets fresh ones.
+- cmd_draw_fullscreen() only needs the FS push uniforms.
+- The SW VS lowers its inputs with pan_nir_lower_vs_inputs(), which
+  replaced panvk_lower_load_vs_input(); libpoly wants load_vertex_id.
+- panvk_lower_nir() runs per VS variant upstream now, and takes
+  allow_merging_workgroups.
+
+Assisted-by: LLM
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c | 39 ++++++++++++---------
+ src/panfrost/vulkan/panvk_vX_shader.c       | 35 ++++++++++++------
+ 2 files changed, 47 insertions(+), 27 deletions(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index cee1f33d212..9ee7c662511 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -2511,6 +2511,23 @@ prepare_vs_push_uniforms(struct panvk_cmd_buffer *cmdbuf,
+    return VK_SUCCESS;
+ }
+ 
++static VkResult
++prepare_fs_push_uniforms(struct panvk_cmd_buffer *cmdbuf,
++                         const struct panvk_shader_variant *fs)
++{
++   if (fs &&
++       (fs_user_dirty(cmdbuf) || gfx_state_dirty(cmdbuf, FS_PUSH_UNIFORMS))) {
++      struct pan_ptr push_uniforms;
++      VkResult result = panvk_per_arch(cmd_prepare_gfx_push_uniforms)(
++         cmdbuf, fs, &push_uniforms, 1);
++      if (result != VK_SUCCESS)
++         return result;
++      cmdbuf->state.gfx.fs.push_uniforms = push_uniforms.gpu;
++   }
++
++   return VK_SUCCESS;
++}
++
+ /* Push uniforms of the HW VS (which is the GS or TES rasterization variant
+  * when those are bound) and of the FS.
+  */
+@@ -2535,17 +2552,7 @@ prepare_push_uniforms(struct panvk_cmd_buffer *cmdbuf,
+       }
+    }
+ 
+-   if (fs &&
+-       (fs_user_dirty(cmdbuf) || gfx_state_dirty(cmdbuf, FS_PUSH_UNIFORMS))) {
+-      struct pan_ptr push_uniforms;
+-      result = panvk_per_arch(cmd_prepare_gfx_push_uniforms)(
+-         cmdbuf, fs, &push_uniforms, 1);
+-      if (result != VK_SUCCESS)
+-         return result;
+-      cmdbuf->state.gfx.fs.push_uniforms = push_uniforms.gpu;
+-   }
+-
+-   return VK_SUCCESS;
++   return prepare_fs_push_uniforms(cmdbuf, fs);
+ }
+ 
+ static VkResult
+@@ -3384,7 +3391,8 @@ launch_gs(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+             }
+          };
+       }
+-      launch_gfx_cs(cmdbuf, vs, &cmdbuf->state.gfx.vs.desc, &vs_disp);
++      launch_gfx_cs(cmdbuf, vs, &cmdbuf->state.gfx.vs.desc,
++                    cmdbuf->state.gfx.vs.push_uniforms, &vs_disp);
+    }
+ 
+    const struct panvk_shader *gs = cmdbuf->state.gfx.gs.shader;
+@@ -3421,7 +3429,7 @@ launch_gs(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+             }
+          };
+       };
+-      launch_gfx_cs(cmdbuf, main, &cmdbuf->state.gfx.gs.desc, &gs_disp);
++      launch_gfx_cs(cmdbuf, main, &cmdbuf->state.gfx.gs.desc, 0, &gs_disp);
+    }
+ 
+    if (poly_gs_indexed(gsi->shape)) {
+@@ -5309,8 +5317,6 @@ panvk_per_arch(cmd_draw_fullscreen)(struct vk_command_buffer *cmd,
+    cmdbuf->state.gfx.fs.required =
+       fs_required(&cmdbuf->state.gfx, &cmdbuf->vk.dynamic_graphics_state);
+    struct vk_rasterization_state rs = cmdbuf->vk.dynamic_graphics_state.rs;
+-   const struct panvk_shader_variant *vs =
+-      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    const struct panvk_shader_variant *fs =
+       panvk_shader_only_variant(get_fs(cmdbuf));
+    const struct panvk_shader_desc_info *vs_desc_info =
+@@ -5357,7 +5363,8 @@ panvk_per_arch(cmd_draw_fullscreen)(struct vk_command_buffer *cmd,
+ 
+    panvk_per_arch(cmd_prepare_draw_sysvals)(cmdbuf, &draw, fs);
+ 
+-   result = prepare_push_uniforms(cmdbuf, &draw, vs, fs);
++   /* The fullscreen draw has no VS, only the FS needs push uniforms. */
++   result = prepare_fs_push_uniforms(cmdbuf, fs);
+    if (result != VK_SUCCESS)
+       return;
+ 
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index fba885df837..c55b1961d12 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -1449,8 +1449,24 @@ lower_compute_vs_id_intrin(struct nir_builder *b,
+    }
+ }
+ 
++/* pan_nir_lower_vs_inputs() fetches attributes with load_raw_vertex_id, but
++ * libpoly only knows about load_vertex_id. On Valhall both are the same
++ * register.
++ */
++static bool
++panvk_lower_raw_vertex_id(nir_builder *b, nir_intrinsic_instr *intrin,
++                          UNUSED void *data)
++{
++   if (intrin->intrinsic != nir_intrinsic_load_raw_vertex_id)
++      return false;
++
++   b->cursor = nir_before_instr(&intrin->instr);
++   nir_def_replace(&intrin->def, nir_load_vertex_id(b));
++   return true;
++}
++
+ static void
+-panvk_nir_lower_compute_vs(nir_shader *nir)
++panvk_nir_lower_compute_vs(nir_shader *nir, uint64_t gpu_id)
+ {
+    /* We need to lower VS inputs now, before we call the libpoly passes so
+     * that they're already tied into gl_VertexID as needed.  There's no need
+@@ -1458,12 +1474,13 @@ panvk_nir_lower_compute_vs(nir_shader *nir)
+     * treated as a compute shader by panvk_compile_nir() and it won't lower
+     * any I/O for us.
+     */
+-   NIR_PASS(_, nir, nir_shader_intrinsics_pass,
+-            panvk_lower_load_vs_input,
++   assert(PAN_ARCH >= 9);
++   NIR_PASS(_, nir, pan_nir_lower_vs_inputs, gpu_id);
++   NIR_PASS(_, nir, nir_shader_intrinsics_pass, panvk_lower_raw_vertex_id,
+             nir_metadata_control_flow, NULL);
+ 
+-   /* panvk_lower_load_vs_input() produces a LOT of load_vertex_id intrinsics
+-    * which will become control-flow.
++   /* The input lowering produces a LOT of load_vertex_id intrinsics which
++    * will become control-flow.
+     */
+    NIR_PASS(_, nir, nir_opt_cse);
+ 
+@@ -1532,10 +1549,6 @@ panvk_compile_shader(struct panvk_device *dev,
+          (next_stage_mask & (VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+                              VK_SHADER_STAGE_GEOMETRY_BIT));
+ 
+-      panvk_lower_nir(dev, info->nir, info->set_layout_count,
+-                      info->set_layouts, info->robustness,
+-                      state, &shader->desc_info);
+-
+       STATIC_ASSERT(PANVK_VS_VARIANT_HW == 0);
+       STATIC_ASSERT(PANVK_VS_VARIANT_SW == 1);
+       const enum panvk_vs_variant last_variant =
+@@ -1604,7 +1617,7 @@ panvk_compile_shader(struct panvk_device *dev,
+          }
+ 
+          if (v == PANVK_VS_VARIANT_SW)
+-            panvk_nir_lower_compute_vs(nir);
++            panvk_nir_lower_compute_vs(nir, inputs.gpu_id);
+ 
+          variant->own_bin = true;
+ 
+@@ -1632,7 +1645,7 @@ panvk_compile_shader(struct panvk_device *dev,
+ 
+       panvk_lower_nir(dev, main, info->set_layout_count,
+                       info->set_layouts, info->robustness,
+-                      state, &shader->desc_info);
++                      state, &shader->desc_info, false);
+ 
+       nir_assign_io_var_locations(main, nir_var_shader_in);
+       nir_assign_io_var_locations(main, nir_var_shader_out);

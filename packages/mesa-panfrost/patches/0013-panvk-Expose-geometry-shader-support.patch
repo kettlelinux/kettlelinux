@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mary Guillemard <mary.guillemard@collabora.com>
+Date: Tue, 23 Sep 2025 11:20:03 +0200
+Subject: [PATCH 13/57] panvk: Expose geometry shader support
+
+Nothing done only for testing so far
+
+Signed-off-by: Mary Guillemard <mary.guillemard@collabora.com>
+(cherry picked from commit 1adf7bee2e49486973030dfeebaf546d296736fe)
+---
+ src/panfrost/vulkan/panvk_vX_physical_device.c | 15 ++++++++-------
+ 1 file changed, 8 insertions(+), 7 deletions(-)
+
+diff --git a/src/panfrost/vulkan/panvk_vX_physical_device.c b/src/panfrost/vulkan/panvk_vX_physical_device.c
+index 3c7241a12e1..1069026d220 100644
+--- a/src/panfrost/vulkan/panvk_vX_physical_device.c
++++ b/src/panfrost/vulkan/panvk_vX_physical_device.c
+@@ -305,7 +305,8 @@ panvk_per_arch(get_physical_device_features)(
+       .fullDrawIndexUint32 = true,
+       .imageCubeArray = true,
+       .independentBlend = true,
+-      .geometryShader = false,
++      /* Emulated with compute shaders (libpoly), CSF only. */
++      .geometryShader = PAN_ARCH >= 10,
+       .tessellationShader = false,
+       .sampleRateShading = true,
+       .dualSrcBlend = true,
+@@ -332,7 +333,7 @@ panvk_per_arch(get_physical_device_features)(
+          (PAN_ARCH >= 13 && instance->drirc.misc.enable_vertex_pipeline_stores_atomics) ||
+          instance->drirc.misc.force_enable_shader_atomics,
+       .fragmentStoresAndAtomics = true,
+-      .shaderTessellationAndGeometryPointSize = false,
++      .shaderTessellationAndGeometryPointSize = PAN_ARCH >= 10,
+       .shaderImageGatherExtended = true,
+       .shaderStorageImageExtendedFormats = true,
+       .shaderStorageImageMultisample = false,
+@@ -922,11 +923,11 @@ panvk_per_arch(get_physical_device_properties)(
+       .maxTessellationEvaluationInputComponents = 0,
+       .maxTessellationEvaluationOutputComponents = 0,
+       /* Geometry shaders not supported. */
+-      .maxGeometryShaderInvocations = 0,
+-      .maxGeometryInputComponents = 0,
+-      .maxGeometryOutputComponents = 0,
+-      .maxGeometryOutputVertices = 0,
+-      .maxGeometryTotalOutputComponents = 0,
++      .maxGeometryShaderInvocations = 32,
++      .maxGeometryInputComponents = 128,
++      .maxGeometryOutputComponents = 128,
++      .maxGeometryOutputVertices = 1024,
++      .maxGeometryTotalOutputComponents = 1024,
+       /* 32 vec4 varyings. */
+       .maxFragmentInputComponents = 128,
+       /* 8 render targets. */

@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Gmeiner <cgmeiner@igalia.com>
+Date: Thu, 21 May 2026 00:09:03 +0200
+Subject: [PATCH 23/57] panvk: Handle clip distances as general varyings
+
+The varying setup matches VS outputs and FS inputs by location, and
+with VK_EXT_shader_object both stages can be compiled without seeing
+each other. Clip distances therefore have to stay at their own
+locations, CLIP_DIST0/1. Remapping them to VAR slots per stage could
+pick a different slot in each stage.
+
+The varying layout code already assigns a byte offset to any slot that
+is not a hardware varying. Only two panvk sites treated everything
+below VARYING_SLOT_VAR0 as a hardware varying, which left clip
+distances at byte offset zero where they collided with VAR0. Check
+against PAN_HARDWARE_VARYING_BITS instead.
+
+Pass the VS clip distance array size to the backend, and run the FS
+clip distance lowering on fragment shaders.
+
+Signed-off-by: Christian Gmeiner <cgmeiner@igalia.com>
+Reviewed-by: Olivia Lee <olivia.lee@collabora.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/40343>
+---
+ src/panfrost/vulkan/panvk_vX_shader.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index 77b61ac438c..6045ba6184e 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -43,6 +43,7 @@
+ #include "compiler/bifrost/bifrost_compile.h"
+ #include "compiler/pan_compiler.h"
+ #include "compiler/pan_nir.h"
++#include "compiler/pan_nir_prolog.h"
+ #include "pan_shader.h"
+ 
+ #include "vk_log.h"
+@@ -1621,6 +1622,8 @@ panvk_compile_shader(struct panvk_device *dev,
+             inputs.varying_layout = &varying_layout;
+          }
+ 
++         inputs.clip_distance_array_size = nir->info.clip_distance_array_size;
++
+          if (v == PANVK_VS_VARIANT_SW)
+             panvk_nir_lower_compute_vs(nir, inputs.gpu_id);
+ 
+@@ -1735,6 +1738,8 @@ panvk_compile_shader(struct panvk_device *dev,
+       nir_assign_io_var_locations(nir, nir_var_shader_out);
+       panvk_lower_nir_io(nir);
+ 
++      NIR_PASS(_, nir, pan_nir_lower_clip_distance_fs);
++
+       /* Lower FS outputs now so that we can lower load_blend_descriptor_pan
+        * to a driver-provided FAU instead of using the blend descriptors
+        * uploaded by the hardware.  See panvk_vX_blend.c for details.
+@@ -2558,7 +2563,7 @@ emit_varying_attrs(struct panvk_pool *desc_pool,
+             gl_varying_slot loc = slot->location;
+ 
+             enum pipe_format pfmt = PIPE_FORMAT_NONE;
+-            bool is_hw = loc < VARYING_SLOT_VAR0;
++            bool is_hw = (BITFIELD64_BIT(loc) & PAN_HARDWARE_VARYING_BITS) != 0;
+             bool is_present = is_hw || bit_sizes[loc] != 0;
+ 
+             if (is_present && !is_hw) {
+@@ -2635,7 +2640,7 @@ panvk_per_arch(link_shaders)(struct panvk_pool *desc_pool,
+ 
+       const gl_varying_slot pos = fs_var->location;
+       /* Skip special varyings. */
+-      if (pos < VARYING_SLOT_VAR0)
++      if (BITFIELD64_BIT(pos) & PAN_HARDWARE_VARYING_BITS)
+          continue;
+ 
+       /* Special buffers are handled explicitly before this loop, everything

@@ -1,0 +1,348 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Olivia Lee <olivia.lee@collabora.com>
+Date: Sat, 11 Oct 2025 00:25:44 -0700
+Subject: [PATCH 14/57] panvk: hook up poly_heap
+
+Signed-off-by: Olivia Lee <olivia.lee@collabora.com>
+(cherry picked from commit 1ae885bec5ce45f0e5004c2ec20fb6d2f45f7a33)
+---
+ src/panfrost/vulkan/csf/panvk_cmd_buffer.h    |  4 ++
+ src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c | 38 +++++++++++
+ src/panfrost/vulkan/jm/panvk_cmd_buffer.h     |  6 ++
+ src/panfrost/vulkan/jm/panvk_vX_cmd_buffer.c  | 37 +++++++++++
+ src/panfrost/vulkan/panvk_device.h            | 14 ++++
+ src/panfrost/vulkan/panvk_vX_cmd_draw.c       |  2 +
+ src/panfrost/vulkan/panvk_vX_device.c         | 65 +++++++++++++++++++
+ 7 files changed, 166 insertions(+)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_cmd_buffer.h b/src/panfrost/vulkan/csf/panvk_cmd_buffer.h
+index 1491d5c81ee..bc801972fbe 100644
+--- a/src/panfrost/vulkan/csf/panvk_cmd_buffer.h
++++ b/src/panfrost/vulkan/csf/panvk_cmd_buffer.h
+@@ -568,6 +568,8 @@ struct panvk_cmd_buffer {
+       bool contains_timestamp_queries;
+ 
+       struct panvk_cond_render_state cond_render;
++
++      bool uses_poly_heap;
+    } state;
+ };
+ 
+@@ -1001,6 +1003,8 @@ vk_stages_to_subqueue_mask(VkPipelineStageFlags2 vk_stages,
+ void panvk_per_arch(emit_barrier)(struct panvk_cmd_buffer *cmdbuf,
+                                   struct panvk_cs_deps deps);
+ 
++VkResult panvk_per_arch(cmd_init_poly_heap)(struct panvk_cmd_buffer *cmdbuf);
++
+ #if PAN_ARCH >= 14
+ static inline void
+ cs_emit_layer_fragment_state(struct cs_builder *b, struct cs_index fbd_ptr)
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c
+index cb3e295a484..fcbcb019971 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c
+@@ -37,6 +37,7 @@
+ #include "pan_samples.h"
+ 
+ #include "util/bitscan.h"
++#include "poly/geometry.h"
+ #include "vk_descriptor_update_template.h"
+ #include "vk_format.h"
+ #include "vk_synchronization.h"
+@@ -744,6 +745,40 @@ panvk_per_arch(CmdPipelineBarrier2)(VkCommandBuffer commandBuffer,
+    STACK_ARRAY_FINISH(crc_addrs);
+ }
+ 
++VkResult
++panvk_per_arch(cmd_init_poly_heap)(struct panvk_cmd_buffer *cmdbuf)
++{
++   struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
++
++   /* The first time poly_heap is used in a primary command buffer, we need to
++    * reset the heap bottom position.
++    *
++    * For secondary command buffers, the heap may already have been
++    * initialized in the primary, so we don't want to reset it again. If not,
++    * it will be initialized in the primary before executing the secondary. */
++   if (cmdbuf->state.uses_poly_heap ||
++       cmdbuf->vk.level == VK_COMMAND_BUFFER_LEVEL_SECONDARY)
++      return VK_SUCCESS;
++
++   VkResult result = panvk_per_arch(device_init_poly_heap)(dev);
++   if (result != VK_SUCCESS)
++      return result;
++
++   struct cs_builder *b = panvk_get_cs_builder(cmdbuf, PANVK_SUBQUEUE_COMPUTE);
++
++   struct cs_index addr = cs_scratch_reg64(b, 0);
++   struct cs_index zero = cs_scratch_reg32(b, 2);
++
++   cs_move64_to(b, addr, dev->poly_heap.state_addr);
++   cs_move32_to(b, zero, 0);
++   cs_store32(b, zero, addr, offsetof(struct poly_heap, bottom));
++   cs_flush_stores(b);
++
++   cmdbuf->state.uses_poly_heap = true;
++
++   return VK_SUCCESS;
++}
++
+ static struct cs_buffer
+ alloc_cs_buffer(void *cookie)
+ {
+@@ -1024,6 +1059,9 @@ panvk_per_arch(CmdExecuteCommands)(VkCommandBuffer commandBuffer,
+    for (uint32_t i = 0; i < commandBufferCount; i++) {
+       VK_FROM_HANDLE(panvk_cmd_buffer, secondary, pCommandBuffers[i]);
+ 
++      if (secondary->state.uses_poly_heap)
++         assert(panvk_per_arch(cmd_init_poly_heap)(primary) == VK_SUCCESS);
++
+       /* make sure the CS context is setup properly
+        * to inherit the primary command buffer state
+        */
+diff --git a/src/panfrost/vulkan/jm/panvk_cmd_buffer.h b/src/panfrost/vulkan/jm/panvk_cmd_buffer.h
+index e824ccae8df..eef218ccc9c 100644
+--- a/src/panfrost/vulkan/jm/panvk_cmd_buffer.h
++++ b/src/panfrost/vulkan/jm/panvk_cmd_buffer.h
+@@ -87,6 +87,7 @@ struct panvk_cmd_buffer {
+       struct panvk_cmd_graphics_state gfx;
+       struct panvk_cmd_compute_state compute;
+       struct panvk_push_constant_state push_constants;
++      bool uses_poly_heap;
+    } state;
+ };
+ 
+@@ -149,4 +150,9 @@ void panvk_per_arch(cmd_bind_shaders)(struct vk_command_buffer *vk_cmd,
+                                       const mesa_shader_stage *stages,
+                                       struct vk_shader **const shaders);
+ 
++/* If a job was added to reset the heap, it's job id is returned in 'job_id'
++ * so that it can be used in dependencies */
++VkResult panvk_per_arch(cmd_init_poly_heap)(struct panvk_cmd_buffer *cmdbuf,
++                                            unsigned *job_id);
++
+ #endif
+diff --git a/src/panfrost/vulkan/jm/panvk_vX_cmd_buffer.c b/src/panfrost/vulkan/jm/panvk_vX_cmd_buffer.c
+index 9f5323ad67a..9150358d33d 100644
+--- a/src/panfrost/vulkan/jm/panvk_vX_cmd_buffer.c
++++ b/src/panfrost/vulkan/jm/panvk_vX_cmd_buffer.c
+@@ -31,6 +31,7 @@
+ #include "pan_props.h"
+ #include "pan_samples.h"
+ 
++#include "poly/geometry.h"
+ #include "vk_descriptor_update_template.h"
+ #include "vk_format.h"
+ 
+@@ -329,6 +330,42 @@ panvk_per_arch(cmd_open_batch)(struct panvk_cmd_buffer *cmdbuf)
+    return cmdbuf->cur_batch;
+ }
+ 
++VkResult
++panvk_per_arch(cmd_init_poly_heap)(struct panvk_cmd_buffer *cmdbuf,
++                                   unsigned *job_id)
++{
++   struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
++   struct panvk_batch *batch = cmdbuf->cur_batch;
++
++   /* The first time poly_heap is used in a primary command buffer, we need to
++    * reset the heap bottom position. */
++   if (cmdbuf->state.uses_poly_heap ||
++       cmdbuf->vk.level == VK_COMMAND_BUFFER_LEVEL_SECONDARY) {
++      *job_id = 0;
++      return VK_SUCCESS;
++   }
++
++   struct pan_ptr job =
++      pan_pool_alloc_desc(&cmdbuf->desc_pool.base, WRITE_VALUE_JOB);
++   if (!job.gpu)
++      return VK_ERROR_OUT_OF_DEVICE_MEMORY;
++
++   pan_section_pack(job.cpu, WRITE_VALUE_JOB, PAYLOAD, payload) {
++      payload.type = MALI_WRITE_VALUE_TYPE_IMMEDIATE_32;
++      payload.address =
++         dev->poly_heap.state_addr + offsetof(struct poly_heap, bottom);
++      payload.immediate_value = 0;
++   }
++
++   *job_id =
++      pan_jc_add_job(&batch->vtc_jc, MALI_JOB_TYPE_WRITE_VALUE, false, false,
++                     0, 0, &job, false);
++
++   cmdbuf->state.uses_poly_heap = true;
++
++   return VK_SUCCESS;
++}
++
+ VKAPI_ATTR VkResult VKAPI_CALL
+ panvk_per_arch(EndCommandBuffer)(VkCommandBuffer commandBuffer)
+ {
+diff --git a/src/panfrost/vulkan/panvk_device.h b/src/panfrost/vulkan/panvk_device.h
+index 0eabbc3ebbc..1ebc002e008 100644
+--- a/src/panfrost/vulkan/panvk_device.h
++++ b/src/panfrost/vulkan/panvk_device.h
+@@ -39,6 +39,9 @@
+ #define PANVK_JM_MAX_VERTICES_INDIRECT                (2000000)
+ #define PANVK_JM_MAX_PER_VTX_ATTRIBUTES_INDIRECT_SIZE (18 * 4)
+ 
++/* 128 MiB */
++#define PANVK_POLY_HEAP_SIZE (1 << 27)
++
+ struct panvk_precomp_cache;
+ struct panvk_device_draw_context;
+ 
+@@ -78,6 +81,7 @@ struct panvk_device {
+ 
+    struct panvk_priv_bo *tiler_heap;
+    struct panvk_priv_bo *indirect_varying_buffer;
++   struct panvk_priv_bo *poly_heap_buffer;
+    struct panvk_priv_bo *sample_positions;
+ 
+    struct {
+@@ -119,6 +123,14 @@ struct panvk_device {
+ 
+    struct panvk_device_draw_context* draw_ctx;
+ 
++   struct {
++      /* Only used on CSF */
++      util_once_flag init_once;
++
++      /* GPU address of 'struct poly_heap' */
++      uint64_t state_addr;
++   } poly_heap;
++
+    struct {
+       struct pandecode_context *decode_ctx;
+    } debug;
+@@ -295,6 +307,8 @@ VkResult panvk_per_arch(device_check_status)(struct vk_device *vk_dev);
+ #if PAN_ARCH >= 10
+ VkResult panvk_per_arch(init_tiler_oom)(struct panvk_device *device);
+ #endif
++
++VkResult panvk_per_arch(device_init_poly_heap)(struct panvk_device *dev);
+ #endif
+ 
+ #endif
+diff --git a/src/panfrost/vulkan/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/panvk_vX_cmd_draw.c
+index 13104a1c685..4836ca7b966 100644
+--- a/src/panfrost/vulkan/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/panvk_vX_cmd_draw.c
+@@ -5,12 +5,14 @@
+  */
+ 
+ #include "panvk_buffer.h"
++#include "panvk_cmd_alloc.h"
+ #include "panvk_cmd_buffer.h"
+ #include "panvk_device_memory.h"
+ #include "panvk_entrypoints.h"
+ 
+ #include "pan_desc.h"
+ #include "pan_util.h"
++#include "poly/geometry.h"
+ 
+ static enum pan_fb_load_op
+ get_att_fb_load_op(const VkRenderingAttachmentInfo *att)
+diff --git a/src/panfrost/vulkan/panvk_vX_device.c b/src/panfrost/vulkan/panvk_vX_device.c
+index c4273c0c050..ef066abbad2 100644
+--- a/src/panfrost/vulkan/panvk_vX_device.c
++++ b/src/panfrost/vulkan/panvk_vX_device.c
+@@ -39,6 +39,7 @@
+ #include "util/u_printf.h"
+ #include "pan_props.h"
+ #include "pan_samples.h"
++#include "poly/geometry.h"
+ 
+ static void *
+ panvk_kmod_zalloc(const struct pan_kmod_allocator *allocator, size_t size,
+@@ -114,6 +115,62 @@ panvk_device_cleanup_mempools(struct panvk_device *dev)
+    panvk_pool_cleanup(&dev->mempools.exec);
+ }
+ 
++/* On JM, this is called during device initialization. On CSF, panthor doesn't
++ * support alloc-on-fault, so we initialize the heap the first time it is used
++ * in a command buffer to avoid wasting memory on the heap buffer on
++ * applications that don't use it */
++static void
++panvk_device_init_poly_heap_inner(const void *data)
++{
++   struct panvk_device *dev = *(struct panvk_device *const *) data;
++
++#if PAN_ARCH >= 10
++   uint32_t flags = PAN_KMOD_BO_FLAG_NO_MMAP;
++#else
++   uint32_t flags = PAN_KMOD_BO_FLAG_NO_MMAP | PAN_KMOD_BO_FLAG_ALLOC_ON_FAULT;
++#endif
++
++   VkResult result = panvk_priv_bo_create(
++      dev, PANVK_POLY_HEAP_SIZE, flags, VK_SYSTEM_ALLOCATION_SCOPE_DEVICE,
++      &dev->poly_heap_buffer);
++   if (result != VK_SUCCESS)
++      return;
++
++   struct panvk_pool_alloc_info alloc_info = {
++      .size = sizeof(struct poly_heap),
++      .alignment = 8,
++   };
++   struct panvk_priv_mem state_mem =
++      panvk_pool_alloc_mem(&dev->mempools.rw, alloc_info);
++
++   dev->poly_heap.state_addr = panvk_priv_mem_dev_addr(state_mem);
++   if (!dev->poly_heap.state_addr) {
++      panvk_priv_bo_unref(dev->poly_heap_buffer);
++      return;
++   }
++
++   struct poly_heap *state_cpu = panvk_priv_mem_host_addr(state_mem);
++   state_cpu->base = dev->poly_heap_buffer->addr.dev;
++   state_cpu->bottom = 0;
++   state_cpu->size = PANVK_POLY_HEAP_SIZE;
++}
++
++VkResult
++panvk_per_arch(device_init_poly_heap)(struct panvk_device *dev)
++{
++#if PAN_ARCH >= 10
++   util_call_once_data(&dev->poly_heap.init_once,
++                       panvk_device_init_poly_heap_inner, &dev);
++#else
++   panvk_device_init_poly_heap_inner(&dev);
++#endif
++
++   if (!dev->poly_heap.state_addr)
++      return VK_ERROR_OUT_OF_DEVICE_MEMORY;
++   else
++      return VK_SUCCESS;
++}
++
+ static VkResult
+ panvk_meta_cmd_bind_map_buffer(struct vk_command_buffer *cmd,
+                                struct vk_meta_device *meta, VkBuffer buf,
+@@ -529,6 +586,12 @@ panvk_per_arch(create_device)(struct panvk_physical_device *physical_device,
+    panvk_priv_bo_flush(device->sample_positions, 0,
+                        pan_sample_positions_buffer_size());
+ 
++#if PAN_ARCH <= 9
++   result = panvk_per_arch(device_init_poly_heap)(device);
++   if (result != VK_SUCCESS)
++      goto err_free_priv_bos;
++#endif
++
+ #if PAN_ARCH >= 10
+    result = panvk_per_arch(init_tiler_oom)(device);
+    if (result != VK_SUCCESS)
+@@ -621,6 +684,7 @@ err_free_priv_bos:
+    panvk_priv_bo_unref(device->tiler_oom.handlers_bo);
+    panvk_priv_bo_unref(device->sample_positions);
+    panvk_priv_bo_unref(device->indirect_varying_buffer);
++   panvk_priv_bo_unref(device->poly_heap_buffer);
+    panvk_priv_bo_unref(device->tiler_heap);
+    panvk_device_cleanup_mempools(device);
+    vk_free(&device->vk.alloc, device->dump_region_size);
+@@ -665,6 +729,7 @@ panvk_per_arch(destroy_device)(struct panvk_device *device,
+    panvk_priv_bo_unref(device->printf.bo);
+    panvk_priv_bo_unref(device->tiler_oom.handlers_bo);
+    panvk_priv_bo_unref(device->indirect_varying_buffer);
++   panvk_priv_bo_unref(device->poly_heap_buffer);
+    panvk_priv_bo_unref(device->tiler_heap);
+    panvk_priv_bo_unref(device->sample_positions);
+    panvk_device_cleanup_mempools(device);

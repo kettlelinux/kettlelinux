@@ -1,0 +1,356 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Gmeiner <cgmeiner@igalia.com>
+Date: Wed, 11 Mar 2026 16:27:48 +0100
+Subject: [PATCH 20/57] panvk: Add linked shader cache
+
+Device-level hash tables caching FS prologs, compiled once per prolog
+key, and the SPD descriptors that link a prolog to a main shader. The
+linked entries are keyed on main shader binary pointer identity and FS
+prolog parameters.
+
+Invalidate cache entries when a shader is destroyed to prevent stale
+pointer matches from malloc address reuse. Device destruction tears
+the cache down after panvk_meta_cleanup() so the meta shaders can
+still invalidate their entries.
+
+Modeled after src/asahi/vulkan/hk_shader.c's per-shader fast-link cache,
+but kept device-level (with an explicit invalidate hook) so a prolog
+and its per-main-FS SPD can be reused across pipelines that bind the
+same main FS.
+
+Signed-off-by: Christian Gmeiner <cgmeiner@igalia.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/40343>
+---
+ src/panfrost/vulkan/meson.build               |   1 +
+ src/panfrost/vulkan/panvk_device.h            |   2 +
+ .../vulkan/panvk_linked_shader_cache.c        | 149 ++++++++++++++++++
+ .../vulkan/panvk_linked_shader_cache.h        |  66 ++++++++
+ src/panfrost/vulkan/panvk_vX_device.c         |   4 +
+ src/panfrost/vulkan/panvk_vX_shader.c         |  13 +-
+ 6 files changed, 231 insertions(+), 4 deletions(-)
+ create mode 100644 src/panfrost/vulkan/panvk_linked_shader_cache.c
+ create mode 100644 src/panfrost/vulkan/panvk_linked_shader_cache.h
+
+diff --git a/src/panfrost/vulkan/meson.build b/src/panfrost/vulkan/meson.build
+index 588ba0ead92..0c813ef4c2a 100644
+--- a/src/panfrost/vulkan/meson.build
++++ b/src/panfrost/vulkan/meson.build
+@@ -58,6 +58,7 @@ libpanvk_files = files(
+   'panvk_host_copy.c',
+   'panvk_image.c',
+   'panvk_instance.c',
++  'panvk_linked_shader_cache.c',
+   'panvk_mempool.c',
+   'panvk_nir_lower_cooperative_matrix.c',
+   'panvk_nir_lower_tile_image.c',
+diff --git a/src/panfrost/vulkan/panvk_device.h b/src/panfrost/vulkan/panvk_device.h
+index 1ebc002e008..708616402a3 100644
+--- a/src/panfrost/vulkan/panvk_device.h
++++ b/src/panfrost/vulkan/panvk_device.h
+@@ -14,6 +14,7 @@
+ 
+ #include "panvk_blend.h"
+ #include "panvk_instance.h"
++#include "panvk_linked_shader_cache.h"
+ #include "panvk_macros.h"
+ #include "panvk_mempool.h"
+ #include "panvk_physical_device.h"
+@@ -109,6 +110,7 @@ struct panvk_device {
+    struct vk_device_dispatch_table cmd_dispatch;
+ 
+    struct panvk_precomp_cache *precomp_cache;
++   struct panvk_linked_shader_cache linked_shader_cache;
+ 
+    struct {
+       struct u_trace_context utctx;
+diff --git a/src/panfrost/vulkan/panvk_linked_shader_cache.c b/src/panfrost/vulkan/panvk_linked_shader_cache.c
+new file mode 100644
+index 00000000000..4b3941da970
+--- /dev/null
++++ b/src/panfrost/vulkan/panvk_linked_shader_cache.c
+@@ -0,0 +1,149 @@
++/*
++ * Copyright © 2026 Google, Inc.
++ * SPDX-License-Identifier: MIT
++ */
++
++#include "panvk_linked_shader_cache.h"
++
++#include "util/hash_table.h"
++#include "util/ralloc.h"
++
++DERIVE_HASH_TABLE(panvk_fs_prolog_cache_key);
++DERIVE_HASH_TABLE(panvk_linked_shader_key);
++
++static void
++panvk_fs_prolog_destroy(struct panvk_fs_prolog *prolog)
++{
++   panvk_pool_free_mem(&prolog->code_mem);
++   panvk_pool_free_mem(&prolog->spd);
++   ralloc_free(prolog);
++}
++
++static void
++panvk_linked_shader_entry_destroy(struct panvk_linked_shader_entry *entry)
++{
++   panvk_pool_free_mem(&entry->spd);
++   ralloc_free(entry);
++}
++
++void
++panvk_linked_shader_cache_init(struct panvk_linked_shader_cache *cache)
++{
++   cache->prologs = panvk_fs_prolog_cache_key_table_create(NULL);
++   cache->ht = panvk_linked_shader_key_table_create(NULL);
++   simple_mtx_init(&cache->lock, mtx_plain);
++}
++
++void
++panvk_linked_shader_cache_destroy(struct panvk_linked_shader_cache *cache)
++{
++   hash_table_foreach(cache->ht, entry)
++      panvk_linked_shader_entry_destroy(entry->data);
++
++   hash_table_foreach(cache->prologs, entry)
++      panvk_fs_prolog_destroy(entry->data);
++
++   _mesa_hash_table_destroy(cache->ht, NULL);
++   _mesa_hash_table_destroy(cache->prologs, NULL);
++   cache->ht = NULL;
++   cache->prologs = NULL;
++   simple_mtx_destroy(&cache->lock);
++}
++
++struct panvk_fs_prolog *
++panvk_linked_shader_cache_lookup_prolog(
++   struct panvk_linked_shader_cache *cache,
++   const struct panvk_fs_prolog_cache_key *key)
++{
++   simple_mtx_lock(&cache->lock);
++   struct hash_entry *entry = _mesa_hash_table_search(cache->prologs, key);
++   simple_mtx_unlock(&cache->lock);
++
++   return entry ? entry->data : NULL;
++}
++
++struct panvk_fs_prolog *
++panvk_linked_shader_cache_insert_prolog(struct panvk_linked_shader_cache *cache,
++                                        struct panvk_fs_prolog *prolog)
++{
++   simple_mtx_lock(&cache->lock);
++
++   /* Lost the race with another thread's insert - drop our duplicate and
++    * return theirs.
++    */
++   struct hash_entry *existing =
++      _mesa_hash_table_search(cache->prologs, &prolog->key);
++   if (existing) {
++      simple_mtx_unlock(&cache->lock);
++      panvk_fs_prolog_destroy(prolog);
++      return existing->data;
++   }
++
++   _mesa_hash_table_insert(cache->prologs, &prolog->key, prolog);
++   simple_mtx_unlock(&cache->lock);
++
++   return prolog;
++}
++
++struct panvk_linked_shader_entry *
++panvk_linked_shader_cache_lookup(struct panvk_linked_shader_cache *cache,
++                                 const struct panvk_linked_shader_key *key)
++{
++   simple_mtx_lock(&cache->lock);
++   struct hash_entry *entry = _mesa_hash_table_search(cache->ht, key);
++   simple_mtx_unlock(&cache->lock);
++
++   return entry ? entry->data : NULL;
++}
++
++struct panvk_linked_shader_entry *
++panvk_linked_shader_cache_insert(struct panvk_linked_shader_cache *cache,
++                                 const struct panvk_linked_shader_key *key,
++                                 struct panvk_priv_mem spd)
++{
++   struct panvk_linked_shader_entry *entry =
++      rzalloc(NULL, struct panvk_linked_shader_entry);
++
++   if (!entry) {
++      panvk_pool_free_mem(&spd);
++      return NULL;
++   }
++
++   entry->key = *key;
++   entry->spd = spd;
++
++   simple_mtx_lock(&cache->lock);
++
++   /* Lost the race with another thread's insert - drop our duplicate and
++    * return theirs.
++    */
++   struct hash_entry *existing = _mesa_hash_table_search(cache->ht, key);
++   if (existing) {
++      simple_mtx_unlock(&cache->lock);
++      panvk_linked_shader_entry_destroy(entry);
++      return existing->data;
++   }
++
++   _mesa_hash_table_insert(cache->ht, &entry->key, entry);
++   simple_mtx_unlock(&cache->lock);
++
++   return entry;
++}
++
++void
++panvk_linked_shader_cache_invalidate(struct panvk_linked_shader_cache *cache,
++                                     const void *main_binary)
++{
++   simple_mtx_lock(&cache->lock);
++
++   hash_table_foreach(cache->ht, entry) {
++      struct panvk_linked_shader_entry *linked = entry->data;
++
++      if (linked->key.main_binary == main_binary) {
++         _mesa_hash_table_remove(cache->ht, entry);
++         panvk_linked_shader_entry_destroy(linked);
++      }
++   }
++
++   simple_mtx_unlock(&cache->lock);
++}
+diff --git a/src/panfrost/vulkan/panvk_linked_shader_cache.h b/src/panfrost/vulkan/panvk_linked_shader_cache.h
+new file mode 100644
+index 00000000000..7803ad994df
+--- /dev/null
++++ b/src/panfrost/vulkan/panvk_linked_shader_cache.h
+@@ -0,0 +1,66 @@
++/*
++ * Copyright © 2026 Google, Inc.
++ * SPDX-License-Identifier: MIT
++ */
++
++#pragma once
++
++#include "util/hash_table.h"
++#include "util/simple_mtx.h"
++#include "pan_nir_prolog.h"
++#include "panvk_mempool.h"
++
++struct panvk_fs_prolog_cache_key {
++   struct pan_fs_prolog_key prolog;
++   bool linked;
++};
++
++struct panvk_fs_prolog {
++   struct panvk_fs_prolog_cache_key key;
++   struct panvk_priv_mem code_mem;
++   /* Only for a standalone prolog, a linked one uses the linked entry's */
++   struct panvk_priv_mem spd;
++   unsigned work_reg_count;
++   uint64_t preload;
++};
++
++struct panvk_linked_shader_key {
++   const void *main_binary;
++   struct pan_fs_prolog_key fs_prolog;
++};
++
++struct panvk_linked_shader_entry {
++   struct panvk_linked_shader_key key;
++   struct panvk_priv_mem spd;
++};
++
++struct panvk_linked_shader_cache {
++   struct hash_table *prologs;
++   struct hash_table *ht;
++   simple_mtx_t lock;
++};
++
++void panvk_linked_shader_cache_init(struct panvk_linked_shader_cache *cache);
++void panvk_linked_shader_cache_destroy(struct panvk_linked_shader_cache *cache);
++
++struct panvk_fs_prolog *
++panvk_linked_shader_cache_lookup_prolog(
++   struct panvk_linked_shader_cache *cache,
++   const struct panvk_fs_prolog_cache_key *key);
++
++struct panvk_fs_prolog *
++panvk_linked_shader_cache_insert_prolog(struct panvk_linked_shader_cache *cache,
++                                        struct panvk_fs_prolog *prolog);
++
++struct panvk_linked_shader_entry *
++panvk_linked_shader_cache_lookup(struct panvk_linked_shader_cache *cache,
++                                 const struct panvk_linked_shader_key *key);
++
++struct panvk_linked_shader_entry *
++panvk_linked_shader_cache_insert(struct panvk_linked_shader_cache *cache,
++                                 const struct panvk_linked_shader_key *key,
++                                 struct panvk_priv_mem spd);
++
++void
++panvk_linked_shader_cache_invalidate(struct panvk_linked_shader_cache *cache,
++                                     const void *main_binary);
+diff --git a/src/panfrost/vulkan/panvk_vX_device.c b/src/panfrost/vulkan/panvk_vX_device.c
+index ef066abbad2..ca79c32c1b3 100644
+--- a/src/panfrost/vulkan/panvk_vX_device.c
++++ b/src/panfrost/vulkan/panvk_vX_device.c
+@@ -624,6 +624,8 @@ panvk_per_arch(create_device)(struct panvk_physical_device *physical_device,
+       goto err_free_precomp;
+    }
+ 
++   panvk_linked_shader_cache_init(&device->linked_shader_cache);
++
+ #if PAN_ARCH >= 10 && PAN_ARCH < 14
+    result = panvk_per_arch(device_draw_context_init)(device);
+    if (result != VK_SUCCESS)
+@@ -675,6 +677,7 @@ err_free_draw_ctx:
+ err_free_mem_cache:
+ #endif
+    vk_pipeline_cache_destroy(device->vk.mem_cache, NULL);
++   panvk_linked_shader_cache_destroy(&device->linked_shader_cache);
+ err_free_precomp:
+    panvk_precomp_cleanup(device);
+ err_free_priv_bos:
+@@ -723,6 +726,7 @@ panvk_per_arch(destroy_device)(struct panvk_device *device,
+    panvk_per_arch(device_draw_context_cleanup)(device);
+ #endif
+    panvk_meta_cleanup(device);
++   panvk_linked_shader_cache_destroy(&device->linked_shader_cache);
+    vk_pipeline_cache_destroy(device->vk.mem_cache, NULL);
+    pan_kmod_bo_put(device->sparse_mem.blackhole);
+    u_printf_destroy(&device->printf.ctx);
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index c55b1961d12..77b61ac438c 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -1358,8 +1358,13 @@ panvk_shader_upload(struct panvk_device *dev,
+ }
+ 
+ static void
+-panvk_shader_variant_destroy(struct panvk_shader_variant *shader)
++panvk_shader_variant_destroy(struct panvk_device *dev,
++                             struct panvk_shader_variant *shader)
+ {
++   if (shader->bin_ptr && shader->info.stage == MESA_SHADER_FRAGMENT)
++      panvk_linked_shader_cache_invalidate(&dev->linked_shader_cache,
++                                           shader->bin_ptr);
++
+    free((void *)shader->asm_str);
+    ralloc_free((void *)shader->nir_str);
+ 
+@@ -1395,12 +1400,12 @@ static void
+ panvk_shader_destroy(struct vk_device *vk_dev, struct vk_shader *vk_shader,
+                      const VkAllocationCallbacks *pAllocator)
+ {
++   struct panvk_device *dev = to_panvk_device(vk_dev);
+    struct panvk_shader *shader =
+       container_of(vk_shader, struct panvk_shader, vk);
+ 
+-   panvk_shader_foreach_variant(shader, variant) {
+-      panvk_shader_variant_destroy(variant);
+-   }
++   panvk_shader_foreach_variant(shader, variant)
++      panvk_shader_variant_destroy(dev, variant);
+ 
+ #if PAN_ARCH < 9
+    panvk_pool_free_mem(&shader->desc_info.others.map);

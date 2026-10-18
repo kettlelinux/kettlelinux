@@ -1,0 +1,200 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Gmeiner <cgmeiner@igalia.com>
+Date: Wed, 15 Jul 2026 12:37:46 +0200
+Subject: [PATCH 22/57] panfrost: Add clip distance VS/FS lowering passes
+
+Mali only supports perspective-correct or flat varying interpolation.
+To get linear interpolation for clip distances:
+
+- VS pass (pan_nir_lower_clip_distance_vs): Multiply clip distance
+  store_outputs by position W after the viewport transform.
+- FS pass (pan_nir_lower_clip_distance_fs): Multiply
+  load_interpolated_input at clip distance slots by FragCoord.w.
+
+The VS clip distance count comes in as a new compile input and is
+recorded in the shader info.
+
+The matching FragCoord.w multiply is also baked into the standalone FS
+clip prolog so it sees linear values without running the lowering pass
+on the prolog itself.
+
+Signed-off-by: Christian Gmeiner <cgmeiner@igalia.com>
+Reviewed-by: Olivia Lee <olivia.lee@collabora.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/40343>
+---
+ src/panfrost/compiler/bifrost/bifrost_nir.c |  4 +
+ src/panfrost/compiler/pan_compiler.h        |  7 ++
+ src/panfrost/compiler/pan_nir_prolog.c      | 95 +++++++++++++++++++++
+ src/panfrost/compiler/pan_nir_prolog.h      |  5 ++
+ 4 files changed, 111 insertions(+)
+
+diff --git a/src/panfrost/compiler/bifrost/bifrost_nir.c b/src/panfrost/compiler/bifrost/bifrost_nir.c
+index 14bfa71a1d5..28c79366780 100644
+--- a/src/panfrost/compiler/bifrost/bifrost_nir.c
++++ b/src/panfrost/compiler/bifrost/bifrost_nir.c
+@@ -9,6 +9,7 @@
+ #include "compiler/nir/nir_builder.h"
+ #include "panfrost/compiler/pan_compiler.h"
+ #include "panfrost/compiler/pan_nir.h"
++#include "panfrost/compiler/pan_nir_prolog.h"
+ #include "util/perf/cpu_trace.h"
+ 
+ #include "panfrost/model/pan_model.h"
+@@ -887,6 +888,9 @@ bifrost_postprocess_nir(nir_shader *nir,
+       /* Needs to run after lower_vs_atomics as it inserts operations between
+        * ssbo_atomic and store_output */
+       NIR_PASS(_, nir, pan_nir_lower_noperspective_vs);
++      info->vs.clip_distance_array_size = inputs->clip_distance_array_size;
++      NIR_PASS(_, nir, pan_nir_lower_clip_distance_vs,
++               inputs->clip_distance_array_size);
+       NIR_PASS(_, nir, pan_nir_lower_vs_inputs, inputs->gpu_id);
+       NIR_PASS(_, nir, pan_nir_lower_vs_outputs, inputs->gpu_id,
+                inputs->varying_layout, info->vs.idvs,
+diff --git a/src/panfrost/compiler/pan_compiler.h b/src/panfrost/compiler/pan_compiler.h
+index c8d753e3ec2..80a5df84063 100644
+--- a/src/panfrost/compiler/pan_compiler.h
++++ b/src/panfrost/compiler/pan_compiler.h
+@@ -52,6 +52,10 @@ struct pan_compile_inputs {
+    /* Varying layout in memory, if known */
+    const struct pan_varying_layout *varying_layout;
+ 
++   /* Size of the gl_ClipDistance array written by the VS. Zero disables clip
++    * distance lowering. */
++   uint8_t clip_distance_array_size;
++
+    /* Settings to move constants into the FAU. */
+    struct {
+       /* Driver-reserved range at the start of the FAU */
+@@ -498,6 +502,9 @@ struct pan_shader_info {
+           * used by the varying shader
+           */
+          uint64_t secondary_preload;
++
++         /* Size of the gl_ClipDistance array written by the shader */
++         uint8_t clip_distance_array_size;
+       } vs;
+ 
+       struct {
+diff --git a/src/panfrost/compiler/pan_nir_prolog.c b/src/panfrost/compiler/pan_nir_prolog.c
+index f8cd8381d0b..baa651e90cf 100644
+--- a/src/panfrost/compiler/pan_nir_prolog.c
++++ b/src/panfrost/compiler/pan_nir_prolog.c
+@@ -6,6 +6,7 @@
+ #include "pan_nir_prolog.h"
+ #include "compiler/nir/nir_builder.h"
+ #include "compiler/shader_enums.h"
++#include "pan_nir.h"
+ 
+ /* Build a standalone fragment shader prolog that interpolates clip distances
+  * from VARYING_SLOT_CLIP_DIST0/1 and demotes fragments where any clip
+@@ -59,3 +60,97 @@ pan_nir_build_fs_prolog(const struct pan_fs_prolog_key *key,
+ 
+    return b.shader;
+ }
++
++/* Mali only supports perspective-correct or flat interpolation. To get linear
++ * interpolation for clip distances (required by Vulkan), the VS stores
++ * (clip_dist * W) and the FS divides out by multiplying by FragCoord.w after
++ * perspective-correct interpolation.
++ *
++ * Like pan_nir_lower_noperspective_vs, this must run after
++ * nir_lower_viewport_transform. That pass may clamp W, and we must scale by the
++ * same W the hardware uses for interpolation. After it, position W holds 1/W,
++ * so we take its reciprocal.
++ *
++ * We do not reuse pan_nir_lower_noperspective_vs. That pass is for user
++ * varyings, where the VS and FS interpolation modes can differ, so it uses a
++ * runtime mask to pick which stores to multiply by W. Clip distances are
++ * always linear and a separate FS prolog reads them back, so here we always
++ * multiply and need no mask.
++ */
++
++static bool
++is_clip_dist_loc(unsigned loc)
++{
++   return loc == VARYING_SLOT_CLIP_DIST0 || loc == VARYING_SLOT_CLIP_DIST1;
++}
++
++static bool
++multiply_clip_store_by_pos_w(nir_builder *b, nir_intrinsic_instr *intrin,
++                             void *data)
++{
++   nir_def *pos_w = data;
++
++   if (intrin->intrinsic != nir_intrinsic_store_output)
++      return false;
++
++   if (!is_clip_dist_loc(nir_intrinsic_io_semantics(intrin).location))
++      return false;
++
++   b->cursor = nir_before_instr(&intrin->instr);
++   nir_def *scaled = nir_fmul(b, intrin->src[0].ssa, pos_w);
++   nir_src_rewrite(&intrin->src[0], scaled);
++
++   return true;
++}
++
++bool
++pan_nir_lower_clip_distance_vs(nir_shader *shader,
++                               unsigned clip_distance_array_size)
++{
++   assert(shader->info.stage == MESA_SHADER_VERTEX);
++
++   if (clip_distance_array_size == 0)
++      return false;
++
++   nir_builder b;
++   nir_def *pos_w = pan_nir_get_pos_w(&b, shader);
++   if (!pos_w)
++      return false;
++
++   nir_shader_intrinsics_pass(shader, multiply_clip_store_by_pos_w,
++                              nir_metadata_control_flow, pos_w);
++
++   return true;
++}
++
++static bool
++lower_clip_distance_fs_instr(nir_builder *b, nir_intrinsic_instr *intrin,
++                             UNUSED void *data)
++{
++   if (intrin->intrinsic != nir_intrinsic_load_interpolated_input)
++      return false;
++
++   if (!is_clip_dist_loc(nir_intrinsic_io_semantics(intrin).location))
++      return false;
++
++   b->cursor = nir_after_instr(&intrin->instr);
++   nir_def *fragcoord = nir_load_frag_coord(b);
++   nir_def *fragcoord_w = nir_channel(b, fragcoord, 3);
++   nir_def *corrected = nir_fmul(b, &intrin->def, fragcoord_w);
++
++   nir_def_rewrite_uses_after(&intrin->def, corrected);
++
++   return true;
++}
++
++bool
++pan_nir_lower_clip_distance_fs(nir_shader *shader)
++{
++   assert(shader->info.stage == MESA_SHADER_FRAGMENT);
++
++   if (shader->info.clip_distance_array_size == 0)
++      return false;
++
++   return nir_shader_intrinsics_pass(shader, lower_clip_distance_fs_instr,
++                                     nir_metadata_control_flow, NULL);
++}
+diff --git a/src/panfrost/compiler/pan_nir_prolog.h b/src/panfrost/compiler/pan_nir_prolog.h
+index 1558127b3f7..e0193e4e94b 100644
+--- a/src/panfrost/compiler/pan_nir_prolog.h
++++ b/src/panfrost/compiler/pan_nir_prolog.h
+@@ -14,3 +14,8 @@ struct pan_fs_prolog_key {
+ nir_shader *
+ pan_nir_build_fs_prolog(const struct pan_fs_prolog_key *key,
+                         const nir_shader_compiler_options *options);
++
++bool pan_nir_lower_clip_distance_vs(nir_shader *shader,
++                                    unsigned clip_distance_array_size);
++
++bool pan_nir_lower_clip_distance_fs(nir_shader *shader);

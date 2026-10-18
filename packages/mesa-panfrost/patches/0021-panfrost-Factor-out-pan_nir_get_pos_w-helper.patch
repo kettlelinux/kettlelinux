@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Gmeiner <cgmeiner@igalia.com>
+Date: Thu, 12 Mar 2026 19:56:05 +0100
+Subject: [PATCH 21/57] panfrost: Factor out pan_nir_get_pos_w() helper
+
+Move the gl_Position.w recovery out of pan_nir_lower_noperspective_vs()
+into a shared helper so it can be reused by the clip distance lowering
+pass.
+
+Signed-off-by: Christian Gmeiner <cgmeiner@igalia.com>
+Reviewed-by: Olivia Lee <olivia.lee@collabora.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/40343>
+---
+ src/panfrost/compiler/pan_nir.h               |  2 ++
+ .../compiler/pan_nir_lower_noperspective.c    | 27 ++++++++++++++-----
+ 2 files changed, 22 insertions(+), 7 deletions(-)
+
+diff --git a/src/panfrost/compiler/pan_nir.h b/src/panfrost/compiler/pan_nir.h
+index 95da20974c1..b449d3f3e41 100644
+--- a/src/panfrost/compiler/pan_nir.h
++++ b/src/panfrost/compiler/pan_nir.h
+@@ -370,4 +370,6 @@ bool pan_nir_opt_push_ubo(nir_shader *nir,
+                           struct pan_fau_layout *fau,
+                           uint32_t *ubo_mask_out);
+ 
++nir_def *pan_nir_get_pos_w(nir_builder *b, nir_shader *shader);
++
+ #endif /* __PAN_NIR_H__ */
+diff --git a/src/panfrost/compiler/pan_nir_lower_noperspective.c b/src/panfrost/compiler/pan_nir_lower_noperspective.c
+index 0b522e83570..9d69a230520 100644
+--- a/src/panfrost/compiler/pan_nir_lower_noperspective.c
++++ b/src/panfrost/compiler/pan_nir_lower_noperspective.c
+@@ -121,13 +121,13 @@ move_output_stores_after(nir_instr *after)
+    }
+ }
+ 
+-bool
+-pan_nir_lower_noperspective_vs(nir_shader *shader)
++nir_def *
++pan_nir_get_pos_w(nir_builder *b, nir_shader *shader)
+ {
+    assert(shader->info.stage == MESA_SHADER_VERTEX);
+ 
+    if (!(shader->info.outputs_written & VARYING_BIT_POS))
+-      return false;
++      return NULL;
+ 
+    nir_function_impl *impl = nir_shader_get_entrypoint(shader);
+ 
+@@ -136,17 +136,30 @@ pan_nir_lower_noperspective_vs(nir_shader *shader)
+    bool has_pos_w =
+       pos_store && !!(nir_intrinsic_write_mask(pos_store) & BITFIELD_BIT(3));
+    if (!has_pos_w)
+-      return false;
++      return NULL;
+ 
+-   nir_builder b = nir_builder_at(nir_after_instr(&pos_store->instr));
++   *b = nir_builder_at(nir_after_instr(&pos_store->instr));
+ 
+    /* This is after nir_lower_viewport_transform, so stored W is 1/W */
+-   nir_def *pos_w_recip = nir_channel(&b, pos_store->src[0].ssa, 3);
+-   nir_def *pos_w = nir_frcp(&b, pos_w_recip);
++   nir_def *pos_w_recip = nir_channel(b, pos_store->src[0].ssa, 3);
++   nir_def *pos_w = nir_frcp(b, pos_w_recip);
+ 
+    /* Reorder stores to ensure pos_w def is available */
+    move_output_stores_after(nir_def_instr(pos_w));
+ 
++   return pos_w;
++}
++
++bool
++pan_nir_lower_noperspective_vs(nir_shader *shader)
++{
++   assert(shader->info.stage == MESA_SHADER_VERTEX);
++
++   nir_builder b;
++   nir_def *pos_w = pan_nir_get_pos_w(&b, shader);
++   if (!pos_w)
++      return false;
++
+    nir_def *noperspective_outputs = nir_load_noperspective_varyings_pan(&b);
+    struct lower_noperspective_vs_state state = {
+       .pos_w = pos_w,

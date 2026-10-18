@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ryan Zhang <ryan.zhang@nxp.com>
+Date: Fri, 31 Jul 2026 17:31:28 +0800
+Subject: [PATCH 46/57] panvk: add panvk_buffer_host_ptr for CPU-side index
+ buffer access
+
+Save memory binding info (mem, mem_offset) in panvk_buffer during
+BindBufferMemory2. Add panvk_buffer_host_ptr() to compute a CPU
+pointer into buffer memory. This is used by CmdBindIndexBuffer2
+to save a host_ptr for CPU-side index buffer traversal during
+XFB indexed draw with primitive restart.
+
+Signed-off-by: Ryan Zhang <ryan.zhang@nxp.com>
+---
+ src/panfrost/vulkan/panvk_buffer.c |  2 ++
+ src/panfrost/vulkan/panvk_buffer.h | 19 +++++++++++++++++++
+ 2 files changed, 21 insertions(+)
+
+diff --git a/src/panfrost/vulkan/panvk_buffer.c b/src/panfrost/vulkan/panvk_buffer.c
+index 9301fc70f40..69970c13dc7 100644
+--- a/src/panfrost/vulkan/panvk_buffer.c
++++ b/src/panfrost/vulkan/panvk_buffer.c
+@@ -89,6 +89,8 @@ panvk_BindBufferMemory2(VkDevice _device, uint32_t bindInfoCount,
+          *bind_status->pResult = VK_SUCCESS;
+ 
+       buffer->vk.device_address = mem->addr.dev + pBindInfos[i].memoryOffset;
++      buffer->mem = mem;
++      buffer->mem_offset = pBindInfos[i].memoryOffset;
+ 
+       panvk_address_binding_report(device, &buffer->vk.base,
+                                    buffer->vk.device_address, buffer->vk.size,
+diff --git a/src/panfrost/vulkan/panvk_buffer.h b/src/panfrost/vulkan/panvk_buffer.h
+index 5b3b47f1766..b92eaf4fae7 100644
+--- a/src/panfrost/vulkan/panvk_buffer.h
++++ b/src/panfrost/vulkan/panvk_buffer.h
+@@ -9,16 +9,35 @@
+ #include <stdint.h>
+ 
+ #include "vk_buffer.h"
++#include "panvk_device_memory.h"
+ 
+ struct panvk_priv_bo;
+ 
+ struct panvk_buffer {
+    struct vk_buffer vk;
++
++   /* Memory binding info, saved for CPU-side access to buffer contents
++    * (e.g. reading index buffer for XFB primitive restart handling).
++    */
++   struct panvk_device_memory *mem;
++   VkDeviceSize mem_offset;
+ };
+ 
+ VK_DEFINE_NONDISP_HANDLE_CASTS(panvk_buffer, vk.base, VkBuffer,
+                                VK_OBJECT_TYPE_BUFFER)
+ 
++/* Get a CPU pointer to buffer contents at the given offset.
++ * Returns NULL if the buffer is not host-visible/mapped.
++ */
++static inline void *
++panvk_buffer_host_ptr(const struct panvk_buffer *buffer, uint64_t offset)
++{
++   if (!buffer->mem || !buffer->mem->addr.host)
++      return NULL;
++
++   return (uint8_t *)buffer->mem->addr.host + buffer->mem_offset + offset;
++}
++
+ static inline uint64_t
+ panvk_buffer_gpu_ptr(const struct panvk_buffer *buffer, uint64_t offset)
+ {

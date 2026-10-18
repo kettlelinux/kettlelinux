@@ -1,0 +1,497 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: 06n-arch <gennro2004@gmail.com>
+Date: Mon, 28 Sep 2026 20:01:40 -0500
+Subject: [PATCH 37/57] panvk: Fold pass-through geometry shaders into the
+ vertex shader (06n-arch)
+
+PanVK has no geometry shaders; 0017 advertises them for DXVK and fails
+any pipeline that has one. Unreal Engine 4 games hit that constantly:
+UE4 renders into 3D-texture slices (the color grading LUT, the
+translucency lighting volume) with a GS that re-emits each triangle
+unchanged and only adds gl_Layer. With those draws skipped, the
+tonemapper reads an all-zero LUT and the whole 3D view is black while
+the HUD, drawn after tonemapping, still shows (Deep Rock Galactic on a
+Radxa Orion O6N).
+
+When a GS is compiled together with its VS (monolithic pipelines and
+DXVK's pre-rasterization libraries both do that), check whether it is a
+pure pass-through: straight-line code, one invocation, stream 0, the
+input primitive's vertex count emitted as a strip of the same primitive,
+and every output a plain copy of the same vertex's input (gl_Layer and
+gl_ViewportIndex may come from vertex 0, which is the provoking one). If
+so, make the VS write the GS outputs itself from its own outputs (v10+
+has shaderOutputLayer) and compile the GS to an empty stub that binding
+ignores and that serializes to just its stage. Anything else still fails
+the pipeline as before; the first such GS is printed to stderr so the
+matcher can be extended.
+---
+ src/panfrost/vulkan/panvk_shader.h    |   3 +
+ src/panfrost/vulkan/panvk_vX_shader.c | 387 +++++++++++++++++++++++++-
+ 2 files changed, 387 insertions(+), 3 deletions(-)
+
+diff --git a/src/panfrost/vulkan/panvk_shader.h b/src/panfrost/vulkan/panvk_shader.h
+index 20f9c011e99..7122687cfa1 100644
+--- a/src/panfrost/vulkan/panvk_shader.h
++++ b/src/panfrost/vulkan/panvk_shader.h
+@@ -502,6 +502,9 @@ struct panvk_shader {
+    struct panvk_shader_desc_info desc_info;
+    struct poly_gs_info gs_info;
+ 
++   /* 06n-arch: a GS folded into its VS, which is bound as no GS at all. */
++   bool gs_folded_stub;
++
+    struct panvk_shader_variant variants[];
+ };
+ 
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index f0a9afa063b..c49ef8f2a97 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -50,6 +50,7 @@
+ #include "vk_pipeline.h"
+ #include "vk_pipeline_layout.h"
+ #include "vk_shader.h"
++#include "util/u_debug.h"
+ #include "vk_util.h"
+ 
+ #define FAU_WORD_COUNT 64
+@@ -1893,6 +1894,325 @@ panvk_per_arch(create_shader_from_binary)(struct panvk_device *dev,
+    return result;
+ }
+ 
++/* 06n-arch: pass-through geometry shaders.
++ *
++ * PanVK has no geometry shaders, but games under DXVK hit them anyway:
++ * Unreal Engine 4 renders into 3D-texture slices (its color grading LUT,
++ * its translucency lighting volume) with a GS that re-emits each triangle
++ * unchanged and only adds gl_Layer. Skipping those draws leaves the
++ * tonemapper reading an all-zero LUT, so the whole 3D view is black.
++ *
++ * A GS like that can be folded into the VS: the VS writes what the GS
++ * would have, gl_Layer included (shaderOutputLayer), and the GS stage
++ * becomes an empty stub. Only straight-line GSes that emit exactly the
++ * input primitive's vertices, each output a plain copy of the same
++ * vertex's input, are accepted; anything else still fails the pipeline.
++ */
++
++#define GS_PT_MAX_OUTPUTS 32
++
++struct gs_pt_output {
++   nir_variable *var;
++   uint8_t mask;
++   struct {
++      nir_variable *in_var;
++      uint8_t comp;
++      uint8_t vertex;
++   } src[4];
++};
++
++struct gs_passthrough {
++   unsigned count;
++   struct gs_pt_output outs[GS_PT_MAX_OUTPUTS];
++};
++
++static struct gs_pt_output *
++gs_pt_get_output(struct gs_passthrough *pt, nir_variable *var)
++{
++   for (unsigned i = 0; i < pt->count; i++) {
++      if (pt->outs[i].var == var)
++         return &pt->outs[i];
++   }
++
++   if (pt->count == GS_PT_MAX_OUTPUTS)
++      return NULL;
++
++   struct gs_pt_output *out = &pt->outs[pt->count++];
++   memset(out, 0, sizeof(*out));
++   out->var = var;
++   return out;
++}
++
++/* Per-primitive values only matter on the provoking (first) vertex. */
++static bool
++gs_pt_is_per_primitive(const nir_variable *var)
++{
++   return var->data.location == VARYING_SLOT_LAYER ||
++          var->data.location == VARYING_SLOT_VIEWPORT;
++}
++
++/* Checks the outputs written before an EmitVertex() and folds them into
++ * the mapping all vertices must share. */
++static bool
++gs_pt_add_vertex(struct gs_passthrough *pt, const struct gs_passthrough *cur,
++                 unsigned vertex)
++{
++   for (unsigned i = 0; i < cur->count; i++) {
++      const struct gs_pt_output *o = &cur->outs[i];
++
++      u_foreach_bit(c, o->mask) {
++         bool per_prim = gs_pt_is_per_primitive(o->var);
++         if (per_prim ? (vertex == 0 && o->src[c].vertex != 0)
++                      : o->src[c].vertex != vertex)
++            return false;
++      }
++   }
++
++   if (vertex == 0) {
++      *pt = *cur;
++      return true;
++   }
++
++   if (cur->count != pt->count)
++      return false;
++
++   for (unsigned i = 0; i < cur->count; i++) {
++      const struct gs_pt_output *o = &cur->outs[i];
++      const struct gs_pt_output *ref = NULL;
++
++      for (unsigned j = 0; j < pt->count; j++) {
++         if (pt->outs[j].var == o->var)
++            ref = &pt->outs[j];
++      }
++
++      if (!ref || ref->mask != o->mask)
++         return false;
++
++      u_foreach_bit(c, o->mask) {
++         if (ref->src[c].in_var != o->src[c].in_var ||
++             ref->src[c].comp != o->src[c].comp)
++            return false;
++      }
++   }
++
++   return true;
++}
++
++static bool
++analyze_passthrough_gs(nir_shader *gs, struct gs_passthrough *pt)
++{
++   unsigned nverts;
++   enum mesa_prim strip;
++
++   switch (gs->info.gs.input_primitive) {
++   case MESA_PRIM_POINTS:
++      nverts = 1;
++      strip = MESA_PRIM_POINTS;
++      break;
++   case MESA_PRIM_LINES:
++      nverts = 2;
++      strip = MESA_PRIM_LINE_STRIP;
++      break;
++   case MESA_PRIM_TRIANGLES:
++      nverts = 3;
++      strip = MESA_PRIM_TRIANGLE_STRIP;
++      break;
++   default:
++      return false;
++   }
++
++   if (gs->info.gs.output_primitive != strip ||
++       gs->info.gs.vertices_out != nverts || gs->info.gs.invocations > 1 ||
++       (gs->info.gs.active_stream_mask & ~1) || gs->xfb_info ||
++       gs->info.has_transform_feedback_varyings)
++      return false;
++
++   nir_function_impl *impl = nir_shader_get_entrypoint(gs);
++   if (!exec_list_is_singular(&impl->body))
++      return false;
++
++   struct gs_passthrough cur = {0};
++   unsigned emitted = 0;
++   bool ended = false;
++
++   nir_foreach_instr(instr, nir_start_block(impl)) {
++      if (instr->type != nir_instr_type_intrinsic)
++         continue;
++
++      nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
++
++      switch (intr->intrinsic) {
++      case nir_intrinsic_load_deref:
++         break;
++
++      case nir_intrinsic_store_deref: {
++         nir_deref_instr *dst = nir_src_as_deref(intr->src[0]);
++
++         if (ended || dst->deref_type != nir_deref_type_var ||
++             !nir_deref_mode_is(dst, nir_var_shader_out) ||
++             !glsl_type_is_vector_or_scalar(dst->var->type))
++            return false;
++
++         struct gs_pt_output *out = gs_pt_get_output(&cur, dst->var);
++         if (!out)
++            return false;
++
++         u_foreach_bit(c, nir_intrinsic_write_mask(intr)) {
++            nir_scalar sc = nir_scalar_resolved(intr->src[1].ssa, c);
++
++            if (!nir_def_is_intrinsic(sc.def) ||
++                nir_scalar_intrinsic_op(sc) != nir_intrinsic_load_deref)
++               return false;
++
++            nir_intrinsic_instr *ld = nir_def_as_intrinsic(sc.def);
++            nir_deref_instr *src = nir_src_as_deref(ld->src[0]);
++            if (src->deref_type != nir_deref_type_array ||
++                !nir_src_is_const(src->arr.index))
++               return false;
++
++            nir_deref_instr *parent = nir_deref_instr_parent(src);
++            if (parent->deref_type != nir_deref_type_var ||
++                !nir_deref_mode_is(parent, nir_var_shader_in) ||
++                !glsl_type_is_vector_or_scalar(glsl_get_array_element(
++                   parent->var->type)))
++               return false;
++
++            out->mask |= BITFIELD_BIT(c);
++            out->src[c].in_var = parent->var;
++            out->src[c].comp = sc.comp;
++            out->src[c].vertex = nir_src_as_uint(src->arr.index);
++         }
++         break;
++      }
++
++      case nir_intrinsic_emit_vertex:
++         if (ended || nir_intrinsic_stream_id(intr) != 0 ||
++             emitted == nverts || !gs_pt_add_vertex(pt, &cur, emitted))
++            return false;
++
++         emitted++;
++         memset(&cur, 0, sizeof(cur));
++         break;
++
++      case nir_intrinsic_end_primitive:
++         if (nir_intrinsic_stream_id(intr) != 0)
++            return false;
++         ended = true;
++         break;
++
++      default:
++         /* Anything with side effects, or that we don't understand. */
++         if (!(nir_intrinsic_infos[intr->intrinsic].flags &
++               NIR_INTRINSIC_CAN_ELIMINATE))
++            return false;
++         break;
++      }
++   }
++
++   return emitted == nverts && pt->count > 0;
++}
++
++/* Makes the VS write the GS outputs: each one copied from the VS output
++ * the GS read it from. The VS's own outputs become temporaries. */
++static bool
++fold_passthrough_gs_into_vs(nir_shader *vs, const nir_shader *gs,
++                            const struct gs_passthrough *pt)
++{
++   nir_variable *srcs[GS_PT_MAX_OUTPUTS][4] = {0};
++
++   /* Resolve every source before touching the VS, so we can still bail. */
++   for (unsigned i = 0; i < pt->count; i++) {
++      const struct gs_pt_output *o = &pt->outs[i];
++
++      u_foreach_bit(c, o->mask) {
++         const nir_variable *in = o->src[c].in_var;
++         const struct glsl_type *in_elem = glsl_get_array_element(in->type);
++
++         nir_foreach_shader_out_variable(var, vs) {
++            if (var->data.location == in->data.location &&
++                var->data.location_frac == in->data.location_frac &&
++                glsl_type_is_vector_or_scalar(var->type) &&
++                glsl_get_bit_size(var->type) == glsl_get_bit_size(in_elem) &&
++                o->src[c].comp < glsl_get_vector_elements(var->type)) {
++               srcs[i][c] = var;
++               break;
++            }
++         }
++
++         if (!srcs[i][c] ||
++             glsl_get_bit_size(o->var->type) != glsl_get_bit_size(in_elem))
++            return false;
++      }
++   }
++
++   nir_foreach_shader_out_variable_safe(var, vs)
++      var->data.mode = nir_var_shader_temp;
++   nir_fixup_deref_modes(vs);
++
++   nir_function_impl *impl = nir_shader_get_entrypoint(vs);
++   nir_builder b = nir_builder_at(nir_after_impl(impl));
++
++   for (unsigned i = 0; i < pt->count; i++) {
++      const struct gs_pt_output *o = &pt->outs[i];
++      nir_variable *var = nir_variable_clone(o->var, vs);
++      unsigned ncomps = glsl_get_vector_elements(var->type);
++      unsigned bit_size = glsl_get_bit_size(var->type);
++      nir_def *comps[4];
++
++      var->data.mode = nir_var_shader_out;
++      var->data.stream = 0;
++      nir_shader_add_variable(vs, var);
++
++      for (unsigned c = 0; c < ncomps; c++) {
++         if (o->mask & BITFIELD_BIT(c)) {
++            nir_def *val = nir_load_var(&b, srcs[i][c]);
++            comps[c] = nir_channel(&b, val, o->src[c].comp);
++         } else {
++            comps[c] = nir_undef(&b, 1, bit_size);
++         }
++      }
++
++      nir_store_var(&b, var, nir_vec(&b, comps, ncomps), o->mask);
++   }
++
++   nir_progress(true, impl, nir_metadata_none);
++
++   vs->info.clip_distance_array_size = gs->info.clip_distance_array_size;
++   vs->info.cull_distance_array_size = gs->info.cull_distance_array_size;
++   vs->info.next_stage = MESA_SHADER_FRAGMENT;
++
++   NIR_PASS(_, vs, nir_lower_global_vars_to_local);
++   NIR_PASS(_, vs, nir_lower_vars_to_ssa);
++   NIR_PASS(_, vs, nir_opt_dce);
++   NIR_PASS(_, vs, nir_remove_dead_variables,
++            nir_var_shader_temp | nir_var_function_temp, NULL);
++   nir_shader_gather_info(vs, impl);
++
++   return true;
++}
++
++/* What a folded GS compiles to: no code, bound as no GS. */
++static VkResult
++panvk_create_gs_stub(struct panvk_device *dev,
++                     const VkAllocationCallbacks *pAllocator,
++                     struct vk_shader **shader_out)
++{
++   size_t size = sizeof(struct panvk_shader) +
++                 sizeof(struct panvk_shader_variant) *
++                    panvk_shader_num_variants(MESA_SHADER_GEOMETRY);
++   struct panvk_shader *shader = vk_shader_zalloc(
++      &dev->vk, &panvk_shader_ops, MESA_SHADER_GEOMETRY, pAllocator, size);
++   if (shader == NULL)
++      return panvk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
++
++   panvk_shader_foreach_variant(shader, variant)
++      variant->info.stage = MESA_SHADER_GEOMETRY;
++   shader->gs_folded_stub = true;
++
++   *shader_out = &shader->vk;
++   return VK_SUCCESS;
++}
++
+ static VkResult
+ compile_shaders(struct vk_device *vk_dev, uint32_t shader_count,
+                 struct vk_shader_compile_info *infos,
+@@ -1907,6 +2227,31 @@ compile_shaders(struct vk_device *vk_dev, uint32_t shader_count,
+    VkResult result;
+    int32_t i;
+ 
++   /* 06n-arch: fold pass-through GSes compiled together with their VS into
++    * the VS (see analyze_passthrough_gs()), which is much cheaper than
++    * running the GS. Any other GS is compiled for the compute emulation
++    * (libpoly). gs_idx is the index of a folded GS, or -1.
++    */
++   int32_t gs_idx = -1;
++   for (i = 0; i < shader_count; i++) {
++      if (infos[i].stage != MESA_SHADER_GEOMETRY)
++         continue;
++
++      struct gs_passthrough pt;
++      if (!debug_get_bool_option("PANVK_NO_GS_FOLD", false) &&
++          i > 0 && infos[i - 1].stage == MESA_SHADER_VERTEX &&
++          analyze_passthrough_gs(infos[i].nir, &pt) &&
++          fold_passthrough_gs_into_vs(infos[i - 1].nir, infos[i].nir, &pt)) {
++         gs_idx = i;
++         infos[i - 1].next_stage_mask = infos[i].next_stage_mask;
++         mesa_logw_once("panvk: folded a pass-through geometry shader into "
++                        "its vertex shader (06n-arch)");
++      } else {
++         mesa_logw_once("panvk: emulating a geometry shader with compute "
++                        "(06n-arch)");
++      }
++   }
++
+    /* If we are linking VS and FS, we can use the static interpolation
+     * qualifiers from the FS in the VS.  Vulkan runtime passes us shaders in
+     * stage order, so the FS will always be last if it exists.
+@@ -1922,14 +2267,26 @@ compile_shaders(struct vk_device *vk_dev, uint32_t shader_count,
+       const uint32_t *noperspective_varyings_ptr =
+          use_static_noperspective ? &noperspective_varyings : NULL;
+ 
++      /* A folded GS: its VS already writes its outputs. */
++      if (i == gs_idx) {
++         result = panvk_create_gs_stub(dev, pAllocator, &shaders_out[i]);
++         if (result != VK_SUCCESS)
++            goto err_cleanup;
++
++         ralloc_free(infos[i].nir);
++         continue;
++      }
++
+       /* For fragment shaders, Look at the previous stage to see if we can
+        * find a varying layout we can use instead of making up our own.
++       * Skip a folded GS: the VS feeds the FS directly.
+        */
++      int32_t prev = (i - 1 == gs_idx) ? i - 2 : i - 1;
+       const struct pan_varying_layout *vs_varying_layout = NULL;
+-      if (infos[i].stage == MESA_SHADER_FRAGMENT && i > 0 &&
+-          infos[i - 1].next_stage_mask == VK_SHADER_STAGE_FRAGMENT_BIT) {
++      if (infos[i].stage == MESA_SHADER_FRAGMENT && prev >= 0 &&
++          infos[prev].next_stage_mask == VK_SHADER_STAGE_FRAGMENT_BIT) {
+          struct panvk_shader *prev_shader =
+-            container_of(shaders_out[i - 1], struct panvk_shader, vk);
++            container_of(shaders_out[prev], struct panvk_shader, vk);
+ 
+          /* The last geometry stage before the FS will always have a HW vertex
+           * shader variant.
+@@ -2176,6 +2533,17 @@ panvk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
+    if (blob->overrun)
+       return vk_error(device, VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT);
+ 
++   bool gs_folded_stub = false;
++   struct poly_gs_info gs_info = {0};
++   if (stage == MESA_SHADER_GEOMETRY) {
++      gs_folded_stub = blob_read_uint8(blob);
++      if (gs_folded_stub)
++         return panvk_create_gs_stub(device, pAllocator, shader_out);
++      blob_copy_bytes(blob, &gs_info, sizeof(gs_info));
++      if (blob->overrun)
++         return vk_error(device, VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT);
++   }
++
+    size_t size =
+       sizeof(struct panvk_shader) +
+       sizeof(struct panvk_shader_variant) * panvk_shader_num_variants(stage);
+@@ -2184,6 +2552,8 @@ panvk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
+    if (shader == NULL)
+       return panvk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+ 
++   shader->gs_info = gs_info;
++
+    result = shader_desc_info_deserialize(device, blob, shader);
+    if (result != VK_SUCCESS) {
+       panvk_shader_destroy(vk_dev, &shader->vk, pAllocator);
+@@ -2298,6 +2668,14 @@ panvk_shader_serialize(struct vk_device *vk_dev,
+ 
+    blob_write_uint8(blob, vk_shader->stage);
+ 
++   if (vk_shader->stage == MESA_SHADER_GEOMETRY) {
++      blob_write_uint8(blob, shader->gs_folded_stub);
++      /* A folded pass-through GS stub has nothing else to store. */
++      if (shader->gs_folded_stub)
++         return !blob->out_of_memory;
++      blob_write_bytes(blob, &shader->gs_info, sizeof(shader->gs_info));
++   }
++
+    shader_desc_info_serialize(blob, shader);
+ 
+    panvk_shader_foreach_variant(shader, variant) {
+@@ -2744,6 +3122,9 @@ panvk_cmd_bind_shader(struct panvk_cmd_buffer *cmd, const mesa_shader_stage stag
+       }
+       break;
+    case MESA_SHADER_GEOMETRY:
++      /* A folded pass-through GS: the VS does its work. */
++      if (shader && shader->gs_folded_stub)
++         shader = NULL;
+       if (cmd->state.gfx.gs.shader != shader) {
+          cmd->state.gfx.gs.shader = shader;
+          gfx_state_set_dirty(cmd, GS);

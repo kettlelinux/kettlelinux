@@ -1,0 +1,147 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: 06n-arch <gennro2004@gmail.com>
+Date: Mon, 28 Sep 2026 19:45:29 -0500
+Subject: [PATCH 36/57] panvk/csf: Share shader scratch (TLS) across command
+ buffers (06n-arch)
+
+A command buffer allocated its TLS from its own pool, sized for its
+largest per-thread stack times every thread slot of every core. With a
+spilling shader that's big: 4 KiB per thread is 184 MiB on a Mali-G720
+with a core ID range of 23. Resetting the command buffer returns the BO
+to its command pool's free list, which only that pool can reuse and
+which is only released on vkResetCommandPool(RELEASE_RESOURCES) or pool
+destruction.
+
+DXVK spreads its command buffers over many pools, so Deep Rock Galactic
+under DXVK on a Radxa Orion O6N ended up holding 161 TLS BOs (23, 46, 92
+and 184 MiB), 15 GB of a 32 GB machine, until allocations failed and the
+3D passes stopped rendering.
+
+Keep one TLS BO per power-of-two per-thread size on the device, created
+on first use and shared by every command buffer, like Turnip's scratch
+BOs. Concurrent jobs can share it: a thread's scratch is addressed by
+its core and thread slot, which no two running threads share, and every
+user of a given BO encodes the same per-thread size. Worst case is
+about twice the largest scratch size instead of one per command buffer.
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c | 45 +++++++++++++++++--
+ src/panfrost/vulkan/panvk_device.h            |  8 ++++
+ src/panfrost/vulkan/panvk_vX_device.c         |  7 +++
+ 3 files changed, 57 insertions(+), 3 deletions(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c
+index 4de045f0e78..92307984820 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c
+@@ -42,6 +42,43 @@
+ #include "vk_format.h"
+ #include "vk_synchronization.h"
+ 
++/* Scratch is sized for every thread slot of every core, so with a spilling
++ * shader it gets big: 4 KiB per thread is 184 MiB on a 23-core-range
++ * Mali-G720. Allocating it per command buffer, recycled only through each
++ * command pool's free list, left games under DXVK (which spreads command
++ * buffers over many pools) holding over a hundred of these, 15 GB.
++ *
++ * Share it device-wide instead, one BO per per-thread size. That's safe
++ * for concurrent jobs: a thread's scratch is addressed by its core and
++ * thread slot, which no two running threads share, and every user of a BO
++ * encodes the same per-thread size, so the layout agrees. */
++static uint64_t
++get_shared_tls(struct panvk_device *dev, unsigned thread_size,
++               unsigned thread_tls_alloc, unsigned core_id_range)
++{
++   unsigned idx =
++      util_logbase2(util_next_power_of_two(ALIGN_POT(thread_size, 16)));
++   struct panvk_priv_bo *bo;
++
++   assert(idx < ARRAY_SIZE(dev->tls.bos));
++
++   simple_mtx_lock(&dev->tls.lock);
++   bo = dev->tls.bos[idx];
++   if (!bo) {
++      unsigned size = pan_get_total_stack_size(thread_size, thread_tls_alloc,
++                                               core_id_range);
++      VkResult result = panvk_priv_bo_create(
++         dev, size, panvk_device_adjust_bo_flags(dev, PAN_KMOD_BO_FLAG_NO_MMAP),
++         VK_SYSTEM_ALLOCATION_SCOPE_DEVICE, &bo);
++
++      dev->tls.bos[idx] = result == VK_SUCCESS ? bo : NULL;
++      bo = dev->tls.bos[idx];
++   }
++   simple_mtx_unlock(&dev->tls.lock);
++
++   return bo ? bo->addr.dev : 0;
++}
++
+ static void
+ emit_tls(struct panvk_cmd_buffer *cmdbuf)
+ {
+@@ -53,11 +90,13 @@ emit_tls(struct panvk_cmd_buffer *cmdbuf)
+    if (cmdbuf->state.tls.info.tls.size) {
+       unsigned thread_tls_alloc =
+          pan_query_thread_tls_alloc(&phys_dev->kmod.dev->props);
+-      unsigned size = pan_get_total_stack_size(cmdbuf->state.tls.info.tls.size,
+-                                               thread_tls_alloc, core_id_range);
+ 
+       cmdbuf->state.tls.info.tls.ptr =
+-         panvk_cmd_alloc_dev_mem(cmdbuf, tls, size, 4096).gpu;
++         get_shared_tls(dev, cmdbuf->state.tls.info.tls.size,
++                        thread_tls_alloc, core_id_range);
++      if (!cmdbuf->state.tls.info.tls.ptr)
++         vk_command_buffer_set_error(&cmdbuf->vk,
++                                     VK_ERROR_OUT_OF_DEVICE_MEMORY);
+    }
+ 
+    assert(!cmdbuf->state.tls.info.wls.size);
+diff --git a/src/panfrost/vulkan/panvk_device.h b/src/panfrost/vulkan/panvk_device.h
+index 708616402a3..67ec3495e8b 100644
+--- a/src/panfrost/vulkan/panvk_device.h
++++ b/src/panfrost/vulkan/panvk_device.h
+@@ -85,6 +85,14 @@ struct panvk_device {
+    struct panvk_priv_bo *poly_heap_buffer;
+    struct panvk_priv_bo *sample_positions;
+ 
++   /* Shader scratch (TLS), shared by every command buffer: one BO per
++    * power-of-two per-thread stack size, indexed by its log2, created on
++    * first use and kept until the device is destroyed. */
++   struct {
++      simple_mtx_t lock;
++      struct panvk_priv_bo *bos[32];
++   } tls;
++
+    struct {
+       struct panvk_priv_bo *handlers_bo;
+       uint32_t handler_stride;
+diff --git a/src/panfrost/vulkan/panvk_vX_device.c b/src/panfrost/vulkan/panvk_vX_device.c
+index ca79c32c1b3..33d664de11c 100644
+--- a/src/panfrost/vulkan/panvk_vX_device.c
++++ b/src/panfrost/vulkan/panvk_vX_device.c
+@@ -543,6 +543,7 @@ panvk_per_arch(create_device)(struct panvk_physical_device *physical_device,
+ #endif
+ 
+    simple_mtx_init(&device->as.lock, mtx_plain);
++   simple_mtx_init(&device->tls.lock, mtx_plain);
+ 
+    panvk_device_init_mempools(device);
+ 
+@@ -689,6 +690,9 @@ err_free_priv_bos:
+    panvk_priv_bo_unref(device->indirect_varying_buffer);
+    panvk_priv_bo_unref(device->poly_heap_buffer);
+    panvk_priv_bo_unref(device->tiler_heap);
++   for (unsigned i = 0; i < ARRAY_SIZE(device->tls.bos); i++)
++      panvk_priv_bo_unref(device->tls.bos[i]);
++   simple_mtx_destroy(&device->tls.lock);
+    panvk_device_cleanup_mempools(device);
+    vk_free(&device->vk.alloc, device->dump_region_size);
+    pan_kmod_vm_destroy(device->kmod.vm);
+@@ -736,6 +740,9 @@ panvk_per_arch(destroy_device)(struct panvk_device *device,
+    panvk_priv_bo_unref(device->poly_heap_buffer);
+    panvk_priv_bo_unref(device->tiler_heap);
+    panvk_priv_bo_unref(device->sample_positions);
++   for (unsigned i = 0; i < ARRAY_SIZE(device->tls.bos); i++)
++      panvk_priv_bo_unref(device->tls.bos[i]);
++   simple_mtx_destroy(&device->tls.lock);
+    panvk_device_cleanup_mempools(device);
+    vk_free(&device->vk.alloc, device->dump_region_size);
+    pan_kmod_vm_destroy(device->kmod.vm);

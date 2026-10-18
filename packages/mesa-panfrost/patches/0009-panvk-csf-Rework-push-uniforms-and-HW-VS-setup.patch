@@ -1,0 +1,297 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Wed, 30 Sep 2026 21:09:15 -0500
+Subject: [PATCH 09/57] panvk/csf: Rework push uniforms and HW VS setup
+
+Ported from mesa!38401 (c4866fa63b3) onto the current upstream draw
+path, which now passes the VS/FS variants down from prepare_draw() and
+keeps the sysvals for the blend descriptors: the VS sysvals and push
+uniforms are prepared in panvk_cmd_draw() before the geometry pipeline,
+and prepare_draw() refreshes the sysvals after prepare_blend() as before.
+
+Also fixes hw_vs_desc_dirty() (|| for &&) and a missing error check on
+the HW VS push uniforms.
+
+(cherry picked from commit c4866fa63b3b60f66e607598b5a325aa1b4fde3d)
+
+Assisted-by: LLM
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c | 156 ++++++++++++++------
+ src/panfrost/vulkan/panvk_cmd_draw.h        |   4 +
+ 2 files changed, 117 insertions(+), 43 deletions(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index ac977a60171..693a9a8b90e 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -549,6 +549,43 @@ prepare_tes_desc(struct panvk_cmd_buffer *cmdbuf)
+                               &cmdbuf->state.gfx.tes.desc);
+ }
+ 
++static bool
++hw_vs_desc_dirty(struct panvk_cmd_buffer *cmdbuf)
++{
++   if (hw_vs_user_dirty(cmdbuf))
++      return true;
++
++   if (!cmdbuf->state.gfx.gs.shader && !cmdbuf->state.gfx.tes.shader)
++      return vs_desc_dirty(cmdbuf);
++
++   return gfx_state_dirty(cmdbuf, DESC_STATE);
++}
++
++static bool
++hw_vs_push_uniforms_dirty(struct panvk_cmd_buffer *cmdbuf)
++{
++   if (hw_vs_user_dirty(cmdbuf))
++      return true;
++
++   if (cmdbuf->state.gfx.gs.shader)
++      return gfx_state_dirty(cmdbuf, GS_PUSH_UNIFORMS);
++   else if (cmdbuf->state.gfx.tes.shader)
++      return gfx_state_dirty(cmdbuf, TES_PUSH_UNIFORMS);
++   else
++      return gfx_state_dirty(cmdbuf, VS_PUSH_UNIFORMS);
++}
++
++static struct panvk_shader_desc_state *
++get_hw_vs_desc_state(struct panvk_cmd_buffer *cmdbuf)
++{
++   if (cmdbuf->state.gfx.gs.shader)
++      return &cmdbuf->state.gfx.gs.desc;
++   else if (cmdbuf->state.gfx.tes.shader)
++      return &cmdbuf->state.gfx.tes.desc;
++   else
++      return &cmdbuf->state.gfx.vs.desc;
++}
++
+ static void
+ emit_varying_descs(const struct panvk_cmd_buffer *cmdbuf,
+                    struct mali_attribute_packed *descs)
+@@ -2272,40 +2309,43 @@ get_render_ctx(struct panvk_cmd_buffer *cmdbuf)
+ }
+ 
+ static void
+-prepare_vs(struct panvk_cmd_buffer *cmdbuf,
+-           const struct panvk_shader_variant *vs)
++prepare_hw_vs(struct panvk_cmd_buffer *cmdbuf)
+ {
+-   struct panvk_shader_desc_state *vs_desc_state = &cmdbuf->state.gfx.vs.desc;
++   struct panvk_shader_desc_state *desc_state = get_hw_vs_desc_state(cmdbuf);
++   const struct panvk_shader_variant *hw_vs = get_hw_vs(cmdbuf);
+    struct cs_builder *b =
+       panvk_get_cs_builder(cmdbuf, PANVK_SUBQUEUE_VERTEX_TILER);
+ 
+    cs_update_vt_ctx(b) {
+-      if (vs_desc_dirty(cmdbuf))
++      if (hw_vs_desc_dirty(cmdbuf))
+          cs_move64_to(b, cs_sr_reg64(b, IDVS, VERTEX_SRT),
+-                      vs_desc_state->res_table);
++                      desc_state->res_table);
++
++      if (hw_vs_push_uniforms_dirty(cmdbuf))
++         cs_move64_to(b, cs_sr_reg64(b, IDVS, VERTEX_FAU),
++                      cmdbuf->state.gfx.hw_vs.push_uniforms |
++                         ((uint64_t)hw_vs->fau.total_count << 56));
+ 
+ #if PAN_ARCH >= 12
+-      if (gfx_state_dirty(cmdbuf, VS) ||
+-          gfx_state_dirty(cmdbuf, IDVS)) {
++      if (hw_vs_user_dirty(cmdbuf) || gfx_state_dirty(cmdbuf, IDVS)) {
+          const uint64_t spd_addr =
+             cmdbuf->state.gfx.idvs.prim == MESA_PRIM_POINTS
+-            ? panvk_priv_mem_dev_addr(vs->spds.all_points)
+-            : panvk_priv_mem_dev_addr(vs->spds.all_triangles);
++            ? panvk_priv_mem_dev_addr(hw_vs->spds.all_points)
++            : panvk_priv_mem_dev_addr(hw_vs->spds.all_triangles);
+          cs_move64_to(b, cs_sr_reg64(b, IDVS, VERTEX_SPD), spd_addr);
+       }
+ #else
+-      if (gfx_state_dirty(cmdbuf, VS) ||
+-          gfx_state_dirty(cmdbuf, IDVS)) {
++      if (hw_vs_user_dirty(cmdbuf) || gfx_state_dirty(cmdbuf, IDVS)) {
+          const uint64_t pos_spd_addr =
+             cmdbuf->state.gfx.idvs.prim == MESA_PRIM_POINTS
+-            ? panvk_priv_mem_dev_addr(vs->spds.pos_points)
+-            : panvk_priv_mem_dev_addr(vs->spds.pos_triangles);
++            ? panvk_priv_mem_dev_addr(hw_vs->spds.pos_points)
++            : panvk_priv_mem_dev_addr(hw_vs->spds.pos_triangles);
+          cs_move64_to(b, cs_sr_reg64(b, IDVS, VERTEX_POS_SPD), pos_spd_addr);
+       }
+ 
+-      if (gfx_state_dirty(cmdbuf, VS))
++      if (hw_vs_user_dirty(cmdbuf))
+          cs_move64_to(b, cs_sr_reg64(b, IDVS, VERTEX_VARY_SPD),
+-                      panvk_priv_mem_dev_addr(vs->spds.var));
++                      panvk_priv_mem_dev_addr(hw_vs->spds.var));
+ #endif
+    }
+ }
+@@ -2319,6 +2359,15 @@ prepare_fs(struct panvk_cmd_buffer *cmdbuf,
+       panvk_get_cs_builder(cmdbuf, PANVK_SUBQUEUE_VERTEX_TILER);
+ 
+    cs_update_vt_ctx(b) {
++      if (fs_user_dirty(cmdbuf) || gfx_state_dirty(cmdbuf, FS_PUSH_UNIFORMS)) {
++         uint64_t fau_ptr = 0;
++         if (fs) {
++            fau_ptr = cmdbuf->state.gfx.fs.push_uniforms |
++                      ((uint64_t)fs->fau.total_count << 56);
++         }
++         cs_move64_to(b, cs_sr_reg64(b, IDVS, FRAGMENT_FAU), fau_ptr);
++      }
++
+       if (fs_desc_dirty(cmdbuf))
+          cs_move64_to(b, cs_sr_reg64(b, IDVS, FRAGMENT_SRT),
+                       fs ? fs_desc_state->res_table : 0);
+@@ -2328,14 +2377,12 @@ prepare_fs(struct panvk_cmd_buffer *cmdbuf,
+    }
+ }
+ 
++/* The VS push uniforms are needed before the geometry pipeline runs. */
+ static VkResult
+-prepare_push_uniforms(struct panvk_cmd_buffer *cmdbuf,
+-                      const struct panvk_draw_info *draw,
+-                      const struct panvk_shader_variant *vs,
+-                      const struct panvk_shader_variant *fs)
++prepare_vs_push_uniforms(struct panvk_cmd_buffer *cmdbuf,
++                         const struct panvk_draw_info *draw)
+ {
+-   struct cs_builder *b =
+-      panvk_get_cs_builder(cmdbuf, PANVK_SUBQUEUE_VERTEX_TILER);
++   const struct panvk_shader_variant *vs = get_vs_variant(cmdbuf);
+    VkResult result;
+ 
+    uint32_t vs_repeat_count = 1;
+@@ -2356,31 +2403,43 @@ prepare_push_uniforms(struct panvk_cmd_buffer *cmdbuf,
+       if (result != VK_SUCCESS)
+          return result;
+       cmdbuf->state.gfx.vs.push_uniforms = push_uniforms.gpu;
+-
+-      cs_update_vt_ctx(b) {
+-         cs_move64_to(b, cs_sr_reg64(b, IDVS, VERTEX_FAU),
+-                      cmdbuf->state.gfx.vs.push_uniforms |
+-                         ((uint64_t)vs->fau.total_count << 56));
+-      }
+    }
+ 
+-   if (fs_user_dirty(cmdbuf) || gfx_state_dirty(cmdbuf, FS_PUSH_UNIFORMS)) {
+-      uint64_t fau_ptr = 0;
++   return VK_SUCCESS;
++}
+ 
+-      if (fs) {
++/* Push uniforms of the HW VS (which is the GS or TES rasterization variant
++ * when those are bound) and of the FS.
++ */
++static VkResult
++prepare_push_uniforms(struct panvk_cmd_buffer *cmdbuf,
++                      const struct panvk_shader_variant *fs)
++{
++   const struct panvk_shader_variant *hw_vs = get_hw_vs(cmdbuf);
++   VkResult result;
++
++   if (hw_vs_push_uniforms_dirty(cmdbuf)) {
++      if (hw_vs == get_vs_variant(cmdbuf)) {
++         cmdbuf->state.gfx.hw_vs.push_uniforms =
++            cmdbuf->state.gfx.vs.push_uniforms;
++      } else {
+          struct pan_ptr push_uniforms;
+          result = panvk_per_arch(cmd_prepare_gfx_push_uniforms)(
+-            cmdbuf, fs, &push_uniforms, 1);
++            cmdbuf, hw_vs, &push_uniforms, 1);
+          if (result != VK_SUCCESS)
+             return result;
+-         cmdbuf->state.gfx.fs.push_uniforms = push_uniforms.gpu;
+-
+-         fau_ptr = cmdbuf->state.gfx.fs.push_uniforms |
+-                   ((uint64_t)fs->fau.total_count << 56);
++         cmdbuf->state.gfx.hw_vs.push_uniforms = push_uniforms.gpu;
+       }
++   }
+ 
+-      cs_update_vt_ctx(b)
+-         cs_move64_to(b, cs_sr_reg64(b, IDVS, FRAGMENT_FAU), fau_ptr);
++   if (fs &&
++       (fs_user_dirty(cmdbuf) || gfx_state_dirty(cmdbuf, FS_PUSH_UNIFORMS))) {
++      struct pan_ptr push_uniforms;
++      result = panvk_per_arch(cmd_prepare_gfx_push_uniforms)(
++         cmdbuf, fs, &push_uniforms, 1);
++      if (result != VK_SUCCESS)
++         return result;
++      cmdbuf->state.gfx.fs.push_uniforms = push_uniforms.gpu;
+    }
+ 
+    return VK_SUCCESS;
+@@ -2961,13 +3020,13 @@ static VkResult
+ prepare_draw(struct panvk_cmd_buffer *cmdbuf,
+              const struct panvk_draw_info *draw)
+ {
+-   const struct panvk_shader_variant *vs = get_vs_variant(cmdbuf);
++   const struct panvk_shader_variant *hw_vs = get_hw_vs(cmdbuf);
+    const struct panvk_shader_variant *fs =
+       panvk_shader_only_variant(get_fs(cmdbuf));
+-   ASSERTED bool idvs = vs->info.vs.idvs;
++   ASSERTED bool idvs = hw_vs->info.vs.idvs;
+    VkResult result;
+ 
+-   assert(vs);
++   assert(hw_vs);
+ 
+    /* FIXME: support non-IDVS. */
+    assert(idvs);
+@@ -3035,11 +3094,11 @@ prepare_draw(struct panvk_cmd_buffer *cmdbuf,
+ 
+    panvk_per_arch(cmd_prepare_draw_sysvals)(cmdbuf, draw, fs);
+ 
+-   result = prepare_push_uniforms(cmdbuf, draw, vs, fs);
++   result = prepare_push_uniforms(cmdbuf, fs);
+    if (result != VK_SUCCESS)
+       return result;
+ 
+-   prepare_vs(cmdbuf, vs);
++   prepare_hw_vs(cmdbuf);
+    prepare_fs(cmdbuf, fs);
+ 
+    cs_update_vt_ctx(b) {
+@@ -3048,7 +3107,7 @@ prepare_draw(struct panvk_cmd_buffer *cmdbuf,
+       set_tiler_idvs_flags(b, cmdbuf, draw);
+ 
+       cs_move32_to(b, cs_sr_reg32(b, IDVS, VARY_SIZE),
+-                   vs->info.varyings.formats.generic_size_B);
++                   get_hw_vs(cmdbuf)->info.varyings.formats.generic_size_B);
+ 
+       struct pan_earlyzs_state earlyzs = {0};
+ 
+@@ -3614,6 +3673,17 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+    if (result != VK_SUCCESS)
+       return;
+ 
++   /* The VS push uniforms have to be ready before the geometry pipeline runs.
++    * prepare_draw() updates the sysvals again once the blend descriptors are
++    * known, which only dirties the FS push uniforms.
++    */
++   panvk_per_arch(cmd_prepare_draw_sysvals)(
++      cmdbuf, &draw, panvk_shader_only_variant(get_fs(cmdbuf)));
++
++   result = prepare_vs_push_uniforms(cmdbuf, &draw);
++   if (result != VK_SUCCESS)
++      return;
++
+    /* For indirect draws, we need to patch the descriptors we just emitted */
+    if (draw.indirect.buffer_dev_addr)
+       patch_vs_attribs(cmdbuf, &draw);
+diff --git a/src/panfrost/vulkan/panvk_cmd_draw.h b/src/panfrost/vulkan/panvk_cmd_draw.h
+index c7b45a00d6c..54fff197856 100644
+--- a/src/panfrost/vulkan/panvk_cmd_draw.h
++++ b/src/panfrost/vulkan/panvk_cmd_draw.h
+@@ -187,6 +187,10 @@ struct panvk_cmd_graphics_state {
+       bool restart;
+    } idvs;
+ 
++   struct {
++      uint64_t push_uniforms;
++   } hw_vs;
++
+    struct {
+       const struct panvk_shader *shader;
+       struct panvk_shader_desc_state desc;

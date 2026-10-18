@@ -1,0 +1,751 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: 06n-arch <gennro2004@gmail.com>
+Date: Tue, 29 Sep 2026 07:15:30 -0500
+Subject: [PATCH 49/57] panvk: Fold per-copy GS computations into the VS too
+ (06n-arch)
+
+UE4's one-pass point light shadows (Deep Rock Galactic under D3D12)
+use a GS that, for each of the 6 cube faces, transforms each vertex's
+world position by that face's view-projection matrix (from a root CBV)
+and emits the triangle to that face's layer if it passes a frustum test.
+0029 only folds outputs that are copies of an input or constants, so
+every shadow-depth pipeline failed and UE4 bailed out.
+
+Generalize the matcher: each output of vertex j of copy k may be any
+computation of in[j], push constants, read-only memory, constants and
+ALU ops, as long as it is the same computation for every vertex of the
+copy (checked structurally, in[j] standing in for in[0]). The fold
+clones copy k's vertex-0 computation into the VS with the VS's own
+outputs as its input, and selects between copies on the copy index.
+Emits may sit in ifs; the conditions are ignored, since a GS that skips
+a copy (UE4's per-face culling) only saves work the rasterizer's
+clipping makes up for.
+---
+ src/panfrost/vulkan/panvk_vX_shader.c | 603 ++++++++++++++++----------
+ 1 file changed, 384 insertions(+), 219 deletions(-)
+
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index 70e3ca6286d..5cfd6661c15 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -2086,292 +2086,462 @@ panvk_per_arch(create_shader_from_binary)(struct panvk_device *dev,
+ 
+ #define GS_PT_MAX_OUTPUTS 32
+ #define GS_PT_MAX_COPIES 8
++#define GS_PT_MAX_VERTS (GS_PT_MAX_COPIES * 3)
+ 
+-/* Where one output component comes from: an input of the same vertex, or a
+- * constant that only depends on which copy of the primitive is emitted. */
+-struct gs_pt_src {
+-   bool is_const;
+-   nir_variable *in_var;
+-   uint8_t comp;
+-   uint8_t vertex;
+-   uint32_t value;
+-};
+-
+-struct gs_pt_output {
+-   nir_variable *var;
+-   uint8_t mask;
+-   struct gs_pt_src src[4];
+-   uint32_t values[4][GS_PT_MAX_COPIES];
++/* What one EmitVertex() emits: the value last stored to each output. */
++struct gs_pt_vertex {
++   unsigned count;
++   struct {
++      nir_variable *var;
++      nir_def *val;
++      uint8_t mask;
++   } outs[GS_PT_MAX_OUTPUTS];
+ };
+ 
+ struct gs_passthrough {
+-   unsigned count;
+-   /* How many times the input primitive is emitted, each to be replayed as
+-    * a separate draw with the copy index in a sysval. */
++   nir_shader *gs;
++   unsigned nverts;
++   /* How many times each input primitive is emitted, each replayed as a
++    * separate draw with the copy index in a sysval. */
+    unsigned copies;
+-   struct gs_pt_output outs[GS_PT_MAX_OUTPUTS];
++   struct gs_pt_vertex verts[GS_PT_MAX_VERTS];
+ };
+ 
+-static struct gs_pt_output *
+-gs_pt_get_output(struct gs_passthrough *pt, nir_variable *var)
++static bool
++gs_pt_store(struct gs_pt_vertex *cur, nir_intrinsic_instr *intr)
+ {
+-   for (unsigned i = 0; i < pt->count; i++) {
+-      if (pt->outs[i].var == var)
+-         return &pt->outs[i];
++   nir_deref_instr *dst = nir_src_as_deref(intr->src[0]);
++
++   if (dst->deref_type != nir_deref_type_var ||
++       !nir_deref_mode_is(dst, nir_var_shader_out) ||
++       !glsl_type_is_vector_or_scalar(dst->var->type) ||
++       glsl_get_bit_size(dst->var->type) != 32)
++      return false;
++
++   unsigned i;
++   for (i = 0; i < cur->count; i++) {
++      if (cur->outs[i].var == dst->var)
++         break;
+    }
+ 
+-   if (pt->count == GS_PT_MAX_OUTPUTS)
+-      return NULL;
++   if (i == cur->count) {
++      if (cur->count == GS_PT_MAX_OUTPUTS)
++         return false;
++      cur->count++;
++      cur->outs[i].var = dst->var;
++      cur->outs[i].mask = 0;
++   } else if (cur->outs[i].val != intr->src[1].ssa) {
++      /* Partial overwrites with different values: keep it simple. */
++      if (cur->outs[i].mask & ~nir_intrinsic_write_mask(intr))
++         return false;
++   }
+ 
+-   struct gs_pt_output *out = &pt->outs[pt->count++];
+-   memset(out, 0, sizeof(*out));
+-   out->var = var;
+-   return out;
++   cur->outs[i].val = intr->src[1].ssa;
++   cur->outs[i].mask |= nir_intrinsic_write_mask(intr);
++   return true;
+ }
+ 
+-/* Per-primitive values only matter on the provoking (first) vertex. */
++/* Walks straight-line code, collecting stores and emits. */
+ static bool
+-gs_pt_is_per_primitive(const nir_variable *var)
++gs_pt_walk_block(struct gs_passthrough *pt, nir_block *block,
++                 struct gs_pt_vertex *cur, unsigned *emitted, bool *strip_open)
+ {
+-   return var->data.location == VARYING_SLOT_LAYER ||
+-          var->data.location == VARYING_SLOT_VIEWPORT;
+-}
++   nir_foreach_instr(instr, block) {
++      if (instr->type == nir_instr_type_phi)
++         return false;
++      if (instr->type != nir_instr_type_intrinsic)
++         continue;
+ 
+-/* Checks the outputs written before an EmitVertex() (vertex `vertex` of copy
+- * `copy`) and folds them into the mapping all vertices must share. */
+-static bool
+-gs_pt_add_vertex(struct gs_passthrough *pt, const struct gs_passthrough *cur,
+-                 unsigned copy, unsigned vertex)
+-{
+-   for (unsigned i = 0; i < cur->count; i++) {
+-      const struct gs_pt_output *o = &cur->outs[i];
++      nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
++      switch (intr->intrinsic) {
++      case nir_intrinsic_store_deref:
++         if (!gs_pt_store(cur, intr))
++            return false;
++         break;
+ 
+-      u_foreach_bit(c, o->mask) {
+-         if (o->src[c].is_const)
+-            continue;
++      case nir_intrinsic_emit_vertex: {
++         unsigned vertex = *emitted % pt->nverts;
++         if (nir_intrinsic_stream_id(intr) != 0 ||
++             *emitted == pt->copies * pt->nverts ||
++             (vertex == 0 && *strip_open && pt->nverts > 1))
++            return false;
+ 
+-         bool per_prim = gs_pt_is_per_primitive(o->var);
+-         if (per_prim ? (vertex == 0 && o->src[c].vertex != 0)
+-                      : o->src[c].vertex != vertex)
++         pt->verts[(*emitted)++] = *cur;
++         cur->count = 0;
++         *strip_open = true;
++         break;
++      }
++
++      case nir_intrinsic_end_primitive:
++         /* Only between copies, each copy being a whole primitive. */
++         if (nir_intrinsic_stream_id(intr) != 0 ||
++             *emitted % pt->nverts != 0)
++            return false;
++         *strip_open = false;
++         break;
++
++      default:
++         /* Anything with side effects, or that we don't understand. */
++         if (!(nir_intrinsic_infos[intr->intrinsic].flags &
++               NIR_INTRINSIC_CAN_ELIMINATE))
+             return false;
++         break;
+       }
+    }
+ 
+-   bool first = copy == 0 && vertex == 0;
+-   if (!first && cur->count != pt->count)
+-      return false;
++   return true;
++}
++
++/* Returns the input vertex index if def loads a per-vertex GS input
++ * (in[idx]), -1 if it's another kind of load. */
++static int
++gs_pt_input_index(nir_def *def, nir_variable **var)
++{
++   if (!nir_def_is_intrinsic(def) ||
++       nir_def_as_intrinsic(def)->intrinsic != nir_intrinsic_load_deref)
++      return -1;
++
++   nir_deref_instr *d =
++      nir_src_as_deref(nir_def_as_intrinsic(def)->src[0]);
++   if (!nir_deref_mode_is(d, nir_var_shader_in))
++      return -1;
++
++   if (d->deref_type != nir_deref_type_array ||
++       !nir_src_is_const(d->arr.index))
++      return -2;
++
++   nir_deref_instr *parent = nir_deref_instr_parent(d);
++   if (parent->deref_type != nir_deref_type_var ||
++       !glsl_type_is_vector_or_scalar(glsl_get_array_element(
++          parent->var->type)))
++      return -2;
++
++   *var = parent->var;
++   return nir_src_as_uint(d->arr.index);
++}
++
++/* Can the value be computed in the VS of input vertex `vertex`: inputs of
++ * that vertex only, uniforms, read-only memory, constants and ALU. */
++static bool
++gs_pt_expr_ok(nir_def *def, unsigned vertex, struct set *ok)
++{
++   if (_mesa_set_search(ok, def))
++      return true;
++
++   nir_instr *instr = nir_def_instr(def);
++   bool res = false;
+ 
+-   for (unsigned i = 0; i < cur->count; i++) {
+-      const struct gs_pt_output *o = &cur->outs[i];
+-      struct gs_pt_output *ref;
++   switch (instr->type) {
++   case nir_instr_type_load_const:
++   case nir_instr_type_undef:
++      res = true;
++      break;
+ 
+-      if (first) {
+-         ref = &pt->outs[pt->count++];
+-         *ref = *o;
++   case nir_instr_type_alu: {
++      nir_alu_instr *alu = nir_instr_as_alu(instr);
++      res = true;
++      for (unsigned s = 0; s < nir_op_infos[alu->op].num_inputs; s++)
++         res = res && gs_pt_expr_ok(alu->src[s].src.ssa, vertex, ok);
++      break;
++   }
++
++   case nir_instr_type_deref: {
++      nir_deref_instr *d = nir_instr_as_deref(instr);
++      if (!nir_deref_mode_is_one_of(d, nir_var_mem_push_const |
++                                          nir_var_mem_global |
++                                          nir_var_mem_ubo))
++         break;
++      if (d->deref_type == nir_deref_type_var) {
++         res = true;
++      } else if (d->deref_type == nir_deref_type_cast) {
++         res = gs_pt_expr_ok(d->parent.ssa, vertex, ok);
+       } else {
+-         ref = NULL;
+-         for (unsigned j = 0; j < pt->count; j++) {
+-            if (pt->outs[j].var == o->var)
+-               ref = &pt->outs[j];
+-         }
+-         if (!ref || ref->mask != o->mask)
+-            return false;
++         res = gs_pt_expr_ok(d->parent.ssa, vertex, ok) &&
++               (d->deref_type != nir_deref_type_array &&
++                   d->deref_type != nir_deref_type_ptr_as_array ||
++                gs_pt_expr_ok(d->arr.index.ssa, vertex, ok));
+       }
++      break;
++   }
+ 
+-      u_foreach_bit(c, o->mask) {
+-         const struct gs_pt_src *s = &o->src[c];
++   case nir_instr_type_intrinsic: {
++      nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
++      nir_variable *var;
++      int idx = gs_pt_input_index(def, &var);
++
++      if (idx >= 0) {
++         res = idx == (int)vertex;
++      } else if (idx == -1 && intr->intrinsic == nir_intrinsic_load_deref) {
++         nir_deref_instr *d = nir_src_as_deref(intr->src[0]);
++         bool readonly = nir_deref_mode_is_one_of(
++            d, nir_var_mem_push_const | nir_var_mem_ubo) ||
++            (nir_intrinsic_access(intr) & ACCESS_NON_WRITEABLE);
++         res = readonly && gs_pt_expr_ok(intr->src[0].ssa, vertex, ok);
++      }
++      break;
++   }
+ 
+-         if (s->is_const != ref->src[c].is_const)
+-            return false;
++   default:
++      break;
++   }
++
++   if (res)
++      _mesa_set_add(ok, def);
++   return res;
++}
++
++/* Is a (from vertex `vertex`) the same computation as b (from vertex 0),
++ * with in[vertex] in place of in[0]? */
++static bool
++gs_pt_expr_equal(nir_def *a, nir_def *b, unsigned vertex)
++{
++   if (a == b)
++      return true;
++   if (a->num_components != b->num_components ||
++       a->bit_size != b->bit_size)
++      return false;
++
++   nir_instr *ia = nir_def_instr(a), *ib = nir_def_instr(b);
++   if (ia->type != ib->type)
++      return false;
++
++   switch (ia->type) {
++   case nir_instr_type_load_const:
++      return nir_instrs_equal(ia, ib);
+ 
+-         if (s->is_const) {
+-            /* Constant per copy: the same on every vertex of a copy. */
+-            if (vertex == 0)
+-               ref->values[c][copy] = s->value;
+-            else if (ref->values[c][copy] != s->value)
+-               return false;
+-         } else if (ref->src[c].in_var != s->in_var ||
+-                    ref->src[c].comp != s->comp) {
++   case nir_instr_type_alu: {
++      nir_alu_instr *x = nir_instr_as_alu(ia), *y = nir_instr_as_alu(ib);
++      if (x->op != y->op || x->fp_math_ctrl != y->fp_math_ctrl)
++         return false;
++      for (unsigned s = 0; s < nir_op_infos[x->op].num_inputs; s++) {
++         if (memcmp(x->src[s].swizzle, y->src[s].swizzle,
++                    sizeof(x->src[s].swizzle)) ||
++             !gs_pt_expr_equal(x->src[s].src.ssa, y->src[s].src.ssa, vertex))
+             return false;
+-         }
+       }
++      return true;
+    }
+ 
+-   return true;
++   case nir_instr_type_intrinsic: {
++      nir_variable *va, *vb;
++      int ka = gs_pt_input_index(a, &va), kb = gs_pt_input_index(b, &vb);
++      if (ka >= 0 || kb >= 0)
++         return ka == (int)vertex && kb == 0 && va == vb;
++      /* Other loads: shared uniforms are usually the same def already. */
++      return false;
++   }
++
++   default:
++      return false;
++   }
+ }
+ 
+ static bool
+ analyze_passthrough_gs(nir_shader *gs, struct gs_passthrough *pt)
+ {
+-   unsigned nverts;
+    enum mesa_prim strip;
+ 
++   memset(pt, 0, sizeof(*pt));
++   pt->gs = gs;
++
+    switch (gs->info.gs.input_primitive) {
+    case MESA_PRIM_POINTS:
+-      nverts = 1;
++      pt->nverts = 1;
+       strip = MESA_PRIM_POINTS;
+       break;
+    case MESA_PRIM_LINES:
+-      nverts = 2;
++      pt->nverts = 2;
+       strip = MESA_PRIM_LINE_STRIP;
+       break;
+    case MESA_PRIM_TRIANGLES:
+-      nverts = 3;
++      pt->nverts = 3;
+       strip = MESA_PRIM_TRIANGLE_STRIP;
+       break;
+    default:
+       return false;
+    }
+ 
+-   unsigned copies = gs->info.gs.vertices_out / nverts;
+-   if (gs->info.gs.output_primitive != strip || copies == 0 ||
+-       copies > GS_PT_MAX_COPIES ||
+-       gs->info.gs.vertices_out != copies * nverts ||
++   pt->copies = gs->info.gs.vertices_out / pt->nverts;
++   if (gs->info.gs.output_primitive != strip || pt->copies == 0 ||
++       pt->copies > GS_PT_MAX_COPIES ||
++       gs->info.gs.vertices_out != pt->copies * pt->nverts ||
+        gs->info.gs.invocations > 1 ||
+        (gs->info.gs.active_stream_mask & ~1) || gs->xfb_info ||
+        gs->info.has_transform_feedback_varyings)
+       return false;
+ 
++   /* Straight-line code, or ifs around whole copies. The conditions are
++    * ignored: a GS that skips a copy (UE4 culls triangles against each
++    * cube face) only saves work, the rasterizer clips what's outside. */
+    nir_function_impl *impl = nir_shader_get_entrypoint(gs);
+-   if (!exec_list_is_singular(&impl->body))
+-      return false;
+-
+-   struct gs_passthrough cur = {0};
++   struct gs_pt_vertex cur = {0};
+    unsigned emitted = 0;
+-   /* A strip continues across copies unless the primitive is ended. */
+    bool strip_open = false;
+ 
+-   memset(pt, 0, sizeof(*pt));
+-   pt->copies = copies;
+-
+-   nir_foreach_instr(instr, nir_start_block(impl)) {
+-      if (instr->type != nir_instr_type_intrinsic)
+-         continue;
+-
+-      nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+-
+-      switch (intr->intrinsic) {
+-      case nir_intrinsic_load_deref:
++   foreach_list_typed(nir_cf_node, node, node, &impl->body) {
++      switch (node->type) {
++      case nir_cf_node_block:
++         if (!gs_pt_walk_block(pt, nir_cf_node_as_block(node), &cur,
++                               &emitted, &strip_open))
++            return false;
+          break;
+ 
+-      case nir_intrinsic_store_deref: {
+-         nir_deref_instr *dst = nir_src_as_deref(intr->src[0]);
+-
+-         if (dst->deref_type != nir_deref_type_var ||
+-             !nir_deref_mode_is(dst, nir_var_shader_out) ||
+-             !glsl_type_is_vector_or_scalar(dst->var->type) ||
+-             glsl_get_bit_size(dst->var->type) != 32)
++      case nir_cf_node_if: {
++         nir_if *nif = nir_cf_node_as_if(node);
++         if (!exec_list_is_singular(&nif->then_list) ||
++             !exec_list_is_singular(&nif->else_list) ||
++             !exec_list_is_empty(&nir_if_first_else_block(nif)->instr_list))
+             return false;
+ 
+-         struct gs_pt_output *out = gs_pt_get_output(&cur, dst->var);
+-         if (!out)
++         /* The emits of a skipped copy still count: every copy is drawn. */
++         if (!gs_pt_walk_block(pt, nir_if_first_then_block(nif), &cur,
++                               &emitted, &strip_open))
+             return false;
++         break;
++      }
+ 
+-         u_foreach_bit(c, nir_intrinsic_write_mask(intr)) {
+-            nir_scalar sc = nir_scalar_resolved(intr->src[1].ssa, c);
+-            struct gs_pt_src *s = &out->src[c];
+-
+-            out->mask |= BITFIELD_BIT(c);
+-            memset(s, 0, sizeof(*s));
++      default:
++         return false;
++      }
++   }
+ 
+-            if (nir_scalar_is_const(sc)) {
+-               s->is_const = true;
+-               s->value = nir_scalar_as_uint(sc);
+-               continue;
+-            }
++   if (emitted != pt->copies * pt->nverts)
++      return false;
+ 
+-            if (!nir_def_is_intrinsic(sc.def) ||
+-                nir_scalar_intrinsic_op(sc) != nir_intrinsic_load_deref)
+-               return false;
+-
+-            nir_intrinsic_instr *ld = nir_def_as_intrinsic(sc.def);
+-            nir_deref_instr *src = nir_src_as_deref(ld->src[0]);
+-            if (src->deref_type != nir_deref_type_array ||
+-                !nir_src_is_const(src->arr.index))
+-               return false;
+-
+-            nir_deref_instr *parent = nir_deref_instr_parent(src);
+-            if (parent->deref_type != nir_deref_type_var ||
+-                !nir_deref_mode_is(parent, nir_var_shader_in) ||
+-                !glsl_type_is_vector_or_scalar(glsl_get_array_element(
+-                   parent->var->type)))
+-               return false;
+-
+-            s->in_var = parent->var;
+-            s->comp = sc.comp;
+-            s->vertex = nir_src_as_uint(src->arr.index);
++   /* Every vertex writes the same outputs; each value only depends on its
++    * own input vertex, computed the same way for every vertex of a copy. */
++   struct set *ok = _mesa_pointer_set_create(NULL);
++   bool res = true;
++
++   for (unsigned e = 0; e < emitted && res; e++) {
++      const struct gs_pt_vertex *v = &pt->verts[e];
++      const struct gs_pt_vertex *v0 = &pt->verts[e - e % pt->nverts];
++      unsigned vertex = e % pt->nverts;
++
++      res = v->count == pt->verts[0].count && v->count > 0;
++      for (unsigned i = 0; i < v->count && res; i++) {
++         unsigned j;
++         for (j = 0; j < v0->count; j++) {
++            if (v0->outs[j].var == v->outs[i].var)
++               break;
+          }
+-         break;
++
++         res = j < v0->count && v0->outs[j].mask == v->outs[i].mask &&
++               gs_pt_expr_ok(v->outs[i].val, vertex, ok) &&
++               gs_pt_expr_equal(v->outs[i].val, v0->outs[j].val, vertex);
+       }
+ 
+-      case nir_intrinsic_emit_vertex: {
+-         unsigned copy = emitted / nverts, vertex = emitted % nverts;
++      /* The set of outputs must match copy 0 too. */
++      for (unsigned i = 0; i < v->count && res; i++) {
++         bool found = false;
++         for (unsigned j = 0; j < pt->verts[0].count; j++)
++            found |= pt->verts[0].outs[j].var == v->outs[i].var;
++         res = found;
++      }
++   }
+ 
+-         if (nir_intrinsic_stream_id(intr) != 0 || copy == copies ||
+-             (vertex == 0 && strip_open && nverts > 1) ||
+-             !gs_pt_add_vertex(pt, &cur, copy, vertex))
+-            return false;
++   _mesa_set_destroy(ok, NULL);
++   return res;
++}
+ 
+-         emitted++;
+-         strip_open = true;
+-         memset(&cur, 0, sizeof(cur));
+-         break;
+-      }
++struct gs_pt_fold {
++   nir_builder *b;
++   nir_shader *vs;
++   struct hash_table *remap;
++};
+ 
+-      case nir_intrinsic_end_primitive:
+-         /* Only between copies, each copy being a whole primitive. */
+-         if (nir_intrinsic_stream_id(intr) != 0 || emitted % nverts != 0)
+-            return false;
+-         strip_open = false;
+-         break;
++/* Maps a GS input var to the VS output var (now a temporary) feeding it. */
++static nir_variable *
++gs_pt_vs_source(nir_shader *vs, const nir_variable *in)
++{
++   const struct glsl_type *elem = glsl_get_array_element(in->type);
+ 
+-      default:
+-         /* Anything with side effects, or that we don't understand. */
+-         if (!(nir_intrinsic_infos[intr->intrinsic].flags &
+-               NIR_INTRINSIC_CAN_ELIMINATE))
+-            return false;
+-         break;
+-      }
++   nir_foreach_variable_with_modes(var, vs, nir_var_shader_temp) {
++      if (var->data.location == in->data.location &&
++          var->data.location_frac == in->data.location_frac &&
++          glsl_type_is_vector_or_scalar(var->type) &&
++          glsl_get_vector_elements(var->type) ==
++             glsl_get_vector_elements(elem) &&
++          glsl_get_bit_size(var->type) == glsl_get_bit_size(elem))
++         return var;
+    }
+ 
+-   return emitted == copies * nverts && pt->count > 0;
++   return NULL;
+ }
+ 
+-/* Makes the VS write the GS outputs: each one copied from the VS output
+- * the GS read it from, or selected by the copy index. The VS's own outputs
+- * become temporaries. */
++static nir_def *gs_pt_clone(struct gs_pt_fold *f, nir_def *def);
++
+ static bool
+-fold_passthrough_gs_into_vs(nir_shader *vs, const nir_shader *gs,
+-                            const struct gs_passthrough *pt)
++gs_pt_clone_src(nir_src *src, void *data)
+ {
+-   nir_variable *srcs[GS_PT_MAX_OUTPUTS][4] = {0};
++   gs_pt_clone(data, src->ssa);
++   return true;
++}
+ 
+-   /* Resolve every source before touching the VS, so we can still bail. */
+-   for (unsigned i = 0; i < pt->count; i++) {
+-      const struct gs_pt_output *o = &pt->outs[i];
++/* Clones a GS value computation (vertex 0's) into the VS. */
++static nir_def *
++gs_pt_clone(struct gs_pt_fold *f, nir_def *def)
++{
++   struct hash_entry *he = _mesa_hash_table_search(f->remap, def);
++   if (he)
++      return he->data;
+ 
+-      u_foreach_bit(c, o->mask) {
+-         if (o->src[c].is_const)
+-            continue;
++   nir_instr *instr = nir_def_instr(def);
++   nir_def *res;
++   nir_variable *in_var;
+ 
+-         const nir_variable *in = o->src[c].in_var;
+-         const struct glsl_type *in_elem = glsl_get_array_element(in->type);
++   if (gs_pt_input_index(def, &in_var) >= 0) {
++      nir_variable *src = gs_pt_vs_source(f->vs, in_var);
++      assert(src);
++      res = nir_load_var(f->b, src);
++   } else if (instr->type == nir_instr_type_deref &&
++              nir_instr_as_deref(instr)->deref_type == nir_deref_type_var) {
++      /* nir_instr_clone_deep() doesn't remap global variables. */
++      nir_variable *gvar = nir_instr_as_deref(instr)->var;
++      nir_variable *vvar = NULL;
++      nir_foreach_variable_with_modes(v, f->vs, gvar->data.mode) {
++         if (v->type == gvar->type)
++            vvar = v;
++      }
++      if (!vvar) {
++         vvar = nir_variable_clone(gvar, f->vs);
++         nir_shader_add_variable(f->vs, vvar);
++      }
++      res = &nir_build_deref_var(f->b, vvar)->def;
++   } else {
++      /* Clone the sources first so the deep clone finds them remapped. */
++      nir_foreach_src(instr, gs_pt_clone_src, f);
++      nir_instr *ni = nir_instr_clone_deep(f->vs, instr, f->remap);
++      nir_builder_instr_insert(f->b, ni);
++      res = nir_instr_def(ni);
++   }
+ 
+-         nir_foreach_shader_out_variable(var, vs) {
+-            if (var->data.location == in->data.location &&
+-                var->data.location_frac == in->data.location_frac &&
+-                glsl_type_is_vector_or_scalar(var->type) &&
+-                glsl_get_bit_size(var->type) == glsl_get_bit_size(in_elem) &&
+-                o->src[c].comp < glsl_get_vector_elements(var->type)) {
+-               srcs[i][c] = var;
+-               break;
+-            }
+-         }
++   _mesa_hash_table_insert(f->remap, def, res);
++   return res;
++}
+ 
+-         if (!srcs[i][c] ||
+-             glsl_get_bit_size(o->var->type) != glsl_get_bit_size(in_elem))
+-            return false;
++/* Makes the VS write the GS outputs: for each copy, vertex 0's computation
++ * with the VS's own outputs as its input, selected by the copy index. The
++ * VS's own outputs become temporaries. */
++static bool
++fold_passthrough_gs_into_vs(nir_shader *vs, const nir_shader *gs,
++                            const struct gs_passthrough *pt)
++{
++   /* Check every GS input used has a matching VS output first. */
++   nir_foreach_shader_in_variable(in, (nir_shader *)gs) {
++      bool found = false;
++      nir_foreach_shader_out_variable(var, vs) {
++         const struct glsl_type *elem = glsl_get_array_element(in->type);
++         found |= var->data.location == in->data.location &&
++                  var->data.location_frac == in->data.location_frac &&
++                  elem && glsl_type_is_vector_or_scalar(var->type) &&
++                  glsl_get_vector_elements(var->type) ==
++                     glsl_get_vector_elements(elem) &&
++                  glsl_get_bit_size(var->type) == glsl_get_bit_size(elem);
+       }
++      if (!found && (gs->info.inputs_read &
++                     BITFIELD64_BIT(in->data.location)))
++         return false;
+    }
+ 
+    nir_foreach_shader_out_variable_safe(var, vs)
+@@ -2380,43 +2550,38 @@ fold_passthrough_gs_into_vs(nir_shader *vs, const nir_shader *gs,
+ 
+    nir_function_impl *impl = nir_shader_get_entrypoint(vs);
+    nir_builder b = nir_builder_at(nir_after_impl(impl));
++   struct gs_pt_fold f = {
++      .b = &b,
++      .vs = vs,
++      .remap = _mesa_pointer_hash_table_create(NULL),
++   };
+ 
+    /* The copy index: lowered to the vs.gs_copy sysval, the draw being
+     * replayed once per copy. load_invocation_id means nothing else in a VS. */
+    nir_def *copy = pt->copies > 1 ? nir_load_invocation_id(&b) : NULL;
++   const struct gs_pt_vertex *v0 = &pt->verts[0];
+ 
+-   for (unsigned i = 0; i < pt->count; i++) {
+-      const struct gs_pt_output *o = &pt->outs[i];
+-      nir_variable *var = nir_variable_clone(o->var, vs);
+-      unsigned ncomps = glsl_get_vector_elements(var->type);
+-      nir_def *comps[4];
+-
++   for (unsigned i = 0; i < v0->count; i++) {
++      nir_variable *var = nir_variable_clone(v0->outs[i].var, vs);
+       var->data.mode = nir_var_shader_out;
+       var->data.stream = 0;
+       nir_shader_add_variable(vs, var);
+ 
+-      for (unsigned c = 0; c < ncomps; c++) {
+-         if (!(o->mask & BITFIELD_BIT(c))) {
+-            comps[c] = nir_undef(&b, 1, 32);
+-         } else if (o->src[c].is_const) {
+-            const uint32_t *v = o->values[c];
+-            nir_def *val = nir_imm_int(&b, v[pt->copies - 1]);
+-
+-            for (int g = pt->copies - 2; g >= 0; g--) {
+-               if (v[g] != v[pt->copies - 1])
+-                  val = nir_bcsel(&b, nir_ieq_imm(&b, copy, g),
+-                                  nir_imm_int(&b, v[g]), val);
+-            }
+-            comps[c] = val;
+-         } else {
+-            nir_def *val = nir_load_var(&b, srcs[i][c]);
+-            comps[c] = nir_channel(&b, val, o->src[c].comp);
++      nir_def *val = NULL;
++      for (int c = pt->copies - 1; c >= 0; c--) {
++         const struct gs_pt_vertex *v = &pt->verts[c * pt->nverts];
++         nir_def *cv = NULL;
++         for (unsigned j = 0; j < v->count; j++) {
++            if (v->outs[j].var == v0->outs[i].var)
++               cv = gs_pt_clone(&f, v->outs[j].val);
+          }
++         val = val ? nir_bcsel(&b, nir_ieq_imm(&b, copy, c), cv, val) : cv;
+       }
+ 
+-      nir_store_var(&b, var, nir_vec(&b, comps, ncomps), o->mask);
++      nir_store_var(&b, var, val, v0->outs[i].mask);
+    }
+ 
++   _mesa_hash_table_destroy(f.remap, NULL);
+    nir_progress(true, impl, nir_metadata_none);
+ 
+    vs->info.clip_distance_array_size = gs->info.clip_distance_array_size;

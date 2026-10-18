@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: 06n-arch <gennro2004@gmail.com>
+Date: Mon, 28 Sep 2026 17:55:11 -0500
+Subject: [PATCH 33/57] panvk: Only enable cull distance when the VS lowering
+ found the output (06n-arch)
+
+pan_nir_lower_cull_distance_vs only matches store_deref, but the
+multiview path runs nir_split_var_copies, which leaves the cull array
+written through copy_deref. The pass then adds no
+VARYING_SLOT_CULL_PRIMITIVE output while cull_distance_array_size still
+enables the fragment prolog, which looks that slot up in the VS varying
+layout: an assert in debug builds, a NULL dereference in release.
+
+Lower var copies before the pass, and only report a cull distance size
+to the compiler (and so to the prolog key) when the pass made progress.
+
+Local fixup on top of mesa!43156, ported to the current mesa!40343.
+---
+ src/panfrost/vulkan/panvk_vX_shader.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index b4931fb1eef..f0a9afa063b 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -1623,7 +1623,15 @@ panvk_compile_shader(struct panvk_device *dev,
+                var->data.location - VERT_ATTRIB_GENERIC0;
+          }
+ 
+-         NIR_PASS(_, nir, pan_nir_lower_cull_distance_vs);
++         /* The cull lowering only matches store_deref, so lower the
++          * copy_derefs the multiview path leaves behind. If it still finds
++          * nothing, leave cull off: the prolog would look for a
++          * VARYING_SLOT_CULL_PRIMITIVE output the VS doesn't have. */
++         bool lowered_cull = false;
++         if (nir->info.cull_distance_array_size > 0) {
++            NIR_PASS(_, nir, nir_lower_var_copies);
++            NIR_PASS(lowered_cull, nir, pan_nir_lower_cull_distance_vs);
++         }
+ 
+          nir_assign_io_var_locations(nir, nir_var_shader_out);
+          panvk_lower_nir_io(nir);
+@@ -1639,7 +1647,8 @@ panvk_compile_shader(struct panvk_device *dev,
+          }
+ 
+          inputs.clip_distance_array_size = nir->info.clip_distance_array_size;
+-         inputs.cull_distance_array_size = nir->info.cull_distance_array_size;
++         inputs.cull_distance_array_size =
++            lowered_cull ? nir->info.cull_distance_array_size : 0;
+ 
+          if (v == PANVK_VS_VARIANT_SW)
+             panvk_nir_lower_compute_vs(nir, inputs.gpu_id);

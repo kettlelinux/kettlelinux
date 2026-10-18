@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Wed, 30 Sep 2026 07:01:00 -0500
+Subject: [PATCH 51/57] panvk: fail pipelines with tessellation shaders
+ (06n-arch)
+
+tessellationShader isn't advertised, but DXVK still exposes feature
+level 11_0 and passes the hull and domain shaders a game uses to the
+driver as tessellation control and evaluation stages. The VS/FS backend
+doesn't handle their intrinsics (load_invocation_id,
+load_per_vertex_input) and then crashes in bi_extract(), taking the
+game down with it: Fallout 4 crashes this way loading a save.
+
+Fail such pipelines the way 0017 fails an unfoldable geometry shader.
+DXVK logs the failure and skips the draws that use it, so tessellated
+geometry is missing but the game runs.
+
+Not for upstream: a local stopgap until PanVK has tessellation.
+---
+ src/panfrost/vulkan/panvk_vX_shader.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index 5cfd6661c15..5b7ddcf63a6 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -2634,6 +2634,23 @@ compile_shaders(struct vk_device *vk_dev, uint32_t shader_count,
+    VkResult result;
+    int32_t i;
+ 
++   /* 06n-arch DXVK hack: tessellationShader isn't advertised, but DXVK
++    * still exposes feature level 11_0 and compiles the hull/domain shaders
++    * games give it (Fallout 4). The VS/FS backend crashes on their
++    * intrinsics, so fail the pipeline; DXVK then skips the draws that use it.
++    */
++   for (i = 0; i < shader_count; i++) {
++      if (infos[i].stage == MESA_SHADER_TESS_CTRL ||
++          infos[i].stage == MESA_SHADER_TESS_EVAL) {
++         mesa_logw_once("panvk: tessellation shaders are not implemented, "
++                        "failing the pipeline (06n-arch DXVK hack)");
++         for (int32_t j = 0; j < shader_count; j++)
++            ralloc_free(infos[j].nir);
++         memset(shaders_out, 0, shader_count * sizeof(*shaders_out));
++         return vk_error(dev, VK_ERROR_UNKNOWN);
++      }
++   }
++
+    /* 06n-arch: fold pass-through GSes compiled together with their VS into
+     * the VS (see analyze_passthrough_gs()), which is much cheaper than
+     * running the GS. Any other GS is compiled for the compute emulation

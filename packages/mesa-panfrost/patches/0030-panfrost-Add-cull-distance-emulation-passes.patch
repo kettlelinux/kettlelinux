@@ -1,0 +1,315 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Gmeiner <cgmeiner@igalia.com>
+Date: Mon, 20 Jul 2026 16:47:03 +0200
+Subject: [PATCH 30/57] panfrost: Add cull distance emulation passes
+
+Mali has no native cull distance. Emulate it with the fragment discard
+path already used for clip. The vertex shader emits, per cull distance, a
+linear quantity (cull distance >= 0) into VARYING_SLOT_CULL_PRIMITIVE.
+The fragment prolog demotes a fragment where that quantity is identically
+zero across the primitive, detected as a zero value with zero
+screen-space derivatives. That is exactly the condition that every vertex
+of the primitive has a negative cull distance, so the whole primitive is
+culled without clipping straddle primitives.
+
+The real cull distances stay in CLIP_DIST0/1 for gl_CullDistance reads.
+One demote and one ATEST cover both clip and cull.
+
+Signed-off-by: Christian Gmeiner <cgmeiner@igalia.com>
+---
+ src/panfrost/compiler/bifrost/bifrost_nir.c |   6 +-
+ src/panfrost/compiler/pan_compiler.h        |   4 +
+ src/panfrost/compiler/pan_nir_prolog.c      | 141 +++++++++++++++++---
+ src/panfrost/compiler/pan_nir_prolog.h      |  10 +-
+ src/panfrost/vulkan/panvk_vX_shader.c       |   2 +-
+ 5 files changed, 142 insertions(+), 21 deletions(-)
+
+diff --git a/src/panfrost/compiler/bifrost/bifrost_nir.c b/src/panfrost/compiler/bifrost/bifrost_nir.c
+index 28c79366780..99db2dbbff3 100644
+--- a/src/panfrost/compiler/bifrost/bifrost_nir.c
++++ b/src/panfrost/compiler/bifrost/bifrost_nir.c
+@@ -889,8 +889,10 @@ bifrost_postprocess_nir(nir_shader *nir,
+        * ssbo_atomic and store_output */
+       NIR_PASS(_, nir, pan_nir_lower_noperspective_vs);
+       info->vs.clip_distance_array_size = inputs->clip_distance_array_size;
+-      NIR_PASS(_, nir, pan_nir_lower_clip_distance_vs,
+-               inputs->clip_distance_array_size);
++      info->vs.cull_distance_array_size = inputs->cull_distance_array_size;
++      NIR_PASS(_, nir, pan_nir_lower_clip_cull_distance_vs,
++               inputs->clip_distance_array_size,
++               inputs->cull_distance_array_size);
+       NIR_PASS(_, nir, pan_nir_lower_vs_inputs, inputs->gpu_id);
+       NIR_PASS(_, nir, pan_nir_lower_vs_outputs, inputs->gpu_id,
+                inputs->varying_layout, info->vs.idvs,
+diff --git a/src/panfrost/compiler/pan_compiler.h b/src/panfrost/compiler/pan_compiler.h
+index ec0b5eff442..200af14ee49 100644
+--- a/src/panfrost/compiler/pan_compiler.h
++++ b/src/panfrost/compiler/pan_compiler.h
+@@ -58,6 +58,7 @@ struct pan_compile_inputs {
+    /* Size of the gl_ClipDistance array written by the VS. Zero disables clip
+     * distance lowering. */
+    uint8_t clip_distance_array_size;
++   uint8_t cull_distance_array_size;
+ 
+    /* Settings to move constants into the FAU. */
+    struct {
+@@ -508,6 +509,9 @@ struct pan_shader_info {
+ 
+          /* Size of the gl_ClipDistance array written by the shader */
+          uint8_t clip_distance_array_size;
++
++         /* Size of the gl_CullDistance array written by the shader */
++         uint8_t cull_distance_array_size;
+       } vs;
+ 
+       struct {
+diff --git a/src/panfrost/compiler/pan_nir_prolog.c b/src/panfrost/compiler/pan_nir_prolog.c
+index baa651e90cf..ad8ae7953bf 100644
+--- a/src/panfrost/compiler/pan_nir_prolog.c
++++ b/src/panfrost/compiler/pan_nir_prolog.c
+@@ -10,15 +10,17 @@
+ 
+ /* Build a standalone fragment shader prolog that interpolates clip distances
+  * from VARYING_SLOT_CLIP_DIST0/1 and demotes fragments where any clip
+- * distance is negative. The prolog is compiled against the VS's varying
++ * distance is negative. It also reads the linear 0/1 cull quantity from
++ * VARYING_SLOT_CULL_PRIMITIVE and demotes fragments where it is identically
++ * zero across the primitive. The prolog is compiled against the VS's varying
+  * layout and ends with a jump to the main FS.
+  */
+ nir_shader *
+ pan_nir_build_fs_prolog(const struct pan_fs_prolog_key *key,
+                         const nir_shader_compiler_options *options)
+ {
+-   assert(key->clip_distance_array_size > 0);
+-   assert(key->clip_distance_array_size <= 8);
++   assert(key->clip_distance_array_size + key->cull_distance_array_size > 0);
++   assert(key->clip_distance_array_size + key->cull_distance_array_size <= 8);
+ 
+    nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_FRAGMENT, options,
+                                                   "pan-fs-prolog");
+@@ -55,6 +57,30 @@ pan_nir_build_fs_prolog(const struct pan_fs_prolog_key *key,
+       b.shader->info.inputs_read |= BITFIELD64_BIT(var_slot);
+    }
+ 
++   /* Cull: a primitive is culled where the linear 0/1 quantity is
++    * identically zero, i.e. a zero value with zero screen-space derivatives.
++    */
++   unsigned cull_slots = DIV_ROUND_UP(key->cull_distance_array_size, 4);
++   for (unsigned s = 0; s < cull_slots; s++) {
++      unsigned var_slot = VARYING_SLOT_CULL_PRIMITIVE + s;
++      unsigned ncomps = MIN2(key->cull_distance_array_size - s * 4, 4);
++
++      nir_def *load =
++         nir_load_interpolated_input(&b, ncomps, 32, barycentric,
++                                     nir_imm_int(&b, 0),
++                                     .base = num_slots + s,
++                                     .io_semantics.location = var_slot,
++                                     .io_semantics.num_slots = 1);
++      nir_def *q = nir_fmul(&b, load, fragcoord_w);
++      nir_def *culled =
++         nir_bany(&b, nir_iand(&b, nir_feq_imm(&b, q, 0.0),
++                               nir_iand(&b, nir_feq_imm(&b, nir_ddx(&b, q), 0.0),
++                                        nir_feq_imm(&b, nir_ddy(&b, q), 0.0))));
++      cond = cond ? nir_ior(&b, cond, culled) : culled;
++
++      b.shader->info.inputs_read |= BITFIELD64_BIT(var_slot);
++   }
++
+    nir_demote_if(&b, cond);
+    b.shader->info.fs.uses_discard = true;
+ 
+@@ -79,9 +105,93 @@ pan_nir_build_fs_prolog(const struct pan_fs_prolog_key *key,
+  */
+ 
+ static bool
+-is_clip_dist_loc(unsigned loc)
++is_clip_or_cull_dist_loc(unsigned loc)
++{
++   return loc == VARYING_SLOT_CLIP_DIST0 || loc == VARYING_SLOT_CLIP_DIST1 ||
++          loc == VARYING_SLOT_CULL_PRIMITIVE ||
++          loc == VARYING_SLOT_CULL_PRIMITIVE + 1;
++}
++
++/* The common Vulkan runtime merges gl_CullDistance into the CLIP_DIST0/1 slots
++ * after clip, so the cull output variable sits at CLIP_DIST0 + clip_size/4.
++ * Emit a companion output at VARYING_SLOT_CULL_PRIMITIVE holding the linear
++ * quantity (cull distance >= 0). The fragment prolog culls a primitive whose
++ * quantity is zero at every vertex. The real cull distances stay in CLIP_DIST
++ * for gl_CullDistance reads.
++ *
++ * This runs before nir_assign_io_var_locations so the companion output gets a
++ * driver location and enters the varying layout.
++ */
++struct lower_cull_distance_vs_state {
++   nir_variable *cull_var;
++   nir_variable *prim_var;
++   unsigned cull_size;
++};
++
++static bool
++lower_cull_distance_vs_store(nir_builder *b, nir_intrinsic_instr *intr,
++                             void *data)
++{
++   struct lower_cull_distance_vs_state *state = data;
++
++   if (intr->intrinsic != nir_intrinsic_store_deref)
++      return false;
++
++   nir_deref_instr *deref = nir_src_as_deref(intr->src[0]);
++   if (!deref || deref->deref_type != nir_deref_type_array ||
++       nir_deref_instr_get_variable(deref) != state->cull_var)
++      return false;
++
++   if (!state->prim_var) {
++      state->prim_var = nir_variable_create(
++         b->shader, nir_var_shader_out,
++         glsl_array_type(glsl_float_type(), state->cull_size, 0),
++         "gl_CullPrimitive");
++      state->prim_var->data.location = VARYING_SLOT_CULL_PRIMITIVE;
++      state->prim_var->data.compact = true;
++   }
++
++   b->cursor = nir_after_instr(&intr->instr);
++   nir_def *q = nir_b2f32(b, nir_fge_imm(b, intr->src[1].ssa, 0.0));
++   nir_store_array_var(b, state->prim_var, deref->arr.index.ssa, q, 0x1);
++
++   return true;
++}
++
++bool
++pan_nir_lower_cull_distance_vs(nir_shader *shader)
+ {
+-   return loc == VARYING_SLOT_CLIP_DIST0 || loc == VARYING_SLOT_CLIP_DIST1;
++   assert(shader->info.stage == MESA_SHADER_VERTEX);
++
++   unsigned clip_size = shader->info.clip_distance_array_size;
++   unsigned cull_size = shader->info.cull_distance_array_size;
++
++   if (cull_size == 0)
++      return false;
++
++   unsigned cull_loc = VARYING_SLOT_CLIP_DIST0 + clip_size / 4;
++   unsigned cull_frac = clip_size % 4;
++   struct lower_cull_distance_vs_state state = {
++      .cull_size = cull_size,
++   };
++   nir_foreach_shader_out_variable(var, shader) {
++      if (var->data.location == cull_loc &&
++          var->data.location_frac == cull_frac && glsl_type_is_array(var->type)) {
++         state.cull_var = var;
++         break;
++      }
++   }
++   if (!state.cull_var)
++      return false;
++
++   bool progress = nir_shader_intrinsics_pass(
++      shader, lower_cull_distance_vs_store, nir_metadata_control_flow, &state);
++
++   if (state.prim_var)
++      shader->info.outputs_written |= BITFIELD64_RANGE(
++         VARYING_SLOT_CULL_PRIMITIVE, DIV_ROUND_UP(cull_size, 4));
++
++   return progress;
+ }
+ 
+ static bool
+@@ -93,7 +203,7 @@ multiply_clip_store_by_pos_w(nir_builder *b, nir_intrinsic_instr *intrin,
+    if (intrin->intrinsic != nir_intrinsic_store_output)
+       return false;
+ 
+-   if (!is_clip_dist_loc(nir_intrinsic_io_semantics(intrin).location))
++   if (!is_clip_or_cull_dist_loc(nir_intrinsic_io_semantics(intrin).location))
+       return false;
+ 
+    b->cursor = nir_before_instr(&intrin->instr);
+@@ -104,12 +214,12 @@ multiply_clip_store_by_pos_w(nir_builder *b, nir_intrinsic_instr *intrin,
+ }
+ 
+ bool
+-pan_nir_lower_clip_distance_vs(nir_shader *shader,
+-                               unsigned clip_distance_array_size)
++pan_nir_lower_clip_cull_distance_vs(nir_shader *shader, unsigned clip_size,
++                                    unsigned cull_size)
+ {
+    assert(shader->info.stage == MESA_SHADER_VERTEX);
+ 
+-   if (clip_distance_array_size == 0)
++   if (clip_size + cull_size == 0)
+       return false;
+ 
+    nir_builder b;
+@@ -124,13 +234,13 @@ pan_nir_lower_clip_distance_vs(nir_shader *shader,
+ }
+ 
+ static bool
+-lower_clip_distance_fs_instr(nir_builder *b, nir_intrinsic_instr *intrin,
+-                             UNUSED void *data)
++lower_clip_cull_distance_fs_instr(nir_builder *b, nir_intrinsic_instr *intrin,
++                                  UNUSED void *data)
+ {
+    if (intrin->intrinsic != nir_intrinsic_load_interpolated_input)
+       return false;
+ 
+-   if (!is_clip_dist_loc(nir_intrinsic_io_semantics(intrin).location))
++   if (!is_clip_or_cull_dist_loc(nir_intrinsic_io_semantics(intrin).location))
+       return false;
+ 
+    b->cursor = nir_after_instr(&intrin->instr);
+@@ -144,13 +254,14 @@ lower_clip_distance_fs_instr(nir_builder *b, nir_intrinsic_instr *intrin,
+ }
+ 
+ bool
+-pan_nir_lower_clip_distance_fs(nir_shader *shader)
++pan_nir_lower_clip_cull_distance_fs(nir_shader *shader)
+ {
+    assert(shader->info.stage == MESA_SHADER_FRAGMENT);
+ 
+-   if (shader->info.clip_distance_array_size == 0)
++   if (shader->info.clip_distance_array_size +
++       shader->info.cull_distance_array_size == 0)
+       return false;
+ 
+-   return nir_shader_intrinsics_pass(shader, lower_clip_distance_fs_instr,
++   return nir_shader_intrinsics_pass(shader, lower_clip_cull_distance_fs_instr,
+                                      nir_metadata_control_flow, NULL);
+ }
+diff --git a/src/panfrost/compiler/pan_nir_prolog.h b/src/panfrost/compiler/pan_nir_prolog.h
+index e0193e4e94b..d9ff9a02c74 100644
+--- a/src/panfrost/compiler/pan_nir_prolog.h
++++ b/src/panfrost/compiler/pan_nir_prolog.h
+@@ -9,13 +9,17 @@
+ 
+ struct pan_fs_prolog_key {
+    uint8_t clip_distance_array_size;
++   uint8_t cull_distance_array_size;
+ };
+ 
+ nir_shader *
+ pan_nir_build_fs_prolog(const struct pan_fs_prolog_key *key,
+                         const nir_shader_compiler_options *options);
+ 
+-bool pan_nir_lower_clip_distance_vs(nir_shader *shader,
+-                                    unsigned clip_distance_array_size);
++bool pan_nir_lower_clip_cull_distance_vs(nir_shader *shader,
++                                         unsigned clip_size,
++                                         unsigned cull_size);
+ 
+-bool pan_nir_lower_clip_distance_fs(nir_shader *shader);
++bool pan_nir_lower_cull_distance_vs(nir_shader *shader);
++
++bool pan_nir_lower_clip_cull_distance_fs(nir_shader *shader);
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index eb9d0f8a1f5..84bb664157e 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -1751,7 +1751,7 @@ panvk_compile_shader(struct panvk_device *dev,
+       nir_assign_io_var_locations(nir, nir_var_shader_out);
+       panvk_lower_nir_io(nir);
+ 
+-      NIR_PASS(_, nir, pan_nir_lower_clip_distance_fs);
++      NIR_PASS(_, nir, pan_nir_lower_clip_cull_distance_fs);
+ 
+       /* Lower FS outputs now so that we can lower load_blend_descriptor_pan
+        * to a driver-provided FAU instead of using the blend descriptors

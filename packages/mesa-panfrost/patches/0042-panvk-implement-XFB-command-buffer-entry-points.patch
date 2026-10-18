@@ -1,0 +1,141 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ryan Zhang <ryan.zhang@nxp.com>
+Date: Fri, 31 Jul 2026 17:30:29 +0800
+Subject: [PATCH 42/57] panvk: implement XFB command buffer entry points
+
+Implement CmdBindTransformFeedbackBuffersEXT to record buffer GPU
+addresses and sizes. Implement CmdBeginTransformFeedbackEXT with
+pause/resume support: buffers with a counter buffer keep their
+current offset, others reset to zero. Implement
+CmdEndTransformFeedbackEXT to write accumulated byte offsets to
+counter buffers via GPU-side CSF STORE instructions.
+
+Signed-off-by: Ryan Zhang <ryan.zhang@nxp.com>
+---
+ src/panfrost/vulkan/panvk_vX_cmd_draw.c | 109 ++++++++++++++++++++++++
+ 1 file changed, 109 insertions(+)
+
+diff --git a/src/panfrost/vulkan/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/panvk_vX_cmd_draw.c
+index bfa180eafa1..4a55037f6c7 100644
+--- a/src/panfrost/vulkan/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/panvk_vX_cmd_draw.c
+@@ -1089,6 +1089,7 @@ panvk_per_arch(CmdBindIndexBuffer2)(VkCommandBuffer commandBuffer,
+       cmdbuf->state.gfx.ib.size = panvk_buffer_range(buf, offset, size);
+       assert(cmdbuf->state.gfx.ib.size <= UINT32_MAX);
+       cmdbuf->state.gfx.ib.dev_addr = panvk_buffer_gpu_ptr(buf, offset);
++      cmdbuf->state.gfx.ib.host_ptr = panvk_buffer_host_ptr(buf, offset);
+    } else {
+       cmdbuf->state.gfx.ib.size = 0;
+       /* In case of NullDescriptors, we need to set a non-NULL address and rely
+@@ -1099,3 +1100,111 @@ panvk_per_arch(CmdBindIndexBuffer2)(VkCommandBuffer commandBuffer,
+    }
+    cmdbuf->state.gfx.ib.index_size = vk_index_type_to_bytes(indexType);
+ }
++
++#if PAN_ARCH >= 10
++VKAPI_ATTR void VKAPI_CALL
++panvk_per_arch(CmdBindTransformFeedbackBuffersEXT)(
++   VkCommandBuffer commandBuffer, uint32_t firstBinding,
++   uint32_t bindingCount, const VkBuffer *pBuffers,
++   const VkDeviceSize *pOffsets, const VkDeviceSize *pSizes)
++{
++   VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
++
++   for (uint32_t i = 0; i < bindingCount; i++) {
++      VK_FROM_HANDLE(panvk_buffer, buffer, pBuffers[i]);
++      uint32_t idx = firstBinding + i;
++
++      assert(idx < MAX_XFB_BUFFERS);
++
++      if (buffer) {
++         cmdbuf->state.gfx.xfb.buffers[idx].address =
++            panvk_buffer_gpu_ptr(buffer, pOffsets[i]);
++         cmdbuf->state.gfx.xfb.buffers[idx].size = panvk_buffer_range(
++            buffer, pOffsets[i],
++            (pSizes && pSizes[i] != VK_WHOLE_SIZE) ? pSizes[i] : VK_WHOLE_SIZE);
++      } else {
++         cmdbuf->state.gfx.xfb.buffers[idx].address = 0;
++         cmdbuf->state.gfx.xfb.buffers[idx].size = 0;
++      }
++   }
++}
++
++VKAPI_ATTR void VKAPI_CALL
++panvk_per_arch(CmdBeginTransformFeedbackEXT)(
++   VkCommandBuffer commandBuffer, uint32_t firstCounterBuffer,
++   uint32_t counterBufferCount, const VkBuffer *pCounterBuffers,
++   const VkDeviceSize *pCounterBufferOffsets)
++{
++   VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
++
++   cmdbuf->state.gfx.xfb.active = true;
++
++   /* Only reset offsets for buffers without a counter buffer.
++    * Buffers with a counter buffer keep their current offset to
++    * support pause/resume within a single command buffer.
++    */
++   bool has_counter[MAX_XFB_BUFFERS] = {false};
++
++   if (pCounterBuffers) {
++      for (uint32_t i = 0; i < counterBufferCount; i++) {
++         uint32_t idx = firstCounterBuffer + i;
++         assert(idx < MAX_XFB_BUFFERS);
++
++         if (pCounterBuffers[i] != VK_NULL_HANDLE) {
++            VK_FROM_HANDLE(panvk_buffer, cbuf, pCounterBuffers[i]);
++            VkDeviceSize offset =
++               (pCounterBufferOffsets ? pCounterBufferOffsets[i] : 0);
++            cmdbuf->state.gfx.xfb.counters[idx].address =
++               panvk_buffer_gpu_ptr(cbuf, offset);
++            has_counter[idx] = true;
++         } else {
++            cmdbuf->state.gfx.xfb.counters[idx].address = 0;
++         }
++      }
++   }
++
++   /* Reset offsets only for buffers without counter buffer resume */
++   for (uint32_t i = 0; i < MAX_XFB_BUFFERS; i++) {
++      if (!has_counter[i])
++         cmdbuf->state.gfx.xfb.offsets[i] = 0;
++   }
++}
++
++VKAPI_ATTR void VKAPI_CALL
++panvk_per_arch(CmdEndTransformFeedbackEXT)(
++   VkCommandBuffer commandBuffer, uint32_t firstCounterBuffer,
++   uint32_t counterBufferCount, const VkBuffer *pCounterBuffers,
++   const VkDeviceSize *pCounterBufferOffsets)
++{
++   VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
++
++   cmdbuf->state.gfx.xfb.active = false;
++
++   /* Write accumulated byte offsets to counter buffers for resume. */
++   if (pCounterBuffers) {
++      for (uint32_t i = 0; i < counterBufferCount; i++) {
++         uint32_t idx = firstCounterBuffer + i;
++         assert(idx < MAX_XFB_BUFFERS);
++
++         if (pCounterBuffers[i] != VK_NULL_HANDLE) {
++            VK_FROM_HANDLE(panvk_buffer, cbuf, pCounterBuffers[i]);
++            VkDeviceSize offset =
++               (pCounterBufferOffsets ? pCounterBufferOffsets[i] : 0);
++            uint64_t counter_addr = panvk_buffer_gpu_ptr(cbuf, offset);
++            cmdbuf->state.gfx.xfb.counters[idx].address = counter_addr;
++
++             /* Write byte offset to counter buffer via CSF STORE. */
++            struct cs_builder *b = panvk_get_cs_builder(
++               cmdbuf, PANVK_SUBQUEUE_COMPUTE);
++            struct cs_index val_reg = cs_scratch_reg32(b, 0);
++            struct cs_index addr_reg = cs_scratch_reg64(b, 2);
++            cs_move32_to(b, val_reg,
++                         (uint32_t)cmdbuf->state.gfx.xfb.offsets[idx]);
++            cs_move64_to(b, addr_reg, counter_addr);
++            cs_store32(b, val_reg, addr_reg, 0);
++            cs_flush_stores(b);
++         }
++      }
++   }
++}
++#endif /* PAN_ARCH >= 10 */

@@ -1,0 +1,159 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Gmeiner <cgmeiner@igalia.com>
+Date: Thu, 17 Sep 2026 23:42:29 +0200
+Subject: [PATCH 25/57] panfrost: Let a shader keep another shader's preloaded
+ registers
+
+A prolog runs before the shader it is linked with and shares its
+register file. Registers preloaded by the following shader must survive,
+so pass the mask to the backends.
+
+Bifrost drops them from the allocation affinity, while Kraid caps its
+arena below the lowest preloaded register.
+
+Without a mask, nothing changes.
+
+Signed-off-by: Christian Gmeiner <cgmeiner@igalia.com>
+---
+ src/panfrost/compiler/bifrost/bi_ra.c |  2 +
+ src/panfrost/compiler/kraid/ir.rs     |  1 +
+ src/panfrost/compiler/kraid/nir.rs    |  1 +
+ src/panfrost/compiler/kraid/ra.rs     | 54 ++++++++++++++++++++++-----
+ src/panfrost/compiler/pan_compiler.h  |  1 +
+ 5 files changed, 49 insertions(+), 10 deletions(-)
+
+diff --git a/src/panfrost/compiler/bifrost/bi_ra.c b/src/panfrost/compiler/bifrost/bi_ra.c
+index 952d4a2464b..2f578edb7ee 100644
+--- a/src/panfrost/compiler/bifrost/bi_ra.c
++++ b/src/panfrost/compiler/bifrost/bi_ra.c
+@@ -454,6 +454,8 @@ bi_allocate_registers(bi_context *ctx, bool *success, bool full_regs)
+       : full_regs           ? BITFIELD64_MASK(64)
+                   : (BITFIELD64_MASK(16) | (BITFIELD64_MASK(16) << 48));
+ 
++   default_affinity &= ~ctx->inputs->preserved_regs;
++
+    /* To test spilling, mimic a small register file */
+    if (bifrost_debug & BIFROST_DBG_SPILL && !ctx->inputs->is_blend && (bifrost_debug & BIFROST_DBG_NOSSARA))
+       default_affinity &= BITFIELD64_MASK(48) << 8;
+diff --git a/src/panfrost/compiler/kraid/ir.rs b/src/panfrost/compiler/kraid/ir.rs
+index 1e90150698b..248137a2583 100644
+--- a/src/panfrost/compiler/kraid/ir.rs
++++ b/src/panfrost/compiler/kraid/ir.rs
+@@ -2197,6 +2197,7 @@ pub struct ShaderInfo {
+     pub blend1_type: Option<DataType>,
+     /// Is this a blend shader?
+     pub is_blend: bool,
++    pub preserved_regs: u64,
+ }
+ 
+ impl ShaderInfo {
+diff --git a/src/panfrost/compiler/kraid/nir.rs b/src/panfrost/compiler/kraid/nir.rs
+index 9cfde2b03ca..f552e243cbb 100644
+--- a/src/panfrost/compiler/kraid/nir.rs
++++ b/src/panfrost/compiler/kraid/nir.rs
+@@ -137,6 +137,7 @@ impl<'a> ShaderFromNir<'a> {
+             info: ShaderInfo {
+                 tls_size: nir.scratch_size,
+                 is_blend: inputs.is_blend,
++                preserved_regs: inputs.preserved_regs,
+                 ..ShaderInfo::default()
+             },
+             constant_pool_label: None,
+diff --git a/src/panfrost/compiler/kraid/ra.rs b/src/panfrost/compiler/kraid/ra.rs
+index 3db037193db..c80968fa735 100644
+--- a/src/panfrost/compiler/kraid/ra.rs
++++ b/src/panfrost/compiler/kraid/ra.rs
+@@ -85,21 +85,46 @@ impl Arena {
+         }
+     }
+ 
+-    /// Creates a new register arena for blend shaders
+-    pub fn new_blend(model: &dyn Model) -> Arena {
+-        let limit = 16 * 4;
++    fn new_capped(model: &dyn Model, regs: u16) -> Arena {
++        let limit = regs * 4;
++        let granularity: u8 = if regs <= 16 {
++            (regs * 4).try_into().unwrap()
++        } else if model.arch() < 15 {
++            32 * 4
++        } else {
++            16 * 4
++        };
+         Arena {
+-            limit: limit.into(),
++            limit,
+             used: 0.into(),
+-            granularity: limit,
++            granularity,
+             is_mem: false,
+             round_robin: true,
+             tls_offset: 0,
+-            is_v9_32reg: model.arch() < 15,
+-            is_v9_64reg: false,
++            is_v9_32reg: regs <= 16 && model.arch() < 15,
++            is_v9_64reg: regs > 16 && model.arch() < 15,
+         }
+     }
+ 
++    /// Creates a new register arena for blend shaders
++    pub fn new_blend(model: &dyn Model) -> Arena {
++        Arena::new_capped(model, 16)
++    }
++
++    pub fn new_preserving(
++        model: &dyn Model,
++        live_bytes: u32,
++        preserved: u64,
++    ) -> Arena {
++        let lowest: u16 = preserved.trailing_zeros().try_into().unwrap();
++        let cap = lowest.min(model.max_reg_count().into());
++        Arena::new_capped(model, if live_bytes <= 16 * 4 && cap >= 16 {
++            16
++        } else {
++            cap
++        })
++    }
++
+     /// Returns the number of bytes used from this arena.  This will be updated
+     /// as we allocate and can be queried after RA is complete to know the
+     /// final amount we need to report to the driver.
+@@ -2574,15 +2599,24 @@ impl Shader<'_> {
+     pub fn assign_registers(&mut self) {
+         pass!(self.lower_repeated_phi_srcs());
+ 
+-        if self.info.is_blend {
+-            let arena = Arena::new_blend(self.model);
++        if self.info.is_blend || self.info.preserved_regs != 0 {
++            let live = Liveness::for_shader(self);
++            let arena = if self.info.is_blend {
++                Arena::new_blend(self.model)
++            } else {
++                Arena::new_preserving(
++                    self.model,
++                    live.max_live_bytes().reg,
++                    self.info.preserved_regs,
++                )
++            };
+ 
+             pass!(self.prop_oob_reg_in(&arena));
+ 
+             let live = Liveness::for_shader(self);
+             assert!(
+                 live.max_live_bytes().reg <= u32::from(arena.limit()),
+-                "Blend shaders cannot spill"
++                "Blend shaders and prologs cannot spill"
+             );
+ 
+             self.run_pass("allocating registers", |s| {
+diff --git a/src/panfrost/compiler/pan_compiler.h b/src/panfrost/compiler/pan_compiler.h
+index 80a5df84063..ec9fd12afea 100644
+--- a/src/panfrost/compiler/pan_compiler.h
++++ b/src/panfrost/compiler/pan_compiler.h
+@@ -36,6 +36,7 @@ struct pan_compile_inputs {
+    uint32_t gpu_variant;
+    bool is_blend, is_blit;
+    bool skip_atest;
++   uint64_t preserved_regs;
+    bool no_idvs;
+    uint32_t view_mask;
+ 

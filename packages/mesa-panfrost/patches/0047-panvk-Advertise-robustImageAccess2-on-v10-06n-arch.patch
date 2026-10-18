@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: 06n-arch <gennro2004@gmail.com>
+Date: Mon, 28 Sep 2026 20:42:54 -0500
+Subject: [PATCH 47/57] panvk: Advertise robustImageAccess2 on v10+ (06n-arch)
+
+vkd3d-proton refuses devices without robustImageAccess2, so no D3D12
+game starts on PanVK.
+
+Storage images get software bounds checks with nir_lower_robust_access:
+out-of-bounds loads return zero with one for missing components, stores
+and atomics are dropped. It runs before descriptor lowering so the
+image_deref_size it emits gets lowered there. Sampled-image fetches are
+left to the hardware, as in other drivers: the robust value depends on
+the view format, which the shader doesn't know. Format-less storage
+image loads return (0, 0, 0, 1).
+---
+ .../vulkan/panvk_vX_physical_device.c         |  2 +-
+ src/panfrost/vulkan/panvk_vX_shader.c         | 23 +++++++++++++++++++
+ 2 files changed, 24 insertions(+), 1 deletion(-)
+
+diff --git a/src/panfrost/vulkan/panvk_vX_physical_device.c b/src/panfrost/vulkan/panvk_vX_physical_device.c
+index 1931a2477d7..d16ce0a7872 100644
+--- a/src/panfrost/vulkan/panvk_vX_physical_device.c
++++ b/src/panfrost/vulkan/panvk_vX_physical_device.c
+@@ -630,7 +630,7 @@ panvk_per_arch(get_physical_device_features)(
+ 
+       /* VK_KHR_robustness2 */
+       .robustBufferAccess2 = PAN_ARCH >= 11,
+-      .robustImageAccess2 = false,
++      .robustImageAccess2 = PAN_ARCH >= 10,
+       .nullDescriptor = PAN_ARCH >= 10,
+ 
+       /* VK_EXT_shader_tile_image */
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index 6ca04513f91..024a3428413 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -627,6 +627,20 @@ valhall_pack_buf_idx(nir_builder *b, nir_instr *instr, UNUSED void *data)
+ }
+ #endif
+ 
++static bool
++is_robust_image_intr(const nir_intrinsic_instr *intr, UNUSED const void *data)
++{
++   switch (intr->intrinsic) {
++   case nir_intrinsic_image_deref_load:
++   case nir_intrinsic_image_deref_store:
++   case nir_intrinsic_image_deref_atomic:
++   case nir_intrinsic_image_deref_atomic_swap:
++      return true;
++   default:
++      return false;
++   }
++}
++
+ static bool
+ is_robust_ssbo_intr(const nir_intrinsic_instr *intr, UNUSED const void *data)
+ {
+@@ -909,6 +923,15 @@ panvk_lower_nir(struct panvk_device *dev, nir_shader *nir,
+    if (PAN_ARCH < 9)
+       NIR_PASS(_, nir, pan_nir_lower_image_ms);
+ 
++   /* robustImageAccess2 for storage images: bounds-check in the shader so
++    * out-of-bounds loads return zero (one for missing alpha) and stores and
++    * atomics are dropped. Before descriptor lowering, for the same reason
++    * as above: it emits image_deref_size. Sampled-image fetches rely on the
++    * hardware, as in other drivers (the value depends on the view format).
++    */
++   if (rs->images == VK_PIPELINE_ROBUSTNESS_IMAGE_BEHAVIOR_ROBUST_IMAGE_ACCESS_2)
++      NIR_PASS(_, nir, nir_lower_robust_access, is_robust_image_intr, NULL);
++
+    panvk_per_arch(nir_lower_descriptors)(nir, dev, rs, set_layout_count,
+                                          set_layouts, state, desc_info);
+ 

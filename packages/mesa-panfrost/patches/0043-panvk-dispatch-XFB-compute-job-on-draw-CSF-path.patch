@@ -1,0 +1,598 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ryan Zhang <ryan.zhang@nxp.com>
+Date: Fri, 31 Jul 2026 17:30:44 +0800
+Subject: [PATCH 43/57] panvk: dispatch XFB compute job on draw (CSF path)
+
+Add panvk_cmd_launch_xfb() which dispatches the XFB compute variant
+after each draw call when transform feedback is active.
+
+Key features:
+- Set per-buffer sysvals with base+offset for append writes
+- Use PAN_SHADER_OOB_ADDRESS for unbound buffers
+- Allocate per-job TLS via cmd_dispatch_prepare_tls
+- Support strip/fan/loop topology expansion via two-dispatch
+  approach: XFB variant writes to temp buffer, then
+  panlib_xfb_scatter_copy reorders to final XFB buffer
+- CPU-side index buffer walk for indexed draw + primitive restart
+- Set PANVK_CSF_BARRIER_WAIT when scatter copy follows to ensure
+  the XFB dispatch completes before the copy reads temp buffer
+- Accumulate primitive counts for XFB query support
+- Advance per-buffer offsets by expanded vertex count
+
+Signed-off-by: Ryan Zhang <ryan.zhang@nxp.com>
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c | 547 +++++++++++++++++++-
+ 1 file changed, 545 insertions(+), 2 deletions(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index 26346e4965a..9edf1d7d9a4 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -4183,15 +4183,552 @@ launch_indirect_draw(struct panvk_cmd_buffer *cmdbuf,
+    }
+ }
+ 
++/**
++ * @brief Dispatch the XFB compute variant to capture vertex shader outputs.
++ *
++ * This is called after every non-indirect draw when transform feedback is
++ * active. It dispatches the XFB variant of the vertex shader as a compute
++ * job with workgroup size (1,1,1) and dimensions (vertex_count,
++ * instance_count, 1), mirroring the Gallium panfrost approach.
++ *
++ * The XFB variant shader reads vertex inputs and writes directly to the
++ * XFB output buffers via global memory stores, using addresses passed
++ * through sysvals.
++ */
++static void
++panvk_cmd_launch_xfb(struct panvk_cmd_buffer *cmdbuf,
++                     const struct panvk_draw_info *draw)
++{
++   const struct panvk_shader *vs_shader = cmdbuf->state.gfx.vs.shader;
++   if (!vs_shader)
++      return;
++
++   const struct panvk_shader_variant *xfb_variant =
++      &vs_shader->variants[PANVK_VS_VARIANT_XFB];
++
++   /* No valid XFB variant (e.g. xfb_info was NULL during compilation). */
++   if (!xfb_variant->bin_ptr || !panvk_priv_mem_dev_addr(xfb_variant->spd))
++      return;
++
++   /* Get XFB strides from the variant (saved at compile time) */
++   const uint32_t *strides = xfb_variant->xfb_strides;
++
++   /* Compute topology expansion parameters */
++   enum mesa_prim prim = draw->prim;
++   uint32_t verts_per_prim = 1;
++   uint32_t prim_count_per_instance = 0;
++   bool needs_expansion = false;
++
++   switch (prim) {
++   case MESA_PRIM_POINTS:
++      verts_per_prim = 1;
++      prim_count_per_instance = draw->vertex.count;
++      break;
++   case MESA_PRIM_LINES:
++      verts_per_prim = 2;
++      prim_count_per_instance = draw->vertex.count / 2;
++      break;
++   case MESA_PRIM_LINE_STRIP:
++      verts_per_prim = 2;
++      prim_count_per_instance = (draw->vertex.count >= 2)
++         ? (draw->vertex.count - 1) : 0;
++      needs_expansion = true;
++      break;
++   case MESA_PRIM_LINE_LOOP:
++      verts_per_prim = 2;
++      prim_count_per_instance = (draw->vertex.count >= 2)
++         ? draw->vertex.count : 0;
++      needs_expansion = true;
++      break;
++   case MESA_PRIM_TRIANGLES:
++      verts_per_prim = 3;
++      prim_count_per_instance = draw->vertex.count / 3;
++      break;
++   case MESA_PRIM_TRIANGLE_STRIP:
++      verts_per_prim = 3;
++      prim_count_per_instance = (draw->vertex.count >= 3)
++         ? (draw->vertex.count - 2) : 0;
++      needs_expansion = true;
++      break;
++   case MESA_PRIM_TRIANGLE_FAN:
++      verts_per_prim = 3;
++      prim_count_per_instance = (draw->vertex.count >= 3)
++         ? (draw->vertex.count - 2) : 0;
++      needs_expansion = true;
++      break;
++   default:
++      verts_per_prim = 1;
++      prim_count_per_instance = draw->vertex.count;
++      break;
++   }
++
++   if (prim_count_per_instance == 0)
++      return;
++
++   /* Check for indexed draw with primitive restart.
++    * If we have CPU access to the index buffer, we can walk it to
++    * build the correct expansion map that skips restart indices.
++    */
++   bool is_indexed = (draw->index.buffer_dev_addr != 0 &&
++                      draw->index.index_size > 0);
++   bool has_restart = is_indexed && draw->index.restart_enable;
++   void *ib_host = cmdbuf->state.gfx.ib.host_ptr;
++
++   uint32_t expanded_vert_count;
++   uint64_t total_expanded_verts;
++   uint64_t index_map_addr = 0;
++
++   if ((needs_expansion || is_indexed) && ib_host && is_indexed) {
++      /* Indexed draw: walk the index buffer to build expansion map.
++       * This handles both topology expansion AND primitive restart.
++       */
++      uint32_t index_count = draw->vertex.count;
++      uint32_t restart_index = 0;
++      if (has_restart) {
++         if (draw->index.index_size == 2)
++            restart_index = 0xFFFF;
++         else if (draw->index.index_size == 4)
++            restart_index = 0xFFFFFFFF;
++         else
++            restart_index = 0xFF;
++      }
++
++      /* Read indices from host-mapped index buffer */
++      const void *ib_data = (const uint8_t *)ib_host;
++
++      /* Worst case output size */
++      uint32_t max_out = index_count * verts_per_prim;
++      uint32_t *out_verts = malloc(max_out * sizeof(uint32_t));
++      if (!out_verts)
++         return;
++
++      uint32_t out_count = 0;
++      uint32_t run_len = 0;
++      uint32_t run_start = 0;
++      uint32_t prim_idx = 0;
++
++      for (uint32_t j = 0; j < index_count; j++) {
++         uint32_t vtx;
++         if (draw->index.index_size == 2)
++            vtx = ((const uint16_t *)ib_data)[j + draw->index.offset];
++         else if (draw->index.index_size == 4)
++            vtx = ((const uint32_t *)ib_data)[j + draw->index.offset];
++         else
++            vtx = ((const uint8_t *)ib_data)[j + draw->index.offset];
++
++         if (has_restart && vtx == restart_index) {
++            run_start = j + 1;
++            run_len = 0;
++            prim_idx = 0;
++            continue;
++         }
++
++         run_len++;
++
++         switch (prim) {
++         case MESA_PRIM_POINTS:
++            out_verts[out_count++] = vtx;
++            break;
++         case MESA_PRIM_LINES:
++            if (run_len % 2 == 0) {
++               uint32_t prev;
++               if (draw->index.index_size == 2)
++                  prev = ((const uint16_t *)ib_data)[j - 1 + draw->index.offset];
++               else if (draw->index.index_size == 4)
++                  prev = ((const uint32_t *)ib_data)[j - 1 + draw->index.offset];
++               else
++                  prev = ((const uint8_t *)ib_data)[j - 1 + draw->index.offset];
++               out_verts[out_count++] = prev;
++               out_verts[out_count++] = vtx;
++            }
++            break;
++         case MESA_PRIM_LINE_STRIP:
++            if (run_len >= 2) {
++               uint32_t prev;
++               if (draw->index.index_size == 2)
++                  prev = ((const uint16_t *)ib_data)[j - 1 + draw->index.offset];
++               else if (draw->index.index_size == 4)
++                  prev = ((const uint32_t *)ib_data)[j - 1 + draw->index.offset];
++               else
++                  prev = ((const uint8_t *)ib_data)[j - 1 + draw->index.offset];
++               out_verts[out_count++] = prev;
++               out_verts[out_count++] = vtx;
++            }
++            break;
++         case MESA_PRIM_TRIANGLES:
++            if (run_len % 3 == 0) {
++               uint32_t v0, v1;
++               if (draw->index.index_size == 2) {
++                  v0 = ((const uint16_t *)ib_data)[j - 2 + draw->index.offset];
++                  v1 = ((const uint16_t *)ib_data)[j - 1 + draw->index.offset];
++               } else if (draw->index.index_size == 4) {
++                  v0 = ((const uint32_t *)ib_data)[j - 2 + draw->index.offset];
++                  v1 = ((const uint32_t *)ib_data)[j - 1 + draw->index.offset];
++               } else {
++                  v0 = ((const uint8_t *)ib_data)[j - 2 + draw->index.offset];
++                  v1 = ((const uint8_t *)ib_data)[j - 1 + draw->index.offset];
++               }
++               out_verts[out_count++] = v0;
++               out_verts[out_count++] = v1;
++               out_verts[out_count++] = vtx;
++            }
++            break;
++         case MESA_PRIM_TRIANGLE_STRIP:
++            if (run_len >= 3) {
++               uint32_t v0, v1;
++               if (draw->index.index_size == 2) {
++                  v0 = ((const uint16_t *)ib_data)[j - 2 + draw->index.offset];
++                  v1 = ((const uint16_t *)ib_data)[j - 1 + draw->index.offset];
++               } else if (draw->index.index_size == 4) {
++                  v0 = ((const uint32_t *)ib_data)[j - 2 + draw->index.offset];
++                  v1 = ((const uint32_t *)ib_data)[j - 1 + draw->index.offset];
++               } else {
++                  v0 = ((const uint8_t *)ib_data)[j - 2 + draw->index.offset];
++                  v1 = ((const uint8_t *)ib_data)[j - 1 + draw->index.offset];
++               }
++               if (prim_idx % 2 == 0) {
++                  out_verts[out_count++] = v0;
++                  out_verts[out_count++] = v1;
++                  out_verts[out_count++] = vtx;
++               } else {
++                  out_verts[out_count++] = v1;
++                  out_verts[out_count++] = v0;
++                  out_verts[out_count++] = vtx;
++               }
++               prim_idx++;
++            }
++            break;
++         case MESA_PRIM_TRIANGLE_FAN:
++            if (run_len >= 3) {
++               uint32_t center, prev;
++               if (draw->index.index_size == 2) {
++                  center = ((const uint16_t *)ib_data)[run_start + draw->index.offset];
++                  prev = ((const uint16_t *)ib_data)[j - 1 + draw->index.offset];
++               } else if (draw->index.index_size == 4) {
++                  center = ((const uint32_t *)ib_data)[run_start + draw->index.offset];
++                  prev = ((const uint32_t *)ib_data)[j - 1 + draw->index.offset];
++               } else {
++                  center = ((const uint8_t *)ib_data)[run_start + draw->index.offset];
++                  prev = ((const uint8_t *)ib_data)[j - 1 + draw->index.offset];
++               }
++               out_verts[out_count++] = center;
++               out_verts[out_count++] = prev;
++               out_verts[out_count++] = vtx;
++            }
++            break;
++         default:
++            out_verts[out_count++] = vtx;
++            break;
++         }
++      }
++
++      if (out_count == 0) {
++         free(out_verts);
++         return;
++      }
++
++      /* Find max vertex index for temp buffer sizing. */
++      uint32_t max_vertex_index = 0;
++      for (uint32_t k = 0; k < out_count; k++) {
++         if (out_verts[k] > max_vertex_index)
++            max_vertex_index = out_verts[k];
++      }
++
++      expanded_vert_count = out_count;
++      total_expanded_verts =
++         (uint64_t)out_count * (uint64_t)draw->instance.count;
++      prim_count_per_instance = out_count / verts_per_prim;
++      needs_expansion = true;
++
++      /* Upload as index_map. */
++      struct pan_ptr map_buf = panvk_cmd_alloc_dev_mem(
++         cmdbuf, desc, out_count * sizeof(uint32_t), sizeof(uint32_t));
++      if (!map_buf.gpu) {
++         free(out_verts);
++         return;
++      }
++      memcpy(map_buf.cpu, out_verts, out_count * sizeof(uint32_t));
++      index_map_addr = map_buf.gpu;
++      free(out_verts);
++   } else if (needs_expansion) {
++      /* Non-indexed strip/fan/loop expansion (original path) */
++      expanded_vert_count = prim_count_per_instance * verts_per_prim;
++      total_expanded_verts =
++         (uint64_t)expanded_vert_count * (uint64_t)draw->instance.count;
++
++      uint32_t map_size = expanded_vert_count * sizeof(uint32_t);
++      struct pan_ptr map_buf = panvk_cmd_alloc_dev_mem(
++         cmdbuf, desc, map_size, sizeof(uint32_t));
++      if (!map_buf.gpu)
++         return;
++
++      uint32_t *map = (uint32_t *)map_buf.cpu;
++      uint32_t idx = 0;
++
++      for (uint32_t p = 0; p < prim_count_per_instance; p++) {
++         switch (prim) {
++         case MESA_PRIM_LINE_STRIP:
++            map[idx++] = p;
++            map[idx++] = p + 1;
++            break;
++         case MESA_PRIM_LINE_LOOP:
++            map[idx++] = p;
++            map[idx++] = (p + 1) % draw->vertex.count;
++            break;
++         case MESA_PRIM_TRIANGLE_STRIP:
++            if (p % 2 == 0) {
++               map[idx++] = p;
++               map[idx++] = p + 1;
++               map[idx++] = p + 2;
++            } else {
++               map[idx++] = p + 1;
++               map[idx++] = p;
++               map[idx++] = p + 2;
++            }
++            break;
++         case MESA_PRIM_TRIANGLE_FAN:
++            map[idx++] = 0;
++            map[idx++] = p + 1;
++            map[idx++] = p + 2;
++            break;
++         default:
++            break;
++         }
++      }
++
++      index_map_addr = map_buf.gpu;
++   } else {
++      /* Simple topology, no expansion needed */
++      expanded_vert_count = draw->vertex.count;
++      total_expanded_verts =
++         (uint64_t)expanded_vert_count * (uint64_t)draw->instance.count;
++   }
++
++   /* Total vertices this draw will output */
++   uint64_t total_verts =
++      (uint64_t)draw->vertex.count * (uint64_t)draw->instance.count;
++
++   /* Set per-buffer sysvals: base + offset for the append position. */
++   for (unsigned i = 0; i < MAX_XFB_BUFFERS; i++) {
++      uint64_t base = cmdbuf->state.gfx.xfb.buffers[i].address;
++      uint64_t size = cmdbuf->state.gfx.xfb.buffers[i].size;
++      uint64_t off = cmdbuf->state.gfx.xfb.offsets[i];
++
++       if (base && strides[i] > 0 && off < size) {
++          cmdbuf->state.gfx.sysvals.xfb.buffers[i] = base + off;
++      } else {
++          /* No buffer bound or full — use OOB sink to avoid fault. */
++         cmdbuf->state.gfx.sysvals.xfb.buffers[i] = PAN_SHADER_OOB_ADDRESS;
++      }
++   }
++   /* Non-indexed expansion needs temp buffer + scatter copy.
++    * All other cases dispatch directly.
++    */
++   bool use_temp_buf = needs_expansion;
++
++   uint64_t xfb_buf_addrs[MAX_XFB_BUFFERS];
++   for (unsigned i = 0; i < MAX_XFB_BUFFERS; i++)
++      xfb_buf_addrs[i] = cmdbuf->state.gfx.sysvals.xfb.buffers[i];
++
++   struct pan_ptr temp_buf = {0};
++   uint32_t source_vert_count = draw->vertex.count;
++   if (is_indexed && ib_host) {
++      /* Find max vertex index in the index buffer (excluding restart) */
++      uint32_t max_idx = 0;
++      uint32_t index_count = draw->vertex.count;
++      uint32_t restart_val = 0;
++      if (has_restart) {
++         if (draw->index.index_size == 2) restart_val = 0xFFFF;
++         else if (draw->index.index_size == 4) restart_val = 0xFFFFFFFF;
++         else restart_val = 0xFF;
++      }
++      for (uint32_t j = 0; j < index_count; j++) {
++         uint32_t v;
++         if (draw->index.index_size == 2)
++            v = ((const uint16_t *)ib_host)[j + draw->index.offset];
++         else if (draw->index.index_size == 4)
++            v = ((const uint32_t *)ib_host)[j + draw->index.offset];
++         else
++            v = ((const uint8_t *)ib_host)[j + draw->index.offset];
++         if (has_restart && v == restart_val)
++            continue;
++         if (v > max_idx)
++            max_idx = v;
++      }
++      source_vert_count = max_idx + 1;
++   }
++
++   if (use_temp_buf) {
++      uint32_t max_stride = 0;
++      for (unsigned i = 0; i < MAX_XFB_BUFFERS; i++)
++         if (strides[i] > max_stride)
++            max_stride = strides[i];
++
++      uint32_t temp_size = source_vert_count * draw->instance.count *
++                           max_stride;
++      temp_buf = panvk_cmd_alloc_dev_mem(cmdbuf, desc, temp_size, 16);
++      if (!temp_buf.gpu)
++         return;
++
++      /* Redirect XFB writes to temp buffer */
++      for (unsigned i = 0; i < MAX_XFB_BUFFERS; i++) {
++         if (strides[i] > 0 && xfb_buf_addrs[i] != PAN_SHADER_OOB_ADDRESS)
++            cmdbuf->state.gfx.sysvals.xfb.buffers[i] = temp_buf.gpu;
++      }
++   }
++
++   uint32_t dispatch_count = use_temp_buf ? source_vert_count
++                                          : draw->vertex.count;
++   cmdbuf->state.gfx.sysvals.xfb.num_vertices = dispatch_count;
++
++   struct pan_ptr push_uniforms_ptr;
++   VkResult result = panvk_per_arch(cmd_prepare_gfx_push_uniforms)(
++      cmdbuf, xfb_variant, &push_uniforms_ptr, 1);
++   if (result != VK_SUCCESS)
++      return;
++
++
++   struct pan_compute_dim xfb_dim = {
++      .x = dispatch_count,
++      .y = draw->instance.count,
++      .z = 1,
++   };
++   uint64_t xfb_tsd = panvk_per_arch(cmd_dispatch_prepare_tls)(
++      cmdbuf, xfb_variant, &xfb_dim, false);
++   if (!xfb_tsd)
++      return;
++
++   /* Dirty everything so cmd_dispatch_shader re-emits all state */
++   compute_state_set_dirty(cmdbuf, CS);
++   compute_state_set_dirty(cmdbuf, DESC_STATE);
++   compute_state_set_dirty(cmdbuf, PUSH_UNIFORMS);
++
++   struct panvk_dispatch_info xfb_info = {
++      .direct.wg_count = {
++         .x = xfb_dim.x,
++         .y = xfb_dim.y,
++         .z = xfb_dim.z,
++      },
++      /* When using a temp buffer, the scatter copy that follows needs
++       * to read from temp_buf after the XFB variant has finished writing.
++       * Use WAIT barrier to ensure the XFB dispatch completes before
++       * the scatter copy's cs_next_iter_sb advances to a new scoreboard
++       * slot and fires concurrently.
++       */
++      .barrier = use_temp_buf ? PANVK_CSF_BARRIER_WAIT
++                              : PANVK_CSF_BARRIER_SYNC,
++   };
++
++   panvk_per_arch(cmd_dispatch_shader)(
++      cmdbuf, xfb_variant, &cmdbuf->state.gfx.vs.desc,
++      push_uniforms_ptr.gpu, xfb_tsd, &xfb_info);
++
++   /* Dirty everything so next dispatch re-emits */
++   compute_state_set_dirty(cmdbuf, CS);
++   compute_state_set_dirty(cmdbuf, DESC_STATE);
++   compute_state_set_dirty(cmdbuf, PUSH_UNIFORMS);
++
++   /* For strip/fan/loop: scatter copy from temp buffer to XFB buffer
++    * using the precompiled panlib_xfb_scatter_copy kernel.
++    */
++   if (use_temp_buf && index_map_addr && temp_buf.gpu) {
++      /* Restore real XFB buffer addresses */
++      for (unsigned i = 0; i < MAX_XFB_BUFFERS; i++)
++         cmdbuf->state.gfx.sysvals.xfb.buffers[i] = xfb_buf_addrs[i];
++
++      /* Dispatch scatter copy for each active XFB buffer.
++       * Each invocation copies stride bytes for one output vertex.
++       */
++      for (unsigned i = 0; i < MAX_XFB_BUFFERS; i++) {
++         if (strides[i] == 0 || xfb_buf_addrs[i] == PAN_SHADER_OOB_ADDRESS)
++            continue;
++
++         uint32_t stride_words = strides[i] / sizeof(uint32_t);
++         if (stride_words == 0)
++            continue;
++
++         for (uint32_t inst = 0; inst < draw->instance.count; inst++) {
++            uint64_t dst_base = xfb_buf_addrs[i] +
++               (uint64_t)inst * expanded_vert_count * strides[i];
++            uint64_t src_base = temp_buf.gpu +
++               (uint64_t)inst * draw->vertex.count * strides[i];
++            uint64_t map_base = index_map_addr;
++
++            struct panvk_precomp_ctx precomp_ctx =
++               panvk_per_arch(precomp_cs)(cmdbuf);
++            const struct panlib_xfb_scatter_copy_args scatter_args = {
++               .dst = dst_base,
++               .src = src_base,
++               .index_map = map_base,
++               .stride_words = stride_words,
++            };
++            panlib_xfb_scatter_copy_struct(
++               &precomp_ctx,
++               panlib_1d(expanded_vert_count),
++               PANLIB_BARRIER_CSF_SYNC,
++               scatter_args);
++         }
++      }
++   }
++
++
++   uint64_t prim_count =
++      (uint64_t)prim_count_per_instance * (uint64_t)draw->instance.count;
++   uint64_t prims_needed = prim_count;
++   uint64_t prims_written = prim_count;
++
++   /* Check if any buffer would overflow and clamp prims_written */
++   for (unsigned i = 0; i < MAX_XFB_BUFFERS; i++) {
++      if (strides[i] > 0 && cmdbuf->state.gfx.xfb.buffers[i].address) {
++         uint64_t size = cmdbuf->state.gfx.xfb.buffers[i].size;
++         uint64_t off = cmdbuf->state.gfx.xfb.offsets[i];
++         uint64_t avail = (off < size) ? (size - off) : 0;
++         uint64_t max_verts = avail / strides[i];
++         uint64_t max_prims;
++
++         if (verts_per_prim > 0)
++            max_prims = max_verts / verts_per_prim;
++         else
++            max_prims = max_verts;
++
++         if (max_prims < prims_written)
++            prims_written = max_prims;
++      }
++   }
++
++   /* Accumulate to active XFB query if any */
++   if (cmdbuf->state.gfx.xfb_query.ptr) {
++      cmdbuf->state.gfx.xfb_query.prims_written += prims_written;
++      cmdbuf->state.gfx.xfb_query.prims_needed += prims_needed;
++   }
++
++   /* Advance offsets using expanded vertex count */
++   for (unsigned i = 0; i < MAX_XFB_BUFFERS; i++) {
++      if (strides[i] > 0) {
++         cmdbuf->state.gfx.xfb.offsets[i] += total_expanded_verts * strides[i];
++
++         /* Clamp offset to buffer size to prevent overflow on next draw */
++         uint64_t size = cmdbuf->state.gfx.xfb.buffers[i].size;
++         if (cmdbuf->state.gfx.xfb.offsets[i] > size)
++            cmdbuf->state.gfx.xfb.offsets[i] = size;
++      }
++   }
++}
++
+ static void
+ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+ {
+    struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
+    VkResult result;
+ 
+-   /* If there's no vertex shader, we can skip the draw. */
+-   if (!panvk_priv_mem_check_alloc(get_vs_variant(cmdbuf)->spd))
++   /* If there's no vertex shader, we can skip the draw.
++    * But if XFB is active, we still need to dispatch the XFB variant.
++    */
++   if (!panvk_priv_mem_check_alloc(get_vs_variant(cmdbuf)->spd)) {
++      if (cmdbuf->state.gfx.xfb.active && !draw.indirect.buffer_dev_addr)
++         panvk_cmd_launch_xfb(cmdbuf, &draw);
+       return;
++   }
+ 
+    /* Needs to be done before get_fs() is called because it depends on
+     * fs.required being initialized.
+@@ -4278,6 +4815,12 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+       launch_indirect_draw(cmdbuf, &draw);
+    else
+       launch_draw(cmdbuf, &draw);
++
++   /* If transform feedback is active, dispatch the XFB compute variant
++    * to capture vertex outputs into the bound XFB buffers.
++    */
++   if (cmdbuf->state.gfx.xfb.active && !draw.indirect.buffer_dev_addr)
++      panvk_cmd_launch_xfb(cmdbuf, &draw);
+ }
+ 
+ VkResult

@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Tue, 29 Sep 2026 18:48:58 -0500
+Subject: [PATCH 50/57] pan/bi: don't hoist shared values out of unified IDVS
+ blocks (06n-arch)
+
+On v12+ the vertex shader is one binary with a predicated block per
+output stage, and nir_opt_gcm hoisted everything the blocks share in
+front of them. Each hoisted value then stays live across all the
+blocks: DXVK vertex shaders no longer fit in 64 registers, and in Deep
+Rock Galactic 185 of 390 spilled (112k fills in all), leaving the frame
+bound by vertex load/store. Without the hoist 85 spill (19k fills) and
+the game goes from 30 to 35 fps. PAN_IDVS_HOIST=1 restores the hoist.
+---
+ src/panfrost/compiler/bifrost/bifrost_nir.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/src/panfrost/compiler/bifrost/bifrost_nir.c b/src/panfrost/compiler/bifrost/bifrost_nir.c
+index 99db2dbbff3..834c6403f4d 100644
+--- a/src/panfrost/compiler/bifrost/bifrost_nir.c
++++ b/src/panfrost/compiler/bifrost/bifrost_nir.c
+@@ -11,6 +11,7 @@
+ #include "panfrost/compiler/pan_nir.h"
+ #include "panfrost/compiler/pan_nir_prolog.h"
+ #include "util/perf/cpu_trace.h"
++#include "util/u_debug.h"
+ 
+ #include "panfrost/model/pan_model.h"
+ #include "valhall/valhall.h"
+@@ -1330,8 +1331,16 @@ bifrost_handle_unified_idvs_shader(nir_shader *nir)
+       NIR_PASS(progress, nir, nir_opt_cse);
+    }
+ 
+-   /* Hoist common values before the predicated blocks. */
+-   NIR_PASS(_, nir, nir_opt_gcm, true);
++   /* 06n-arch: don't hoist the values the predicated blocks share. Hoisted,
++    * each one stays live across all the blocks, and DXVK vertex shaders
++    * then no longer fit in 64 registers: in Deep Rock Galactic 185 of 390
++    * spilled, 112k fills in all, and the frame was bound by vertex
++    * load/store. Without the hoist the shared work is done once per block
++    * instead, which is cheap next to the fills: 85 spill, 19k fills, and
++    * 30 -> 35 fps. PAN_IDVS_HOIST=1 restores the hoist.
++    */
++   if (debug_get_bool_option("PAN_IDVS_HOIST", false))
++      NIR_PASS(_, nir, nir_opt_gcm, true);
+ }
+ 
+ static const char *

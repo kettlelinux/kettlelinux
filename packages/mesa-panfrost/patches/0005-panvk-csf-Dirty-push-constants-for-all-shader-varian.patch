@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Faith Ekstrand <faith.ekstrand@collabora.com>
+Date: Tue, 11 Nov 2025 11:01:07 -0500
+Subject: [PATCH 05/57] panvk/csf: Dirty push constants for all shader variants
+
+(cherry picked from commit e29e8d0fb08224fcac02ef505395e5ffa6848a32)
+---
+ src/panfrost/vulkan/panvk_vX_cmd_draw.c | 30 ++++++++++++++++++++-----
+ 1 file changed, 24 insertions(+), 6 deletions(-)
+
+diff --git a/src/panfrost/vulkan/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/panvk_vX_cmd_draw.c
+index c51fb9a9cef..078017c510a 100644
+--- a/src/panfrost/vulkan/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/panvk_vX_cmd_draw.c
+@@ -939,9 +939,6 @@ panvk_per_arch(cmd_prepare_draw_sysvals)(struct panvk_cmd_buffer *cmdbuf,
+    if (dyn_gfx_state_dirty(cmdbuf, INPUT_ATTACHMENT_MAP))
+       prepare_iam_sysvals(cmdbuf, dirty_sysvals);
+ 
+-   const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
+-
+ #if PAN_ARCH < 9
+    struct panvk_descriptor_state *desc_state = &cmdbuf->state.gfx.desc_state;
+    struct panvk_shader_desc_state *vs_desc_state = &cmdbuf->state.gfx.vs.desc;
+@@ -975,9 +972,30 @@ panvk_per_arch(cmd_prepare_draw_sysvals)(struct panvk_cmd_buffer *cmdbuf,
+    /* We mask the dirty sysvals by the shader usage, and only flag
+     * the push uniforms dirty if those intersect. */
+    BITSET_DECLARE(dirty_shader_sysvals, MAX_SYSVAL_FAUS);
+-   BITSET_AND(dirty_shader_sysvals, dirty_sysvals, vs->fau.used_sysvals);
+-   if (!BITSET_IS_EMPTY(dirty_shader_sysvals))
+-      gfx_state_set_dirty(cmdbuf, VS_PUSH_UNIFORMS);
++
++   panvk_shader_foreach_variant_const(cmdbuf->state.gfx.vs.shader, vs) {
++      BITSET_AND(dirty_shader_sysvals, dirty_sysvals, vs->fau.used_sysvals);
++      if (!BITSET_IS_EMPTY(dirty_shader_sysvals))
++         gfx_state_set_dirty(cmdbuf, VS_PUSH_UNIFORMS);
++   }
++
++   panvk_shader_foreach_variant_const(cmdbuf->state.gfx.tcs.shader, tcs) {
++      BITSET_AND(dirty_shader_sysvals, dirty_sysvals, tcs->fau.used_sysvals);
++      if (!BITSET_IS_EMPTY(dirty_shader_sysvals))
++         gfx_state_set_dirty(cmdbuf, TCS_PUSH_UNIFORMS);
++   }
++
++   panvk_shader_foreach_variant_const(cmdbuf->state.gfx.tes.shader, tes) {
++      BITSET_AND(dirty_shader_sysvals, dirty_sysvals, tes->fau.used_sysvals);
++      if (!BITSET_IS_EMPTY(dirty_shader_sysvals))
++         gfx_state_set_dirty(cmdbuf, TES_PUSH_UNIFORMS);
++   }
++
++   panvk_shader_foreach_variant_const(cmdbuf->state.gfx.gs.shader, gs) {
++      BITSET_AND(dirty_shader_sysvals, dirty_sysvals, gs->fau.used_sysvals);
++      if (!BITSET_IS_EMPTY(dirty_shader_sysvals))
++         gfx_state_set_dirty(cmdbuf, GS_PUSH_UNIFORMS);
++   }
+ 
+    if (fs) {
+       BITSET_AND(dirty_shader_sysvals, dirty_sysvals, fs->fau.used_sysvals);

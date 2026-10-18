@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ryan Zhang <ryan.zhang@nxp.com>
+Date: Mon, 28 Sep 2026 20:39:40 -0500
+Subject: [PATCH 45/57] panvk: add panlib_xfb_scatter_copy precompiled kernel
+
+Add a precompiled compute kernel for XFB topology expansion.
+Each invocation copies stride_words uint32s from a temp buffer
+(indexed by source vertex) to the final XFB buffer (indexed by
+output vertex), using a CPU-built index_map for the mapping.
+
+Signed-off-by: Ryan Zhang <ryan.zhang@nxp.com>
+---
+ src/panfrost/libpan/libpan_copy.cl | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/src/panfrost/libpan/libpan_copy.cl b/src/panfrost/libpan/libpan_copy.cl
+index c828b25a7eb..42c72f0934c 100644
+--- a/src/panfrost/libpan/libpan_copy.cl
++++ b/src/panfrost/libpan/libpan_copy.cl
+@@ -85,4 +85,20 @@ panlib_copy_mem_indirect(global const uint32_t *cmd)
+    panlib_copy_mem_body(dst, src, size);
+ }
+ #endif
++
++KERNEL(1)
++panlib_xfb_scatter_copy(global uint32_t *dst,
++                        global const uint32_t *src,
++                        global const uint32_t *index_map,
++                        uint32_t stride_words)
++{
++   uint32_t out_idx = cl_global_id.x;
++   uint32_t src_idx = index_map[out_idx];
++
++   uint32_t dst_off = out_idx * stride_words;
++   uint32_t src_off = src_idx * stride_words;
++
++   for (uint32_t w = 0; w < stride_words; w++)
++      dst[dst_off + w] = src[src_off + w];
++}
+ #endif

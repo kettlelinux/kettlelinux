@@ -1,0 +1,28 @@
+# meson cross file: mesa-panfrost, the aarch64 system Mesa, built on x86_64 by clang against the
+# sysroot scripts/build-x86-packages.sh makes of Valve's aarch64 packages (/sysroot)
+[binaries]
+c = ['clang', '--target=aarch64-unknown-linux-gnu', '--sysroot=/sysroot']
+cpp = ['clang++', '--target=aarch64-unknown-linux-gnu', '--sysroot=/sysroot']
+c_ld = 'lld'
+cpp_ld = 'lld'
+ar = 'llvm-ar'
+strip = 'llvm-strip'
+pkg-config = 'pkg-config'
+
+[properties]
+sys_root = '/sysroot'
+pkg_config_libdir = ['/sysroot/usr/lib/pkgconfig', '/sysroot/usr/share/pkgconfig']
+
+[built-in options]
+# Arch's aarch64 flags: makepkg's CFLAGS/LDFLAGS are the build machine's (x86_64 -march), and
+# the PKGBUILD keeps them out of this build
+c_args = ['-O2', '-pipe', '-fno-plt', '-fexceptions', '-Wp,-D_FORTIFY_SOURCE=3', '-fstack-clash-protection']
+cpp_args = ['-O2', '-pipe', '-fno-plt', '-fexceptions', '-Wp,-D_FORTIFY_SOURCE=3', '-fstack-clash-protection']
+c_link_args = ['-Wl,-O1', '-Wl,--sort-common', '-Wl,--as-needed', '-Wl,-z,relro', '-Wl,-z,now']
+cpp_link_args = ['-Wl,-O1', '-Wl,--sort-common', '-Wl,--as-needed', '-Wl,-z,relro', '-Wl,-z,now']
+
+[host_machine]
+system = 'linux'
+cpu_family = 'aarch64'
+cpu = 'aarch64'
+endian = 'little'

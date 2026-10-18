@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Thu, 1 Oct 2026 06:59:02 -0500
+Subject: [PATCH 54/57] panvk: give the GS rasterization variant a varying
+ layout
+
+The backend requires one for every VS now. Its clip distances are
+handled like a VS's.
+
+Assisted-by: LLM
+---
+ src/panfrost/vulkan/panvk_vX_shader.c | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index 9965498dd2e..5f58a79a9c1 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -1898,6 +1898,24 @@ panvk_compile_shader(struct panvk_device *dev,
+          NIR_PASS(_, nir, poly_nir_lower_sysvals);
+          NIR_PASS(_, nir, nir_lower_global_vars_to_local);
+ 
++         /* The rasterization variant is the HW VS: it needs a varying
++          * layout like any other, and its clip distances are handled like
++          * a VS's. Cull distances need lowering at the deref level, which
++          * is gone by now, so they're ignored.
++          */
++         struct pan_varying_layout varying_layout;
++         inputs.varying_layout = NULL;
++         inputs.clip_distance_array_size = 0;
++         inputs.cull_distance_array_size = 0;
++         if (variant == &shader->variants[PANVK_GS_VARIANT_RAST]) {
++            pan_varying_collect_formats(&varying_layout, nir, inputs.gpu_id);
++            pan_build_varying_layout_compact(&varying_layout, nir,
++                                             inputs.gpu_id);
++            inputs.varying_layout = &varying_layout;
++            inputs.clip_distance_array_size =
++               nir->info.clip_distance_array_size;
++         }
++
+          variant->own_bin = true;
+ 
+          result = panvk_compile_nir(dev, nir, info->flags,

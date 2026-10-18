@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Gmeiner <cgmeiner@igalia.com>
+Date: Thu, 24 Sep 2026 11:18:00 +0200
+Subject: [PATCH 27/57] panvk: Reserve an FS FAU word for the clip prolog
+
+A clip prolog runs in front of the main FS with the main FS's FAU and
+jumps to it when done. Put the main FS address in a sysval right after
+the blend constants, which every FS reserves, so the prolog finds it
+at a fixed FAU word on v10+ however the FS packs the rest.
+
+The common sysvals move back by one word to stay at the same offset
+for compute.
+
+Signed-off-by: Christian Gmeiner <cgmeiner@igalia.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/40343>
+---
+ src/panfrost/vulkan/panvk_shader.h      | 10 ++++++++--
+ src/panfrost/vulkan/panvk_vX_cmd_draw.c |  5 +++++
+ src/panfrost/vulkan/panvk_vX_shader.c   |  3 +++
+ 3 files changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/src/panfrost/vulkan/panvk_shader.h b/src/panfrost/vulkan/panvk_shader.h
+index 319d0b934bb..20f9c011e99 100644
+--- a/src/panfrost/vulkan/panvk_shader.h
++++ b/src/panfrost/vulkan/panvk_shader.h
+@@ -116,7 +116,7 @@ struct panvk_common_sysvals_inner {
+ } __attribute__((aligned(FAU_WORD_SIZE)));
+ 
+ struct panvk_common_sysvals {
+-   uint32_t _pad[4];
++   uint32_t _pad[6];
+    struct panvk_common_sysvals_inner common;
+ } __attribute__((aligned(FAU_WORD_SIZE)));
+ 
+@@ -143,6 +143,9 @@ struct panvk_graphics_sysvals {
+       float constants[4];
+    } blend;
+ 
++   /* Main FS address a clip prolog jumps to, at a fixed FAU word too */
++   aligned_u64 fs_prolog_next;
++
+    /* This must be at the same offset for both compute and graphics */
+    struct panvk_common_sysvals_inner common;
+ 
+@@ -206,6 +209,9 @@ struct panvk_graphics_sysvals {
+ 
+ static_assert(offsetof(struct panvk_graphics_sysvals, blend) == 0,
+               "panvk_graphics_sysvals::blend must be at the start");
++static_assert(offsetof(struct panvk_graphics_sysvals, fs_prolog_next) ==
++                 sizeof(((struct panvk_graphics_sysvals *)NULL)->blend),
++              "panvk_graphics_sysvals::fs_prolog_next must follow blend");
+ static_assert(offsetof(struct panvk_graphics_sysvals, common) ==
+                  offsetof(struct panvk_common_sysvals, common),
+               "Common sysvals must be at the same offset everywhere");
+@@ -222,7 +228,7 @@ struct panvk_compute_sysvals {
+       uint32_t x, y, z;
+    } base;
+ 
+-   uint32_t _pad;
++   uint32_t _pad[3];
+ 
+    /* This must be at the same offset for both compute and graphics */
+    struct panvk_common_sysvals_inner common;
+diff --git a/src/panfrost/vulkan/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/panvk_vX_cmd_draw.c
+index 4836ca7b966..bfa180eafa1 100644
+--- a/src/panfrost/vulkan/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/panvk_vX_cmd_draw.c
+@@ -866,6 +866,11 @@ panvk_per_arch(cmd_prepare_draw_sysvals)(struct panvk_cmd_buffer *cmdbuf,
+                      cmdbuf->state.gfx.fs.blend_descs[i]);
+    }
+ 
++#if PAN_ARCH >= 10
++   set_gfx_sysval(cmdbuf, dirty_sysvals, fs_prolog_next,
++                  fs ? panvk_shader_variant_get_dev_addr(fs) : 0);
++#endif
++
+    if (dyn_gfx_state_dirty(cmdbuf, VP_VIEWPORTS) ||
+        dyn_gfx_state_dirty(cmdbuf, VP_DEPTH_CLIP_NEGATIVE_ONE_TO_ONE) ||
+        dyn_gfx_state_dirty(cmdbuf, RS_DEPTH_CLIP_ENABLE) ||
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index 510f4aa6da1..eb9d0f8a1f5 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -769,6 +769,9 @@ lower_load_push_consts(nir_shader *nir, struct panvk_shader_variant *shader)
+             16);
+ 
+       shader_use_sysval(shader, graphics, blend.constants);
++#if PAN_ARCH >= 10
++      shader_use_sysval(shader, graphics, fs_prolog_next);
++#endif
+    }
+ 
+    progress = false;

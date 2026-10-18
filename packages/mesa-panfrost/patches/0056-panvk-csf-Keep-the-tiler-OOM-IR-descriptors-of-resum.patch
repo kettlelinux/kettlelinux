@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Thu, 1 Oct 2026 17:04:03 -0500
+Subject: [PATCH 56/57] panvk/csf: Keep the tiler OOM IR descriptors of resumed
+ render passes
+
+The tiler OOM context's IR descriptor pointers come from the command
+buffer that allocated the render pass descriptors. When a render pass
+is resumed in another command buffer, setup_tiler_oom_ctx() stored that
+command buffer's empty ir.fbds, so a tiler OOM during the resumed pass
+made the handler use NULL framebuffer descriptors.
+
+Store the IR descriptors when suspending the render pass, and don't
+overwrite them when the resuming command buffer issues the fragment
+jobs.
+
+Assisted-by: LLM
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c | 38 ++++++++++++++++-----
+ 1 file changed, 30 insertions(+), 8 deletions(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index 96943f1395f..d02c84356e4 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -5610,6 +5610,22 @@ calc_tiler_oom_handler_idx(struct panvk_cmd_buffer *cmdbuf)
+    return get_tiler_oom_handler_idx(has_zs_crc_ext, fb->rt_count);
+ }
+ 
++static void
++store_tiler_oom_ir_descs(struct panvk_cmd_buffer *cmdbuf)
++{
++   struct panvk_rendering_state *render = &cmdbuf->state.gfx.render;
++   struct cs_builder *b = panvk_get_cs_builder(cmdbuf, PANVK_SUBQUEUE_FRAGMENT);
++
++   for (uint32_t ir_pass = 0; ir_pass < PANVK_IR_PASS_COUNT; ir_pass++) {
++      const uint32_t ir_descs_offset =
++         TILER_OOM_CTX_FIELD_OFFSET(ir_descs) + (sizeof(uint64_t) * ir_pass);
++      struct cs_index ir_fbds_reg = cs_scratch_reg64(b, 2);
++
++      cs_move64_to(b, ir_fbds_reg, render->ir.fbds[ir_pass]);
++      cs_store64(b, ir_fbds_reg, cs_subqueue_ctx_reg(b), ir_descs_offset);
++   }
++}
++
+ static void
+ setup_tiler_oom_ctx(struct panvk_cmd_buffer *cmdbuf)
+ {
+@@ -5698,14 +5714,12 @@ setup_tiler_oom_ctx(struct panvk_cmd_buffer *cmdbuf)
+    cs_store64(b, fbd_ptr_reg, cs_subqueue_ctx_reg(b),
+               TILER_OOM_CTX_FIELD_OFFSET(layer_fbd_ptr));
+ 
+-   for (uint32_t ir_pass = 0; ir_pass < PANVK_IR_PASS_COUNT; ir_pass++) {
+-      const uint32_t ir_descs_offset =
+-         TILER_OOM_CTX_FIELD_OFFSET(ir_descs) + (sizeof(uint64_t) * ir_pass);
+-      struct cs_index ir_fbds_reg = cs_scratch_reg64(b, 2);
+-
+-      cs_move64_to(b, ir_fbds_reg, render->ir.fbds[ir_pass]);
+-      cs_store64(b, ir_fbds_reg, cs_subqueue_ctx_reg(b), ir_descs_offset);
+-   }
++   /* A render pass resumed from another command buffer doesn't know its IR
++    * descriptors: the command buffer that allocated them stored them when it
++    * suspended the render pass.
++    */
++   if (render->fbds.gpu)
++      store_tiler_oom_ir_descs(cmdbuf);
+ 
+    struct cs_index td_count_reg = cs_scratch_reg32(b, 4);
+    cs_move32_to(b, td_count_reg, td_count);
+@@ -6173,6 +6187,14 @@ panvk_per_arch(CmdEndRendering)(VkCommandBuffer commandBuffer)
+       VkResult result = get_render_ctx(cmdbuf);
+       if (result != VK_SUCCESS)
+          return;
++
++      /* The command buffer resuming the render pass can't know the IR
++       * descriptors, so store them for the tiler OOM handler now. */
++      if (cmdbuf->state.gfx.render.fbds.gpu) {
++         store_tiler_oom_ir_descs(cmdbuf);
++         cs_flush_stores(
++            panvk_get_cs_builder(cmdbuf, PANVK_SUBQUEUE_FRAGMENT));
++      }
+    }
+ 
+    memset(&cmdbuf->state.gfx.render.fbds, 0,
