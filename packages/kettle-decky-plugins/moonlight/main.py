@@ -1,10 +1,11 @@
 # Moonlight: streaming games from a PC running Sunshine or Apollo, in Game Mode. The hosts on the
 # network (mDNS) and the ones paired before, pairing with a PIN shown on the device, each host's
 # apps with their box art, and those apps in the Steam library as shortcuts (index.tsx adds them).
-# A shortcut runs `kettle-moonlight launch <host uuid> <app name>` (packages/kettle-moonlight),
+# A shortcut runs `kettle-moonlight launch <host uuid> <app name, hex>` (packages/kettle-moonlight),
 # which streams with the host's settings from ~/.config/kettle-moonlight/<uuid>.args, written
 # here: changing a host's settings changes how every one of its shortcuts streams, without
-# touching the shortcuts.
+# touching the shortcuts. Steam runs launch options through a shell, so nothing the host says
+# (its name, its apps' names) goes into them as text: the host is its uuid, the app hex.
 # moonlight-qt keeps the pairing (its own config, read through mlconf.py); everything else talks
 # to the host directly (gamestream.py).
 import asyncio
@@ -14,6 +15,7 @@ import os
 import re
 import secrets
 import signal
+import tempfile
 
 import decky
 import gamestream
@@ -24,11 +26,11 @@ SETTINGS = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "settings.json")
 BOXART = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "boxart")
 ARGS_DIR = os.path.join(decky.DECKY_USER_HOME, ".config", "kettle-moonlight")
 PAIR_TIMEOUT = 120  # s: the time to type the PIN in on the PC
+PAIR_SILENT = 15  # s: the PC not answering while pairing: it's gone
 # moonlight-qt's pairing failures (nvpairingmanager.cpp, cli/pair.cpp), as the player reads them
 PAIR_ERRORS = [
     (re.compile(r"Incorrect PIN"), "The PIN didn't match. Try again and type the new PIN."),
     (re.compile(r"already pairing"), "The PC is already pairing with another device. Try again in a minute."),
-    (re.compile(r"Failed to connect"), "The PC didn't answer. Check that Sunshine or Apollo is running."),
     (re.compile(r"Failed pairing at stage|Invalid|MITM|Failed to parse"), "Pairing failed. Try again."),
 ]
 
@@ -50,12 +52,18 @@ DEFAULTS = {
     "host_audio": False,
     "quit_after": False,
     "swap_buttons": False,
+    # Moonlight reads the device's own controller (InputPlumber's virtual Steam Deck pad) rather
+    # than Steam Input's virtual Xbox pad: the gyro reaches the PC, which then emulates a DS4 or
+    # DualSense with motion (Sunshine/Apollo's motion_as_ds4); Steam Input layouts don't apply
+    "raw_pad": True,
 }
 CODECS = ("auto", "H.264", "HEVC")  # AV1: iris has a decoder, moonlight-qt no v4l2m2m entry for it
 AUDIO = ("stereo", "5.1-surround", "7.1-surround")
 
 _pair = {"state": "idle", "address": "", "pin": "", "error": "", "uuid": ""}
 _pair_proc: asyncio.subprocess.Process | None = None
+# one writer at a time for settings.json and the launcher files (a slider sends a change per step)
+_lock = asyncio.Lock()
 
 
 def _load() -> dict:
@@ -70,11 +78,20 @@ def _load() -> dict:
     return s
 
 
+def _atomic_write(path: str, data: bytes):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp-")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+
 def _save(s: dict):
-    os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
-    with open(SETTINGS + ".new", "w") as f:
-        json.dump(s, f, indent=1)
-    os.replace(SETTINGS + ".new", SETTINGS)
+    _atomic_write(SETTINGS, json.dumps(s, indent=1).encode())
 
 
 def _panel() -> tuple[int, int]:
@@ -119,10 +136,14 @@ def _effective(hs: dict, dev: dict) -> dict:
     return v
 
 
-def _args(host_name: str, hs: dict, dev: dict) -> list[str]:
+# a line of the launcher's file that kettle-moonlight takes itself, not moonlight
+RAW_PAD = "--kettle-raw-controller"
+
+
+def _args(hs: dict, dev: dict) -> list[str]:
     v = _effective(hs, dev)
     toggle = lambda on, name: f"--{name}" if on else f"--no-{name}"
-    a = [host_name, "--resolution", v["resolution"], "--fps", str(v["fps"])]
+    a = ["--resolution", v["resolution"], "--fps", str(v["fps"])]
     if v["bitrate"]:
         a += ["--bitrate", str(v["bitrate"])]
     a += [
@@ -137,16 +158,15 @@ def _args(host_name: str, hs: dict, dev: dict) -> list[str]:
         "--touchscreen-trackpad",
         "--keep-awake",
     ]
+    if hs["raw_pad"]:
+        a.append(RAW_PAD)
     return a
 
 
-def _write_args(host_uuid: str, host_name: str, hs: dict):
-    """The launcher's file: one argument per line (moonlight's `stream` arguments, the app aside)."""
-    os.makedirs(ARGS_DIR, exist_ok=True)
-    path = os.path.join(ARGS_DIR, f"{host_uuid}.args")
-    with open(path + ".new", "w") as f:
-        f.write("\n".join(_args(host_name, hs, _device())) + "\n")
-    os.replace(path + ".new", path)
+def _write_args(host_uuid: str, hs: dict):
+    """The launcher's file: one moonlight `stream` option per line (the host and app are the
+    shortcut's), and RAW_PAD for the launcher."""
+    _atomic_write(os.path.join(ARGS_DIR, f"{host_uuid}.args"), ("\n".join(_args(hs, _device())) + "\n").encode())
 
 
 def _check_uuid(host_uuid: str):
@@ -226,52 +246,69 @@ async def _hosts(discover: bool) -> list[dict]:
     return out
 
 
-async def _watch_pair(address: str, before: set[str]):
+async def _watch_pair(address: str, before: set[str], proc: asyncio.subprocess.Process):
     """Pairing ends in a dialog moonlight-qt never closes (offscreen): success shows as a newly
-    pinned host in its config, failure as a "Qt Critical" line; either way the process is stopped."""
-    global _pair_proc
-    proc = _pair_proc
+    pinned host in its config, failure as a "Qt Critical" line. Some failures it only shows in that
+    dialog (the PC stops answering), so the PC is asked every few seconds too. Either way the
+    process is stopped."""
     lines: list[str] = []
 
     async def read():
-        while proc and proc.stdout:
+        while proc.stdout:
             line = await proc.stdout.readline()
             if not line:
                 return
             lines.append(line.decode(errors="replace").rstrip())
 
     reader = asyncio.create_task(read())
+    silent = 0  # s the PC hasn't answered
     try:
-        for _ in range(PAIR_TIMEOUT * 2):
+        for tick in range(PAIR_TIMEOUT * 2):
             await asyncio.sleep(0.5)
             if _pair["state"] != "waiting" or proc is not _pair_proc:
-                return  # cancelled
+                return  # cancelled, or a new attempt
             new = [h for h in await asyncio.to_thread(mlconf.hosts) if h["srvcert"] and h["uuid"] not in before]
             if new:
                 h = new[0]
-                hs = _host_settings(_load(), h["uuid"])
-                await asyncio.to_thread(_write_args, h["uuid"], h["name"], hs)
+                async with _lock:
+                    await asyncio.to_thread(_write_args, h["uuid"], _host_settings(_load(), h["uuid"]))
                 _pair.update(state="done", uuid=h["uuid"], error="")
                 decky.logger.info("moonlight: paired with %s (%s)", h["name"], address)
                 break
-            critical = [l for l in lines if "Qt Critical" in l or "Failed to connect" in l]
+            critical = [l for l in lines if "Qt Critical" in l]
             if critical or proc.returncode is not None:
                 text = " ".join(critical) or "\n".join(lines[-3:])
                 msg = next((m for r, m in PAIR_ERRORS if r.search(text)), "Pairing failed. Try again.")
                 _pair.update(state="failed", error=msg)
                 decky.logger.warning("moonlight: pairing with %s failed: %s", address, text[-300:])
                 break
+            if tick % 10 == 9:  # every 5 s
+                up = await asyncio.to_thread(_probe, address, gamestream.HTTP_PORT)
+                silent = 0 if up else silent + 5
+                if silent >= PAIR_SILENT:
+                    _pair.update(state="failed", error="The PC stopped answering. Check that it's on and Sunshine or Apollo is running.")
+                    break
         else:
             _pair.update(state="failed", error="The PIN wasn't entered on the PC in time. Try again.")
-        await decky.emit("pair", dict(_pair))
+        if proc is _pair_proc:
+            await decky.emit("pair", dict(_pair))
     finally:
         reader.cancel()
-        if proc and proc.returncode is None:
-            proc.send_signal(signal.SIGTERM)
-            try:
-                await asyncio.wait_for(proc.wait(), 3)
-            except asyncio.TimeoutError:
-                proc.kill()
+        await _stop(proc)
+
+
+async def _stop(proc: asyncio.subprocess.Process | None):
+    if proc and proc.returncode is None:
+        proc.send_signal(signal.SIGTERM)
+        try:
+            await asyncio.wait_for(proc.wait(), 3)
+        except asyncio.TimeoutError:
+            proc.kill()
+
+
+def _launch(host_uuid: str, app_name: str) -> str:
+    """The shortcut's launch options: no host text (Steam runs them through a shell)."""
+    return f"launch {host_uuid} {app_name.encode().hex()}"
 
 
 class Plugin:
@@ -286,25 +323,35 @@ class Plugin:
         if not re.fullmatch(r"[A-Za-z0-9.:\-\[\]]{1,253}", address):
             raise ValueError("that isn't an IP address or a PC name")
         info = await asyncio.to_thread(gamestream.serverinfo, address)
-        s = _load()
-        if address not in s["manual"]:
-            s["manual"].append(address)
-            _save(s)
+        async with _lock:
+            s = _load()
+            if address not in s["manual"]:
+                s["manual"].append(address)
+                _save(s)
         return {"uuid": info["uuid"], "name": info["name"], "address": address}
 
     async def pair(self, address: str) -> str:
-        """Starts pairing with the host; returns the PIN to type in on the PC. The outcome comes as
-        a "pair" event (and from pair_status)."""
+        """Starts pairing with the host; returns the PIN to type in on the PC ("" when it's paired
+        already). The outcome comes as a "pair" event (and from pair_status)."""
         global _pair_proc
+        # this attempt's state first: a poll from the dialog never sees the last attempt's
+        _pair.update(state="starting", address=address, pin="", error="", uuid="")
         await self.pair_cancel()
+        info = await asyncio.to_thread(_probe, address, gamestream.HTTP_PORT)
+        if not info:
+            _pair.update(state="failed", error="The PC didn't answer. Check that it's on and Sunshine or Apollo is running.")
+            return ""
+        paired = {h["uuid"] for h in await asyncio.to_thread(mlconf.hosts) if h["srvcert"]}
+        if info["uuid"] in paired:
+            _pair.update(state="done", uuid=info["uuid"])
+            return ""
         pin = f"{secrets.randbelow(10000):04d}"
-        before = {h["uuid"] for h in await asyncio.to_thread(mlconf.hosts) if h["srvcert"]}
         env = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "HOME": decky.DECKY_USER_HOME}
-        _pair_proc = await asyncio.create_subprocess_exec(
+        _pair_proc = proc = await asyncio.create_subprocess_exec(
             "moonlight", "pair", address, "--pin", pin, env=env,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-        _pair.update(state="waiting", address=address, pin=pin, error="", uuid="")
-        asyncio.create_task(_watch_pair(address, before))
+        _pair.update(state="waiting", pin=pin)
+        asyncio.create_task(_watch_pair(address, paired, proc))
         return pin
 
     async def pair_status(self) -> dict:
@@ -315,12 +362,7 @@ class Plugin:
         proc, _pair_proc = _pair_proc, None
         if _pair["state"] == "waiting":
             _pair.update(state="idle")
-        if proc and proc.returncode is None:
-            proc.send_signal(signal.SIGTERM)
-            try:
-                await asyncio.wait_for(proc.wait(), 3)
-            except asyncio.TimeoutError:
-                proc.kill()
+        await _stop(proc)
 
     async def apps(self, host_uuid: str) -> list[dict]:
         h = await asyncio.to_thread(_known, host_uuid)
@@ -343,10 +385,7 @@ class Plugin:
                 return ""
             if not data.startswith(b"\x89PNG"):
                 return ""
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path + ".new", "wb") as f:
-                f.write(data)
-            os.replace(path + ".new", path)
+            await asyncio.to_thread(_atomic_write, path, data)
         with open(path, "rb") as f:
             return "data:image/png;base64," + base64.b64encode(f.read()).decode()
 
@@ -358,48 +397,54 @@ class Plugin:
 
     async def set_settings(self, host_uuid: str, changes: dict) -> dict:
         _check_uuid(host_uuid)
-        s = _load()
-        hs = _host_settings(s, host_uuid)
+        await asyncio.to_thread(_known, host_uuid)
         for k, v in changes.items():
             if k not in DEFAULTS:
                 raise ValueError(f"no such setting: {k}")
             if k == "preset" and v not in (*PRESETS, "custom"):
                 raise ValueError(f"no such preset: {v}")
-            if k in ("fps", "bitrate") and (not isinstance(v, int) or v < 0 or v > 500000):
+            if k in ("fps", "bitrate") and (not isinstance(v, int) or isinstance(v, bool) or v < 0 or v > 500000):
                 raise ValueError(f"{k} out of range")
             if k == "resolution" and not (v == "native" or re.fullmatch(r"\d{3,4}x\d{3,4}", str(v))):
                 raise ValueError(f"not a resolution: {v}")
-            hs[k] = v
-        s["hosts"][host_uuid] = hs
-        _save(s)
-        h = await asyncio.to_thread(_known, host_uuid)
-        await asyncio.to_thread(_write_args, host_uuid, h["name"], hs)
+            if k == "codec" and v not in CODECS or k == "audio" and v not in AUDIO:
+                raise ValueError(f"no such {k}: {v}")
+            if isinstance(DEFAULTS[k], bool) and not isinstance(v, bool):
+                raise ValueError(f"{k} is on or off")
+        async with _lock:
+            s = _load()
+            hs = {**_host_settings(s, host_uuid), **changes}
+            s["hosts"][host_uuid] = hs
+            _save(s)
+            await asyncio.to_thread(_write_args, host_uuid, hs)
         return await self.settings(host_uuid)
 
     async def shortcut_info(self, host_uuid: str, app_name: str) -> dict:
         h = await asyncio.to_thread(_known, host_uuid)
-        if not os.path.exists(os.path.join(ARGS_DIR, f"{host_uuid}.args")):
-            await asyncio.to_thread(_write_args, host_uuid, h["name"], _host_settings(_load(), host_uuid))
-        quote = lambda v: '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        async with _lock:
+            if not os.path.exists(os.path.join(ARGS_DIR, f"{host_uuid}.args")):
+                await asyncio.to_thread(_write_args, host_uuid, _host_settings(_load(), host_uuid))
         return {"title": app_name, "exe": "/usr/bin/kettle-moonlight", "dir": decky.DECKY_USER_HOME,
-                "launch": f"launch {host_uuid} {quote(app_name)}", "host": h["name"]}
+                "launch": _launch(host_uuid, app_name), "host": h["name"]}
 
     async def remember_shortcut(self, host_uuid: str, app_name: str, appid: int | None):
         _check_uuid(host_uuid)
-        s = _load()
-        key = f"{host_uuid}/{app_name}"
-        if appid:
-            s["shortcuts"][key] = appid
-        else:
-            s["shortcuts"].pop(key, None)
-        _save(s)
+        async with _lock:
+            s = _load()
+            key = f"{host_uuid}/{app_name}"
+            if appid:
+                s["shortcuts"][key] = appid
+            else:
+                s["shortcuts"].pop(key, None)
+            _save(s)
 
     async def streams(self) -> dict:
-        """Every Moonlight shortcut: {Steam appid: {uuid, app}}, to tell a running stream apart."""
+        """Every Moonlight shortcut: {Steam appid: {uuid, app, launch}}, to tell a running stream
+        apart and to bring older shortcuts' launch options up to date."""
         out = {}
         for key, appid in _load()["shortcuts"].items():
             host_uuid, _, app = key.partition("/")
-            out[str(appid)] = {"uuid": host_uuid, "app": app}
+            out[str(appid)] = {"uuid": host_uuid, "app": app, "launch": _launch(host_uuid, app)}
         return out
 
     async def wake(self, host_uuid: str):
@@ -412,15 +457,18 @@ class Plugin:
         _check_uuid(host_uuid)
         await self.pair_cancel()
         await asyncio.to_thread(mlconf.forget, host_uuid)
-        s = _load()
-        gone = [v for k, v in s["shortcuts"].items() if k.startswith(f"{host_uuid}/")]
-        s["shortcuts"] = {k: v for k, v in s["shortcuts"].items() if not k.startswith(f"{host_uuid}/")}
-        s["hosts"].pop(host_uuid, None)
-        _save(s)
-        try:
-            os.remove(os.path.join(ARGS_DIR, f"{host_uuid}.args"))
-        except OSError:
-            pass
+        async with _lock:
+            s = _load()
+            gone = [v for k, v in s["shortcuts"].items() if k.startswith(f"{host_uuid}/")]
+            s["shortcuts"] = {k: v for k, v in s["shortcuts"].items() if not k.startswith(f"{host_uuid}/")}
+            s["hosts"].pop(host_uuid, None)
+            _save(s)
+            try:
+                os.remove(os.path.join(ARGS_DIR, f"{host_uuid}.args"))
+            except OSError:
+                pass
+        if _pair["uuid"] == host_uuid:
+            _pair.update(state="idle", uuid="")
         return gone
 
     async def fps_limit(self) -> int:
@@ -436,12 +484,13 @@ class Plugin:
         return int(m.group(1)) if m else 0
 
     async def _main(self):
-        # settings written by an older version, or a device swapped under them: rewrite every
-        # paired host's launcher file with this device's screen
-        s = _load()
-        for h in await asyncio.to_thread(mlconf.hosts):
-            if h["srvcert"]:
-                await asyncio.to_thread(_write_args, h["uuid"], h["name"], _host_settings(s, h["uuid"]))
+        # files written by an older version, or a device swapped under them: rewrite every paired
+        # host's launcher file with this version's format and this device's screen
+        async with _lock:
+            s = _load()
+            for h in await asyncio.to_thread(mlconf.hosts):
+                if h["srvcert"]:
+                    await asyncio.to_thread(_write_args, h["uuid"], _host_settings(s, h["uuid"]))
 
     async def _unload(self):
         await self.pair_cancel()

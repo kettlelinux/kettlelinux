@@ -1,36 +1,69 @@
 #!/bin/bash
 # Kettle Linux: starts Moonlight for a game stream, the command Game Mode's Moonlight shortcuts
-# run: kettle-moonlight launch <host uuid> <app>, which streams with the host's settings as the
-# Moonlight plugin last wrote them (~/.config/kettle-moonlight/<uuid>.args: the host's name, then
-# one moonlight `stream` option per line), or kettle-moonlight stream <host> <app> [options],
-# straight to moonlight. Around the stream it tunes the device
-# through kettle-stream-link (as root, by pkexec), on a device whose /usr/lib/kettle/stream-link
-# asks for it, and puts it back when Moonlight quits, crashes or Steam stops the shortcut.
+# run: kettle-moonlight launch <host uuid> <app name, hex>, which streams with the host's settings
+# as the Moonlight plugin last wrote them (~/.config/kettle-moonlight/<uuid>.args: one moonlight
+# `stream` option per line), or kettle-moonlight stream <host> <app> [options], straight to
+# moonlight. Steam runs a shortcut's launch options through a shell, so the plugin puts no text
+# from the host in them: the host is its uuid (moonlight finds it by uuid, so a renamed PC still
+# works) and the app's name is hex.
+# Around the stream it tunes the device through kettle-stream-link (as root, by pkexec), on a
+# device whose /usr/lib/kettle/stream-link asks for it, and puts it back when Moonlight quits,
+# crashes or Steam stops the shortcut (SIGTERM). Killed outright (SIGKILL), it can't: the device
+# is put back at the next stream or reboot.
+# --kettle-raw-controller in the settings: Moonlight reads the device's own controller (on Kettle,
+# InputPlumber's virtual Steam Deck pad, with the gyro) instead of Steam Input's virtual pad, which
+# has no motion sensors. Steam hides the real pads from what it starts (SDL's ignore list); this
+# lifts that and hides Steam's virtual pads instead. The PC then gets the motion data (Sunshine and
+# Apollo emulate a DS4 or DualSense for a controller with it); Steam Input layouts don't apply.
 CONF=/usr/lib/kettle/stream-link
 HELPER=/usr/lib/kettle/kettle-stream-link
 
 if [ "${1:-}" = launch ]; then
-  [ $# = 3 ] || { echo "usage: kettle-moonlight launch <host uuid> <app>" >&2; exit 2; }
+  [ $# = 3 ] || { echo "usage: kettle-moonlight launch <host uuid> <app name, hex>" >&2; exit 2; }
   case "$2" in *[!0-9A-Fa-f-]*|"") echo "kettle-moonlight: not a host: $2" >&2; exit 2 ;; esac
+  case "$3" in *[!0-9a-f]*|"") echo "kettle-moonlight: not an app: $3" >&2; exit 2 ;; esac
+  [ $(( ${#3} % 2 )) = 0 ] || { echo "kettle-moonlight: not an app: $3" >&2; exit 2; }
+  app=""
+  for ((i = 0; i < ${#3}; i += 2)); do
+    printf -v c "\\x${3:i:2}"
+    app+=$c
+  done
   args="$HOME/.config/kettle-moonlight/$2.args"
   mapfile -t a <"$args" || { echo "kettle-moonlight: no settings for host $2 (pair with it in Game Mode's Moonlight)" >&2; exit 1; }
-  set -- stream "${a[0]}" "$3" "${a[@]:1}"
+  opts=()
+  for o in "${a[@]}"; do
+    case "$o" in
+      --kettle-raw-controller)
+        unset SDL_GAMECONTROLLER_IGNORE_DEVICES SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT
+        export SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD=0
+        ;;
+      --*) opts+=("$o") ;;
+      "") ;;
+      *) opts+=("$o") ;;  # an option's value
+    esac
+  done
+  set -- stream "$2" "$app" "${opts[@]}"
 fi
+
+# Steam stops a shortcut with SIGTERM: pass it on once moonlight runs, and still restore afterwards
+pid=""
+quit=0
+trap 'quit=1; [ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null' TERM INT HUP
 
 tuned=0
 if [ -r "$CONF" ] && pkexec "$HELPER" start; then
   tuned=1
 fi
 
-moonlight "$@" &
-pid=$!
-# Steam stops a shortcut with SIGTERM: pass it on and still restore afterwards
-trap 'kill -TERM "$pid" 2>/dev/null' TERM INT HUP
 rc=0
-while kill -0 "$pid" 2>/dev/null; do
-  wait "$pid"
-  rc=$?
-done
+if [ "$quit" = 0 ]; then
+  moonlight "$@" &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    wait "$pid"
+    rc=$?
+  done
+fi
 
 [ "$tuned" = 1 ] && pkexec "$HELPER" stop
 exit "$rc"

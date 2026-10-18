@@ -22,25 +22,30 @@ function PairModal({ name, address, closeModal }: { name: string; address: strin
 
   useEffect(() => {
     let live = true;
+    let t: ReturnType<typeof setInterval> | undefined;
     setP(null);
+    // this attempt's status only: the PIN pair() gave it ("" when it ended at once: paired
+    // already, or the PC didn't answer)
+    const follow = (pin: string) => {
+      const tick = () =>
+        pairStatus()
+          .then((s) => {
+            if (!live || s.address !== address || s.pin !== pin || s.state === "starting") return;
+            setP(s);
+            if (s.state === "done" || s.state === "failed") clearInterval(t);
+            if (s.state === "done") {
+              toaster.toast({ title: "Moonlight", body: `Paired with ${name}.` });
+              closeModal?.();
+              openHost(s.uuid);
+            }
+          })
+          .catch(() => {});
+      tick();
+      t = setInterval(tick, 1000);
+    };
     pair(address)
-      .then(() => pairStatus())
-      .then((s) => live && setP(s))
+      .then((pin) => live && follow(pin))
       .catch((e) => live && setP({ state: "failed", address, pin: "", error: errorText(e), uuid: "" }));
-    const t = setInterval(() => {
-      pairStatus()
-        .then((s) => {
-          if (!live || s.address !== address) return;
-          setP(s);
-          if (s.state === "done") {
-            clearInterval(t);
-            toaster.toast({ title: "Moonlight", body: `Paired with ${name}.` });
-            closeModal?.();
-            openHost(s.uuid);
-          }
-        })
-        .catch(() => {});
-    }, 1000);
     return () => {
       live = false;
       clearInterval(t);

@@ -11,7 +11,7 @@ import { MdCastConnected } from "react-icons/md";
 import { fpsLimit, hosts, settings, streams } from "./api";
 import { HostPage } from "./host";
 import { Page, status } from "./page";
-import { overview } from "./shortcuts";
+import { inLibrary, overview } from "./shortcuts";
 import { HOST_ROUTE, QUIT_COMBO, ROUTE, STATS_COMBO, dim, openHost, openMoonlight, small, usePoll } from "./ui";
 
 type Running = { appid: number; uuid: string; app: string; fps: number; limit: number };
@@ -97,7 +97,16 @@ function Content() {
   );
 }
 
+// Shortcuts added by an older version: their launch options as this one writes them (the app's
+// name hex, never as text Steam's shell would read)
+async function updateShortcuts() {
+  for (const [appid, s] of Object.entries(await streams())) {
+    if (inLibrary(Number(appid))) SteamClient.Apps.SetShortcutLaunchOptions(Number(appid), s.launch);
+  }
+}
+
 export default definePlugin(() => {
+  updateShortcuts().catch((e) => console.error("Moonlight: updating shortcuts failed", e));
   routerHook.addRoute(ROUTE, Page, { exact: true });
   routerHook.addRoute(`${HOST_ROUTE}/:uuid`, HostPage);
   return {

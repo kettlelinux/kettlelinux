@@ -13,7 +13,7 @@ import time
 import uuid as uuidlib
 import xml.etree.ElementTree as ET
 from contextlib import contextmanager
-from http.client import HTTPConnection, HTTPSConnection
+from http.client import HTTPConnection, HTTPException, HTTPSConnection
 
 HTTP_PORT = 47989
 HTTPS_PORT = 47984
@@ -47,22 +47,31 @@ def serverinfo(address: str, port: int = HTTP_PORT, uid: str = "0123456789ABCDEF
         return _info(_parse(r.read()))
     except OSError as e:
         raise HostError(f"no answer from {address}: {e.strerror or e}") from None
+    except HTTPException as e:
+        raise HostError(f"{address} didn't answer as a GameStream host: {e!r}") from None
     finally:
         c.close()
 
 
+def _int(v: str, default: int = 0) -> int:
+    try:
+        return int(v)
+    except ValueError:
+        raise HostError(f"the host's answer isn't readable: {v!r} isn't a number") from None
+
+
 def _info(root: ET.Element) -> dict:
     t = lambda k, d="": (root.findtext(k) or d).strip()
-    codecs = int(t("ServerCodecModeSupport", "0") or 0)
+    codecs = _int(t("ServerCodecModeSupport", "0") or "0")
     return {
         "name": t("hostname"),
         "uuid": t("uniqueid"),
         "mac": t("mac"),
-        "https_port": int(t("HttpsPort", str(HTTPS_PORT)) or HTTPS_PORT),
+        "https_port": _int(t("HttpsPort", str(HTTPS_PORT)) or str(HTTPS_PORT)),
         "local_ip": t("LocalIP"),
         "paired": t("PairStatus") == "1",
         "busy": t("state").endswith("_BUSY"),
-        "current_app": int(t("currentgame", "0") or 0),
+        "current_app": _int(t("currentgame", "0") or "0"),
         "version": t("appversion"),
         # Sunshine's codec mode bits: 0x1 H.264, 0x100 HEVC, 0x200 HEVC Main10, 0x10000 AV1 Main8
         "hevc": bool(codecs & 0x100),
@@ -113,6 +122,8 @@ class Client:
                 return body
             except (OSError, ssl.SSLError) as e:
                 raise HostError(f"no answer from {address}: {getattr(e, 'strerror', None) or e}") from None
+            except HTTPException as e:
+                raise HostError(f"{address} didn't answer as a GameStream host: {e!r}") from None
             finally:
                 c.close()
 
@@ -121,7 +132,7 @@ class Client:
 
     def applist(self, address: str, port: int) -> list[dict]:
         root = _parse(self.get(address, port, "applist"))
-        return [{"id": int(a.findtext("ID") or 0), "name": (a.findtext("AppTitle") or "").strip(),
+        return [{"id": _int(a.findtext("ID") or "0"), "name": (a.findtext("AppTitle") or "").strip(),
                  "hdr": a.findtext("IsHdrSupported") == "1"} for a in root.iter("App")]
 
     def boxart(self, address: str, port: int, app_id: int) -> bytes:

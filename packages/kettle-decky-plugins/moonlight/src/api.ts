@@ -24,10 +24,11 @@ export type Settings = {
   host_audio: boolean;
   quit_after: boolean;
   swap_buttons: boolean;
+  raw_pad: boolean; // the device's own controller, with the gyro, instead of Steam Input's
 };
 export type Device = { width: number; height: number; rates: number[]; max_fps: number };
 export type SettingsInfo = { settings: Settings; effective: { resolution: string; fps: number; bitrate: number }; device: Device };
-export type Pair = { state: "idle" | "waiting" | "done" | "failed"; address: string; pin: string; error: string; uuid: string };
+export type Pair = { state: "idle" | "starting" | "waiting" | "done" | "failed"; address: string; pin: string; error: string; uuid: string };
 export type ShortcutInfo = { title: string; exe: string; dir: string; launch: string; host: string };
 
 export const hosts = callable<[discover: boolean], Host[]>("hosts");
@@ -41,7 +42,7 @@ export const settings = callable<[uuid: string], SettingsInfo>("settings");
 export const setSettings = callable<[uuid: string, changes: Partial<Settings>], SettingsInfo>("set_settings");
 export const shortcutInfo = callable<[uuid: string, app: string], ShortcutInfo>("shortcut_info");
 export const rememberShortcut = callable<[uuid: string, app: string, appid: number | null], void>("remember_shortcut");
-export const streams = callable<[], Record<string, { uuid: string; app: string }>>("streams");
+export const streams = callable<[], Record<string, { uuid: string; app: string; launch: string }>>("streams");
 export const wake = callable<[uuid: string], void>("wake");
 export const forget = callable<[uuid: string], number[]>("forget");
 export const fpsLimit = callable<[], number>("fps_limit");
