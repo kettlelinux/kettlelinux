@@ -1,0 +1,51 @@
+#!/bin/bash
+# Kettle Linux: tunes the device for a game stream while one runs, for kettle-moonlight, run
+# through pkexec (org.kettle.stream-link, 50-kettle-stream-link.rules: no password, which Game
+# Mode can't ask for). It changes only what the device's /usr/lib/kettle/stream-link lists,
+# one word per line:
+#   wifi-l1ss  ASPM L1.1/L1.2 off on the Wi-Fi card's PCIe link. The KONKR Pocket FIT Elite's
+#              card (17cb:110e) is slow out of L1.2: a 30 Mb/s Moonlight stream measured 22 ms
+#              network latency (±9) with them, 6 ms (±0) without. The Odin 2 Portal's WCN785x
+#              is at 3 ms either way, so it doesn't list it.
+# start saves what it changes in $STATE and stop puts it back; a second start before a stop
+# keeps the first one's saved values. Without a stop (a crash), a reboot restores them.
+#   kettle-stream-link start|stop
+set -eu
+CONF=/usr/lib/kettle/stream-link
+STATE=/run/kettle/stream-link
+[ "$(id -u)" = 0 ] || { echo "kettle-stream-link: run it as root" >&2; exit 1; }
+case "${1:-}" in
+  start|stop) ;;
+  *) echo "usage: kettle-stream-link start|stop" >&2; exit 2 ;;
+esac
+
+# the PCIe link attributes of each Wi-Fi interface's card
+wifi_links() {
+  for n in /sys/class/net/*; do
+    [ -d "$n/wireless" ] && [ -d "$n/device/link" ] && readlink -f "$n/device/link"
+  done
+  return 0
+}
+
+if [ "$1" = start ]; then
+  [ -r "$CONF" ] && grep -qx wifi-l1ss "$CONF" || exit 0
+  [ -e "$STATE" ] && exit 0
+  mkdir -p "${STATE%/*}"
+  saved=$(mktemp "$STATE.XXXXXX")
+  for link in $(wifi_links); do
+    for a in l1_2_aspm l1_1_aspm l1_2_pcipm l1_1_pcipm; do
+      [ -w "$link/$a" ] || continue
+      echo "$link/$a $(cat "$link/$a")" >>"$saved"
+      echo 0 >"$link/$a"
+    done
+  done
+  mv "$saved" "$STATE"
+else
+  [ -e "$STATE" ] || exit 0
+  # in the reverse order: the substates' ASPM control goes back on after their PCI-PM control
+  tac "$STATE" | while read -r attr value; do
+    case "$attr" in /sys/devices/*/link/l1_[12]_aspm|/sys/devices/*/link/l1_[12]_pcipm) ;; *) continue ;; esac
+    echo "$value" >"$attr" || true
+  done
+  rm -f "$STATE"
+fi

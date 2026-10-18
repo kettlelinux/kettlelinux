@@ -1,0 +1,25 @@
+#!/bin/bash
+# Kettle Linux: starts Moonlight for a game stream, the command Game Mode's Moonlight shortcuts
+# run (kettle-moonlight stream <host> <app> [options]). Around the stream it tunes the device
+# through kettle-stream-link (as root, by pkexec), on a device whose /usr/lib/kettle/stream-link
+# asks for it, and puts it back when Moonlight quits, crashes or Steam stops the shortcut.
+CONF=/usr/lib/kettle/stream-link
+HELPER=/usr/lib/kettle/kettle-stream-link
+
+tuned=0
+if [ -r "$CONF" ] && pkexec "$HELPER" start; then
+  tuned=1
+fi
+
+moonlight "$@" &
+pid=$!
+# Steam stops a shortcut with SIGTERM: pass it on and still restore afterwards
+trap 'kill -TERM "$pid" 2>/dev/null' TERM INT HUP
+rc=0
+while kill -0 "$pid" 2>/dev/null; do
+  wait "$pid"
+  rc=$?
+done
+
+[ "$tuned" = 1 ] && pkexec "$HELPER" stop
+exit "$rc"

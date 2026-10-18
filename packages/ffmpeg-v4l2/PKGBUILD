@@ -10,8 +10,10 @@
 # libavcodec it finds (152 goes up to .so.62, so don't move to 9.x/.so.63 before Firefox 155),
 # and nothing else asks for .so.62, so everything else keeps using Valve's. The libraries live in
 # /usr/lib/ffmpeg-v4l2, which /etc/ld.so.conf.d adds to the loader's path (pacman runs ldconfig
-# after installing), so Firefox finds them however it's started. No headers or .pc files:
-# nothing builds against this.
+# after installing), so Firefox finds them however it's started. Headers and .pc files stay in
+# that directory too (include/, pkgconfig/), for moonlight-qt, the only thing built against it
+# (PKG_CONFIG_PATH=/usr/lib/ffmpeg-v4l2/pkgconfig, rpath /usr/lib/ffmpeg-v4l2); libswscale is
+# built for it.
 #
 # 0001 (ours) stops sending VP8/VP9/AV1 extradata (Firefox passes the container's vpcC/av1C
 #   record) in front of the first frame: iris then skipped the first keyframe and every frame to
@@ -28,9 +30,9 @@
 # To follow the fork, move _commit to the head of its test/<version>/main branch.
 pkgname=ffmpeg-v4l2
 pkgver=8.1.2
-pkgrel=4
+pkgrel=5
 _commit=f60aae17021abae85b1ba9759e8b2da33f723902 # test/8.1.2/main
-pkgdesc="FFmpeg with DRM-PRIME V4L2 decoding (Raspberry Pi's fork), for Firefox's hardware video decoding"
+pkgdesc="FFmpeg with DRM-PRIME V4L2 decoding (Raspberry Pi's fork), for Firefox's and Moonlight's hardware video decoding"
 arch=(aarch64)
 url='https://github.com/jc-kynesim/rpi-ffmpeg'
 license=(LGPL-2.1-or-later)
@@ -58,6 +60,7 @@ build() {
     --prefix=/usr \
     --libdir=/usr/lib/ffmpeg-v4l2 \
     --shlibdir=/usr/lib/ffmpeg-v4l2 \
+    --incdir=/usr/lib/ffmpeg-v4l2/include \
     --enable-shared \
     --disable-static \
     --disable-programs \
@@ -65,7 +68,6 @@ build() {
     --disable-avdevice \
     --disable-avfilter \
     --disable-avformat \
-    --disable-swscale \
     --disable-swresample \
     --disable-autodetect \
     --enable-libdrm \
@@ -82,9 +84,7 @@ build() {
 package() {
   cd rpi-ffmpeg
   make DESTDIR="$pkgdir" install
-  rm -r "$pkgdir/usr/include" "$pkgdir/usr/lib/ffmpeg-v4l2/pkgconfig"
   rm -rf "$pkgdir/usr/share"
-  rm "$pkgdir"/usr/lib/ffmpeg-v4l2/lib*.so
   install -Dm644 "$srcdir/ffmpeg-v4l2.conf" -t "$pkgdir/etc/ld.so.conf.d"
   install -Dm644 LICENSE.md COPYING.LGPLv2.1 -t "$pkgdir/usr/share/licenses/$pkgname"
 }

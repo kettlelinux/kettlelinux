@@ -1,0 +1,20 @@
+# Kettle Linux's Moonlight launcher: kettle-moonlight, the command Game Mode's Moonlight shortcuts
+# run, starts moonlight-qt for the stream and tunes the device around it through
+# kettle-stream-link (pkexec, org.kettle.stream-link: no password in the active local session).
+# What it tunes is per device: a device lists it in /usr/lib/kettle/stream-link (its overlay);
+# without that file nothing is changed. Today only the KONKR Pocket FIT Elite lists wifi-l1ss.
+pkgname=kettle-moonlight
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Kettle Linux: Moonlight game streaming launcher with per-device stream tuning'
+arch=(any)
+license=(BSD-3-Clause)
+depends=(bash moonlight-qt polkit)
+
+package() {
+  install -Dm755 "$startdir/kettle-moonlight" -t "$pkgdir/usr/bin"
+  install -Dm755 "$startdir/kettle-stream-link" -t "$pkgdir/usr/lib/kettle"
+  install -Dm644 "$startdir/org.kettle.stream-link.policy" -t "$pkgdir/usr/share/polkit-1/actions"
+  install -Dm644 "$startdir/50-kettle-stream-link.rules" -t "$pkgdir/usr/share/polkit-1/rules.d"
+  install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}
