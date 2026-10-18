@@ -1,0 +1,55 @@
+# The two libretro cores that take longest to build, kept apart from packages/libretro-cores so
+# bumping a small core doesn't rebuild them; both in /usr/lib/libretro for RetroArch
+# (packages/retroarch) and Kettle's emulation (/usr/lib/kettle/emu-run).
+#
+#   flycast           Dreamcast, NAOMI, Atomiswave (v2.7)     GPL-2.0-or-later
+#   mupen64plus_next  Nintendo 64                             GPL-2.0-or-later
+#
+# mupen64plus_next is built with paraLLEl-RDP and paraLLEl-RSP (Vulkan, MIT / LGPL lightning) and
+# GLideN64 (GL), without the angrylion software renderer: its copy here carries no license, and
+# its MAME-derived origins leave the terms unclear.
+# flycast's git submodules: the ones its libretro build uses (not SDL, breakpad, Android, Apple,
+# Windows or Discord).
+pkgbase=libretro-cores-heavy
+pkgname=(libretro-flycast libretro-mupen64plus-next)
+pkgver=20261018
+pkgrel=1
+pkgdesc='libretro emulator cores (Dreamcast, N64)'
+arch=(aarch64)
+url='https://www.libretro.com'
+license=(GPL-2.0-or-later)
+makedepends=(git cmake ninja python libglvnd mesa vulkan-headers zlib libpng)
+options=(!lto)
+source=("git+https://github.com/flyinghead/flycast.git#tag=v2.7"
+        "git+https://github.com/libretro/mupen64plus-libretro-nx.git#commit=12edd2c74a517ff86dfa8cfc71ad75e4c10486d5")
+sha256sums=(SKIP SKIP)
+
+prepare() {
+  cd flycast
+  local m
+  m=$(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | awk '{print $2}' |
+      grep -vxE 'core/deps/(SDL|breakpad|oboe|Syphon|Spout|discord-rpc|libadrenotools|googletest|gamesdk|DreamPicoPort-API|freetype)')
+  git submodule update --init --recursive -- $m
+}
+
+build() {
+  cmake -S flycast -B build-flycast -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIBRETRO=ON \
+    -DUSE_HOST_LIBZIP=OFF
+  cmake --build build-flycast
+
+  make -C mupen64plus-libretro-nx HAVE_PARALLEL_RDP=1 HAVE_PARALLEL_RSP=1 HAVE_THR_AL=0 LLE=1
+}
+
+package_libretro-flycast() {
+  pkgdesc='libretro core: Dreamcast, NAOMI and Atomiswave (Flycast)'
+  install -Dm644 build-flycast/flycast_libretro.so "$pkgdir/usr/lib/libretro/flycast_libretro.so"
+  install -Dm644 flycast/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+package_libretro-mupen64plus-next() {
+  pkgdesc='libretro core: Nintendo 64 (Mupen64Plus-Next)'
+  license=(GPL-2.0-or-later MIT LGPL-3.0-or-later)
+  install -Dm644 mupen64plus-libretro-nx/mupen64plus_next_libretro.so \
+    "$pkgdir/usr/lib/libretro/mupen64plus_next_libretro.so"
+  install -Dm644 mupen64plus-libretro-nx/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

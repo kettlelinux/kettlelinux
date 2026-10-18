@@ -1,0 +1,112 @@
+# RetroArch: the libretro frontend Kettle's emulation runs most systems in (the cores are
+# packages/libretro-cores and libretro-cores-heavy, in /usr/lib/libretro). Game Mode's Emulation
+# plugin adds ROMs to the library as shortcuts that run /usr/lib/kettle/emu-run, which starts this
+# with the system's core; kettle-emulation seeds each user's own retroarch.cfg (hotkeys, folders,
+# the aarch64 buildbot for the opt-in cores), so /etc/retroarch.cfg keeps upstream's defaults and
+# only points at where this package puts things.
+#
+# One package with what RetroArch reads at run time, each pinned to the release's own tag:
+#   retroarch-assets  the Ozone and GLUI menus, XMB's monochrome icons (Ozone's) and the fallback
+#                     fonts; not the menu sounds (CC BY-NC 3.0), wallpapers or branding
+#   libretro-core-info  every core's .info (firmware lists, extensions)
+#   retroarch-joypad-autoconfig  pad profiles, udev and sdl2 (Steam's virtual pad is one)
+#   slang-shaders     a license-checked subset (slang-presets.txt, slang-subset.py), no tags
+#                     upstream: a pinned commit
+# The online updater's asset and core-info downloads are off (they would write into /usr); its
+# core downloads stay, for cores the user chooses to add to their own folder.
+#
+# Left out: Discord, FFmpeg (recording/streaming and the ffmpeg core) and its subtitles (libass),
+# Qt, JACK, OSS, OpenVG, caca, sixel, V4L2 cameras. mbedTLS, glslang and SPIRV-Cross are
+# RetroArch's bundled copies (none in the repos, or too old).
+pkgname=retroarch
+pkgver=1.22.2
+pkgrel=1
+_assets=1.22.0
+_coreinfo=1.22.2
+_autoconfig=1.22.0
+_shaders=e1d75632a205c70f14a4cc947c46d5abb7b3f7f1
+pkgdesc='Frontend for libretro emulator cores (Vulkan, Wayland, X11)'
+arch=(aarch64)
+url='https://www.retroarch.com'
+# RetroArch GPL 3; bundled mbedTLS Apache 2.0, glslang BSD/MIT, SPIRV-Cross Apache 2.0, stb and
+# rcheevos MIT; core info and joypad autoconfig MIT; assets CC BY 4.0, their fonts Apache 2.0
+# (Droid Sans), Bitstream Vera (DejaVu Sans), OFL (Spoqa Han Sans, Inter) and M+ (XMB/Ozone
+# fonts); shaders as listed in slang-presets.txt (GPL 2+, MIT, MPL 2.0, public domain, CC0)
+license=(GPL-3.0-only Apache-2.0 BSD-3-Clause MIT CC-BY-4.0 OFL-1.1 Bitstream-Vera GPL-2.0-or-later
+         MPL-2.0 CC0-1.0)
+depends=(alsa-lib fontconfig freetype2 libdrm libglvnd libpipewire libpulse libudev.so libx11
+         libxext libxi libxinerama libxkbcommon libxrandr libxss libxxf86vm mesa sdl2
+         vulkan-icd-loader wayland xz zlib)
+makedepends=(git python vulkan-headers wayland-protocols)
+options=(!lto)
+source=("RetroArch-$pkgver.tar.gz::https://github.com/libretro/RetroArch/archive/refs/tags/v$pkgver.tar.gz"
+        "retroarch-assets-$_assets.tar.gz::https://github.com/libretro/retroarch-assets/archive/refs/tags/v$_assets.tar.gz"
+        "libretro-core-info-$_coreinfo.tar.gz::https://github.com/libretro/libretro-core-info/archive/refs/tags/v$_coreinfo.tar.gz"
+        "retroarch-joypad-autoconfig-$_autoconfig.tar.gz::https://github.com/libretro/retroarch-joypad-autoconfig/archive/refs/tags/v$_autoconfig.tar.gz"
+        "slang-shaders-$_shaders.tar.gz::https://github.com/libretro/slang-shaders/archive/$_shaders.tar.gz"
+        slang-presets.txt
+        slang-subset.py)
+sha256sums=('245ef18c8fa8fbd9fbb5eb25cf43e17c6aace2f95c1ed99873cbd794012bb232'
+            '183c638bf2e9273c975e1f46c2d19eff2f63529312856a984c0a777f973672ac'
+            '91b543fe636b4a0dc320c258b04f7b5f76cc26637e8f81cb9658536e8979b563'
+            'ab5264ba2589cffb163b32ac779a9446a23cb09eb2ef4647484bf4f272d347e0'
+            'b8bc2fbb31a754ed41ee4ab309ece63c08123ada8e5e7c5142621461f165bbd9'
+            'ecc5f9b113ab13d135cd72b658b64a113379107d04ece5b5aa6cdf0e08950199'
+            'abd80d08cbe42999ef17a8cd10c6b3228cdcf6423b2b4864cb18b76f5afde085')
+
+prepare() {
+  cd RetroArch-$pkgver
+  # where this package puts the cores and RetroArch's data (upstream's file says nothing)
+  sed -i \
+    -e 's|^# libretro_directory =.*|libretro_directory = "/usr/lib/libretro"|' \
+    -e 's|^# libretro_info_path =.*|libretro_info_path = "/usr/share/libretro/info"|' \
+    -e 's|^# assets_directory =.*|assets_directory = "/usr/share/libretro/assets"|' \
+    -e 's|^# joypad_autoconfig_dir =.*|joypad_autoconfig_dir = "/usr/share/libretro/autoconfig"|' \
+    -e 's|^# video_shader_dir =.*|video_shader_dir = "/usr/share/libretro/shaders"|' \
+    retroarch.cfg
+  for k in libretro_directory libretro_info_path assets_directory joypad_autoconfig_dir video_shader_dir; do
+    grep -q "^$k = " retroarch.cfg || { echo "retroarch.cfg: no $k"; return 1; }
+  done
+}
+
+build() {
+  cd RetroArch-$pkgver
+  ./configure --prefix=/usr --sysconfdir=/etc \
+    --enable-vulkan --enable-wayland --enable-x11 --enable-egl --enable-kms --enable-udev \
+    --enable-sdl2 --enable-pipewire --enable-pulse --enable-alsa --enable-freetype \
+    --disable-discord --disable-ffmpeg --disable-qt --disable-jack --disable-oss --disable-vg \
+    --disable-caca --disable-sixel --disable-v4l2 \
+    --disable-ssa --enable-builtinglslang \
+    --disable-update_assets --disable-update_core_info
+  make
+}
+
+package() {
+  cd RetroArch-$pkgver
+  make DESTDIR="$pkgdir" install
+  local l="$pkgdir/usr/share/licenses/$pkgname"
+  install -Dm644 COPYING "$l/COPYING"
+
+  local a="$pkgdir/usr/share/libretro/assets" src="$srcdir/retroarch-assets-$_assets"
+  install -d "$a/xmb" "$a/pkg"
+  cp -r "$src/ozone" "$src/glui" "$a/"
+  cp -r "$src/xmb/monochrome" "$a/xmb/"
+  cp "$src"/pkg/*.ttf "$src"/pkg/*.txt "$a/pkg/"
+  install -Dm644 "$src/COPYING" "$l/assets-COPYING"
+
+  install -d "$pkgdir/usr/share/libretro/info"
+  cp "$srcdir/libretro-core-info-$_coreinfo"/*.info "$pkgdir/usr/share/libretro/info/"
+  install -Dm644 "$srcdir/libretro-core-info-$_coreinfo/COPYING" "$l/core-info-COPYING"
+
+  src="$srcdir/retroarch-joypad-autoconfig-$_autoconfig"
+  install -d "$pkgdir/usr/share/libretro/autoconfig"
+  cp -r "$src/udev" "$src/sdl2" "$pkgdir/usr/share/libretro/autoconfig/"
+  install -Dm644 "$src/COPYING" "$l/joypad-autoconfig-COPYING"
+
+  cd "$srcdir/slang-shaders-$_shaders"
+  local s="$pkgdir/usr/share/libretro/shaders/shaders_slang" f
+  python3 "$srcdir/slang-subset.py" "$srcdir/slang-presets.txt" | while read -r f; do
+    install -Dm644 "$f" "$s/$f"
+  done
+  install -Dm644 "$srcdir/slang-presets.txt" "$l/shaders-LICENSES.txt"
+}

@@ -1,0 +1,47 @@
+# PPSSPP: the PSP emulator Kettle's emulation runs PSP games in (Game Mode's Emulation plugin adds
+# them to the library as shortcuts through /usr/lib/kettle/emu-run). The SDL frontend, Vulkan
+# first (Turnip), OpenGL as its fallback; installed as /usr/bin/PPSSPPSDL with /usr/bin/ppsspp
+# beside it. kettle-emulation seeds each user's ppsspp.ini and controls.ini (hotkeys, pad, folders,
+# no update checks); nothing here changes PPSSPP's defaults.
+#
+# System FFmpeg (Valve's 7.0, for PSP video and audio) instead of PPSSPP's ffmpeg submodule, which
+# is prebuilt static libraries. Left out: Discord, UPnP (miniupnpc), the Qt frontend.
+pkgname=ppsspp
+pkgver=1.20.4
+pkgrel=1
+pkgdesc='PSP emulator (SDL frontend, Vulkan)'
+arch=(aarch64)
+url='https://www.ppsspp.org'
+# PPSSPP GPL 2 or later; bundled glslang BSD/MIT, SPIRV-Cross Apache 2.0, cpu_features
+# Apache 2.0, rcheevos MIT, libchdr BSD-3, Lua MIT, naett MIT, nanosvg zlib
+license=(GPL-2.0-or-later BSD-3-Clause MIT Apache-2.0 Zlib)
+depends=(ffmpeg freetype2 glew libglvnd libpng libzip sdl2 sdl2_ttf fontconfig snappy
+         vulkan-icd-loader wayland libx11 zlib zstd)
+makedepends=(git cmake ninja python rapidjson vulkan-headers)
+options=(!lto)
+source=("git+https://github.com/hrydgard/ppsspp.git#tag=v$pkgver")
+sha256sums=('SKIP')
+
+prepare() {
+  cd ppsspp
+  # what the Linux SDL build compiles in (OpenXR-SDK and miniupnp for their headers only): not
+  # the prebuilt FFmpeg, PSP tests, Apple, Android or Discord submodules
+  git submodule update --init --recursive --depth 1 -- \
+    ext/armips ext/glslang ext/SPIRV-Cross ext/cpu_features ext/rcheevos ext/naett ext/libchdr \
+    ext/lua ext/nanosvg ext/aemu_postoffice ext/OpenXR-SDK ext/miniupnp assets/debugger
+}
+
+build() {
+  cmake -S ppsspp -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+    -DUSE_SYSTEM_FFMPEG=ON -DUSE_SYSTEM_LIBZIP=ON -DUSE_SYSTEM_SNAPPY=ON -DUSE_SYSTEM_ZSTD=ON \
+    -DUSE_SYSTEM_FREETYPE=ON -DUSE_SYSTEM_LIBSDL2=ON -DUSE_SYSTEM_LIBPNG=ON \
+    -DUSE_SYSTEM_RAPIDJSON=ON -DUSE_DISCORD=OFF -DUSE_MINIUPNPC=OFF -DUSE_CCACHE=OFF \
+    -DUSING_QT_UI=OFF -DHEADLESS=OFF -DUNITTEST=OFF -DUSE_WAYLAND_WSI=ON
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  ln -s PPSSPPSDL "$pkgdir/usr/bin/ppsspp"
+  install -Dm644 ppsspp/LICENSE.TXT "$pkgdir/usr/share/licenses/$pkgname/LICENSE.TXT"
+}

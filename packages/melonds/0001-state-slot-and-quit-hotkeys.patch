@@ -1,0 +1,224 @@
+melonDS: hotkeys for save state, load state, next/previous state slot and quit
+
+The Qt frontend saves and loads states only through its menu, whose fixed shortcuts are
+Shift+F1..F8 / F1..F8, F9 and F12. Five new hotkeys (Keyboard/Joystick HK_SaveState,
+HK_LoadState, HK_NextStateSlot, HK_PrevStateSlot, HK_Quit, unbound by default) act on a
+current slot (1-8, shown in the OSD), so the same keys as every other Kettle emulator work.
+Once either state hotkey is bound to a key, the menu items lose their F-key shortcuts, which
+would otherwise clash (F2 loading slot 2).
+
+diff --git a/src/frontend/qt_sdl/EmuInstance.h b/src/frontend/qt_sdl/EmuInstance.h
+index f143496..1932aaa 100755
+--- a/src/frontend/qt_sdl/EmuInstance.h
++++ b/src/frontend/qt_sdl/EmuInstance.h
+@@ -55,6 +55,11 @@ enum
+     HK_GuitarGripRed,
+     HK_GuitarGripYellow,
+     HK_GuitarGripBlue,
++    HK_SaveState,
++    HK_LoadState,
++    HK_NextStateSlot,
++    HK_PrevStateSlot,
++    HK_Quit,
+     HK_MAX
+ };
+ 
+diff --git a/src/frontend/qt_sdl/EmuInstanceInput.cpp b/src/frontend/qt_sdl/EmuInstanceInput.cpp
+index 866eb29..5232c3f 100644
+--- a/src/frontend/qt_sdl/EmuInstanceInput.cpp
++++ b/src/frontend/qt_sdl/EmuInstanceInput.cpp
+@@ -66,7 +66,12 @@ const char* EmuInstance::hotkeyNames[HK_MAX] =
+     "HK_GuitarGripGreen",
+     "HK_GuitarGripRed",
+     "HK_GuitarGripYellow",
+-    "HK_GuitarGripBlue"
++    "HK_GuitarGripBlue",
++    "HK_SaveState",
++    "HK_LoadState",
++    "HK_NextStateSlot",
++    "HK_PrevStateSlot",
++    "HK_Quit"
+ };
+ 
+ std::shared_ptr<SDL_mutex> EmuInstance::joyMutexGlobal = nullptr;
+diff --git a/src/frontend/qt_sdl/EmuThread.cpp b/src/frontend/qt_sdl/EmuThread.cpp
+index e754d98..fa4774b 100755
+--- a/src/frontend/qt_sdl/EmuThread.cpp
++++ b/src/frontend/qt_sdl/EmuThread.cpp
+@@ -83,6 +83,9 @@ void EmuThread::attachWindow(MainWindow* window)
+     {
+         connect(this, SIGNAL(windowLimitFPSChange()), window->actLimitFramerate, SLOT(trigger()));
+         connect(this, SIGNAL(swapScreensToggle()), window->actScreenSwap, SLOT(trigger()));
++        connect(this, SIGNAL(hotkeySaveState(int)), window, SLOT(onHotkeySaveState(int)));
++        connect(this, SIGNAL(hotkeyLoadState(int)), window, SLOT(onHotkeyLoadState(int)));
++        connect(this, SIGNAL(hotkeyQuit()), window->actQuit, SLOT(trigger()));
+     }
+ }
+ 
+@@ -101,6 +104,9 @@ void EmuThread::detachWindow(MainWindow* window)
+     {
+         disconnect(this, SIGNAL(windowLimitFPSChange()), window->actLimitFramerate, SLOT(trigger()));
+         disconnect(this, SIGNAL(swapScreensToggle()), window->actScreenSwap, SLOT(trigger()));
++        disconnect(this, SIGNAL(hotkeySaveState(int)), window, SLOT(onHotkeySaveState(int)));
++        disconnect(this, SIGNAL(hotkeyLoadState(int)), window, SLOT(onHotkeyLoadState(int)));
++        disconnect(this, SIGNAL(hotkeyQuit()), window->actQuit, SLOT(trigger()));
+     }
+ }
+ 
+@@ -150,6 +156,7 @@ void EmuThread::run()
+     bool slowmo = false;
+     emuInstance->fastForwardToggled = false;
+     emuInstance->slowmoToggled = false;
++    int stateSlot = 1;
+ 
+     while (emuStatus != emuStatus_Exit)
+     {
+@@ -169,6 +176,18 @@ void EmuThread::run()
+         if (emuInstance->hotkeyPressed(HK_SwapScreens)) emit swapScreensToggle();
+         if (emuInstance->hotkeyPressed(HK_SwapScreenEmphasis)) emit screenEmphasisToggle();
+ 
++        // state slots 1-8 by hotkey, for a pad-only setup
++        if (emuInstance->hotkeyPressed(HK_NextStateSlot) || emuInstance->hotkeyPressed(HK_PrevStateSlot))
++        {
++            stateSlot += emuInstance->hotkeyPressed(HK_NextStateSlot) ? 1 : -1;
++            if (stateSlot > 8) stateSlot = 1;
++            if (stateSlot < 1) stateSlot = 8;
++            emuInstance->osdAddMessage(0, "State slot %d", stateSlot);
++        }
++        if (emuInstance->hotkeyPressed(HK_SaveState)) emit hotkeySaveState(stateSlot);
++        if (emuInstance->hotkeyPressed(HK_LoadState)) emit hotkeyLoadState(stateSlot);
++        if (emuInstance->hotkeyPressed(HK_Quit)) emit hotkeyQuit();
++
+         if (emuStatus == emuStatus_Running || emuStatus == emuStatus_FrameStep)
+         {
+             if (emuStatus == emuStatus_FrameStep) emuStatus = emuStatus_Paused;
+diff --git a/src/frontend/qt_sdl/EmuThread.h b/src/frontend/qt_sdl/EmuThread.h
+index 7a7f060..2fa66c3 100755
+--- a/src/frontend/qt_sdl/EmuThread.h
++++ b/src/frontend/qt_sdl/EmuThread.h
+@@ -163,6 +163,10 @@ signals:
+ 
+     void syncVolumeLevel();
+ 
++    void hotkeySaveState(int slot);
++    void hotkeyLoadState(int slot);
++    void hotkeyQuit();
++
+ private:
+     void handleMessages();
+ 
+diff --git a/src/frontend/qt_sdl/InputConfig/InputConfigDialog.h b/src/frontend/qt_sdl/InputConfig/InputConfigDialog.h
+index 0dd3844..b13f912 100644
+--- a/src/frontend/qt_sdl/InputConfig/InputConfigDialog.h
++++ b/src/frontend/qt_sdl/InputConfig/InputConfigDialog.h
+@@ -67,7 +67,12 @@ static constexpr std::initializer_list<int> hk_general =
+     HK_SwapScreenEmphasis,
+     HK_PowerButton,
+     HK_VolumeUp,
+-    HK_VolumeDown
++    HK_VolumeDown,
++    HK_SaveState,
++    HK_LoadState,
++    HK_NextStateSlot,
++    HK_PrevStateSlot,
++    HK_Quit
+ };
+ 
+ static constexpr std::initializer_list<const char*> hk_general_labels =
+@@ -87,7 +92,12 @@ static constexpr std::initializer_list<const char*> hk_general_labels =
+     "Swap screen emphasis",
+     "DSi Power button",
+     "DSi Volume up",
+-    "DSi Volume down"
++    "DSi Volume down",
++    "Save state (current slot)",
++    "Load state (current slot)",
++    "Next state slot",
++    "Previous state slot",
++    "Quit"
+ };
+ 
+ static_assert(hk_general.size() == hk_general_labels.size());
+diff --git a/src/frontend/qt_sdl/Window.cpp b/src/frontend/qt_sdl/Window.cpp
+index 9b3ab95..e4984c9 100755
+--- a/src/frontend/qt_sdl/Window.cpp
++++ b/src/frontend/qt_sdl/Window.cpp
+@@ -350,19 +350,23 @@ MainWindow::MainWindow(int id, EmuInstance* inst, QWidget* parent) :
+ 
+             menu->addSeparator();
+ 
++            // once the state hotkeys are bound to keys, the F keys stop being the slots' own shortcuts
++            // (F2 would load slot 2 when bound to "save state")
++            Config::Table keycfg = localCfg.GetTable("Keyboard");
++            bool stateHotkeys = keycfg.GetInt("HK_SaveState") != -1 || keycfg.GetInt("HK_LoadState") != -1;
+             {
+                 QMenu * submenu = menu->addMenu("Save state");
+ 
+                 for (int i = 1; i < 9; i++)
+                 {
+                     actSaveState[i] = submenu->addAction(QString("%1").arg(i));
+-                    actSaveState[i]->setShortcut(QKeySequence(Qt::ShiftModifier | (Qt::Key_F1 + i - 1)));
++                    if (!stateHotkeys) actSaveState[i]->setShortcut(QKeySequence(Qt::ShiftModifier | (Qt::Key_F1 + i - 1)));
+                     actSaveState[i]->setData(QVariant(i));
+                     connect(actSaveState[i], &QAction::triggered, this, &MainWindow::onSaveState);
+                 }
+ 
+                 actSaveState[0] = submenu->addAction("File...");
+-                actSaveState[0]->setShortcut(QKeySequence(Qt::ShiftModifier | Qt::Key_F9));
++                if (!stateHotkeys) actSaveState[0]->setShortcut(QKeySequence(Qt::ShiftModifier | Qt::Key_F9));
+                 actSaveState[0]->setData(QVariant(0));
+                 connect(actSaveState[0], &QAction::triggered, this, &MainWindow::onSaveState);
+             }
+@@ -372,19 +376,19 @@ MainWindow::MainWindow(int id, EmuInstance* inst, QWidget* parent) :
+                 for (int i = 1; i < 9; i++)
+                 {
+                     actLoadState[i] = submenu->addAction(QString("%1").arg(i));
+-                    actLoadState[i]->setShortcut(QKeySequence(Qt::Key_F1 + i - 1));
++                    if (!stateHotkeys) actLoadState[i]->setShortcut(QKeySequence(Qt::Key_F1 + i - 1));
+                     actLoadState[i]->setData(QVariant(i));
+                     connect(actLoadState[i], &QAction::triggered, this, &MainWindow::onLoadState);
+                 }
+ 
+                 actLoadState[0] = submenu->addAction("File...");
+-                actLoadState[0]->setShortcut(QKeySequence(Qt::Key_F9));
++                if (!stateHotkeys) actLoadState[0]->setShortcut(QKeySequence(Qt::Key_F9));
+                 actLoadState[0]->setData(QVariant(0));
+                 connect(actLoadState[0], &QAction::triggered, this, &MainWindow::onLoadState);
+             }
+ 
+             actUndoStateLoad = menu->addAction("Undo state load");
+-            actUndoStateLoad->setShortcut(QKeySequence(Qt::Key_F12));
++            if (!stateHotkeys) actUndoStateLoad->setShortcut(QKeySequence(Qt::Key_F12));
+             connect(actUndoStateLoad, &QAction::triggered, this, &MainWindow::onUndoStateLoad);
+ 
+             menu->addSeparator();
+@@ -1642,6 +1646,16 @@ void MainWindow::onLoadState()
+     }
+ }
+ 
++void MainWindow::onHotkeySaveState(int slot)
++{
++    actSaveState[slot]->trigger();
++}
++
++void MainWindow::onHotkeyLoadState(int slot)
++{
++    actLoadState[slot]->trigger();
++}
++
+ void MainWindow::onUndoStateLoad()
+ {
+     emuThread->undoStateLoad();
+diff --git a/src/frontend/qt_sdl/Window.h b/src/frontend/qt_sdl/Window.h
+index 678be7c..716599e 100755
+--- a/src/frontend/qt_sdl/Window.h
++++ b/src/frontend/qt_sdl/Window.h
+@@ -169,6 +169,8 @@ private slots:
+     void onEjectGBACart();
+     void onSaveState();
+     void onLoadState();
++    void onHotkeySaveState(int slot);
++    void onHotkeyLoadState(int slot);
+     void onUndoStateLoad();
+     void onImportSavefile();
+     void onQuit();

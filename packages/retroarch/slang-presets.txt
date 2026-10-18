@@ -1,0 +1,38 @@
+# The slang shader presets RetroArch ships with (paths in libretro/slang-shaders). Each one is
+# installed with every file it needs (passes, includes, textures: slang-subset.py). Each family is
+# checked for its license; families with files of unknown license are left out (fakelottes,
+# crt-hyllian's glow passes, cgwg's lcd-grid-v2, the plain scanline shader).
+stock.slang
+nearest.slangp
+bilinear.slangp
+# CRT
+crt/crt-geom.slangp                 # GPL-2.0+ (cgwg, Themaister, DOLLS)
+crt/crt-lottes.slangp               # public domain (Timothy Lottes)
+crt/crt-easymode.slangp             # GPL
+crt/zfast-crt.slangp                # GPL-2.0+ (Greg Hogan)
+crt/crt-royale.slangp               # GPL-2.0+ (TroggleMonkey; its include/ helpers MIT)
+crt/crt-pi.slangp                   # GPL-2.0+ (davej)
+crt/crt-guest-advanced.slangp       # GPL-2.0+ (guest(r))
+# handhelds
+handheld/gameboy.slangp             # GPL (Harlequin, Matt Akins)
+handheld/gameboy-pocket.slangp
+handheld/gameboy-advance-dot-matrix.slangp
+handheld/gameboy-color-dot-matrix.slangp
+handheld/sameboy-lcd.slangp         # MIT (Lior Halphon)
+handheld/lcd3x.slangp               # public domain (Gigaherz)
+handheld/lcd1x_nds.slangp           # GPL-2.0+ over public-domain lcd3x
+handheld/lcd1x_psp.slangp
+handheld/dot.slangp                 # public domain
+handheld/retro-v2.slangp            # GPL-2.0+
+handheld/zfast-lcd.slangp           # GPL-2.0+ (Greg Hogan)
+handheld/authentic_gbc.slangp       # CC0
+handheld/agb001.slangp              # MPL-2.0 (mGBA's)
+handheld/ags001.slangp              # MPL-2.0
+# scaling and smoothing
+interpolation/bicubic.slangp        # GPL-2.0+ (Team XBMC)
+interpolation/lanczos2.slangp       # GPL-2.0+ (guest(r))
+pixel-art-scaling/pixel_aa.slangp   # CC0
+edge-smoothing/scalefx/scalefx.slangp       # MIT (Sp00kyFox)
+edge-smoothing/xbrz/xbrz-freescale.slangp   # MIT (Hyllian)
+edge-smoothing/xbr/xbr-lv2.slangp           # MIT (Hyllian)
+edge-smoothing/xbr/super-xbr.slangp         # MIT (Hyllian; jinc2 pass GPL-2.0+)
