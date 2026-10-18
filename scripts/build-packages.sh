@@ -41,6 +41,18 @@ pacman_root "$CHROOT" -Syu >/dev/null
 
 names=("$@")
 [ ${#names[@]} -gt 0 ] || mapfile -t names < <(find "$ROOT/packages" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+# packages built on the x86_64 side (_kettle_buildhost=x86_64) are scripts/build-x86-packages.sh's
+x86=() kept=()
+for name in "${names[@]}"; do
+  if [ "$(bash -c ". '$ROOT/packages/$name/PKGBUILD' 2>/dev/null; echo \${_kettle_buildhost:-}")" = x86_64 ]; then
+    x86+=("$name")
+  else
+    kept+=("$name")
+  fi
+done
+[ ${#x86[@]} = 0 ] || log "not here, built by scripts/build-x86-packages.sh: ${x86[*]}"
+[ $# = 0 ] || [ ${#x86[@]} = 0 ] || die "build ${x86[*]} with scripts/build-x86-packages.sh"
+names=("${kept[@]}")
 
 # build order: each package after the ones of this run that it depends on (so it builds against
 # them, not the repo's older copies); pkgnames map to their directory under packages/
