@@ -274,11 +274,16 @@ def _server() -> str:
 
 
 def _device() -> dict:
-    try:
-        with open("/proc/device-tree/model", "rb") as f:
-            model = f.read().rstrip(b"\0").decode(errors="replace").strip()
-    except OSError:
-        model = ""
+    model = ""
+    # the devicetree's model, or the firmware's (SMBIOS) on a UEFI machine
+    for path in ("/proc/device-tree/model", "/sys/class/dmi/id/product_name"):
+        try:
+            with open(path, "rb") as f:
+                model = f.read().rstrip(b"\0").decode(errors="replace").strip()
+        except OSError:
+            continue
+        if model:
+            break
     osr = {}
     try:
         with open("/etc/os-release", encoding="utf-8") as f:

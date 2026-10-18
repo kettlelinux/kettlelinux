@@ -55,8 +55,10 @@ CFG
 }
 
 # the devicetree: DTB, or a DTB_ALT whose marker file (NAME or NAME.txt) is in the top folder of
-# partition 1 (the KETTLE esp) of the disk GRUB was loaded from
+# partition 1 (the KETTLE esp) of the disk GRUB was loaded from. None on a UEFI machine (no DTB):
+# its firmware describes the hardware (ACPI).
 dtb_select() {
+  [ -n "${DTB:-}" ] || return 0
   echo "set dtb=/boot/dtbs/$DTB"
   [ -n "${DTB_ALT:-}" ] || return 0
   echo "if regexp --set=1:edisk '^\\(([^,)]+),' \"\$cmdpath\"; then"
@@ -71,8 +73,8 @@ dtb_select() {
 entry() {  # name, extra cmdline
   echo "menuentry '$1' {"
   find_root
+  [ -z "${DTB:-}" ] || echo "    devicetree \$dtb"
   cat <<CFG
-    devicetree \$dtb
     linux /boot/Image $CMDLINE $2 steamos.efi=PARTUUID=$efi_partuuid
     initrd /boot/initramfs-linux.img
 }
