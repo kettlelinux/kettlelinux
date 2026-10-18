@@ -74,13 +74,23 @@
 #              run kettle-moonlight (packages/kettle-moonlight) with the PC's stream settings
 #              (presets from this screen's resolution and refresh rates, or custom), and the
 #              running stream in Quick Access (end it, Steam's frame limit warning)
+#   emulation  Emulation: retro games through kettle-emulation (packages/kettle-emulation). The
+#              ROMs in Emulation/roms/<system> on internal storage and every card as Steam shortcuts
+#              running emu-run (roms.py, sync.ts), a collection per system, artwork from
+#              libretro-thumbnails composed with PySide6 (art.py, artcompose.py; SteamGridDB with the
+#              user's key) and the standard controls' layout; getting games in: the inbox, a card or
+#              stick, the upload page (QR code and PIN) and the network share; BIOS status, the
+#              emulator per system and per game, saves and backups, the extra cores whose licenses
+#              keep them out of the image (cores.py), Get started for the first visit, and the running
+#              game's hotkeys as Quick Access buttons
 # Sources live next to this PKGBUILD; shared/ holds code both frontends use.
 pkgbase=kettle-decky-plugins
 pkgname=(kettle-decky-welcome kettle-decky-device-settings
          kettle-decky-crash kettle-decky-game-settings
-         kettle-decky-stores kettle-decky-moonlight)
+         kettle-decky-stores kettle-decky-moonlight
+         kettle-decky-emulation)
 pkgver=1.12.0
-pkgrel=64
+pkgrel=65
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
@@ -88,8 +98,8 @@ makedepends=(nodejs npm)
 
 prepare() {
   rm -rf src-tree; mkdir src-tree
-  cp -r "$startdir"/{package.json,pnpm-lock.yaml,shared,welcome,device-settings,crash,game-settings,stores,moonlight} src-tree/
-  rm -rf src-tree/{welcome,device-settings,crash,game-settings,stores,moonlight}/dist
+  cp -r "$startdir"/{package.json,pnpm-lock.yaml,shared,welcome,device-settings,crash,game-settings,stores,moonlight,emulation} src-tree/
+  rm -rf src-tree/{welcome,device-settings,crash,game-settings,stores,moonlight,emulation}/dist
 }
 
 build() {
@@ -162,4 +172,10 @@ package_kettle-decky-moonlight() {
   pkgdesc='Moonlight Decky plugin (game streaming from Sunshine and Apollo: pairing, the PCs'"'"' games in the Steam library, stream settings)'
   depends=(decky-loader kettle-moonlight moonlight-qt pyside6 python xorg-xprop)
   _install_plugin kettle-moonlight moonlight
+}
+
+package_kettle-decky-emulation() {
+  pkgdesc='Emulation Decky plugin (retro games in the Steam library: ROMs and BIOS in, artwork, collections, the standard controls, saves, extra cores)'
+  depends=(decky-loader kettle-emulation retroarch python pyside6)
+  _install_plugin kettle-emulation emulation
 }

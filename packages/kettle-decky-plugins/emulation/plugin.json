@@ -1,0 +1,11 @@
+{
+  "name": "Emulation",
+  "author": "Kettle Linux",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["emulation", "retroarch", "roms", "retro"],
+    "description": "Retro games in your Steam library: drop ROMs in (inbox, card, phone upload or network share) and each game gets its own entry with artwork, a collection per system, and the same controls in every emulator.",
+    "image": ""
+  }
+}
