@@ -9,6 +9,9 @@ After=gamescope-session.service
 Before=steam.service
 
 [Service]
+# only with a built-in gamepad (PAD_NAME in device.conf): a desktop machine's controllers are
+# Steam's own
+ExecCondition=/bin/sh -c '. /usr/lib/kettle/device.conf; [ -n "$${PAD_NAME:-}" ]'
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/bin/systemctl start inputplumber.service
