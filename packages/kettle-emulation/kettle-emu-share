@@ -1,0 +1,128 @@
+#!/usr/bin/python3
+"""Kettle Linux: turns the Emulation plugin's "Kettle" network share (Samba, of the user's
+~/Emulation) on or off. Run as root through pkexec (org.kettle.emulation.share); the user is
+the one pkexec ran it for. What it writes is listed in kettle_emulation/samba.py.
+
+  kettle-emu-share enable      the user's new Samba password on stdin (one line)
+  kettle-emu-share disable
+  kettle-emu-share status      JSON
+"""
+import json
+import os
+import pwd
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from kettle_emulation import samba  # noqa: E402
+
+
+def die(msg, code=1):
+    print(f"kettle-emu-share: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def run(*cmd, **kw):
+    r = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    if r.returncode != 0:
+        die(f"{' '.join(cmd[:2])}: {r.stderr.strip() or r.returncode}")
+    return r
+
+
+def write(path, text, mode=0o644):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(text)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def remove(path):
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
+def ours(path):
+    try:
+        with open(path) as f:
+            return f.readline().rstrip("\n") == samba.MARK
+    except OSError:
+        return False
+
+
+def the_user():
+    uid = os.environ.get("PKEXEC_UID") or os.environ.get("SUDO_UID")
+    if not uid:
+        die("run it through pkexec")
+    u = pwd.getpwuid(int(uid))
+    if u.pw_uid == 0:
+        die("not for root")
+    return u
+
+
+def enable(u):
+    password = sys.stdin.readline().rstrip("\n")
+    if len(password) < samba.MIN_PASSWORD:
+        die(f"the password needs at least {samba.MIN_PASSWORD} characters", 2)
+    if os.path.exists(samba.SMB_CONF) and not ours(samba.SMB_CONF):
+        with open(samba.SMB_CONF) as f:
+            if samba.INCLUDE not in f.read():
+                die(f"{samba.SMB_CONF} is your own: add '{samba.INCLUDE}' to its [global] section", 3)
+    else:
+        write(samba.SMB_CONF, samba.smb_conf())
+    # made by the plugin, as the user: root creating or chowning a path in a folder the user
+    # owns could be sent anywhere through a symlink swapped in at the right moment
+    path = os.path.join(u.pw_dir, "Emulation")
+    if not os.path.isdir(path):
+        die(f"{path} is missing: open the Emulation plugin once to make it", 4)
+    write(samba.SHARE_CONF, samba.share_conf(u.pw_name, path))
+    run("smbpasswd", "-s", "-a", u.pw_name, input=f"{password}\n{password}\n")
+    run("smbpasswd", "-e", u.pw_name)
+    state = []
+    if os.path.exists("/usr/bin/avahi-daemon"):
+        write(samba.AVAHI_SERVICE, samba.AVAHI)
+        if subprocess.run(["systemctl", "is-enabled", "--quiet", "avahi-daemon.service"]).returncode != 0:
+            run("systemctl", "enable", "--now", "avahi-daemon.service")
+            state.append("avahi-daemon.service")
+    if not os.path.exists(samba.STATE):
+        write(samba.STATE, "".join(s + "\n" for s in state))
+    run("systemctl", "enable", "--now", "smb.service", "nmb.service")
+    run("systemctl", "reload-or-restart", "smb.service")
+
+
+def disable(u):
+    subprocess.run(["systemctl", "disable", "--now", "smb.service", "nmb.service"], capture_output=True)
+    subprocess.run(["smbpasswd", "-d", u.pw_name], capture_output=True)
+    remove(samba.SHARE_CONF)
+    if ours(samba.SMB_CONF):
+        remove(samba.SMB_CONF)
+    remove(samba.AVAHI_SERVICE)
+    try:
+        with open(samba.STATE) as f:
+            started = [l.strip() for l in f if l.strip()]
+    except OSError:
+        started = []
+    for unit in started:
+        subprocess.run(["systemctl", "disable", "--now", unit], capture_output=True)
+    remove(samba.STATE)
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) == 2 else ""
+    if cmd == "status":
+        print(json.dumps(samba.status()))
+        return 0
+    if cmd not in ("enable", "disable"):
+        die("usage: kettle-emu-share enable|disable|status", 2)
+    if os.geteuid() != 0:
+        die("run it as root (pkexec)")
+    u = the_user()
+    enable(u) if cmd == "enable" else disable(u)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

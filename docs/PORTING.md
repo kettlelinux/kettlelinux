@@ -26,7 +26,7 @@ setting instead, from the device's `device.conf` or one of its overlay's files.
 ## What a device directory holds
 | File | What it is | Read by |
 |---|---|---|
-| `device.conf` | `MODEL`, `RAUC_COMPATIBLE` (required); `DTB`, `ABL_DTBS` (required unless `BOOT=uefi`); `PAD_NAME` and with it `FACE_BUTTONS` (a built-in gamepad); `BOOT`, `KERNEL_FLAVOUR`, `DTB_ALT`, `CMDLINE_SOC`, `CMDLINE_EXTRA`, `REPART`, `GAME_CPU_AFFINITY`, `ADSP_FIRMWARE_FALLBACK` (optional) | `scripts/build-image.sh`; installed in the image as `/usr/lib/kettle/device.conf` |
+| `device.conf` | `MODEL`, `RAUC_COMPATIBLE` (required); `DTB`, `ABL_DTBS` (required unless `BOOT=uefi`); `PAD_NAME` and with it `FACE_BUTTONS` (a built-in gamepad); `BOOT`, `KERNEL_FLAVOUR`, `DTB_ALT`, `CMDLINE_SOC`, `CMDLINE_EXTRA`, `REPART`, `GAME_CPU_AFFINITY`, `ADSP_FIRMWARE_FALLBACK`, `EMU_TIER` (optional) | `scripts/build-image.sh`; installed in the image as `/usr/lib/kettle/device.conf` |
 | `packages.txt` | packages only this device's image gets, added to `image/packages.txt`; a `-name` line drops a shared one (another GPU's Mesa) | `scripts/build-image.sh` |
 | `overlay/` | files copied over `device/common/overlay` | `scripts/build-image.sh` |
 | `overlay/usr/lib/kettle/gamescope.conf` | Game Mode's screen: `GAMESCOPE_ORIENTATION`, `GAMESCOPE_OUTPUT`, a second screen's `GAMESCOPE_LEASE_*` (required) | `gamescope-session` |

@@ -1,0 +1,8 @@
+#!/usr/bin/python3
+# The command of every emulation shortcut: emu-run <system> "<rom>" (kettle_emulation/run.py).
+import sys
+
+sys.path.insert(0, "/usr/lib/kettle")
+from kettle_emulation import run  # noqa: E402
+
+sys.exit(run.main())

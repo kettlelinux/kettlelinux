@@ -1,0 +1,84 @@
+#!/usr/bin/python3
+"""Kettle Linux: sorts ROMs and BIOS files into an Emulation tree, for the Emulation plugin.
+
+  kettle-emu-import scan <path>                       what an import would do: one JSON object
+  kettle-emu-import run <path> [--copy|--move] [--dest internal|<card mount>]
+  kettle-emu-import inbox [--settle SECONDS]          sort every storage's Emulation/inbox
+  kettle-emu-import assign <file> <system> [--dest internal|<card mount>]
+                                                      (the file's own storage by default)
+  kettle-emu-import unsorted                          every storage's inbox/unsorted: a JSON list
+  kettle-emu-import bios                              BIOS status per system: one JSON object
+  kettle-emu-import bios-install [<system>]           copy BIOS files found elsewhere into place:
+                                                      a JSON list of the names installed
+
+run, inbox and assign print JSON lines as they go (start, progress, item, done; inbox also one
+"inbox" line per storage). Exit status 1 if any file failed, 2 on bad arguments. SIGTERM (the
+plugin's Cancel) stops it without leaving half-copied files.
+"""
+import argparse
+import json
+import os
+import signal
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from kettle_emulation import bios, importer, storage  # noqa: E402
+
+
+def emit(ev):
+    print(json.dumps(ev), flush=True)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="kettle-emu-import")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("scan")
+    p.add_argument("path")
+    p = sub.add_parser("run")
+    p.add_argument("path")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--copy", dest="mode", action="store_const", const="copy")
+    g.add_argument("--move", dest="mode", action="store_const", const="move")
+    p.add_argument("--dest", default="internal")
+    p = sub.add_parser("inbox")
+    p.add_argument("--settle", type=float, default=30)
+    p = sub.add_parser("assign")
+    p.add_argument("path")
+    p.add_argument("system")
+    p.add_argument("--dest")
+    sub.add_parser("unsorted")
+    sub.add_parser("bios")
+    p = sub.add_parser("bios-install")
+    p.add_argument("system", nargs="?")
+    a = ap.parse_args()
+    # SystemExit runs the finally blocks: .part files and staging folders are removed
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+
+    try:
+        if a.cmd == "scan":
+            emit(importer.scan(a.path))
+            return 0
+        if a.cmd == "bios":
+            emit(bios.status())
+            return 0
+        if a.cmd == "bios-install":
+            emit(bios.install_found(a.system))
+            return 0
+        if a.cmd == "unsorted":
+            emit(importer.unsorted())
+            return 0
+        if a.cmd == "run":
+            st = importer.Importer(storage.root_for(a.dest), a.mode or "copy", emit).run(a.path)
+        elif a.cmd == "assign":
+            st = importer.assign(a.path, a.system, storage.root_for(a.dest) if a.dest else None, emit)
+        else:
+            st = importer.inbox(emit, a.settle)
+            return 1 if any(s["errors"] for s in st) else 0
+    except ValueError as e:
+        print(f"kettle-emu-import: {e}", file=sys.stderr)
+        return 2
+    return 1 if st["errors"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,32 @@
+#!/usr/bin/python3
+"""Kettle Linux: the Emulation plugin's upload page, for adding ROMs and BIOS files from a phone
+or PC browser on the same network.
+
+  kettle-emu-upload [--port N] [--idle-timeout SECONDS]
+
+Prints JSON lines: {"event": "listening", "port", "pin", "urls", "idle_timeout"} first, then
+"uploaded" {name, bytes}, "sorted" {results}, "locked" (10 wrong PINs) and "exit" {reason}.
+SIGTERM stops it; whatever was uploaded is sorted on the way out.
+"""
+import argparse
+import json
+import os
+import signal
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from kettle_emulation import upload  # noqa: E402
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="kettle-emu-upload")
+    ap.add_argument("--port", type=int, default=0)
+    ap.add_argument("--idle-timeout", type=float, default=600)
+    a = ap.parse_args()
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    upload.serve(a.port, a.idle_timeout, lambda ev: print(json.dumps(ev), flush=True))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

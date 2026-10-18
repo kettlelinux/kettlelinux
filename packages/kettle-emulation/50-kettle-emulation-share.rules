@@ -1,0 +1,28 @@
+// Game Mode's Emulation plugin turns the "Kettle" network share of ~/Emulation on and off
+// through /usr/lib/kettle/kettle-emu-share (org.kettle.emulation.share), where no password
+// prompt can be shown: allowed for the person at the device (wheel, in the active local session)
+// and for Decky's plugin backends, where the plugin runs. The share itself needs the Samba
+// password the user sets in the plugin.
+// fromDecky: one of Decky Loader's plugin backends. They run in its own system service, outside
+// the user's login session, so polkit sees them as neither local nor active. (All rule files share
+// one scope: 50-kettle-*.rules define the same function.) Newer polkit says which unit a
+// process is in (subject.system_unit); polkit 124 doesn't, so a helper reads it from /proc.
+function fromDecky(subject) {
+    if (subject.system_unit == "plugin_loader.service")
+        return true;
+    try {
+        polkit.spawn(["/usr/lib/kettle/polkit-decky-subject", String(subject.pid)]);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+// Decky's backends run as the user but without its supplementary groups, so polkit doesn't see
+// wheel there.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.kettle.emulation.share" &&
+        ((subject.isInGroup("wheel") && subject.local && subject.active) || fromDecky(subject)))
+        return polkit.Result.YES;
+    return polkit.Result.NOT_HANDLED;
+});
