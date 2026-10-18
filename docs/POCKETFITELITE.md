@@ -251,6 +251,17 @@ The image boots through ROCKNIX's ABL, as ROCKNIX does:
 - Headphone jack (20261017.28, kernel 1465): plugging a headset in moves the sound to it and
   unplugging moves it back to the speakers, both ways twice.
 
+- Sleep on 7.3-rc7 (2026-10-17, debug image 20261017.30). Every s2idle hung before the crypto
+  engine was disabled (5fa3e6d: QCE never probes on 7.3, so interconnect sync_state stayed
+  pending); after it, suspends wake on the RTC. The ADSP then never slept while the gyro was set
+  up: hexagonrpcd quit on the sensors process's unsupported apps_std method 36 and left it
+  waiting. hexagonrpc 0005 answers it; with it, gyro works and a 60 s sleep on battery reaches CX
+  shutdown and DDR low power 21-22 times. A suspend within about 45-80 s of hexagonrpcd starting
+  the sensors process still hangs (watchdog reset ~2 min later, nothing in pstore), wherever in
+  the boot that start falls; system-sleep/kettle-sensors-settle holds such a suspend back (up to
+  85 s), and the one tested that way woke. On the charger, battmgr notifies ~3/s and each
+  notification re-reads every battery property, so no CX collapse there (as expected).
+
 ## Still to check, by hand
 - The intermittent WCN7860 loss above; suspend over many cycles; the DisplayPort unplug freeze
   and the GPI DMA errors above; Steam's charge limit and charge speeds end to end.

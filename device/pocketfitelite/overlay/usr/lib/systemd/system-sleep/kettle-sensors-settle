@@ -1,0 +1,19 @@
+#!/bin/bash
+# Kettle Linux, Pocket FIT Elite: hold a suspend back until the ADSP's sensors process has
+# settled. For somewhere between 45 and 80 s after hexagonrpcd starts it (kettle-hexagonrpcd,
+# at boot), a suspend never wakes: the SoC hangs until the watchdog resets it about 2 minutes
+# later, with nothing logged. Later suspends, and early ones without the sensors process, are
+# fine (checked on 7.3-rc7, 2026-10-17). So a suspend asked for within SETTLE seconds of its
+# start waits out the rest here; the screen is already off by then. systemd-sleep kills a hook
+# after 90 s and suspends anyway, so the wait stops at 85 s (the window ends by 80 s).
+SETTLE=100
+[ "$1" = pre ] || exit 0
+start=$(systemctl show -P ActiveEnterTimestampMonotonic kettle-hexagonrpcd.service 2>/dev/null)
+[ -n "$start" ] && [ "$start" != 0 ] || exit 0
+now=$(($(cut -d' ' -f1 /proc/uptime | tr -d .) * 10000))
+left=$(( (start + SETTLE * 1000000 - now) / 1000000 ))
+[ "$left" -gt 0 ] || exit 0
+[ "$left" -le 85 ] || left=85
+echo "kettle-sensors-settle: the ADSP sensors process started $(( (now - start) / 1000000 )) s ago; sleeping in $left s" >/dev/kmsg
+sleep "$left"
+exit 0
