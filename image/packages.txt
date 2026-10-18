@@ -199,6 +199,10 @@ kettle-decky-device-settings
 # Game Mode: sign in, browse, install, update, and play from the Steam library (Proton shortcuts
 # through kettle-store-run), with Heroic's store tools and config (desktop Heroic shares them)
 kettle-decky-stores
+# Moonlight (built by us, packages/kettle-decky-plugins): game streaming from a PC running
+# Sunshine or Apollo in Game Mode: find and pair PCs, their games in the Steam library
+# (kettle-moonlight shortcuts), stream settings, and the running stream in Quick Access
+kettle-decky-moonlight
 
 # Desktop Mode welcome (built by us, packages/kettle-welcome): Kettle Welcome, our own hub app.
 # Opens on the first desktop login; setup shortcuts (password, Wi-Fi, ...), controls, games

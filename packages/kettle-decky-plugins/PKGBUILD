@@ -67,13 +67,20 @@
 #              window's up to 1.12.0-37); Amethyst Mod Manager (packages/amethyst-mod-manager), added
 #              to Steam as the nested desktop with the app started in it; and an Installed tab:
 #              everything installed through it, with sizes, updates and uninstalls
+#   moonlight  Moonlight: games streamed from a PC running Sunshine or Apollo. The PCs on the
+#              network (its own mDNS query: avahi-daemon isn't running) and pairing with a PIN
+#              shown large (moonlight-qt pairs; its config is read and written through PySide6's
+#              QSettings), each PC's games with their box art, played through Steam shortcuts that
+#              run kettle-moonlight (packages/kettle-moonlight) with the PC's stream settings
+#              (presets from this screen's resolution and refresh rates, or custom), and the
+#              running stream in Quick Access (end it, Steam's frame limit warning)
 # Sources live next to this PKGBUILD; shared/ holds code both frontends use.
 pkgbase=kettle-decky-plugins
 pkgname=(kettle-decky-welcome kettle-decky-device-settings
          kettle-decky-crash kettle-decky-game-settings
-         kettle-decky-stores)
+         kettle-decky-stores kettle-decky-moonlight)
 pkgver=1.12.0
-pkgrel=62
+pkgrel=63
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
@@ -81,8 +88,8 @@ makedepends=(nodejs npm)
 
 prepare() {
   rm -rf src-tree; mkdir src-tree
-  cp -r "$startdir"/{package.json,pnpm-lock.yaml,shared,welcome,device-settings,crash,game-settings,stores} src-tree/
-  rm -rf src-tree/{welcome,device-settings,crash,game-settings,stores}/dist
+  cp -r "$startdir"/{package.json,pnpm-lock.yaml,shared,welcome,device-settings,crash,game-settings,stores,moonlight} src-tree/
+  rm -rf src-tree/{welcome,device-settings,crash,game-settings,stores,moonlight}/dist
 }
 
 build() {
@@ -149,4 +156,10 @@ package_kettle-decky-stores() {
               'amethyst-mod-manager: the Mod Manager tab')
   _install_plugin kettle-stores stores
   install -Dm755 src-tree/stores/kettle-store-run -t "$pkgdir/usr/bin"
+}
+
+package_kettle-decky-moonlight() {
+  pkgdesc='Moonlight Decky plugin (game streaming from Sunshine and Apollo: pairing, the PCs'"'"' games in the Steam library, stream settings)'
+  depends=(decky-loader kettle-moonlight moonlight-qt pyside6 python xorg-xprop)
+  _install_plugin kettle-moonlight moonlight
 }
