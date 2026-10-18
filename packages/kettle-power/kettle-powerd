@@ -81,6 +81,7 @@ AUTO_STUCK = 3  # ticks falling short with neither unit at its limit before rais
 AUTO_REACH = 10  # ticks of frame rates without Auto TDP's caps that tell what a game reaches
 AUTO_PROBE = 30  # ticks holding a reached rate below the target before checking it without the caps
 MAX_GAMES = 500  # games with settings of their own kept, the least recently set go first
+CPPC_STEP_KHZ = 100_000  # caps offered for a cluster without a frequency table (cppc_cpufreq)
 
 
 def log(msg):
@@ -124,7 +125,16 @@ def load_config():
     path = config_path()
     log(f"device: {path}")
     with open(path, "rb") as f:
-        return tomllib.load(f)
+        cfg = tomllib.load(f)
+    # A machine without a battery and charger (a desktop board) leaves [power] out, one without
+    # a PWM fan [fan]: no charge limit, no power reading (so no TDP limit), no custom fan curves
+    if "fan" not in cfg:
+        cfg["fan"] = {"hwmon": None, "cooling_device": None, "default_curve": [[0, 0]],
+                      "full_speed_temp": 200}
+    if "power" not in cfg:
+        cfg["power"] = {"battery": None, "charger": None, "charge_limit": False,
+                        "charge_limit_min": 0, "tdp_min": 0, "tdp_max": 0}
+    return cfg
 
 
 def read(path, default=None):
@@ -235,6 +245,11 @@ class Hardware:
         for c in cfg["cpu"]["clusters"]:
             p = f"/sys/devices/system/cpu/cpufreq/policy{c['policy']}"
             avail = freq_list(read(f"{p}/scaling_available_frequencies"))
+            if not avail:
+                # no table (cppc_cpufreq takes any frequency in its range): 100 MHz steps
+                lo, hi = read_int(f"{p}/cpuinfo_min_freq"), read_int(f"{p}/cpuinfo_max_freq")
+                if lo and hi and lo < hi:
+                    avail = sorted(set(range(lo, hi, CPPC_STEP_KHZ)) | {hi})
             freqs = sorted(set(avail + freq_list(read(f"{p}/scaling_boost_frequencies"))))
             if not freqs:
                 log(f"no frequency table in {p}: no caps for the {c['name']} cluster")
@@ -263,8 +278,10 @@ class Hardware:
         # the fan's PWM kept through s2idle while a charger is plugged in (0: stopped, as always)
         p = f"{self.hwmon}/pwm1_sleep_charging" if self.hwmon else None
         self.sleep_fan = p if p and os.path.exists(ROOT + p) else None
-        self.battery = f"/sys/class/power_supply/{cfg['power']['battery']}"
-        self.charger = f"/sys/class/power_supply/{cfg['power']['charger']}"
+        # none without [power]
+        b, c = cfg["power"].get("battery"), cfg["power"].get("charger")
+        self.battery = f"/sys/class/power_supply/{b}" if b else None
+        self.charger = f"/sys/class/power_supply/{c}" if c else None
         # the charge current the charger may use, uA (kernel patches 40-kettle/1190 on the
         # battery, 21-sm8250/0115 on the charger), and the charger's charge_behaviour
         self.charge_current = self._supply_attr("constant_charge_current")
@@ -274,7 +291,7 @@ class Hardware:
     def _supply_attr(self, name):
         """The battery's or else the charger's power supply file of that name, if it has one."""
         for psy in (self.battery, self.charger):
-            if read(f"{psy}/{name}") is not None:
+            if psy and read(f"{psy}/{name}") is not None:
                 return f"{psy}/{name}"
         return None
 
@@ -311,6 +328,8 @@ class Hardware:
         a device whose input readings aren't ([power] charger_power = false): the battery's
         then is what goes into it, not the draw."""
         b, c = self.battery, self.charger
+        if not b:
+            return None
         status = read(f"{b}/status", "")
         plugged = bool(read_int(f"{c}/online", 0))  # any non-zero: the RP5's PM8150B says 16
         if plugged and status != "Discharging" and not self.cfg["power"].get("charger_power", True):
@@ -1096,7 +1115,7 @@ class Daemon:
         going = params.unpack()[0]
         try:
             limit = self.state["steam"]["charge_limit"]
-            level = read_int(f"{self.hw.battery}/capacity") if going and limit >= 0 else None
+            level = read_int(f"{self.hw.battery}/capacity") if going and limit >= 0 and self.hw.battery else None
             self.sleep_hold = level is not None and level >= limit
             if self.sleep_hold:
                 log(f"sleep at {level}% (limit {limit}%): charging held until wake")
@@ -1116,7 +1135,7 @@ class Daemon:
     def charge_limit(self):
         if self.charge_mode in ("current", "inhibit"):
             return self.state["steam"]["charge_limit"]
-        v = read_int(f"{self.hw.battery}/charge_control_end_threshold")
+        v = read_int(f"{self.hw.battery}/charge_control_end_threshold") if self.hw.battery else None
         return -1 if not v or v >= 100 else v
 
     def apply_charge_limit(self):
@@ -1124,7 +1143,8 @@ class Daemon:
             self.charge_tick(now=True)
             return
         limit = self.state["steam"]["charge_limit"]
-        write(f"{self.hw.battery}/charge_control_end_threshold", 100 if limit < 0 else limit)
+        if self.hw.battery:
+            write(f"{self.hw.battery}/charge_control_end_threshold", 100 if limit < 0 else limit)
 
     def gpu_range(self):
         if not self.hw.gpu:
@@ -1203,7 +1223,8 @@ class Daemon:
                          "fps": None if self.auto_fps is None else round(self.auto_fps, 1),
                          "limiting": bool(self.auto_cpu or self.auto_gpu)},
             "steam": {**self.state["steam"], "charge_limit": self.charge_limit() if self.charge_ok else None},
-            "battery": {"status": read(f"{hw.battery}/status"), "capacity": read_int(f"{hw.battery}/capacity")},
+            "battery": {"status": read(f"{hw.battery}/status"), "capacity": read_int(f"{hw.battery}/capacity")}
+                       if hw.battery else {"status": None, "capacity": None},
             "charge_speed": self.state["charge_speed"],
             "charge_custom_ua": self.state["charge_custom_ua"],
             "charge_held": self.charge_held,
