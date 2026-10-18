@@ -72,7 +72,8 @@ GAME_CRASH = (
 LOCK = threading.Lock()  # two followers write reports
 # versions that matter for a crash report, those installed
 PACKAGES = ("mesa", "vulkan-freedreno", "gamescope", "steam", "fex-emu-wine", "wine",
-            "kettle-framegen", "optiscaler-arm64ec", "decky-loader", "kettle-power")
+            "kettle-framegen", "optiscaler-arm64ec", "remora", "decky-loader",
+            "kettle-power")
 
 
 def log(msg):

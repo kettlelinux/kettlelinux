@@ -17,7 +17,7 @@ sees the same sign-ins and installed games, and the other way round.
 
 The store's login page opens in Steam's own browser, with the on-screen keyboard and any captcha
 the store asks for. The plugin's backend (`main.py`) watches the page through Steam's browser
-DevTools port, 127.0.0.1:8080, which Decky Loader turns on (`py_modules/cdp.py`). It waits until
+DevTools port, 127.0.0.1:8080, which the plugin loader (Remora) turns on (`py_modules/cdp.py`). It waits until
 the store sends the browser to its "signed in" address, then:
 
 | Store | Login page | The code comes from | Handed to |
