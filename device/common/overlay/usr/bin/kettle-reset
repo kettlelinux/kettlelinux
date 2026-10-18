@@ -26,6 +26,9 @@
 #                             asks, then runs one of the above through pkexec (org.kettle.reset)
 #
 # settings and everything restart the device unless --no-reboot is given.
+#
+# A device without volume keys to confirm with (CONFIRM_KEYS=none in device.conf: a desktop
+# machine) asks for the user's password instead (50-kettle-reset.rules), in the desktop only.
 set -euo pipefail
 
 RESET=/var/lib/kettle/reset
@@ -41,11 +44,13 @@ die() { echo "kettle-reset: $*" >&2; exit 1; }
 need_root() { [ "$(id -u)" = 0 ] || die "run as root (sudo kettle-reset $1)"; }
 has_ufs_backup() { [ -n "$(ls -A "$UFS_BACKUP" 2>/dev/null)" ]; }
 factory_pending() { compgen -G "$FACTORY/*.cfg" >/dev/null; }
+# the device has volume keys to confirm with (else polkit asked for the password)
+has_keys() { /usr/lib/kettle/has-confirm-keys; }
 
 # through pkexec (no password asked: 50-kettle-reset.rules), the person holding the device
 # confirms with both volume keys; any program running as the user gets this far too
 confirm() {
-  [ -n "${PKEXEC_UID:-}" ] || return 0
+  [ -n "${PKEXEC_UID:-}" ] && has_keys || return 0
   /usr/lib/kettle/confirm-keys "$1" ||
     die "not confirmed: hold Volume Up and Volume Down together for a second, within 30 seconds"
 }
@@ -106,9 +111,13 @@ do_cancel() {
 # ---------------------------------------------------------------- the desktop's window
 gui() {
   local Z=(zenity --title="Reset Kettle" --width=560) what text
-  # pkexec kettle-reset waits for both volume keys (confirm-keys): say so while it does
+  # pkexec kettle-reset waits for both volume keys (confirm-keys): say so while it does. Without
+  # volume keys polkit asks for the password itself.
+  local refused="the volume keys weren't held within 30 seconds, or it was refused"
+  has_keys || refused="the password wasn't given, or it was refused"
   keys() {
     local then=$1; shift
+    if ! has_keys; then pkexec /usr/bin/kettle-reset "$@" >/dev/null; return; fi
     pkexec /usr/bin/kettle-reset "$@" >/dev/null &
     local p=$!
     while kill -0 "$p" 2>/dev/null; do sleep 0.5; done |
@@ -123,7 +132,7 @@ gui() {
     if keys "Nothing is reset then." cancel; then
       "${Z[@]}" --info --text="Nothing will be reset." 2>/dev/null
     else
-      "${Z[@]}" --error --text="The reset is still set: the volume keys weren't held within 30 seconds, or it was refused." 2>/dev/null
+      "${Z[@]}" --error --text="The reset is still set: $refused." 2>/dev/null
     fi
     exit 0
   fi
@@ -149,7 +158,7 @@ What's reset is kept in /home/.kettle/settings-backup until the next reset.
 The device restarts now and resets while it starts."
       "${Z[@]}" --question --default-cancel --text="$text" --ok-label="Reset settings" --cancel-label=Back 2>/dev/null || exec "$0" --gui
       keys "The device then restarts and resets while it starts." settings ||
-        "${Z[@]}" --error --text="Nothing was reset: the volume keys weren't held within 30 seconds, or the reset was refused." 2>/dev/null
+        "${Z[@]}" --error --text="Nothing was reset: $refused." 2>/dev/null
       exit 0 ;;
     everything)
       local extra=() warn=""
@@ -166,7 +175,7 @@ All games, saves, screenshots, downloaded apps, your files and every setting on 
 The device restarts now and erases while it starts. This can't be undone."
       "${Z[@]}" --question --default-cancel --text="$text" --ok-label="Erase everything" --cancel-label=Back 2>/dev/null || exec "$0" --gui
       keys "The device then restarts and erases while it starts." everything "${extra[@]}" ||
-        "${Z[@]}" --error --text="Nothing was erased: the volume keys weren't held within 30 seconds, or the reset was refused." 2>/dev/null
+        "${Z[@]}" --error --text="Nothing was erased: $refused." 2>/dev/null
       exit 0 ;;
   esac
 }

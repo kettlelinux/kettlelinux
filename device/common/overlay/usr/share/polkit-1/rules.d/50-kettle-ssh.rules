@@ -18,11 +18,26 @@ function fromDecky(subject) {
     }
 }
 
+// hasConfirmKeys: the device has volume keys to confirm with (/usr/lib/kettle/has-confirm-keys).
+// A device without them (CONFIRM_KEYS=none: a desktop machine) asks for the user's password
+// instead, which only the desktop can show: Game Mode and Decky's backends can't do it there.
+function hasConfirmKeys() {
+    try {
+        polkit.spawn(["/usr/lib/kettle/has-confirm-keys"]);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
 // The person at the device (wheel, in the active local session), or Decky's plugin backends,
 // which run as that user but without its supplementary groups, so polkit doesn't see wheel there.
 polkit.addRule(function(action, subject) {
-    if (action.id == "org.kettle.ssh" &&
-        ((subject.isInGroup("wheel") && subject.local && subject.active) || fromDecky(subject))) {
+    if (action.id != "org.kettle.ssh")
+        return;
+    var atDevice = subject.isInGroup("wheel") && subject.local && subject.active;
+    if (!hasConfirmKeys())
+        return atDevice ? polkit.Result.AUTH_ADMIN_KEEP : polkit.Result.NO;
+    if (atDevice || fromDecky(subject))
         return polkit.Result.YES;
-    }
 });

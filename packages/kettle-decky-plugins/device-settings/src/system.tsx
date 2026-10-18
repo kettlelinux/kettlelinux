@@ -41,6 +41,9 @@ const ablName = (v?: string | null) => {
   return `${ABL_NAMES[k] ?? k} ${ver}`;
 };
 const ablStatus = callable<[], Abl>("abl_status");
+// false on a device without volume keys to confirm with (a desktop machine): turning SSH on and
+// resetting ask for the password there, which only the desktop can do
+const confirmKeys = callable<[], boolean>("confirm_keys");
 const ablUpdate = callable<[mode: AblMode], Abl>("abl_update");
 
 const small = { fontSize: "12px", lineHeight: "16px" };
@@ -443,18 +446,35 @@ function Bootloader() {
 }
 
 export function SystemTab() {
+  const [keys, setKeys] = useState<boolean | null>(null);
+  useEffect(() => {
+    confirmKeys().then(setKeys, () => setKeys(true));
+  }, []);
   return (
     <>
       <PanelSection title="Start-up">
         <StartUp />
       </PanelSection>
-      <PanelSection title="Remote access">
-        <RemoteAccess />
-      </PanelSection>
-      <Bootloader />
-      <PanelSection title="Reset">
-        <Reset />
-      </PanelSection>
+      {keys === false ? (
+        <PanelSection title="Remote access and reset">
+          <PanelSectionRow>
+            <Field
+              label="In the desktop"
+              description="This device has no volume keys to confirm them with: turn on SSH and reset Kettle from the desktop (Kettle Welcome, Reset Kettle), where they ask for your password."
+            />
+          </PanelSectionRow>
+        </PanelSection>
+      ) : keys ? (
+        <>
+          <PanelSection title="Remote access">
+            <RemoteAccess />
+          </PanelSection>
+          <Bootloader />
+          <PanelSection title="Reset">
+            <Reset />
+          </PanelSection>
+        </>
+      ) : null}
     </>
   );
 }
