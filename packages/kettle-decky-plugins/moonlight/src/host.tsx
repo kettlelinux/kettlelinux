@@ -127,6 +127,13 @@ const shortRes = (r: string) => ({ "1280x720": "720p", "1920x1080": "1080p", "25
 function SettingsTab({ host }: { host: Host }) {
   const [info, setInfo] = useState<SettingsInfo | null>(null);
   const [error, setError] = useState("");
+  // the slider's value while it moves: saved once it has stopped for a moment
+  const [bitrate, setBitrate] = useState<number | null>(null);
+  useEffect(() => {
+    if (bitrate === null) return;
+    const t = setTimeout(() => act(async () => setInfo(await setSettings(host.uuid, { bitrate })), "Saving failed"), 400);
+    return () => clearTimeout(t);
+  }, [bitrate]);
   useEffect(() => {
     settings(host.uuid).then(setInfo).catch((e) => setError(errorText(e)));
   }, [host.uuid]);
@@ -168,14 +175,16 @@ function SettingsTab({ host }: { host: Host }) {
           />
           <SliderField
             label="Bitrate"
-            description={s.bitrate ? `${s.bitrate / 1000} Mbps` : "Automatic: Moonlight picks it for the resolution and frame rate"}
-            value={s.bitrate / 1000}
+            description={
+              (bitrate ?? s.bitrate) ? `${(bitrate ?? s.bitrate) / 1000} Mbps` : "Automatic: Moonlight picks it for the resolution and frame rate"
+            }
+            value={(bitrate ?? s.bitrate) / 1000}
             min={0}
             max={150}
             step={5}
             notchCount={2}
             notchLabels={[{ notchIndex: 0, label: "Auto" }, { notchIndex: 1, label: "150" }]}
-            onChange={(v) => set({ bitrate: v * 1000 })}
+            onChange={(v) => setBitrate(v * 1000)}
           />
         </>
       )}
@@ -199,6 +208,12 @@ function SettingsTab({ host }: { host: Host }) {
         ]}
         selectedOption={s.audio}
         onChange={(o) => set({ audio: o.data })}
+      />
+      <ToggleField
+        label="Send the gyro to the PC"
+        description="Moonlight uses this device's controller directly, so games on the PC get its motion sensors (it shows up there as a DualShock 4 or DualSense). Steam Input layouts don't apply to the stream."
+        checked={s.raw_pad}
+        onChange={(v) => set({ raw_pad: v })}
       />
       <ToggleField label="Show the stream's stats" description="Frame rate, latency and decoding time over the game" checked={s.overlay} onChange={(v) => set({ overlay: v })} />
       <ToggleField label="Play sound on the PC too" checked={s.host_audio} onChange={(v) => set({ host_audio: v })} />
@@ -259,7 +274,13 @@ export function HostPage() {
     () =>
       host
         ? [
-            { title: "Games", route: `${HOST_ROUTE}/${uuid}/games`, icon: <FaGamepad />, content: <GamesTab host={host} /> },
+            // keyed by whether it's online: the games load again once an offline PC answers
+            {
+              title: "Games",
+              route: `${HOST_ROUTE}/${uuid}/games`,
+              icon: <FaGamepad />,
+              content: <GamesTab key={`${host.uuid}-${host.online}`} host={host} />,
+            },
             { title: "Stream settings", route: `${HOST_ROUTE}/${uuid}/settings`, icon: <FaCog />, content: <SettingsTab host={host} /> },
             { title: "PC", route: `${HOST_ROUTE}/${uuid}/pc`, icon: <FaDesktop />, content: <PcTab host={host} reload={reload} /> },
           ]
@@ -270,7 +291,8 @@ export function HostPage() {
   if (!host) return <div style={{ marginTop: "40px", padding: "16px 24px" }}>This PC isn't paired.</div>;
   return (
     <div style={{ marginTop: "40px", height: "calc(100% - 40px)" }}>
-      <SidebarNavigation title={host.name} showTitle pages={pages} />
+      {/* keyed by PC: going from one PC's page to another's starts afresh */}
+      <SidebarNavigation key={uuid} title={host.name} showTitle pages={pages} />
     </div>
   );
 }

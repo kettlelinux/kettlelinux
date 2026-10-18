@@ -2,10 +2,16 @@
 // through /usr/lib/kettle/kettle-stream-link (org.kettle.stream-link), where no password prompt
 // can be shown. It only changes what the device's /usr/lib/kettle/stream-link lists, and puts it
 // back after the stream.
-// The person at the device: wheel, in the active local session (Steam starts the shortcut there).
+// start: the person at the device (wheel, in the active local session: Steam starts the shortcut
+// there). stop only puts back what start saved, so wheel may run it from a session that's no longer
+// active too (the stream ends as Game Mode closes, or on a switch to the desktop). pkexec passes
+// the command line it runs.
 polkit.addRule(function(action, subject) {
-    if (action.id == "org.kettle.stream-link" &&
-        subject.isInGroup("wheel") && subject.local && subject.active) {
+    if (action.id != "org.kettle.stream-link" || !subject.isInGroup("wheel"))
+        return polkit.Result.NOT_HANDLED;
+    if (subject.local && subject.active)
         return polkit.Result.YES;
-    }
+    if (action.lookup("command_line") == "/usr/lib/kettle/kettle-stream-link stop")
+        return polkit.Result.YES;
+    return polkit.Result.NOT_HANDLED;
 });

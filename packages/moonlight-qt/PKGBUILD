@@ -13,11 +13,13 @@
 # The release's source tarball carries moonlight-common-c, qmdnsengine and h264bitstream.
 pkgname=moonlight-qt
 pkgver=6.2.0
-pkgrel=1
+pkgrel=2
 pkgdesc='GameStream client for Sunshine and Apollo hosts, with V4L2 hardware decoding'
 arch=(aarch64)
 url='https://moonlight-stream.org'
-license=(GPL-3.0-or-later)
+# moonlight-qt and moonlight-common-c: GPL 3 (no "or later" notice); h264bitstream LGPL 2.1;
+# qmdnsengine, ENet and nanors MIT; SDL_GameControllerDB zlib
+license=(GPL-3.0-only LGPL-2.1-only MIT Zlib)
 depends=(ffmpeg-v4l2 libdrm libglvnd openssl opus qt6-base qt6-declarative qt6-svg qt6-wayland
          sdl2 sdl2_ttf wayland libx11)
 makedepends=(pkgconf)
@@ -44,4 +46,11 @@ build() {
 package() {
   cd moonlight-qt
   make INSTALL_ROOT="$pkgdir" install
+  local l="$pkgdir/usr/share/licenses/$pkgname"
+  install -Dm644 LICENSE "$l/LICENSE"
+  install -Dm644 h264bitstream/LICENSE "$l/h264bitstream-LICENSE"
+  install -Dm644 qmdnsengine/qmdnsengine/LICENSE.txt "$l/qmdnsengine-LICENSE"
+  install -Dm644 moonlight-common-c/moonlight-common-c/enet/LICENSE "$l/enet-LICENSE"
+  install -Dm644 moonlight-common-c/moonlight-common-c/nanors/LICENSE "$l/nanors-LICENSE"
+  install -Dm644 app/SDL_GameControllerDB/LICENSE "$l/SDL_GameControllerDB-LICENSE"
 }
