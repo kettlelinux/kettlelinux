@@ -1,0 +1,11 @@
+// Game Mode's Moonlight shortcuts run kettle-moonlight, which tunes the device for the stream
+// through /usr/lib/kettle/kettle-stream-link (org.kettle.stream-link), where no password prompt
+// can be shown. It only changes what the device's /usr/lib/kettle/stream-link lists, and puts it
+// back after the stream.
+// The person at the device: wheel, in the active local session (Steam starts the shortcut there).
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.kettle.stream-link" &&
+        subject.isInGroup("wheel") && subject.local && subject.active) {
+        return polkit.Result.YES;
+    }
+});

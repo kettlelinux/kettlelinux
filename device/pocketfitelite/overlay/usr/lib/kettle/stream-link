@@ -1,0 +1,3 @@
+# what kettle-stream-link changes while a Moonlight stream runs (packages/kettle-moonlight):
+# this card (17cb:110e) is slow out of PCIe L1.2, 22 ms vs 6 ms stream network latency
+wifi-l1ss
