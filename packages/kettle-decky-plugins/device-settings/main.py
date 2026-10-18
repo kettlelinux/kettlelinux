@@ -473,6 +473,9 @@ class Plugin:
     async def set_boot_mode(self, mode: str):
         await asyncio.to_thread(system.set_boot_mode, mode)
 
+    async def confirm_keys(self) -> bool:
+        return await asyncio.to_thread(system.confirm_keys)
+
     async def ssh_status(self) -> dict:
         return await asyncio.to_thread(system.ssh_status)
 

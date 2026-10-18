@@ -1,0 +1,7 @@
+#!/bin/sh
+# Kettle Linux: exit 0 if this device has keys to confirm with (confirm-keys: Volume Up and Down),
+# 1 if its device.conf says it has none (CONFIRM_KEYS=none: a desktop machine). Read by
+# kettle-reset, kettle-ssh and the polkit rules that let them run without a password: without the
+# keys, polkit asks for the user's password instead, so only the desktop can do them.
+. /usr/lib/kettle/device.conf 2>/dev/null
+[ "${CONFIRM_KEYS:-}" != none ]

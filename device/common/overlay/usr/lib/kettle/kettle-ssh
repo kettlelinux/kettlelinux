@@ -4,12 +4,14 @@
 # lets other computers log in, so it first waits for the device's Volume Up and Volume Down to be
 # held together (confirm-keys), which no program running as the user can do in its place.
 # Enabling it at every start-up stays with the desktop's Kettle Welcome, behind a password.
+# A device without volume keys (CONFIRM_KEYS=none) asks for the password instead
+# (50-kettle-ssh.rules), so only in the desktop.
 #   kettle-ssh on | off
 set -eu
 [ "$(id -u)" = 0 ] || { echo "kettle-ssh: run it as root" >&2; exit 1; }
 case "${1:-}" in
   on)
-    if [ -n "${PKEXEC_UID:-}" ]; then
+    if [ -n "${PKEXEC_UID:-}" ] && /usr/lib/kettle/has-confirm-keys; then
       /usr/lib/kettle/confirm-keys "Turn on the SSH server" || {
         echo "kettle-ssh: not confirmed: hold Volume Up and Volume Down together for a second, within 30 seconds" >&2
         exit 1

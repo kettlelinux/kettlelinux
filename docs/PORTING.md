@@ -70,6 +70,9 @@ Machines that aren't Qualcomm handhelds:
   the SM8550's little cores, the UFS timeout, ...); empty for none.
 - `REPART=disk`: the first boot partitions whichever disk the image booted from (rootfs-B,
   growing /home), not only an SD card: for a machine whose disks are all Kettle's (NVMe, USB).
+- `CONFIRM_KEYS`: the input devices whose volume keys confirm a reset, turning SSH on or a
+  bootloader write (`confirm-keys`; default the gpio-keys and PMIC resin), or `none` for a machine
+  without them: those then ask for the user's password (polkit), so only the desktop offers them.
 - `GAME_CPU_AFFINITY`: the CPUs Steam starts games on, as a hex mask (`game-cpu-affinity`), for
   a machine with no devicetree to tell the SoC by.
 

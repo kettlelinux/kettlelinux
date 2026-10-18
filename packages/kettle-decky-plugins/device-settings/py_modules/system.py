@@ -78,6 +78,16 @@ def _addresses() -> list[str]:
             if not i.startswith(("podman", "docker", "br-", "veth", "virbr", "cni"))]
 
 
+def confirm_keys() -> bool:
+    """The device has volume keys to confirm with. Without them (CONFIRM_KEYS=none: a desktop
+    machine) turning SSH on and resetting ask for the password, so they're the desktop's only and
+    the System tab doesn't offer them."""
+    try:
+        return subprocess.run(["/usr/lib/kettle/has-confirm-keys"], timeout=5).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+
+
 def _sshd(*args: str) -> int:
     return subprocess.run(["systemctl", *args, "sshd.service"], capture_output=True, timeout=30).returncode
 

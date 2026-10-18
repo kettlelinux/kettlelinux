@@ -56,6 +56,9 @@ place of the Qualcomm options (`CMDLINE_SOC`).
 - **No built-in gamepad, battery or panel**: no `PAD_NAME`, so no InputPlumber, desktop controller
   or Quick Access button services; Steam takes USB and Bluetooth controllers as they are. Game
   Mode's `gamescope.conf` sets nothing: the monitor's EDID decides.
+- **No volume keys**: `CONFIRM_KEYS=none`. Turning SSH on and resetting Kettle ask for the
+  user's password, so they are the desktop's (Kettle Welcome, Reset Kettle); Game Mode's Device
+  Settings doesn't offer them, and Steam's own Factory Reset is refused there.
 - **Games** start on the eight Cortex-A720s (`GAME_CPU_AFFINITY=0xfc3`).
 - **Network**: the RTL8125Bs never runtime-suspend (an unplugged one in D3hot panicked the board
   at every login in 06n-arch).
@@ -77,4 +80,4 @@ Nothing yet: no Kettle image has run on an O6N.
 - [ ] the VPU in Remote Play and Firefox (amvx loads from its ACPI ID, CIXH3010)
 - [ ] the gamescope cursor plane (KWin uses a software cursor for CIX's report)
 - [ ] kettle-powerd: no description yet (no battery or charger, fan through the platform profile)
-- [ ] `confirm-keys` has no volume keys here: factory reset, SSH and the like can't be confirmed
+- [ ] Reset Kettle and SSH from the desktop ask for the password; Device Settings shows neither
