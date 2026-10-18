@@ -1,0 +1,77 @@
+From 2e2ad1abaab82545012e36e6c14c2e44bc5724e8 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Sun, 18 Oct 2026 11:33:25 -0500
+Subject: [PATCH] DRM: scan out on the display controller when the Vulkan GPU
+ has no KMS
+
+On SoCs whose GPU is render-only, beside a separate display controller (Panthor and linlondp on the CIX P1 of the Radxa Orion O6N), the Vulkan device's primary node is not a KMS device, and gamescope gave up ("'/dev/dri/card0' is not a KMS device", then "failed to find Vulkan format suitable for KMS"). Fall back to the first DRM device that is KMS and has connectors; rendering stays on the Vulkan device, whose buffers the display controller imports by dmabuf, as Mesa's kmsro does for GL.
+---
+ src/Backends/DRMBackend.cpp | 47 +++++++++++++++++++++++++++++++++++--
+ 1 file changed, 45 insertions(+), 2 deletions(-)
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 5a282fbc..29493bcf 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -1790,6 +1790,33 @@ static void lease_socket_thread_run( struct drm_t *drm )
+ 	lease_disconnect_client( nClientFd );
+ }
+ 
++// The display controller, when the Vulkan GPU has none (a render-only GPU beside a separate
++// display controller, as on many ARM SoCs: Panthor and linlondp on the CIX P1): the first
++// /dev/dri/card* that is a KMS device with connectors. Tried node by node: libdrm's device list
++// leaves out platform devices that have no devicetree node (ACPI ones). Returns a strdup'd path.
++static char *find_kms_device()
++{
++	for ( int i = 0; i < 64; i++ )
++	{
++		char path[32];
++		snprintf( path, sizeof( path ), "/dev/dri/card%d", i );
++		int fd = open( path, O_RDWR | O_CLOEXEC );
++		if ( fd < 0 )
++			continue;
++		bool ok = false;
++		if ( drmIsKMS( fd ) )
++		{
++			drmModeRes *res = drmModeGetResources( fd );
++			ok = res && res->count_connectors > 0;
++			drmModeFreeResources( res );
++		}
++		close( fd );
++		if ( ok )
++			return strdup( path );
++	}
++	return nullptr;
++}
++
+ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+ {
+ 	load_pnps();
+@@ -1826,9 +1853,25 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+ 
+ 	if ( !drmIsKMS( drm->fd ) )
+ 	{
+-		drm_log.errorf( "'%s' is not a KMS device", drm->device_name );
++		// a render-only GPU: scan out on the display controller beside it, rendering stays on
++		// the Vulkan device (its buffers are imported there by dmabuf, as kmsro does for GL)
++		char *kms = find_kms_device();
++		if ( !kms )
++		{
++			drm_log.errorf( "'%s' is not a KMS device, and no other DRM device is", drm->device_name );
++			wlsession_close_kms();
++			return -1;
++		}
++		drm_log.infof( "'%s' is not a KMS device: using the display controller '%s'", drm->device_name, kms );
+ 		wlsession_close_kms();
+-		return -1;
++		free( drm->device_name );
++		drm->device_name = kms;
++		drm->fd = wlsession_open_kms( drm->device_name );
++		if ( drm->fd < 0 || !drmIsKMS( drm->fd ) )
++		{
++			drm_log.errorf( "Could not open KMS device '%s'", drm->device_name );
++			return false;
++		}
+ 	}
+ 
+ 	if (drmSetClientCap(drm->fd, DRM_CLIENT_CAP_ATOMIC, 1) != 0) {
