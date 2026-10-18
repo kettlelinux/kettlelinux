@@ -1,0 +1,25 @@
+# drm_info: prints the kernel's DRM state (connectors, CRTCs, planes, formats). Valve's repos don't
+# carry it; Decky Sunshine waits for a display by running it, and it helps debug the display path.
+pkgname=drm_info
+pkgver=2.10.0
+pkgrel=1
+pkgdesc='Small utility to dump info about DRM devices'
+arch=(aarch64)
+url='https://gitlab.freedesktop.org/emersion/drm_info'
+license=(MIT)
+# libdrm 2.4.134 (Valve's hotfix repo) is new enough that the libdrm subproject isn't needed
+depends=('libdrm>=2.4.134' json-c pciutils)
+makedepends=(meson python scdoc)
+source=("$pkgname-$pkgver.tar.gz::https://gitlab.freedesktop.org/emersion/drm_info/-/archive/v$pkgver/drm_info-v$pkgver.tar.gz")
+sha256sums=('17bcca16920ecf22904b0af82c2d8c94545991b9840332833adfe8ae3e8f232d')
+
+build() {
+  # libdisplay-info only decodes EDIDs in the output, and Valve's 0.1.1 is old: left out
+  arch-meson $pkgname-v$pkgver build -Dlibpci=enabled -Dlibdisplay-info=disabled -Dman-pages=enabled
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+  install -Dm644 $pkgname-v$pkgver/LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+}

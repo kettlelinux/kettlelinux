@@ -51,6 +51,8 @@ htop
 stress-ng
 lsof
 strace
+# DRM state dump (built by us, packages/drm_info); Decky Sunshine also needs it
+drm_info
 
 # KDE Plasma desktop (SteamOS desktop mode). Valve's hotfix repo supplies Plasma 6.2.5 /
 # KF6 6.14 / Qt 6.8; plasma-nm, plasma-pa, konsole, kinfocenter and plasma-systemmonitor
