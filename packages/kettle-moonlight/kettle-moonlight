@@ -13,7 +13,7 @@
 # --kettle-raw-controller in the settings: Moonlight reads the device's own controller (on Kettle,
 # InputPlumber's virtual Steam Deck pad, with the gyro) instead of Steam Input's virtual pad, which
 # has no motion sensors. Steam hides the real pads from what it starts (SDL's ignore list); this
-# lifts that and hides Steam's virtual pads instead. The PC then gets the motion data (Sunshine and
+# hides Steam's virtual pads (28de:11ff) instead. The PC then gets the motion data (Sunshine and
 # Apollo emulate a DS4 or DualSense for a controller with it); Steam Input layouts don't apply.
 CONF=/usr/lib/kettle/stream-link
 HELPER=/usr/lib/kettle/kettle-stream-link
@@ -34,8 +34,10 @@ if [ "${1:-}" = launch ]; then
   for o in "${a[@]}"; do
     case "$o" in
       --kettle-raw-controller)
-        unset SDL_GAMECONTROLLER_IGNORE_DEVICES SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT
-        export SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD=0
+        # SDL hides Steam's virtual pads only through this list (ALLOW_STEAM_VIRTUAL_GAMEPAD=0
+        # alone doesn't): left in, a pad Steam manages would reach the PC twice
+        unset SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD
+        export SDL_GAMECONTROLLER_IGNORE_DEVICES=0x28de/0x11ff
         ;;
       --*) opts+=("$o") ;;
       "") ;;
