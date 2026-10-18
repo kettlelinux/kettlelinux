@@ -1,0 +1,13 @@
+# The O6N's additions to the games' environment (gfx.txt; steam.service.d/kettle.conf), from
+# 06n-arch's 60-o6n-dxvk.conf. A DXVK_CONFIG in a game's launch options (Game Settings) replaces
+# this one, so it has to repeat these.
+#
+# d3d11.maxFeatureLevel=11_0: PanVK has no tessellation yet, so DXVK caps D3D11 at feature level
+# 10_1, and most D3D11 games refuse to create a device below 11_0. Claiming 11_0, games that never
+# create hull/domain shaders run; ones that do fail at shader creation (mesa-panfrost 0051 fails
+# the pipeline instead of crashing). Drop it once PanVK has tessellationShader.
+# dxgi.maxDeviceMemory=4096: PanVK's one heap is ~3/4 of system RAM, which DXVK reports as
+# dedicated VRAM; games size their texture pools from it (Deep Rock Galactic reached 20 GB) and
+# starve the rest of the shared memory. A 4 GB card instead (a hint, not a cap). Valve's
+# VK_VRAM_REPORT_LIMIT in gfx.txt is its own Mesa's, which PanVK doesn't have.
+DXVK_CONFIG=d3d11.maxFeatureLevel=11_0;dxgi.maxDeviceMemory=4096

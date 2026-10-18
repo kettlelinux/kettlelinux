@@ -1,0 +1,24 @@
+# The O6N's own packages, added to image/packages.txt (built by us, packages/), and the shared
+# ones it doesn't take (-name).
+
+# graphics: Mali-G720 through Panthor. Mesa's Panfrost (GL) and PanVK (Vulkan) for native
+# programs, and an x86 build of the same for the games FEX runs, in place of Valve's Turnip-only
+# builds (06n-arch's panvk-o6n and fex-mesa-panfrost)
+-deckard-mesa-linux-aarch64
+-deckard-mesa-linux-x86_64
+mesa-panfrost
+fex-mesa-panfrost
+# Adreno only: upstream Turnip (a per-game choice), the drm/msm ring priority layer, and Lepton,
+# which runs Android games on Valve's Android Turnip
+-kettle-turnip
+-kettle-gpu-priority
+-kettle-lepton
+# the phone bootloaders' installers (rocknix-abl, openabl): the board boots its own UEFI firmware
+-rocknix-abl
+-openabl
+# stick lights: none here
+-kettle-leds
+
+# firmware: the Mali CSF firmware, the VPU's, and the RTL8125B 2.5 GbE (packages/kettle-firmware-radxa;
+# the VPU driver itself is the cix kernel's, 40-kettle/3007)
+kettle-firmware-radxa-o6n
