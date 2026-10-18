@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Fri, 8 May 2026 10:39:10 +0800
+Subject: drm/panel: add fwnode_drm_find_panel
+
+[kettle: ported to 7.3: onto 7.3's reference-counted panel lookup; trilin dptx drops its reference]
+---
+ drivers/gpu/drm/cix/dptx/trilin_dptx.c | 16 +++++++++++++---
+ drivers/gpu/drm/drm_panel.c            | 17 +++++++++++++++++
+ include/drm/drm_panel.h                |  1 +
+ 3 files changed, 31 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx.c b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+index 997dae07e..d3a24b4ee 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+@@ -3546,6 +3546,11 @@ static void trilin_dp_gop_set(void)
+ 			dp_gop_bit << DP_GOP_SHIFT, 0, 0, 0, 0, 0, &res);
+ }
+ 
++static void trilin_dp_put_panel(void *panel)
++{
++	drm_panel_put(panel);
++}
++
+ int trilin_dp_probe(struct trilin_dpsub *dpsub, struct drm_device *drm)
+ {
+ 	struct platform_device *pdev = to_platform_device(dpsub->dev);
+@@ -3563,6 +3568,7 @@ int trilin_dp_probe(struct trilin_dpsub *dpsub, struct drm_device *drm)
+ 	fwnode_edp_panel = fwnode_find_reference(dev->fwnode, "edp-panel", 0);
+ 	if (!IS_ERR_OR_NULL(fwnode_edp_panel)) {
+ 		edp_panel = fwnode_drm_find_panel(fwnode_edp_panel);
++		fwnode_handle_put(fwnode_edp_panel);
+ 		if (IS_ERR(edp_panel)) {
+ 			ret = PTR_ERR(edp_panel);
+ 			if (ret == -EPROBE_DEFER)
+@@ -3572,9 +3578,13 @@ int trilin_dp_probe(struct trilin_dpsub *dpsub, struct drm_device *drm)
+ 				dev_err(dev, "%s, invalid drm_panel: %d\n",
+ 					__func__, ret);
+ 			return ret;
+-		} else
+-			dev_info(dev, "%s, edp-panel %s is found\n", __func__,
+-				 dev_name(edp_panel->dev));
++		}
++		/* 7.3: the lookup holds a reference on the panel, dropped on unbind */
++		ret = devm_add_action_or_reset(dev, trilin_dp_put_panel, edp_panel);
++		if (ret)
++			return ret;
++		dev_info(dev, "%s, edp-panel %s is found\n", __func__,
++			 dev_name(edp_panel->dev));
+ 	}
+ 
+ 	dp = devm_kzalloc(dpsub->dev, sizeof(*dp), GFP_KERNEL);
+diff --git a/drivers/gpu/drm/drm_panel.c b/drivers/gpu/drm/drm_panel.c
+index f8f6082e6..03501d01d 100644
+--- a/drivers/gpu/drm/drm_panel.c
++++ b/drivers/gpu/drm/drm_panel.c
+@@ -529,6 +529,23 @@ static struct drm_panel *find_panel_by_fwnode(const struct fwnode_handle *fwnode
+ 	return ERR_PTR(-EPROBE_DEFER);
+ }
+ 
++/**
++ * fwnode_drm_find_panel - look up and reference a panel by firmware node
++ * @fwnode: firmware node of the panel (device tree or ACPI)
++ *
++ * The firmware-node counterpart of of_drm_find_panel(), for drivers that also
++ * bind through ACPI. On success the panel's reference count has been
++ * incremented; the caller must call drm_panel_put() when it no longer needs it.
++ *
++ * Return: the panel, or ERR_PTR(-EPROBE_DEFER) if it has not been registered
++ * yet, or ERR_PTR(-ENODEV) if the device is not available.
++ */
++struct drm_panel *fwnode_drm_find_panel(const struct fwnode_handle *fwnode)
++{
++	return find_panel_by_fwnode(fwnode);
++}
++EXPORT_SYMBOL(fwnode_drm_find_panel);
++
+ /* Find panel by follower device */
+ static struct drm_panel *find_panel_by_dev(struct device *follower_dev)
+ {
+diff --git a/include/drm/drm_panel.h b/include/drm/drm_panel.h
+index b87323443..f9a4cd6f4 100644
+--- a/include/drm/drm_panel.h
++++ b/include/drm/drm_panel.h
+@@ -334,6 +334,7 @@ void drm_panel_enable(struct drm_panel *panel);
+ void drm_panel_disable(struct drm_panel *panel);
+ 
+ int drm_panel_get_modes(struct drm_panel *panel, struct drm_connector *connector);
++struct drm_panel *fwnode_drm_find_panel(const struct fwnode_handle *fwnode);
+ 
+ #if defined(CONFIG_OF) && defined(CONFIG_DRM_PANEL)
+ struct drm_panel *of_drm_find_panel(const struct device_node *np);

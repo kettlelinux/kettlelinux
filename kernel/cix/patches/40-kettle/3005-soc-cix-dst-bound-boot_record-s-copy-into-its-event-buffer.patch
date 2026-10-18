@@ -1,0 +1,44 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] soc: cix: dst: bound boot_record()'s copy into its event buffer
+
+boot_record() copied strlen(str) bytes into the fixed event[BOOT_STR_SIZE]
+of the next log slot without a bound check, so a long initcall name (or a
+string written to /proc) overran into the next slot, and with
+FORTIFY_SOURCE the copy traps. It also tested boot_log_count before taking
+the lock that guards it, so two callers could both take the last slot.
+
+Copy with strscpy_pad(), which bounds the copy to the buffer and keeps it
+NUL-terminated, and test the count under the lock.
+
+Kettle Linux (Radxa Orion O6N).
+---
+ drivers/soc/cix/cix_dst/hw_boottime.c | 11 +++++------
+ 1 file changed, 5 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/soc/cix/cix_dst/hw_boottime.c b/drivers/soc/cix/cix_dst/hw_boottime.c
+index 84172d725..a0c5d69cb 100755
+--- a/drivers/soc/cix/cix_dst/hw_boottime.c
++++ b/drivers/soc/cix/cix_dst/hw_boottime.c
+@@ -112,17 +112,16 @@ void boot_record(const char *str)
+ 	if (hw_boottime_enabled == 0)
+ 		return;
+ 
++	if (strncmp(BOOTUP_DONE, str, strlen(BOOTUP_DONE)) == 0)
++		hw_boottime_enabled = 0; // zygote start
++	mutex_lock(&hw_boottime_lock);
+ 	if (boot_log_count >= BOOT_LOG_NUM) {
++		mutex_unlock(&hw_boottime_lock);
+ 		DST_PN("[boottime] no enough boottime buffer\n");
+ 		return;
+ 	}
+-	if (strncmp(BOOTUP_DONE, str, strlen(BOOTUP_DONE)) == 0)
+-		hw_boottime_enabled = 0; // zygote start
+-	mutex_lock(&hw_boottime_lock);
+ 	hw_boottime[boot_log_count].time_us = sky1_get_time_us();
+-	memset(&hw_boottime[boot_log_count].event, 0,
+-	       sizeof(hw_boottime[boot_log_count].event));
+-	memcpy(&hw_boottime[boot_log_count].event, str, strlen(str));
++	strscpy_pad(hw_boottime[boot_log_count].event, str);
+ 
+ 	boot_log_count++;
+ 	mutex_unlock(&hw_boottime_lock);

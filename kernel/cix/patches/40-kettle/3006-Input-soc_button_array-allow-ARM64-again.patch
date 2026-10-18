@@ -1,0 +1,28 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] Input: soc_button_array: allow ARM64 again
+
+7.3 made INPUT_SOC_BUTTON_ARRAY depend on X86 when it moved the driver to
+GPIOLIB_LEGACY. The driver has nothing x86-only in it (the Intel SoC checks
+in <linux/platform_data/x86/soc.h> are stubbed out elsewhere), and ACPI
+arm64 machines use it: on the Radxa Orion O6N (CIX P1) the power button is
+an ACPI0011 Generic Buttons device, and without this driver it neither
+works nor wakes the board from s2idle.
+
+Kettle Linux (Radxa Orion O6N).
+---
+ drivers/input/misc/Kconfig | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/input/misc/Kconfig b/drivers/input/misc/Kconfig
+index 169768e3d..eea6d95c5 100644
+--- a/drivers/input/misc/Kconfig
++++ b/drivers/input/misc/Kconfig
+@@ -904,7 +904,7 @@ config INPUT_IDEAPAD_SLIDEBAR
+ config INPUT_SOC_BUTTON_ARRAY
+ 	tristate "Windows-compatible SoC Button Array"
+ 	depends on KEYBOARD_GPIO && ACPI
+-	depends on X86
++	depends on X86 || ARM64
+ 	depends on GPIOLIB
+ 	select GPIOLIB_LEGACY
+ 	help

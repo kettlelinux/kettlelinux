@@ -1,0 +1,387 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: 06n-arch <gennro2004@gmail.com>
+Date: Mon, 28 Sep 2026 23:45:00 -0500
+Subject: drm/panthor: don't block on a syncobj BO's resv under sched->lock
+
+sync_upd_work() evaluates blocked queues with sched->lock held, and the
+evaluation takes the synchronization object's BO reservation lock
+uninterruptibly: drm_gem_vmap() on first use, panthor_gem_sync() for the
+CPU cache invalidation (not a NOP here: 3001 makes Sky1 BOs write-back),
+drm_gem_vunmap() once satisfied.
+
+Private BOs share their VM's reservation lock, and the GEM shrinker can
+hold it while waiting on the VM's fences: it trylocks a BO, waits up to
+10 jiffies for its fences, moves to the next BO of the same VM, and so
+on. Those fences can't signal while sync_upd_work() sits on sched->lock
+waiting for that reservation, with tick_work, process_fw_events_work and
+every GROUP_GET_STATE caller (Mesa, kwin_wayland) queued behind it. The
+whole GPU stalls until memory pressure lets up.
+
+Seen on a Radxa Orion O6N (Mali-G720, 32 GB): Deep Rock Galactic under
+DXVK grew to 20 GB of GPU memory; hung-task reports showed sync_upd_work
+in panthor_gem_sync() -> ww_mutex_lock, and everything else in
+mutex_lock(&sched->lock). It only cleared once the game's processes were
+killed and memory was freed.
+
+Evaluate the sync wait under a single dma_resv_trylock(): map, invalidate,
+read the seqno and unmap with the reservation held, and drop the BO
+reference after unlocking. If the trylock fails, the queue stays blocked
+and sync_upd_work() retries a jiffy later: sync updates are the only
+thing that re-evaluates blocked queues, so a skipped queue needs an
+explicit retry.
+
+panthor_gem_sync() is split into panthor_gem_sync_locked() for this; the
+vmap/vunmap hooks are called directly because drm_gem_vmap_locked() is
+declared in drm_internal.h.
+---
+ drivers/gpu/drm/panthor/panthor_gem.c   |  49 +++++---
+ drivers/gpu/drm/panthor/panthor_gem.h   |   2 +
+ drivers/gpu/drm/panthor/panthor_sched.c | 160 ++++++++++++++++--------
+ 3 files changed, 139 insertions(+), 72 deletions(-)
+
+diff --git a/drivers/gpu/drm/panthor/panthor_gem.c b/drivers/gpu/drm/panthor/panthor_gem.c
+index f926b1fb1..516ee393a 100644
+--- a/drivers/gpu/drm/panthor/panthor_gem.c
++++ b/drivers/gpu/drm/panthor/panthor_gem.c
+@@ -1138,16 +1138,26 @@ panthor_gem_kernel_bo_set_label(struct panthor_kernel_bo *bo, const char *label)
+ 	panthor_gem_bo_set_label(bo->obj, str);
+ }
+ 
++/**
++ * panthor_gem_sync_locked() - CPU cache maintenance on a BO range
++ * @obj: Object to sync.
++ * @type: DRM_PANTHOR_BO_SYNC_CPU_CACHE_* operation.
++ * @offset: Start of the range.
++ * @size: Size of the range.
++ *
++ * Same as panthor_gem_sync(), with the BO reservation lock already held.
++ *
++ * Return: 0 on success, a negative error code otherwise.
++ */
+ int
+-panthor_gem_sync(struct drm_gem_object *obj, u32 type,
+-		 u64 offset, u64 size)
++panthor_gem_sync_locked(struct drm_gem_object *obj, u32 type,
++			u64 offset, u64 size)
+ {
+ 	struct panthor_gem_object *bo = to_panthor_bo(obj);
+ 	struct device *dma_dev = drm_dev_dma_dev(bo->base.dev);
+ 	struct sg_table *sgt;
+ 	struct scatterlist *sgl;
+ 	unsigned int count;
+-	int ret;
+ 
+ 	/* Make sure the range is in bounds. */
+ 	if (offset + size < offset || offset + size > bo->base.size)
+@@ -1174,21 +1184,15 @@ panthor_gem_sync(struct drm_gem_object *obj, u32 type,
+ 	if (size == 0)
+ 		return 0;
+ 
+-	ret = dma_resv_lock_interruptible(bo->base.resv, NULL);
+-	if (ret)
+-		return ret;
++	dma_resv_assert_held(bo->base.resv);
+ 
+ 	/* If there's no pages, there's no point pulling those back, bail out early. */
+-	if (!bo->backing.pages) {
+-		ret = 0;
+-		goto out_unlock;
+-	}
++	if (!bo->backing.pages)
++		return 0;
+ 
+ 	sgt = panthor_gem_dev_map_get_sgt_locked(bo);
+-	if (IS_ERR(sgt)) {
+-		ret = PTR_ERR(sgt);
+-		goto out_unlock;
+-	}
++	if (IS_ERR(sgt))
++		return PTR_ERR(sgt);
+ 
+ 	for_each_sgtable_dma_sg(sgt, sgl, count) {
+ 		if (size == 0)
+@@ -1232,10 +1236,21 @@ panthor_gem_sync(struct drm_gem_object *obj, u32 type,
+ 			dma_sync_single_for_cpu(dma_dev, paddr, len, DMA_FROM_DEVICE);
+ 	}
+ 
+-	ret = 0;
++	return 0;
++}
+ 
+-out_unlock:
+-	dma_resv_unlock(bo->base.resv);
++int
++panthor_gem_sync(struct drm_gem_object *obj, u32 type,
++		 u64 offset, u64 size)
++{
++	int ret;
++
++	ret = dma_resv_lock_interruptible(obj->resv, NULL);
++	if (ret)
++		return ret;
++
++	ret = panthor_gem_sync_locked(obj, type, offset, size);
++	dma_resv_unlock(obj->resv);
+ 	return ret;
+ }
+ 
+diff --git a/drivers/gpu/drm/panthor/panthor_gem.h b/drivers/gpu/drm/panthor/panthor_gem.h
+index 5ae37d0d3..1b2686c0b 100644
+--- a/drivers/gpu/drm/panthor/panthor_gem.h
++++ b/drivers/gpu/drm/panthor/panthor_gem.h
+@@ -273,6 +273,8 @@ void panthor_gem_bo_set_label(struct drm_gem_object *obj, const char *label);
+ void panthor_gem_kernel_bo_set_label(struct panthor_kernel_bo *bo, const char *label);
+ int panthor_gem_sync(struct drm_gem_object *obj,
+ 		     u32 type, u64 offset, u64 size);
++int panthor_gem_sync_locked(struct drm_gem_object *obj,
++			    u32 type, u64 offset, u64 size);
+ 
+ struct drm_gem_object *
+ panthor_gem_prime_import(struct drm_device *dev,
+diff --git a/drivers/gpu/drm/panthor/panthor_sched.c b/drivers/gpu/drm/panthor/panthor_sched.c
+index 653c67558..0ba38d41f 100644
+--- a/drivers/gpu/drm/panthor/panthor_sched.c
++++ b/drivers/gpu/drm/panthor/panthor_sched.c
+@@ -177,6 +177,12 @@ struct panthor_scheduler {
+ 	 */
+ 	struct work_struct sync_upd_work;
+ 
++	/**
++	 * @sync_upd_retry_work: Requeues @sync_upd_work after it skipped a
++	 * queue whose synchronization object BO was locked.
++	 */
++	struct delayed_work sync_upd_retry_work;
++
+ 	/**
+ 	 * @fw_events_work: Work used to process FW events outside the interrupt path.
+ 	 *
+@@ -863,53 +869,6 @@ panthor_queue_put_syncwait_obj(struct panthor_queue *queue)
+ 	queue->syncwait.obj = NULL;
+ }
+ 
+-static void *
+-panthor_queue_get_syncwait_obj(struct panthor_group *group, struct panthor_queue *queue)
+-{
+-	struct panthor_device *ptdev = group->ptdev;
+-	struct panthor_gem_object *bo;
+-	struct iosys_map map;
+-	int ret;
+-
+-	if (queue->syncwait.kmap) {
+-		bo = to_panthor_bo(queue->syncwait.obj);
+-		goto out_sync;
+-	}
+-
+-	bo = panthor_vm_get_bo_for_va(group->vm,
+-				      queue->syncwait.gpu_va,
+-				      &queue->syncwait.offset);
+-	if (drm_WARN_ON(&ptdev->base, IS_ERR_OR_NULL(bo)))
+-		goto err_put_syncwait_obj;
+-
+-	queue->syncwait.obj = &bo->base;
+-	ret = drm_gem_vmap(queue->syncwait.obj, &map);
+-	if (drm_WARN_ON(&ptdev->base, ret))
+-		goto err_put_syncwait_obj;
+-
+-	queue->syncwait.kmap = map.vaddr;
+-	if (drm_WARN_ON(&ptdev->base, !queue->syncwait.kmap))
+-		goto err_put_syncwait_obj;
+-
+-out_sync:
+-	/* Make sure the CPU caches are invalidated before the seqno is read.
+-	 * panthor_gem_sync() is a NOP if map_wc=true, so no need to check
+-	 * it here.
+-	 */
+-	panthor_gem_sync(&bo->base,
+-			 DRM_PANTHOR_BO_SYNC_CPU_CACHE_FLUSH_AND_INVALIDATE,
+-			 queue->syncwait.offset,
+-			 queue->syncwait.sync64 ?
+-			 sizeof(struct panthor_syncobj_64b) :
+-			 sizeof(struct panthor_syncobj_32b));
+-
+-	return queue->syncwait.kmap + queue->syncwait.offset;
+-
+-err_put_syncwait_obj:
+-	panthor_queue_put_syncwait_obj(queue);
+-	return NULL;
+-}
+-
+ static void group_free_queue(struct panthor_group *group, struct panthor_queue *queue)
+ {
+ 	if (IS_ERR_OR_NULL(queue))
+@@ -2582,20 +2541,70 @@ static void tick_work(struct work_struct *work)
+ 	drm_dev_exit(cookie);
+ }
+ 
++/*
++ * Returns 1 if the queue's sync wait is satisfied, 0 if not, -EAGAIN if the
++ * synchronization object's BO was locked, or another negative error code.
++ *
++ * Called with sched->lock held, so the BO reservation lock is only
++ * trylocked. Private BOs share their VM's reservation lock, and its holder
++ * can be waiting for this VM's GPU work: the GEM shrinker, for one, trylocks
++ * a BO then waits on its fences, BO after BO, under memory pressure. Those
++ * fences can't signal while the scheduler is stuck behind sched->lock
++ * waiting for the same lock, so blocking here stalls the whole GPU.
++ */
+ static int panthor_queue_eval_syncwait(struct panthor_group *group, u8 queue_idx)
+ {
+ 	struct panthor_queue *queue = group->queues[queue_idx];
++	struct panthor_device *ptdev = group->ptdev;
+ 	union {
+ 		struct panthor_syncobj_64b sync64;
+ 		struct panthor_syncobj_32b sync32;
+ 	} *syncobj;
++	struct drm_gem_object *obj;
++	struct iosys_map map;
+ 	bool result;
+ 	u64 value;
++	int ret;
+ 
+-	syncobj = panthor_queue_get_syncwait_obj(group, queue);
+-	if (!syncobj)
+-		return -EINVAL;
++	if (!queue->syncwait.obj) {
++		struct panthor_gem_object *bo;
++
++		bo = panthor_vm_get_bo_for_va(group->vm,
++					      queue->syncwait.gpu_va,
++					      &queue->syncwait.offset);
++		if (drm_WARN_ON(&ptdev->base, IS_ERR_OR_NULL(bo)))
++			return -EINVAL;
++
++		queue->syncwait.obj = &bo->base;
++	}
++
++	obj = queue->syncwait.obj;
++	if (!dma_resv_trylock(obj->resv))
++		return -EAGAIN;
++
++	/* drm_gem_vmap_locked() without the DRM-internal header: call the
++	 * object's vmap/vunmap hooks directly, with the reservation held.
++	 */
++	if (!queue->syncwait.kmap) {
++		ret = obj->funcs->vmap(obj, &map);
++		if (drm_WARN_ON(&ptdev->base, ret || iosys_map_is_null(&map)))
++			goto err_unlock;
+ 
++		queue->syncwait.kmap = map.vaddr;
++	}
++
++	/* Make sure the CPU caches are invalidated before the seqno is read.
++	 * panthor_gem_sync_locked() is a NOP if map_wc=true, so no need to
++	 * check it here.
++	 */
++	panthor_gem_sync_locked(obj,
++				DRM_PANTHOR_BO_SYNC_CPU_CACHE_FLUSH_AND_INVALIDATE,
++				queue->syncwait.offset,
++				queue->syncwait.sync64 ?
++				sizeof(struct panthor_syncobj_64b) :
++				sizeof(struct panthor_syncobj_32b));
++
++	syncobj = queue->syncwait.kmap + queue->syncwait.offset;
+ 	value = queue->syncwait.sync64 ?
+ 		syncobj->sync64.seqno :
+ 		syncobj->sync32.seqno;
+@@ -2605,10 +2614,27 @@ static int panthor_queue_eval_syncwait(struct panthor_group *group, u8 queue_idx
+ 	else
+ 		result = value <= queue->syncwait.ref;
+ 
+-	if (result)
+-		panthor_queue_put_syncwait_obj(queue);
++	if (result) {
++		iosys_map_set_vaddr(&map, queue->syncwait.kmap);
++		obj->funcs->vunmap(obj, &map);
++		queue->syncwait.kmap = NULL;
++	}
++
++	dma_resv_unlock(obj->resv);
++
++	/* Drop the reference outside the reservation lock: it may be the last. */
++	if (result) {
++		drm_gem_object_put(obj);
++		queue->syncwait.obj = NULL;
++	}
+ 
+ 	return result;
++
++err_unlock:
++	dma_resv_unlock(obj->resv);
++	drm_gem_object_put(obj);
++	queue->syncwait.obj = NULL;
++	return -EINVAL;
+ }
+ 
+ static void sync_upd_work(struct work_struct *work)
+@@ -2618,6 +2644,7 @@ static void sync_upd_work(struct work_struct *work)
+ 						      sync_upd_work);
+ 	struct panthor_group *group, *tmp;
+ 	bool immediate_tick = false;
++	bool retry = false;
+ 
+ 	mutex_lock(&sched->lock);
+ 	list_for_each_entry_safe(group, tmp, &sched->groups.waiting, wait_node) {
+@@ -2629,9 +2656,14 @@ static void sync_upd_work(struct work_struct *work)
+ 			int ret;
+ 
+ 			ret = panthor_queue_eval_syncwait(group, cs_id);
+-			drm_WARN_ON(&group->ptdev->base, ret < 0);
+-			if (ret)
+-				unblocked_queues |= BIT(cs_id);
++			if (ret == -EAGAIN) {
++				/* Still blocked as far as we know, check again soon. */
++				retry = true;
++			} else {
++				drm_WARN_ON(&group->ptdev->base, ret < 0);
++				if (ret)
++					unblocked_queues |= BIT(cs_id);
++			}
+ 
+ 			tested_queues &= ~BIT(cs_id);
+ 		}
+@@ -2654,6 +2686,21 @@ static void sync_upd_work(struct work_struct *work)
+ 
+ 	if (immediate_tick)
+ 		sched_queue_delayed_work(sched, tick, 0);
++
++	/* Sync updates are the only thing that re-evaluates blocked queues, so
++	 * a skipped queue needs an explicit retry.
++	 */
++	if (retry)
++		sched_queue_delayed_work(sched, sync_upd_retry, 1);
++}
++
++static void sync_upd_retry_work(struct work_struct *work)
++{
++	struct panthor_scheduler *sched = container_of(work,
++						      struct panthor_scheduler,
++						      sync_upd_retry_work.work);
++
++	sched_queue_work(sched, sync_upd);
+ }
+ 
+ static void sched_resume_tick(struct panthor_device *ptdev)
+@@ -2967,6 +3014,7 @@ void panthor_sched_pre_reset(struct panthor_device *ptdev)
+ 	/* Cancel all scheduler works. Once this is done, these works can't be
+ 	 * scheduled again until the reset operation is complete.
+ 	 */
++	cancel_delayed_work_sync(&sched->sync_upd_retry_work);
+ 	cancel_work_sync(&sched->sync_upd_work);
+ 	cancel_delayed_work_sync(&sched->tick_work);
+ 
+@@ -4070,6 +4118,7 @@ void panthor_sched_unplug(struct panthor_device *ptdev)
+ 
+ 	disable_delayed_work_sync(&sched->tick_work);
+ 	disable_work_sync(&sched->fw_events_work);
++	disable_delayed_work_sync(&sched->sync_upd_retry_work);
+ 	disable_work_sync(&sched->sync_upd_work);
+ 
+ 	mutex_lock(&sched->lock);
+@@ -4154,6 +4203,7 @@ int panthor_sched_init(struct panthor_device *ptdev)
+ 	sched->tick_period = msecs_to_jiffies(10);
+ 	INIT_DELAYED_WORK(&sched->tick_work, tick_work);
+ 	INIT_WORK(&sched->sync_upd_work, sync_upd_work);
++	INIT_DELAYED_WORK(&sched->sync_upd_retry_work, sync_upd_retry_work);
+ 	INIT_WORK(&sched->fw_events_work, process_fw_events_work);
+ 
+ 	ret = drmm_mutex_init(&ptdev->base, &sched->lock);
