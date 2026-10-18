@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Thu, 1 Oct 2026 06:46:53 -0500
+Subject: [PATCH 53/57] panvk: only lower mediump IO for the HW VS and the FS
+
+The SW VS outputs and the GS inputs go through memory at 32 bits
+(libpoly), and pan_nir_lower_mediump_io() doesn't handle geometry
+shaders.
+
+Assisted-by: LLM
+---
+ src/panfrost/vulkan/panvk_vX_shader.c | 14 +++++++++-----
+ 1 file changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index 5b7ddcf63a6..9965498dd2e 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -1045,7 +1045,7 @@ panvk_lower_nir(struct panvk_device *dev, nir_shader *nir,
+ }
+ 
+ static void
+-panvk_lower_nir_io(nir_shader *nir)
++panvk_lower_nir_io(nir_shader *nir, bool lower_mediump)
+ {
+    NIR_PASS(_, nir, nir_lower_var_copies);
+    NIR_PASS(_, nir, nir_lower_indirect_derefs_to_if_else_trees,
+@@ -1063,7 +1063,11 @@ panvk_lower_nir_io(nir_shader *nir)
+    NIR_PASS(_, nir, nir_opt_constant_folding);
+    NIR_PASS(_, nir, nir_opt_dce);
+ 
+-   pan_nir_lower_mediump_io(nir);
++   /* Only for varyings: the SW VS outputs and GS inputs go through memory
++    * at 32 bits (libpoly).
++    */
++   if (lower_mediump)
++      pan_nir_lower_mediump_io(nir);
+ }
+ 
+ static VkResult
+@@ -1803,7 +1807,7 @@ panvk_compile_shader(struct panvk_device *dev,
+          } else
+ #endif
+          {
+-            panvk_lower_nir_io(nir);
++            panvk_lower_nir_io(nir, v == PANVK_VS_VARIANT_HW);
+          }
+          /* This somehow folds the location for multi-slot nir_load/nir_store */
+          NIR_PASS(_, nir, nir_opt_constant_folding);
+@@ -1859,7 +1863,7 @@ panvk_compile_shader(struct panvk_device *dev,
+ 
+       nir_assign_io_var_locations(main, nir_var_shader_in);
+       nir_assign_io_var_locations(main, nir_var_shader_out);
+-      panvk_lower_nir_io(main);
++      panvk_lower_nir_io(main, false);
+ 
+       nir_shader *count = NULL, *rast = NULL, *pre = NULL;
+       NIR_PASS(_, main, poly_nir_lower_gs, &count, &rast, &pre,
+@@ -1938,7 +1942,7 @@ panvk_compile_shader(struct panvk_device *dev,
+                       info->robustness, state, &shader->desc_info, false);
+ 
+       nir_assign_io_var_locations(nir, nir_var_shader_out);
+-      panvk_lower_nir_io(nir);
++      panvk_lower_nir_io(nir, true);
+ 
+       NIR_PASS(_, nir, pan_nir_lower_clip_cull_distance_fs);
+ 

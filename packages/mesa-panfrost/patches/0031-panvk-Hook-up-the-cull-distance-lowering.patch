@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Gmeiner <cgmeiner@igalia.com>
+Date: Mon, 20 Jul 2026 16:47:03 +0200
+Subject: [PATCH 31/57] panvk: Hook up the cull distance lowering
+
+Run the variable-level pass before output locations are assigned and
+feed the cull distance array size to the compiler. The size travels in
+pan_shader_info, which is serialized with the shader binary, so a warm
+shader cache hit keeps the cull configuration.
+
+Signed-off-by: Christian Gmeiner <cgmeiner@igalia.com>
+---
+ src/panfrost/vulkan/panvk_vX_shader.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index 84bb664157e..b4931fb1eef 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -1622,6 +1622,9 @@ panvk_compile_shader(struct panvk_device *dev,
+             var->data.driver_location =
+                var->data.location - VERT_ATTRIB_GENERIC0;
+          }
++
++         NIR_PASS(_, nir, pan_nir_lower_cull_distance_vs);
++
+          nir_assign_io_var_locations(nir, nir_var_shader_out);
+          panvk_lower_nir_io(nir);
+          /* This somehow folds the location for multi-slot nir_load/nir_store */
+@@ -1636,6 +1639,7 @@ panvk_compile_shader(struct panvk_device *dev,
+          }
+ 
+          inputs.clip_distance_array_size = nir->info.clip_distance_array_size;
++         inputs.cull_distance_array_size = nir->info.cull_distance_array_size;
+ 
+          if (v == PANVK_VS_VARIANT_SW)
+             panvk_nir_lower_compute_vs(nir, inputs.gpu_id);

@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Wed, 30 Sep 2026 21:20:56 -0500
+Subject: [PATCH 38/57] panvk/csf: take the clip/cull info from the HW VS
+ (06n-arch)
+
+With a geometry shader bound the HW VS is its rasterization variant.
+
+Assisted-by: LLM
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index 6fef72bd7ab..26346e4965a 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -2565,7 +2565,7 @@ link_fs_prolog(struct panvk_cmd_buffer *cmdbuf,
+                const struct panvk_shader_variant *fs)
+ {
+    const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++      get_hw_vs(cmdbuf);
+ 
+    if (!vs_has_clip_or_cull(vs))
+       return 0;
+@@ -2950,7 +2950,7 @@ build_dcd_flags(struct panvk_cmd_buffer *cmdbuf,
+                      MESA_VK_RP_ATTACHMENT_ANY_COLOR_BITS;
+ 
+    const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++      get_hw_vs(cmdbuf);
+    bool has_fs_prolog =
+       vs_has_clip_or_cull(vs) && !rs->rasterizer_discard_enable;
+ 

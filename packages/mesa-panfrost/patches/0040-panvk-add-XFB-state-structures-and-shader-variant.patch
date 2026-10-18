@@ -1,0 +1,152 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ryan Zhang <ryan.zhang@nxp.com>
+Date: Fri, 31 Jul 2026 17:30:01 +0800
+Subject: [PATCH 40/57] panvk: add XFB state structures and shader variant
+
+Add runtime XFB state (buffers, counters, offsets, active flag) to
+panvk_cmd_graphics_state. Add XFB sysvals (buffer addresses,
+num_vertices) to panvk_graphics_sysvals for GPU access via FAU.
+Add PANVK_VS_VARIANT_XFB enum and xfb_strides[4] to shader variant.
+Add panvk_xfb_query_state for transform feedback query support.
+
+Signed-off-by: Ryan Zhang <ryan.zhang@nxp.com>
+---
+ src/panfrost/vulkan/panvk_cmd_draw.h  | 24 ++++++++++++++++++++
+ src/panfrost/vulkan/panvk_cmd_query.h |  8 +++++++
+ src/panfrost/vulkan/panvk_shader.h    | 32 +++++++++++++++++++++++++++
+ 3 files changed, 64 insertions(+)
+
+diff --git a/src/panfrost/vulkan/panvk_cmd_draw.h b/src/panfrost/vulkan/panvk_cmd_draw.h
+index 8b8257edac9..5c66918dc0d 100644
+--- a/src/panfrost/vulkan/panvk_cmd_draw.h
++++ b/src/panfrost/vulkan/panvk_cmd_draw.h
+@@ -29,6 +29,7 @@
+ #include "pan_props.h"
+ 
+ #define MAX_VBS 16
++#define MAX_XFB_BUFFERS 4
+ 
+ #if PAN_ARCH < 10
+ #define MAX_FRAMEBUFFER_DIMENSION (1 << 14)
+@@ -165,6 +166,7 @@ struct panvk_cmd_graphics_state {
+    struct panvk_occlusion_query_state occlusion_query;
+ #if PAN_ARCH >= 10
+    struct panvk_prims_generated_query_state prims_generated_query;
++   struct panvk_xfb_query_state xfb_query;
+ #endif
+    struct panvk_graphics_sysvals sysvals;
+ 
+@@ -251,8 +253,30 @@ struct panvk_cmd_graphics_state {
+       uint64_t dev_addr;
+       uint64_t size;
+       uint8_t index_size;
++      void *host_ptr; /* CPU mapping of index buffer, NULL if not available */
+    } ib;
+ 
++#if PAN_ARCH >= 10
++   /* Transform feedback state */
++   struct {
++      struct {
++         uint64_t address;  /* base address of the bound buffer */
++         uint64_t size;     /* total size of the bound buffer */
++      } buffers[MAX_XFB_BUFFERS];
++      struct {
++         uint64_t address;
++      } counters[MAX_XFB_BUFFERS];
++      /* Current write offset in bytes per buffer, accumulated across draws.
++       * When XFB begins, this is initialized to 0 (or read from counter
++       * buffers). Each draw advances it by vertex_count * instance_count *
++       * stride. This allows multiple draws within a begin/end pair to
++       * append to the XFB buffers correctly.
++       */
++      uint64_t offsets[MAX_XFB_BUFFERS];
++      bool active;
++   } xfb;
++#endif
++
+    struct {
+       struct panvk_blend_info info;
+    } cb;
+diff --git a/src/panfrost/vulkan/panvk_cmd_query.h b/src/panfrost/vulkan/panvk_cmd_query.h
+index e3f190b4685..6875aa1325d 100644
+--- a/src/panfrost/vulkan/panvk_cmd_query.h
++++ b/src/panfrost/vulkan/panvk_cmd_query.h
+@@ -25,6 +25,14 @@ struct panvk_prims_generated_query_state {
+    uint64_t syncobj;
+    uint64_t ptr;
+ };
++
++struct panvk_xfb_query_state {
++   uint64_t syncobj;
++   uint64_t ptr;    /* points to 2 x panvk_query_report (written, needed) */
++   /* CPU-side accumulators: updated in panvk_cmd_launch_xfb */
++   uint64_t prims_written;
++   uint64_t prims_needed;
++};
+ #endif
+ 
+ #endif
+diff --git a/src/panfrost/vulkan/panvk_shader.h b/src/panfrost/vulkan/panvk_shader.h
+index 7122687cfa1..0bc4dfbfe9e 100644
+--- a/src/panfrost/vulkan/panvk_shader.h
++++ b/src/panfrost/vulkan/panvk_shader.h
+@@ -195,6 +195,26 @@ struct panvk_graphics_sysvals {
+ 
+    struct panvk_input_attachment_info iam[INPUT_ATTACHMENT_MAP_SIZE];
+ 
++#if PAN_ARCH >= 10
++   /* Transform feedback output buffer addresses and state */
++   struct {
++      aligned_u64 buffers[4];
++      uint32_t num_vertices;
++      uint32_t _pad;
++      /* Per-buffer byte offsets: where in each buffer the current draw
++       * should start writing. Accumulated across draws in a begin/end pair.
++       */
++      aligned_u64 offsets[4];
++      /* Per-buffer sizes: maximum bytes available per buffer (for overflow
++       * clamping).
++       */
++      aligned_u64 buf_sizes[4];
++      /* Per-buffer strides in bytes. */
++      uint32_t strides[4];
++      uint32_t _pad2[4];
++   } xfb;
++#endif
++
+ #if PAN_ARCH < 9
+    /* gl_Layer on Bifrost is a bit of hack. We have to issue one draw per
+     * layer, and filter primitives at the VS level.
+@@ -420,6 +440,10 @@ struct panvk_shader_desc_info {
+ struct panvk_shader_variant {
+    struct pan_shader_info info;
+ 
++   /* XFB buffer strides in bytes (only valid for PANVK_VS_VARIANT_XFB) */
++   uint32_t xfb_strides[MAX_XFB_BUFFERS];
++
++
+    union {
+       struct {
+          struct pan_compute_dim local_size;
+@@ -477,6 +501,11 @@ enum panvk_vs_variant {
+    /* Hardware compute shader, when next is geometry/tessellation */
+    PANVK_VS_VARIANT_SW,
+ 
++#if PAN_ARCH >= 10
++   /* Transform feedback compute shader variant */
++   PANVK_VS_VARIANT_XFB,
++#endif
++
+    PANVK_VS_VARIANTS,
+ };
+ 
+@@ -523,6 +552,9 @@ panvk_shader_num_variants(mesa_shader_stage stage)
+ static const char *panvk_vs_shader_variant_name[] = {
+    [PANVK_VS_VARIANT_HW] = "Hardware",
+    [PANVK_VS_VARIANT_SW] = "Software",
++#if PAN_ARCH >= 10
++   [PANVK_VS_VARIANT_XFB] = "xfb",
++#endif
+ };
+ 
+ static const char *panvk_gs_variant_name[] = {

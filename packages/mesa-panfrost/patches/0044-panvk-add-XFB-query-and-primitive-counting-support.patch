@@ -1,0 +1,185 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ryan Zhang <ryan.zhang@nxp.com>
+Date: Fri, 31 Jul 2026 17:30:56 +0800
+Subject: [PATCH 44/57] panvk: add XFB query and primitive counting support
+
+Support VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT queries with
+two uint64 reports per query (primitivesWritten, primitivesNeeded).
+
+BeginQuery zeros GPU reports and resets CPU accumulators. Each draw
+accumulates primitive counts (clamped by buffer overflow). EndQuery
+writes final values via CSF STORE and signals availability.
+
+Signed-off-by: Ryan Zhang <ryan.zhang@nxp.com>
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_query.c | 71 ++++++++++++++++++--
+ src/panfrost/vulkan/panvk_vX_query_pool.c    | 24 +++++--
+ 2 files changed, 85 insertions(+), 10 deletions(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_query.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_query.c
+index bcd83884a49..6f09a6a5ce5 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_query.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_query.c
+@@ -35,6 +35,7 @@ panvk_subqueue_for_query_type(VkQueryType type)
+    case VK_QUERY_TYPE_OCCLUSION:
+       return PANVK_SUBQUEUE_FRAGMENT;
+    case VK_QUERY_TYPE_PRIMITIVES_GENERATED_EXT:
++   case VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT:
+       return PANVK_SUBQUEUE_COMPUTE;
+    default:
+       UNREACHABLE("Unsupported query type");
+@@ -730,7 +731,8 @@ panvk_per_arch(CmdResetQueryPool)(VkCommandBuffer commandBuffer,
+ 
+    switch (pool->vk.query_type) {
+    case VK_QUERY_TYPE_OCCLUSION:
+-   case VK_QUERY_TYPE_PRIMITIVES_GENERATED_EXT: {
++   case VK_QUERY_TYPE_PRIMITIVES_GENERATED_EXT:
++   case VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT: {
+       panvk_cmd_reset_queries(cmd, pool, firstQuery, queryCount);
+       break;
+    }
+@@ -752,7 +754,7 @@ panvk_per_arch(CmdBeginQueryIndexedEXT)(VkCommandBuffer commandBuffer,
+    VK_FROM_HANDLE(panvk_cmd_buffer, cmd, commandBuffer);
+    VK_FROM_HANDLE(panvk_query_pool, pool, queryPool);
+ 
+-   /* TODO: transform feedback */
++   /* Transform feedback queries only support stream index 0 */
+    assert(index == 0);
+ 
+    switch (pool->vk.query_type) {
+@@ -764,6 +766,26 @@ panvk_per_arch(CmdBeginQueryIndexedEXT)(VkCommandBuffer commandBuffer,
+       panvk_cmd_begin_prims_generated_query(cmd, pool, query, flags);
+       break;
+    }
++   case VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT: {
++      uint64_t report_addr = panvk_query_report_dev_addr(pool, query);
++      cmd->state.gfx.xfb_query.ptr = report_addr;
++      cmd->state.gfx.xfb_query.syncobj =
++         panvk_query_available_dev_addr(pool, query);
++      cmd->state.gfx.xfb_query.prims_written = 0;
++      cmd->state.gfx.xfb_query.prims_needed = 0;
++
++      /* Clear the two query reports (written + needed) */
++      struct cs_builder *b =
++         panvk_get_cs_builder(cmd, PANVK_SUBQUEUE_COMPUTE);
++      struct cs_index addr_reg = cs_scratch_reg64(b, 0);
++      struct cs_index zero_reg = cs_scratch_reg64(b, 2);
++      cs_move64_to(b, addr_reg, report_addr);
++      cs_move64_to(b, zero_reg, 0);
++      cs_store64(b, zero_reg, addr_reg, 0);  /* written */
++      cs_store64(b, zero_reg, addr_reg, 8);  /* needed */
++      cs_flush_stores(b);
++      break;
++   }
+    default:
+       UNREACHABLE("Unsupported query type");
+    }
+@@ -777,7 +799,7 @@ panvk_per_arch(CmdEndQueryIndexedEXT)(VkCommandBuffer commandBuffer,
+    VK_FROM_HANDLE(panvk_cmd_buffer, cmd, commandBuffer);
+    VK_FROM_HANDLE(panvk_query_pool, pool, queryPool);
+ 
+-   /* TODO: transform feedback */
++   /* Transform feedback queries only support stream index 0 */
+    assert(index == 0);
+ 
+    switch (pool->vk.query_type) {
+@@ -789,6 +811,46 @@ panvk_per_arch(CmdEndQueryIndexedEXT)(VkCommandBuffer commandBuffer,
+       panvk_cmd_end_prims_generated_query(cmd, pool, query);
+       break;
+    }
++   case VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT: {
++      /* Write the final counts from CPU-side accumulators to the GPU report
++       * buffer. The counts were accumulated in panvk_cmd_launch_xfb().
++       */
++      struct cs_builder *b =
++         panvk_get_cs_builder(cmd, PANVK_SUBQUEUE_COMPUTE);
++      struct cs_index addr_reg = cs_scratch_reg64(b, 0);
++      struct cs_index val_reg = cs_scratch_reg64(b, 2);
++
++      uint64_t report_addr = panvk_query_report_dev_addr(pool, query);
++      cs_move64_to(b, addr_reg, report_addr);
++
++      /* Store primitives written (report 0) */
++      cs_move64_to(b, val_reg, cmd->state.gfx.xfb_query.prims_written);
++      cs_store64(b, val_reg, addr_reg, 0);
++
++      /* Store primitives needed (report 1) */
++      cs_move64_to(b, val_reg, cmd->state.gfx.xfb_query.prims_needed);
++      cs_store64(b, val_reg, addr_reg, 8);
++      cs_flush_stores(b);
++
++      /* Flush caches and signal availability */
++      struct cs_index syncobj_reg = cs_scratch_reg64(b, 0);
++      struct cs_index one_reg = cs_scratch_reg32(b, 2);
++      cs_move32_to(b, one_reg, 0);
++      cs_flush_caches(
++         b, MALI_CS_FLUSH_MODE_CLEAN, MALI_CS_FLUSH_MODE_CLEAN,
++         MALI_CS_OTHER_FLUSH_MODE_NONE, one_reg,
++         cs_defer(SB_IMM_MASK, SB_ID(DEFERRED_FLUSH)));
++
++      cs_move32_to(b, one_reg, 1);
++      cs_move64_to(b, syncobj_reg,
++                   panvk_query_available_dev_addr(pool, query));
++      cs_sync32_set(b, true, MALI_CS_SYNC_SCOPE_CSG, one_reg, syncobj_reg,
++                    cs_defer(SB_MASK(DEFERRED_FLUSH), SB_ID(DEFERRED_SYNC)));
++
++      cmd->state.gfx.xfb_query.ptr = 0;
++      cmd->state.gfx.xfb_query.syncobj = 0;
++      break;
++   }
+    default:
+       UNREACHABLE("Unsupported query type");
+    }
+@@ -819,7 +881,8 @@ panvk_per_arch(CmdCopyQueryPoolResults)(
+ 
+    switch (pool->vk.query_type) {
+    case VK_QUERY_TYPE_OCCLUSION:
+-   case VK_QUERY_TYPE_PRIMITIVES_GENERATED_EXT: {
++   case VK_QUERY_TYPE_PRIMITIVES_GENERATED_EXT:
++   case VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT: {
+       panvk_copy_query_results(cmd, pool, firstQuery, queryCount,
+                                dst_buffer_addr, stride, flags);
+       break;
+diff --git a/src/panfrost/vulkan/panvk_vX_query_pool.c b/src/panfrost/vulkan/panvk_vX_query_pool.c
+index 65db1d4ef1a..c083ec02f37 100644
+--- a/src/panfrost/vulkan/panvk_vX_query_pool.c
++++ b/src/panfrost/vulkan/panvk_vX_query_pool.c
+@@ -70,6 +70,11 @@ panvk_per_arch(CreateQueryPool)(VkDevice _device,
+       reports_per_query = 1;
+       break;
+    }
++   case VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT: {
++      /* Two reports: primitives_written and primitives_needed */
++      reports_per_query = 2;
++      break;
++   }
+ #endif
+    default:
+       UNREACHABLE("Unsupported query type");
+@@ -278,13 +283,20 @@ panvk_per_arch(GetQueryPoolResults)(VkDevice _device, VkQueryPool queryPool,
+                                                 pool->reports_per_query);
+             break;
+          }
+-         case VK_QUERY_TYPE_PRIMITIVES_GENERATED_EXT: {
+-            if (write_results)
+-               cpu_write_query_result(dst, 0, flags, src[0].value);
+-            break;
+-         }
++          case VK_QUERY_TYPE_PRIMITIVES_GENERATED_EXT: {
++             if (write_results)
++                cpu_write_query_result(dst, 0, flags, src[0].value);
++             break;
++          }
++          case VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT: {
++             if (write_results) {
++                cpu_write_query_result(dst, 0, flags, src[0].value);
++                cpu_write_query_result(dst, 1, flags, src[1].value);
++             }
++             break;
++          }
+ #endif
+-         default:
++          default:
+             UNREACHABLE("Unsupported query type");
+          }
+       }

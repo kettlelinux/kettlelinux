@@ -1,0 +1,160 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Gmeiner <cgmeiner@igalia.com>
+Date: Wed, 11 Mar 2026 15:52:08 +0100
+Subject: [PATCH 19/57] panfrost: Add FS clip distance prolog NIR builder
+
+Build a standalone fragment shader prolog that loads gl_ClipDistance
+values from CLIP_DIST0/CLIP_DIST1 with perspective-correct
+interpolation, multiplies by gl_FragCoord.w to recover linear
+interpolation, and demotes fragments where any clip distance is
+negative. Demote keeps helper invocations alive so derivatives in the
+main FS stay defined.
+
+This is compiled independently against the VS's varying layout and
+runs in front of the main FS. The new skip_atest compile input avoids
+a second ATEST alongside the main FS's, which would overwrite the
+coverage mask.
+
+Modeled after src/asahi/lib/agx_nir_prolog_epilog.c.
+
+Signed-off-by: Christian Gmeiner <cgmeiner@igalia.com>
+Reviewed-by: Olivia Lee <olivia.lee@collabora.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/40343>
+---
+ src/panfrost/compiler/bifrost/bifrost_nir.c |  3 +-
+ src/panfrost/compiler/meson.build           |  2 +
+ src/panfrost/compiler/pan_compiler.h        |  1 +
+ src/panfrost/compiler/pan_nir_prolog.c      | 61 +++++++++++++++++++++
+ src/panfrost/compiler/pan_nir_prolog.h      | 16 ++++++
+ 5 files changed, 82 insertions(+), 1 deletion(-)
+ create mode 100644 src/panfrost/compiler/pan_nir_prolog.c
+ create mode 100644 src/panfrost/compiler/pan_nir_prolog.h
+
+diff --git a/src/panfrost/compiler/bifrost/bifrost_nir.c b/src/panfrost/compiler/bifrost/bifrost_nir.c
+index 58c8333425b..14bfa71a1d5 100644
+--- a/src/panfrost/compiler/bifrost/bifrost_nir.c
++++ b/src/panfrost/compiler/bifrost/bifrost_nir.c
+@@ -863,7 +863,8 @@ bifrost_postprocess_nir(nir_shader *nir,
+       const bool emit_zs =
+          nir->info.outputs_written & (BITFIELD_BIT(FRAG_RESULT_DEPTH) |
+                                       BITFIELD_BIT(FRAG_RESULT_STENCIL));
+-      const bool skip_atest = inputs->is_blit && !emit_zs;
++      const bool skip_atest =
++         inputs->skip_atest || (inputs->is_blit && !emit_zs);
+       NIR_PASS(_, nir, pan_nir_lower_fs_outputs, skip_atest,
+                inputs->fragcolor_nr_cbufs);
+    } else if (nir->info.stage == MESA_SHADER_VERTEX) {
+diff --git a/src/panfrost/compiler/meson.build b/src/panfrost/compiler/meson.build
+index 1133ad1343e..edcaab8f0fa 100644
+--- a/src/panfrost/compiler/meson.build
++++ b/src/panfrost/compiler/meson.build
+@@ -17,6 +17,8 @@ libpanfrost_compiler_files = files(
+   'pan_nir_lower_image_ms.c',
+   'pan_nir_lower_mem_to_global.c',
+   'pan_nir_lower_noperspective.c',
++  'pan_nir_prolog.c',
++  'pan_nir_prolog.h',
+   'pan_nir_lower_sample_position.c',
+   'pan_nir_lower_tex.c',
+   'pan_nir_lower_var_special.c',
+diff --git a/src/panfrost/compiler/pan_compiler.h b/src/panfrost/compiler/pan_compiler.h
+index ffbbc21ab4b..c8d753e3ec2 100644
+--- a/src/panfrost/compiler/pan_compiler.h
++++ b/src/panfrost/compiler/pan_compiler.h
+@@ -35,6 +35,7 @@ struct pan_compile_inputs {
+    uint64_t gpu_id;
+    uint32_t gpu_variant;
+    bool is_blend, is_blit;
++   bool skip_atest;
+    bool no_idvs;
+    uint32_t view_mask;
+ 
+diff --git a/src/panfrost/compiler/pan_nir_prolog.c b/src/panfrost/compiler/pan_nir_prolog.c
+new file mode 100644
+index 00000000000..f8cd8381d0b
+--- /dev/null
++++ b/src/panfrost/compiler/pan_nir_prolog.c
+@@ -0,0 +1,61 @@
++/*
++ * Copyright © 2026 Google, Inc.
++ * SPDX-License-Identifier: MIT
++ */
++
++#include "pan_nir_prolog.h"
++#include "compiler/nir/nir_builder.h"
++#include "compiler/shader_enums.h"
++
++/* Build a standalone fragment shader prolog that interpolates clip distances
++ * from VARYING_SLOT_CLIP_DIST0/1 and demotes fragments where any clip
++ * distance is negative. The prolog is compiled against the VS's varying
++ * layout and ends with a jump to the main FS.
++ */
++nir_shader *
++pan_nir_build_fs_prolog(const struct pan_fs_prolog_key *key,
++                        const nir_shader_compiler_options *options)
++{
++   assert(key->clip_distance_array_size > 0);
++   assert(key->clip_distance_array_size <= 8);
++
++   nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_FRAGMENT, options,
++                                                  "pan-fs-prolog");
++
++   b.shader->info.io_lowered = true;
++
++   nir_def *barycentric =
++      nir_load_barycentric(&b, nir_intrinsic_load_barycentric_pixel,
++                           INTERP_MODE_NONE);
++
++   /* The VS stores clip_dist * W. The hardware loads with perspective-correct
++    * interpolation, so multiply by fragcoord_w to recover linear values.
++    */
++   nir_def *fragcoord_w = nir_load_frag_coord_w(&b);
++
++   nir_def *cond = NULL;
++   unsigned num_slots = DIV_ROUND_UP(key->clip_distance_array_size, 4);
++
++   for (unsigned s = 0; s < num_slots; s++) {
++      unsigned var_slot = VARYING_SLOT_CLIP_DIST0 + s;
++      unsigned ncomps = MIN2(key->clip_distance_array_size - s * 4, 4);
++
++      nir_def *load =
++         nir_load_interpolated_input(&b, ncomps, 32, barycentric,
++                                     nir_imm_int(&b, 0),
++                                     .base = s,
++                                     .io_semantics.location = var_slot,
++                                     .io_semantics.num_slots = 1);
++
++      nir_def *clipdist = nir_fmul(&b, load, fragcoord_w);
++      nir_def *negative = nir_bany(&b, nir_flt_imm(&b, clipdist, 0.0));
++      cond = cond ? nir_ior(&b, cond, negative) : negative;
++
++      b.shader->info.inputs_read |= BITFIELD64_BIT(var_slot);
++   }
++
++   nir_demote_if(&b, cond);
++   b.shader->info.fs.uses_discard = true;
++
++   return b.shader;
++}
+diff --git a/src/panfrost/compiler/pan_nir_prolog.h b/src/panfrost/compiler/pan_nir_prolog.h
+new file mode 100644
+index 00000000000..1558127b3f7
+--- /dev/null
++++ b/src/panfrost/compiler/pan_nir_prolog.h
+@@ -0,0 +1,16 @@
++/*
++ * Copyright © 2026 Google, Inc.
++ * SPDX-License-Identifier: MIT
++ */
++
++#pragma once
++
++#include "compiler/nir/nir.h"
++
++struct pan_fs_prolog_key {
++   uint8_t clip_distance_array_size;
++};
++
++nir_shader *
++pan_nir_build_fs_prolog(const struct pan_fs_prolog_key *key,
++                        const nir_shader_compiler_options *options);

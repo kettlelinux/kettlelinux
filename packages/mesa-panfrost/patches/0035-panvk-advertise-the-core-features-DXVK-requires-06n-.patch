@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: 06n-arch <gennro2004@gmail.com>
+Date: Sun, 27 Sep 2026 14:43:52 -0500
+Subject: [PATCH 35/57] panvk: advertise the core features DXVK requires
+ (06n-arch hack)
+
+DXVK refuses any device without geometryShader, fillModeNonSolid and
+multiViewport. geometryShader is implemented now (compute emulation via
+libpoly); advertise the other two (with spec-minimum limits, including
+maxViewports = 16, which multiViewport requires) so DXVK starts. Also
+advertise depthBounds, without which DOOM (2016)'s Vulkan renderer
+refuses the device. This is for the x86_64 Mesa Steam's FEX runs games
+with on the Radxa Orion O6N (Mali-G720).
+
+What actually happens when a game uses them:
+- fillModeNonSolid: PanVK ignores polygonMode, so lines/points draw filled.
+- multiViewport: only viewport 0 and scissor 0 are set up.
+- depthBounds: Mali has no depth bounds test, so it always passes.
+  Games use it to skip work (e.g. lighting outside a light's depth
+  range), so that work is done and thrown away instead.
+
+Not for upstream: a local stopgap until PanVK has these.
+---
+ .../vulkan/panvk_vX_physical_device.c         | 19 +++++++++----------
+ 1 file changed, 9 insertions(+), 10 deletions(-)
+
+diff --git a/src/panfrost/vulkan/panvk_vX_physical_device.c b/src/panfrost/vulkan/panvk_vX_physical_device.c
+index 5759df11564..618430f3af7 100644
+--- a/src/panfrost/vulkan/panvk_vX_physical_device.c
++++ b/src/panfrost/vulkan/panvk_vX_physical_device.c
+@@ -315,12 +315,12 @@ panvk_per_arch(get_physical_device_features)(
+       .drawIndirectFirstInstance = true,
+       .depthClamp = true,
+       .depthBiasClamp = true,
+-      .fillModeNonSolid = false,
+-      .depthBounds = false,
++      .fillModeNonSolid = PAN_ARCH >= 10 /* 06n-arch DXVK hack, see commit */,
++      .depthBounds = true /* 06n-arch hack, see commit */,
+       .wideLines = true,
+       .largePoints = true,
+       .alphaToOne = false,
+-      .multiViewport = false,
++      .multiViewport = PAN_ARCH >= 10 /* 06n-arch DXVK hack, see commit */,
+       .samplerAnisotropy = true,
+       .textureCompressionETC2 = has_texture_compression_etc2(device),
+       .textureCompressionASTC_LDR = has_texture_compression_astc_ldr(device),
+@@ -922,12 +922,11 @@ panvk_per_arch(get_physical_device_properties)(
+       .maxTessellationControlTotalOutputComponents = 0,
+       .maxTessellationEvaluationInputComponents = 0,
+       .maxTessellationEvaluationOutputComponents = 0,
+-      /* Geometry shaders not supported. */
+-      .maxGeometryShaderInvocations = 32,
+-      .maxGeometryInputComponents = 128,
+-      .maxGeometryOutputComponents = 128,
+-      .maxGeometryOutputVertices = 1024,
+-      .maxGeometryTotalOutputComponents = 1024,
++      .maxGeometryShaderInvocations = PAN_ARCH >= 10 ? 32 : 0,
++      .maxGeometryInputComponents = PAN_ARCH >= 10 ? 128 : 0,
++      .maxGeometryOutputComponents = PAN_ARCH >= 10 ? 128 : 0,
++      .maxGeometryOutputVertices = PAN_ARCH >= 10 ? 1024 : 0,
++      .maxGeometryTotalOutputComponents = PAN_ARCH >= 10 ? 1024 : 0,
+       /* 32 vec4 varyings. */
+       .maxFragmentInputComponents = 128,
+       /* 8 render targets. */
+@@ -964,7 +963,7 @@ panvk_per_arch(get_physical_device_properties)(
+       .maxDrawIndirectCount = PAN_ARCH >= 10 ? UINT32_MAX : 1,
+       .maxSamplerLodBias = (float)INT16_MAX / 256.0f,
+       .maxSamplerAnisotropy = 16,
+-      .maxViewports = 1,
++      .maxViewports = PAN_ARCH >= 10 ? 16 : 1 /* 06n-arch DXVK hack, see commit */,
+       .maxViewportDimensions = {MAX_FRAMEBUFFER_DIMENSION, MAX_FRAMEBUFFER_DIMENSION},
+       .viewportBoundsRange = {-2.0f * MAX_FRAMEBUFFER_DIMENSION, 2.0f * MAX_FRAMEBUFFER_DIMENSION - 1.0f},
+       .viewportSubPixelBits = 0,

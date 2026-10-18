@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Faith Ekstrand <faith.ekstrand@collabora.com>
+Date: Fri, 7 Nov 2025 12:45:31 -0500
+Subject: [PATCH 03/57] panvk: Add geometry and tessellation binding
+
+We can't actually do anything with tessellation yet but having the bind
+points there makes easiert o sprinkle asserts around for when we do add
+it in the future.
+
+(cherry picked from commit 2bfac9d166e538c70d301fe869328368f8e04fad)
+---
+ src/panfrost/vulkan/panvk_cmd_draw.h          | 21 +++++++++++++++++++
+ .../vulkan/panvk_vX_nir_lower_descriptors.c   |  6 ++++++
+ src/panfrost/vulkan/panvk_vX_shader.c         | 21 +++++++++++++++++++
+ 3 files changed, 48 insertions(+)
+
+diff --git a/src/panfrost/vulkan/panvk_cmd_draw.h b/src/panfrost/vulkan/panvk_cmd_draw.h
+index ff34da3a52e..c7feb2be749 100644
+--- a/src/panfrost/vulkan/panvk_cmd_draw.h
++++ b/src/panfrost/vulkan/panvk_cmd_draw.h
+@@ -136,12 +136,18 @@ struct panvk_rendering_state {
+ enum panvk_cmd_graphics_dirty_state {
+    PANVK_CMD_GRAPHICS_DIRTY_BASE_INSTANCE,
+    PANVK_CMD_GRAPHICS_DIRTY_VS,
++   PANVK_CMD_GRAPHICS_DIRTY_TCS,
++   PANVK_CMD_GRAPHICS_DIRTY_TES,
++   PANVK_CMD_GRAPHICS_DIRTY_GS,
+    PANVK_CMD_GRAPHICS_DIRTY_FS,
+    PANVK_CMD_GRAPHICS_DIRTY_VB,
+    PANVK_CMD_GRAPHICS_DIRTY_OQ,
+    PANVK_CMD_GRAPHICS_DIRTY_DESC_STATE,
+    PANVK_CMD_GRAPHICS_DIRTY_RENDER_STATE,
+    PANVK_CMD_GRAPHICS_DIRTY_VS_PUSH_UNIFORMS,
++   PANVK_CMD_GRAPHICS_DIRTY_TCS_PUSH_UNIFORMS,
++   PANVK_CMD_GRAPHICS_DIRTY_TES_PUSH_UNIFORMS,
++   PANVK_CMD_GRAPHICS_DIRTY_GS_PUSH_UNIFORMS,
+    PANVK_CMD_GRAPHICS_DIRTY_FS_PUSH_UNIFORMS,
+    PANVK_CMD_GRAPHICS_DIRTY_IDVS,
+    PANVK_CMD_GRAPHICS_DIRTY_STATE_COUNT,
+@@ -181,6 +187,21 @@ struct panvk_cmd_graphics_state {
+       bool restart;
+    } idvs;
+ 
++   struct {
++      const struct panvk_shader *shader;
++      struct panvk_shader_desc_state desc;
++   } gs;
++
++   struct {
++      const struct panvk_shader *shader;
++      struct panvk_shader_desc_state desc;
++   } tes;
++
++   struct {
++      const struct panvk_shader *shader;
++      struct panvk_shader_desc_state desc;
++   } tcs;
++
+    struct {
+       const struct panvk_shader *shader;
+       struct panvk_shader_desc_state desc;
+diff --git a/src/panfrost/vulkan/panvk_vX_nir_lower_descriptors.c b/src/panfrost/vulkan/panvk_vX_nir_lower_descriptors.c
+index a5327ac9978..19b19942835 100644
+--- a/src/panfrost/vulkan/panvk_vX_nir_lower_descriptors.c
++++ b/src/panfrost/vulkan/panvk_vX_nir_lower_descriptors.c
+@@ -1195,6 +1195,12 @@ create_copy_table(nir_shader *nir, struct lower_desc_ctx *ctx)
+       /* Dummy sampler comes after the vertex attributes. */
+       dummy_sampler_idx = 16;
+       break;
++   case MESA_SHADER_TESS_CTRL:
++   case MESA_SHADER_TESS_EVAL:
++   case MESA_SHADER_GEOMETRY:
++      /* Dummy sampler comes first. */
++      dummy_sampler_idx = 0;
++      break;
+    case MESA_SHADER_FRAGMENT:
+       /* Dummy sampler comes after the varyings. */
+       dummy_sampler_idx = desc_info->num_varying_attr_descs;
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index 7f490edce74..b931753e8b6 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -2673,6 +2673,27 @@ panvk_cmd_bind_shader(struct panvk_cmd_buffer *cmd, const mesa_shader_stage stag
+          gfx_state_set_dirty(cmd, VS_PUSH_UNIFORMS);
+       }
+       break;
++   case MESA_SHADER_TESS_CTRL:
++      if (cmd->state.gfx.tcs.shader != shader) {
++         cmd->state.gfx.tcs.shader = shader;
++         gfx_state_set_dirty(cmd, TCS);
++         gfx_state_set_dirty(cmd, TCS_PUSH_UNIFORMS);
++      }
++      break;
++   case MESA_SHADER_TESS_EVAL:
++      if (cmd->state.gfx.tes.shader != shader) {
++         cmd->state.gfx.tes.shader = shader;
++         gfx_state_set_dirty(cmd, TES);
++         gfx_state_set_dirty(cmd, TES_PUSH_UNIFORMS);
++      }
++      break;
++   case MESA_SHADER_GEOMETRY:
++      if (cmd->state.gfx.gs.shader != shader) {
++         cmd->state.gfx.gs.shader = shader;
++         gfx_state_set_dirty(cmd, GS);
++         gfx_state_set_dirty(cmd, GS_PUSH_UNIFORMS);
++      }
++      break;
+    case MESA_SHADER_FRAGMENT:
+       if (cmd->state.gfx.fs.shader != shader) {
+          cmd->state.gfx.fs.shader = shader;

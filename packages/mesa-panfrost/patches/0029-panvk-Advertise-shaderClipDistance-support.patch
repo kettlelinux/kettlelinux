@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Gmeiner <cgmeiner@igalia.com>
+Date: Wed, 11 Mar 2026 17:09:20 +0100
+Subject: [PATCH 29/57] panvk: Advertise shaderClipDistance support
+
+Enable shaderClipDistance with up to 8 clip distances on v10+. The
+clip distance lowering is handled by the FS prolog at draw time, which
+then jumps to the main FS.
+
+Signed-off-by: Christian Gmeiner <cgmeiner@igalia.com>
+Reviewed-by: Olivia Lee <olivia.lee@collabora.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/40343>
+---
+ docs/relnotes/new_features.txt                 | 1 +
+ src/panfrost/vulkan/panvk_vX_physical_device.c | 6 +++---
+ 2 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/docs/relnotes/new_features.txt b/docs/relnotes/new_features.txt
+index 76a688932c3..2fa94be9b88 100644
+--- a/docs/relnotes/new_features.txt
++++ b/docs/relnotes/new_features.txt
+@@ -60,3 +60,4 @@ VK_KHR_shader_untyped_pointers on HK
+ VK_KHR_maintenance10 on HK
+ VK_KHR_shader_fma on HK
+ VK_EXT_primitive_restart_index on HK
++shaderClipDistance on panvk/v10+
+diff --git a/src/panfrost/vulkan/panvk_vX_physical_device.c b/src/panfrost/vulkan/panvk_vX_physical_device.c
+index 1069026d220..13ce9017789 100644
+--- a/src/panfrost/vulkan/panvk_vX_physical_device.c
++++ b/src/panfrost/vulkan/panvk_vX_physical_device.c
+@@ -343,7 +343,7 @@ panvk_per_arch(get_physical_device_features)(
+       .shaderSampledImageArrayDynamicIndexing = true,
+       .shaderStorageBufferArrayDynamicIndexing = true,
+       .shaderStorageImageArrayDynamicIndexing = true,
+-      .shaderClipDistance = false,
++      .shaderClipDistance = PAN_ARCH >= 10,
+       .shaderCullDistance = false,
+       .shaderFloat64 = false,
+       .shaderInt64 = true,
+@@ -1002,9 +1002,9 @@ panvk_per_arch(get_physical_device_properties)(
+          PAN_ARCH >= 10 && device->kmod.dev->props.gpu_can_query_timestamp,
+       .timestampPeriod =
+          PAN_ARCH >= 10 ? panvk_get_gpu_system_timestamp_period(device) : 0,
+-      .maxClipDistances = 0,
++      .maxClipDistances = PAN_ARCH >= 10 ? 8 : 0,
+       .maxCullDistances = 0,
+-      .maxCombinedClipAndCullDistances = 0,
++      .maxCombinedClipAndCullDistances = PAN_ARCH >= 10 ? 8 : 0,
+       .discreteQueuePriorities = 2,
+       .pointSizeRange = {pointSizeRangeMin, pointSizeRangeMax},
+       .lineWidthRange = {0.0, 7.9921875},

@@ -1,0 +1,164 @@
+# Mesa with Panfrost (GL) and PanVK (Vulkan) for Mali GPUs (the Radxa Orion O6N's Mali-G720,
+# Panthor), from upstream Mesa main with 06n-arch's patches (patches/, below). Two packages from
+# one tree, both installed on the aarch64 machine:
+#   mesa-panfrost      the system's Mesa (aarch64): GL/GLES/EGL/GBM and Vulkan for the desktop,
+#                      gamescope, Steam and native games, in place of Valve's Turnip-only
+#                      deckard-mesa-linux-aarch64
+#   fex-mesa-panfrost  x86_64 + i686 Mesa for the rootfs Steam's FEX runs x86 games in
+#                      (/usr/share/guestos/fex-mesa), in place of Valve's Adreno-only
+#                      deckard-mesa-linux-x86_64; linked against that rootfs's libraries
+#                      (deckard-mesa-linux-deps-x86_64: glibc 2.41, GCC 15, LLVM 20)
+#
+# Built by scripts/build-x86-packages.sh (_kettle_buildhost below), not build-packages.sh, in an
+# x86_64 Arch chroot pinned to the archive of 2025-07-15, whose glibc, GCC and LLVM are the FEX
+# rootfs's. The aarch64 driver is cross-compiled there against an aarch64 sysroot of Valve's
+# libraries (_kettle_sysroot): Panfrost's CL shaders need mesa_clc and LLVM with a libclc and
+# SPIR-V translator of the same version, which Valve's aarch64 repos don't have (LLVM 19, libclc
+# 17). Those tools run on the build machine; the aarch64 driver needs no LLVM itself.
+#
+# Mesa main at a pinned commit, not a release: DXVK needs PanVK features no release has.
+# patches/ (applied in order; from 06n-arch's pkgs/fex-mesa-panfrost, by the same author):
+#   0001-0018  geometry shaders, mesa!38401 (draft MR) ported onto _commit: GSes run as compute
+#              shaders (libpoly, as on Asahi)
+#   0019-0029  shaderClipDistance, mesa!40343 (open MR)
+#   0030-0034  shaderCullDistance, mesa!43156 (open MR), ported onto mesa!40343
+#   0035       advertise fillModeNonSolid, multiViewport and depthBounds so DXVK accepts the
+#              device (not implemented: ignored)
+#   0036       shader scratch (TLS) shared device-wide, not per command buffer (DXVK games held
+#              15 GB of TLS BOs)
+#   0037-0038  pass-through geometry shaders folded into the VS (PANVK_NO_GS_FOLD=1 turns it
+#              off); clip/cull info from the hardware VS
+#   0039-0046  VK_EXT_transform_feedback, mesa!43359 (open MR), rebased
+#   0047       robustImageAccess2 (vkd3d-proton needs it and 0039-0046 to create a device)
+#   0048-0049  0037 extended to GSes that emit up to 8 copies and to per-copy computations
+#              (UE4's cube-face and point light shadow GSes)
+#   0050       shared values not hoisted out of v12's unified IDVS blocks (DXVK VS spilling)
+#   0051       pipelines with tessellation shaders fail instead of crashing the compiler
+#   0052-0057  fixes: GS emulation on _commit, direct indexed GS draws, the tiler OOM handler's
+#              descriptors across command buffers, occlusion queries in suspended render passes
+pkgbase=mesa-panfrost
+pkgname=(mesa-panfrost fex-mesa-panfrost)
+_commit=63bb18ab73a19ec8125f51515b16b3f40ce6ca04
+pkgver=26.3.0_devel.20260927
+pkgrel=1
+arch=(aarch64)
+url='https://www.mesa3d.org/'
+license=(MIT)
+options=(!debug !lto !strip)  # makepkg's strip is the build machine's (x86_64); install strips
+# what scripts/build-x86-packages.sh builds in (an x86_64 chroot) and, for the aarch64 driver,
+# the sysroot it links against (Valve's aarch64 packages)
+_kettle_buildhost=x86_64
+_kettle_sysroot=(glibc gcc gcc-libs linux-api-headers libdrm wayland wayland-protocols libx11
+                 libxext libxfixes libxshmfence libxxf86vm libxrandr libxcb xorgproto expat
+                 zstd zlib libelf libglvnd libdisplay-info vulkan-icd-loader vulkan-headers)
+# x86_64 and i686 build dependencies, from the pinned Arch archive
+makedepends=(meson ninja python-mako python-yaml python-packaging python-ply bison flex glslang
+             spirv-tools spirv-llvm-translator libclc clang llvm lld libdrm libglvnd libx11
+             libxext libxfixes libxshmfence libxxf86vm libxrandr libxcb wayland
+             wayland-protocols xorgproto expat zstd elfutils zlib
+             lib32-glibc lib32-gcc-libs lib32-libdrm lib32-expat lib32-zstd lib32-zlib
+             lib32-libelf lib32-spirv-tools lib32-libx11 lib32-libxext lib32-libxfixes
+             lib32-libxshmfence lib32-libxxf86vm lib32-libxrandr lib32-libxcb lib32-wayland
+             lib32-libglvnd lib32-systemd)
+# wayland: only its wayland-scanner, run on the build machine for the aarch64 build. Meson wants
+# one at least as new as the target's libwayland-client (Valve's 1.26), and the chroot's (1.23.1)
+# must stay: the FEX rootfs links against that version.
+_wayland=1.26.0
+source=("https://gitlab.freedesktop.org/mesa/mesa/-/archive/$_commit/mesa-$_commit.tar.gz"
+        "https://gitlab.freedesktop.org/wayland/wayland/-/releases/$_wayland/downloads/wayland-$_wayland.tar.xz"
+        graphics_provider.json
+        aarch64.cross
+        i686.cross)
+sha256sums=('cfa73acdfeed0d9997609a29fa1d44ecaff4f2cb9755dfb8dbfbda7c05de2a4d'
+            '64176eaa46e4969903e286f8e5ef8331affc17fdf03ac9b58381d2b23162b7a3'
+            'SKIP'
+            'SKIP'
+            'SKIP')
+_src=mesa-$_commit
+_guest=/usr/share/guestos/fex-mesa
+
+prepare() {
+  cd $_src
+  local p
+  for p in "$startdir"/patches/*.patch; do
+    patch -p1 -N --fuzz=0 -i "$p"
+  done
+}
+
+_common=(
+  --prefix=/usr --sysconfdir=/etc --localstatedir=/var
+  --buildtype=release -D b_ndebug=true -D b_lto=false
+  -D gallium-drivers=panfrost,zink
+  -D vulkan-drivers=panfrost
+  -D platforms=x11,wayland
+  -D glvnd=enabled -D glx=dri -D egl=enabled -D gbm=enabled
+  -D gles1=disabled -D gles2=enabled
+  -D draw-use-llvm=false
+  -D video-codecs= -D gallium-va=disabled -D gallium-rusticl=false
+  -D vulkan-layers= -D tools=
+  -D valgrind=disabled -D libunwind=disabled -D lmsensors=disabled
+  -D android-libbacktrace=disabled -D microsoft-clc=disabled
+  -D html-docs=disabled -D build-tests=false
+)
+
+build() {
+  [[ $(uname -m) == x86_64 ]] || { error "build with scripts/build-x86-packages.sh"; return 1; }
+  # the tarball has no .git: name the commit in driverInfo
+  export MESA_GIT_SHA1_OVERRIDE=$_commit
+
+  # x86_64 for the FEX rootfs, and the tools the other two builds run: mesa_clc, vtn_bindgen2 and
+  # panfrost_compile (the only parts that need LLVM; the rootfs has the same LLVM 20)
+  meson setup build-x86_64 $_src "${_common[@]}" --libdir=lib -D llvm=enabled -D shared-llvm=enabled
+  meson compile -C build-x86_64
+  local tools
+  tools=$(realpath build-x86_64/src/compiler/clc):$(realpath build-x86_64/src/compiler/spirv)
+  tools+=:$(realpath build-x86_64/src/panfrost/clc)
+
+  # i686 for the rootfs's 32-bit games (/usr/lib32)
+  PATH="$tools:$PATH" meson setup build-i686 $_src "${_common[@]}" --libdir=lib32 \
+    --cross-file i686.cross -D llvm=disabled -D mesa-clc=system -D precomp-compiler=system
+  PATH="$tools:$PATH" meson compile -C build-i686
+
+  # the build machine's wayland-scanner for the aarch64 build (see _wayland). Mesa's meson takes
+  # its path from the build machine's wayland-scanner.pc, so that has to be one for it too.
+  meson setup build-wayland-scanner wayland-$_wayland --buildtype=release \
+    -D libraries=false -D scanner=true -D tests=false -D documentation=false -D dtd_validation=false
+  meson compile -C build-wayland-scanner
+  local ws; ws=$(realpath build-wayland-scanner/src/wayland-scanner)
+  mkdir -p wayland-scanner-pc
+  printf 'wayland_scanner=%s\npkgdatadir=/usr/share/wayland\n\nName: Wayland Scanner\nDescription: %s\nVersion: %s\n' \
+    "$ws" "wayland-scanner for the aarch64 build" "$_wayland" >wayland-scanner-pc/wayland-scanner.pc
+  printf "[binaries]\nwayland-scanner = '%s'\n\n[properties]\npkg_config_libdir = ['%s', '/usr/lib/pkgconfig', '/usr/share/pkgconfig']\n" \
+    "$ws" "$PWD/wayland-scanner-pc" >aarch64.native
+
+  # aarch64, the system's Mesa: against the sysroot of Valve's aarch64 libraries. Without
+  # makepkg's flags, which are x86_64's (meson would give them to the aarch64 compiler)
+  PATH="$tools:$PATH" env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
+    meson setup build-aarch64 $_src "${_common[@]}" --libdir=lib \
+    --cross-file aarch64.cross --native-file aarch64.native \
+    -D llvm=disabled -D mesa-clc=system -D precomp-compiler=system
+  PATH="$tools:$PATH" meson compile -C build-aarch64
+}
+
+package_mesa-panfrost() {
+  pkgdesc='Mesa with Panfrost (GL) and PanVK (Vulkan) for Mali GPUs, from upstream main with 06n-arch patches'
+  depends=(glibc gcc-libs systemd-libs libdrm wayland libx11 libxcb libxext libxfixes libxshmfence libxxf86vm
+           libxrandr expat zstd zlib libelf libglvnd libdisplay-info vulkan-icd-loader)
+  provides=(mesa mesa-libgl opengl-driver vulkan-driver)
+  conflicts=(mesa mesa-libgl deckard-mesa-linux-aarch64)
+  meson install -C build-aarch64 --destdir "$pkgdir" --no-rebuild --strip
+  install -Dm644 $_src/docs/license.rst "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+package_fex-mesa-panfrost() {
+  pkgdesc='Mesa with Panfrost/PanVK for the x86_64 rootfs of Steam'"'"'s FEX (in place of Valve'"'"'s Adreno-only build)'
+  depends=(deckard-mesa-linux-deps-x86_64)
+  provides=(deckard-mesa-linux-x86_64)
+  conflicts=(deckard-mesa-linux-x86_64)
+  meson install -C build-i686 --destdir "$pkgdir$_guest" --no-rebuild --strip
+  meson install -C build-x86_64 --destdir "$pkgdir$_guest" --no-rebuild --strip
+  rm -rf "$pkgdir$_guest"/usr/include
+  # how pressure-vessel finds this Mesa (Valve's FEX compat tool reads it from here)
+  install -Dm644 graphics_provider.json "$pkgdir$_guest/graphics_provider.json"
+  install -Dm644 $_src/docs/license.rst "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

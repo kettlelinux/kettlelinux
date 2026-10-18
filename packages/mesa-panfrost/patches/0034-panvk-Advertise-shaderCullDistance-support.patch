@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Gmeiner <cgmeiner@igalia.com>
+Date: Mon, 20 Jul 2026 16:47:03 +0200
+Subject: [PATCH 34/57] panvk: Advertise shaderCullDistance support
+
+Enable shaderCullDistance and maxCullDistances on v10+. Cull distances
+share the combined clip and cull budget already reported.
+
+Signed-off-by: Christian Gmeiner <cgmeiner@igalia.com>
+---
+ src/panfrost/vulkan/panvk_vX_physical_device.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/panfrost/vulkan/panvk_vX_physical_device.c b/src/panfrost/vulkan/panvk_vX_physical_device.c
+index 13ce9017789..5759df11564 100644
+--- a/src/panfrost/vulkan/panvk_vX_physical_device.c
++++ b/src/panfrost/vulkan/panvk_vX_physical_device.c
+@@ -344,7 +344,7 @@ panvk_per_arch(get_physical_device_features)(
+       .shaderStorageBufferArrayDynamicIndexing = true,
+       .shaderStorageImageArrayDynamicIndexing = true,
+       .shaderClipDistance = PAN_ARCH >= 10,
+-      .shaderCullDistance = false,
++      .shaderCullDistance = PAN_ARCH >= 10,
+       .shaderFloat64 = false,
+       .shaderInt64 = true,
+       .shaderInt16 = true,
+@@ -1003,7 +1003,7 @@ panvk_per_arch(get_physical_device_properties)(
+       .timestampPeriod =
+          PAN_ARCH >= 10 ? panvk_get_gpu_system_timestamp_period(device) : 0,
+       .maxClipDistances = PAN_ARCH >= 10 ? 8 : 0,
+-      .maxCullDistances = 0,
++      .maxCullDistances = PAN_ARCH >= 10 ? 8 : 0,
+       .maxCombinedClipAndCullDistances = PAN_ARCH >= 10 ? 8 : 0,
+       .discreteQueuePriorities = 2,
+       .pointSizeRange = {pointSizeRangeMin, pointSizeRangeMax},

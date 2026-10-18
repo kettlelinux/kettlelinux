@@ -1,0 +1,231 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Gmeiner <cgmeiner@igalia.com>
+Date: Wed, 23 Sep 2026 21:18:21 +0200
+Subject: [PATCH 26/57] panfrost: Let a shader jump to another shader when it
+ ends
+
+A prolog runs in front of an existing shader. Copying both binaries
+into one breaks the PC-relative inline constant pool, so let the
+backends end the shader with an absolute jump to the next shader
+instead. The target address comes from a FAU word, so the same prolog
+binary works in front of any shader. Each shader keeps its own pool.
+
+Helper invocations stay alive, as the next shader may need them for
+derivatives.
+
+Signed-off-by: Christian Gmeiner <cgmeiner@igalia.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/40343>
+---
+ .../compiler/bifrost/bi_helper_invocations.c  | 14 +++++--
+ src/panfrost/compiler/bifrost/compiler.h      |  2 +-
+ .../compiler/bifrost/valhall/va_insert_flow.c |  2 +-
+ .../compiler/bifrost/valhall/va_pack.c        | 26 ++++++++++++
+ src/panfrost/compiler/kraid/compile.rs        |  3 ++
+ src/panfrost/compiler/kraid/lib.rs            |  1 +
+ .../compiler/kraid/lower_end_to_jump.rs       | 40 +++++++++++++++++++
+ src/panfrost/compiler/pan_compiler.h          |  2 +
+ 8 files changed, 85 insertions(+), 5 deletions(-)
+ create mode 100644 src/panfrost/compiler/kraid/lower_end_to_jump.rs
+
+diff --git a/src/panfrost/compiler/bifrost/bi_helper_invocations.c b/src/panfrost/compiler/bifrost/bi_helper_invocations.c
+index e7b32aecffe..3751e1cd83e 100644
+--- a/src/panfrost/compiler/bifrost/bi_helper_invocations.c
++++ b/src/panfrost/compiler/bifrost/bi_helper_invocations.c
+@@ -142,8 +142,12 @@ bi_block_uses_helpers(bi_block *block)
+ }
+ 
+ bool
+-bi_block_terminates_helpers(bi_block *block)
++bi_block_terminates_helpers(bi_context *ctx, bi_block *block)
+ {
++   /* The shader we jump to at the end may need helpers */
++   if (ctx->inputs->next_shader_fau && bi_num_successors(block) == 0)
++      return false;
++
+    /* Can't terminate if a successor needs helpers */
+    bi_foreach_successor(block, succ) {
+       if (succ->pass_flags & 1)
+@@ -178,6 +182,8 @@ bi_analyze_helper_terminate(bi_context *ctx)
+    if (ctx->stage != MESA_SHADER_FRAGMENT || ctx->inputs->is_blend)
+       return;
+ 
++   assert(!ctx->inputs->next_shader_fau || ctx->arch >= 9);
++
+    /* Clear flags */
+    bi_foreach_block(ctx, block)
+       block->pass_flags = 0;
+@@ -187,7 +193,9 @@ bi_analyze_helper_terminate(bi_context *ctx)
+     * if the (unique) last block uses helpers, only that block is tested.
+     */
+    bi_foreach_block_rev(ctx, block) {
+-      if (block->pass_flags == 0 && bi_block_uses_helpers(block))
++      if (block->pass_flags == 0 &&
++          (bi_block_uses_helpers(block) ||
++           !bi_block_terminates_helpers(ctx, block)))
+          bi_propagate_pass_flag(block);
+    }
+ }
+@@ -201,7 +209,7 @@ bi_mark_clauses_td(bi_context *ctx)
+    /* Finally, mark clauses requiring helpers */
+    bi_foreach_block(ctx, block) {
+       /* At the end, there are helpers iff we don't terminate */
+-      bool helpers = !bi_block_terminates_helpers(block);
++      bool helpers = !bi_block_terminates_helpers(ctx, block);
+ 
+       bi_foreach_clause_in_block_rev(block, clause) {
+          bi_foreach_instr_in_clause_rev(block, clause, I) {
+diff --git a/src/panfrost/compiler/bifrost/compiler.h b/src/panfrost/compiler/bifrost/compiler.h
+index 0c82eceb5dd..05995854d7f 100644
+--- a/src/panfrost/compiler/bifrost/compiler.h
++++ b/src/panfrost/compiler/bifrost/compiler.h
+@@ -1648,7 +1648,7 @@ void bi_print_shader(bi_context *ctx, FILE *fp);
+ /* BIR passes */
+ 
+ bool bi_instr_uses_helpers(bi_instr *I);
+-bool bi_block_terminates_helpers(bi_block *block);
++bool bi_block_terminates_helpers(bi_context *ctx, bi_block *block);
+ void bi_analyze_helper_terminate(bi_context *ctx);
+ void bi_mark_clauses_td(bi_context *ctx);
+ 
+diff --git a/src/panfrost/compiler/bifrost/valhall/va_insert_flow.c b/src/panfrost/compiler/bifrost/valhall/va_insert_flow.c
+index b377161586c..d2611fc5d5d 100644
+--- a/src/panfrost/compiler/bifrost/valhall/va_insert_flow.c
++++ b/src/panfrost/compiler/bifrost/valhall/va_insert_flow.c
+@@ -469,7 +469,7 @@ va_insert_flow_control_nops(bi_context *ctx)
+ 
+       /* Terminate helpers after the last use */
+       if (ctx->stage == MESA_SHADER_FRAGMENT && !ctx->inputs->is_blend &&
+-          block->pass_flags && bi_block_terminates_helpers(block)) {
++          block->pass_flags && bi_block_terminates_helpers(ctx, block)) {
+ 
+          bi_foreach_instr_in_block_safe_rev(block, I) {
+             if (bi_instr_uses_helpers(I)) {
+diff --git a/src/panfrost/compiler/bifrost/valhall/va_pack.c b/src/panfrost/compiler/bifrost/valhall/va_pack.c
+index 3713bcfff50..50ad9c61787 100644
+--- a/src/panfrost/compiler/bifrost/valhall/va_pack.c
++++ b/src/panfrost/compiler/bifrost/valhall/va_pack.c
+@@ -1204,6 +1204,29 @@ va_lower_blend(bi_context *ctx)
+    }
+ }
+ 
++/*
++ * Instead of ending the shader, jump to the shader whose address is in the
++ * next_shader_fau word, after waiting for everything END would have waited
++ * for.
++ */
++static void
++va_lower_end_to_jump(bi_context *ctx)
++{
++   const unsigned word = ctx->inputs->next_shader_fau;
++   const bi_index target = bi_fau(BIR_FAU_UNIFORM | (word >> 1), word & 1);
++
++   bi_foreach_instr_global_safe(ctx, I) {
++      if (I->flow != VA_FLOW_END)
++         continue;
++
++      assert(I->op != BI_OPCODE_BLEND);
++      I->flow = VA_FLOW_WAIT0126;
++
++      bi_builder b = bi_init_builder(ctx, bi_after_instr(I));
++      bi_branchzi(&b, va_zero_lut(), target, BI_CMPF_EQ);
++   }
++}
++
+ void
+ bi_pack_valhall(bi_context *ctx, struct util_dynarray *emission)
+ {
+@@ -1215,6 +1238,9 @@ bi_pack_valhall(bi_context *ctx, struct util_dynarray *emission)
+    if (ctx->stage == MESA_SHADER_FRAGMENT && !ctx->inputs->is_blend)
+       va_lower_blend(ctx);
+ 
++   if (ctx->inputs->next_shader_fau)
++      va_lower_end_to_jump(ctx);
++
+    bool has_pool = false;
+    unsigned num_instrs = 0;
+ 
+diff --git a/src/panfrost/compiler/kraid/compile.rs b/src/panfrost/compiler/kraid/compile.rs
+index 20128287bc3..6fbfbd719d0 100644
+--- a/src/panfrost/compiler/kraid/compile.rs
++++ b/src/panfrost/compiler/kraid/compile.rs
+@@ -305,6 +305,9 @@ pub extern "C" fn kraid_compile_nir(
+     pass!(s.insert_required_waits());
+     pass!(s.mark_reconvergence());
+     pass!(s.opt_flow());
++    if inputs.next_shader_fau != 0 {
++        pass!(s.lower_end_to_jump(inputs.next_shader_fau));
++    }
+ 
+     let stats = if !s.is_empty() {
+         let mut stats = s.get_stats();
+diff --git a/src/panfrost/compiler/kraid/lib.rs b/src/panfrost/compiler/kraid/lib.rs
+index 33801b6b4ea..459dbf23fd9 100644
+--- a/src/panfrost/compiler/kraid/lib.rs
++++ b/src/panfrost/compiler/kraid/lib.rs
+@@ -21,6 +21,7 @@ mod legalize_src_swizzles;
+ mod liveness;
+ mod lower_blend_call;
+ mod lower_copy;
++mod lower_end_to_jump;
+ mod lower_mkvec_swz;
+ mod message_slots;
+ mod model;
+diff --git a/src/panfrost/compiler/kraid/lower_end_to_jump.rs b/src/panfrost/compiler/kraid/lower_end_to_jump.rs
+new file mode 100644
+index 00000000000..d0ab2b92f9f
+--- /dev/null
++++ b/src/panfrost/compiler/kraid/lower_end_to_jump.rs
+@@ -0,0 +1,40 @@
++// Copyright © 2026 Google, Inc.
++// SPDX-License-Identifier: MIT
++
++use crate::builder::{Builder, InstrBuilder};
++use crate::flow::FlowWaitBit;
++use crate::ir::*;
++use crate::ops::*;
++
++impl Shader<'_> {
++    /// Instead of ending the shader, jump to the shader whose address is in
++    /// the 32-bit FAU word `fau_word`, after waiting for everything END would
++    /// have waited for.  This must run after `opt_flow`.
++    pub fn lower_end_to_jump(&mut self, fau_word: u16) {
++        let model = self.model;
++        self.map_instrs(|mut instr, _| {
++            if !instr.flow.take_end_shader() {
++                return [instr].into();
++            }
++
++            for bit in [
++                FlowWaitBit::Slot0,
++                FlowWaitBit::Slot1,
++                FlowWaitBit::Slot2,
++                FlowWaitBit::ZS,
++            ] {
++                instr.flow.set_wait_bit(bit);
++            }
++
++            let mut b = InstrBuilder::new(model);
++            b.push_instr(instr);
++            b.push_op(OpJump {
++                not: true,
++                cond: 0u32.into(),
++                combine_op: BranchCombineOp::None,
++                address: FAURef::user_i32(fau_word).into(),
++            });
++            b.into_mapped()
++        });
++    }
++}
+diff --git a/src/panfrost/compiler/pan_compiler.h b/src/panfrost/compiler/pan_compiler.h
+index ec9fd12afea..ec0b5eff442 100644
+--- a/src/panfrost/compiler/pan_compiler.h
++++ b/src/panfrost/compiler/pan_compiler.h
+@@ -37,6 +37,8 @@ struct pan_compile_inputs {
+    bool is_blend, is_blit;
+    bool skip_atest;
+    uint64_t preserved_regs;
++   /* 32-bit FAU word holding the address to jump to at the end, 0 if none */
++   uint16_t next_shader_fau;
+    bool no_idvs;
+    uint32_t view_mask;
+ 

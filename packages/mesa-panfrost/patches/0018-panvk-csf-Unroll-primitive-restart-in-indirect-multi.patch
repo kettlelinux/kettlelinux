@@ -1,0 +1,115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Faith Ekstrand <faith.ekstrand@collabora.com>
+Date: Wed, 26 Nov 2025 11:11:17 -0500
+Subject: [PATCH 18/57] panvk/csf: Unroll primitive restart in indirect
+ multi-draws
+
+From mesa!38401 (draft geometry shader support), originally titled "restart multi-draw".
+(cherry picked from commit 6967bd0e82513d8d4f2769b6199703170d09eef2)
+---
+ src/panfrost/libpan/geometry.cl             | 36 +++++++++++++++++++++
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c | 11 +++++--
+ 2 files changed, 44 insertions(+), 3 deletions(-)
+
+diff --git a/src/panfrost/libpan/geometry.cl b/src/panfrost/libpan/geometry.cl
+index 7229dee24cb..2cc02c84df9 100644
+--- a/src/panfrost/libpan/geometry.cl
++++ b/src/panfrost/libpan/geometry.cl
+@@ -7,10 +7,42 @@
+ #include "poly/geometry.h"
+ 
+ #if PAN_ARCH >= 10
++static bool
++panlib_get_draws(global uint32_t **out_draw,
++                 uint32_t out_draw_stride_dw,
++                 constant uint **in_draw,
++                 uint32_t in_draw_stride_dw,
++                 constant uint *in_draw_count,
++                 enum mesa_prim mode)
++{
++   uint per_prim = mesa_vertices_per_prim(mode);
++
++   *in_draw += cl_group_id.x * in_draw_stride_dw;
++   *out_draw += cl_group_id.x * out_draw_stride_dw;
++
++   bool skip_draw = in_draw_count && cl_group_id.x >= *in_draw_count;
++
++   /* If we don't have enough vertices/indices for a complete prim, skip */
++   if (in_draw[0] < per_prim)
++      skip_draw = true;
++
++   if (skip_draw) {
++      if (cl_local_id.x == 0) {
++         for (uint i = 0; i < out_draw_stride_dw; i++)
++            out_draw[i] = 0;
++      }
++      return false;
++   } else {
++      return true;
++   }
++}
++
+ KERNEL(16)
+ panlib_unroll_restart(global uint32_t *out_draw,
+                       global struct poly_heap *heap,
+                       constant uint *in_draw,
++                      uint32_t in_draw_stride_dw,
++                      constant uint *in_draw_count,
+                       uint64_t index_buffer,
+                       uint32_t index_buffer_range_el,
+                       uint32_t index_size_log2,
+@@ -21,6 +53,10 @@ panlib_unroll_restart(global uint32_t *out_draw,
+    const uint32_t index_size_B = 1 << index_size_log2;
+    const enum mesa_prim mode = poly_uncompact_prim(mode__11);
+ 
++   if (!panlib_get_draws(&out_draw, 5, &in_draw, in_draw_stride_dw,
++                         in_draw_count, mode))
++      return;
++
+    poly_unroll_restart(out_draw, heap, in_draw, index_buffer,
+                        index_buffer_range_el, index_size_B, restart_index,
+                        flatshade_first, mode, NULL);
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index a6fd55d6b53..de0ae2fcd3c 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -3396,8 +3396,9 @@ unroll_restart(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+       draw.indirect.stride = 0;
+    }
+ 
++   uint32_t max_draws = draw.indirect.draw_count;
+    struct pan_ptr indirect = panvk_cmd_alloc_dev_mem(
+-      cmdbuf, desc, sizeof(VkDrawIndexedIndirectCommand), 4);
++      cmdbuf, desc, max_draws * sizeof(VkDrawIndexedIndirectCommand), 4);
+    if (!indirect.gpu)
+       return (struct panvk_draw_info) { .vertex.count = 0 };
+ 
+@@ -3408,6 +3409,8 @@ unroll_restart(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+       .out_draw = indirect.gpu,
+       .heap = dev->poly_heap.state_addr,
+       .in_draw = draw.indirect.buffer_dev_addr,
++      .in_draw_stride_dw = draw.indirect.stride / 4,
++      .in_draw_count = draw.indirect.count_buffer_dev_addr,
+       .index_buffer = draw.index.buffer_dev_addr,
+       .index_buffer_range_el =
+          draw.index.buffer_size / draw.index.index_size,
+@@ -3418,7 +3421,7 @@ unroll_restart(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+    };
+ 
+    struct panvk_precomp_ctx ctx = panvk_per_arch(precomp_cs)(cmdbuf);
+-   panlib_unroll_restart_struct(&ctx, panlib_1d(1),
++   panlib_unroll_restart_struct(&ctx, panlib_1d(max_draws),
+                                 PANLIB_BARRIER_CSF_WAIT, unroll,
+                                 poly_compact_prim(draw.prim));
+ 
+@@ -3427,7 +3430,9 @@ unroll_restart(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+       .index.buffer_dev_addr = dev->poly_heap_buffer->addr.dev,
+       .index.buffer_size = dev->poly_heap_buffer->bo->size,
+       .indirect.buffer_dev_addr = indirect.gpu,
+-      .indirect.draw_count = 1,
++      .indirect.stride = sizeof(VkDrawIndexedIndirectCommand),
++      .indirect.draw_count = draw.indirect.draw_count,
++      .indirect.count_buffer_dev_addr = draw.indirect.count_buffer_dev_addr,
+       .prim = u_decomposed_prim(draw.prim),
+       .need_cs_sync = true,
+    };

@@ -1,0 +1,216 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Faith Ekstrand <faith.ekstrand@collabora.com>
+Date: Tue, 18 Nov 2025 11:48:06 -0500
+Subject: [PATCH 07/57] panvk: Rework VS variant helpers
+
+panvk_shader_hw_variant() doesn't make any sense for anything other than
+vertex shaders as fragment shaders already only have one variant and
+geometry and tessellation shaders don't have a hardware variant at all.
+Instead, add two new helpers, one for HW and one for SW like we did with
+GS and use the HW one everywhere.
+
+(cherry picked from commit 73c742651230b6ec71007965f03331b303601511)
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c | 14 ++++++------
+ src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c  | 24 +++++++++++----------
+ src/panfrost/vulkan/panvk_shader.h          | 13 +++++++----
+ 3 files changed, 29 insertions(+), 22 deletions(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index 91281ed53eb..19524ab4bcb 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -554,7 +554,7 @@ emit_varying_descs(const struct panvk_cmd_buffer *cmdbuf,
+                    struct mali_attribute_packed *descs)
+ {
+    const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    const struct panvk_shader_variant *fs =
+       panvk_shader_only_variant(get_fs(cmdbuf));
+ 
+@@ -1159,7 +1159,7 @@ prepare_tiler_primitive_size(struct panvk_cmd_buffer *cmdbuf,
+ #if PAN_ARCH < 13
+    case MESA_PRIM_POINTS: {
+       const struct panvk_shader_variant *vs =
+-         panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++         panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+ 
+       if (vs->info.vs.writes_point_size)
+          return;
+@@ -2882,7 +2882,7 @@ set_tiler_idvs_flags(struct cs_builder *b, struct panvk_cmd_buffer *cmdbuf,
+                      const struct panvk_draw_info *draw)
+ {
+    const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    const struct panvk_shader_variant *fs =
+       panvk_shader_only_variant(get_fs(cmdbuf));
+    const struct vk_dynamic_graphics_state *dyns =
+@@ -2965,7 +2965,7 @@ prepare_draw(struct panvk_cmd_buffer *cmdbuf,
+              const struct panvk_draw_info *draw)
+ {
+    const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    const struct panvk_shader_variant *fs =
+       panvk_shader_only_variant(get_fs(cmdbuf));
+    ASSERTED bool idvs = vs->info.vs.idvs;
+@@ -3415,7 +3415,7 @@ launch_indirect_draw(struct panvk_cmd_buffer *cmdbuf,
+    const struct cs_tracing_ctx *tracing_ctx =
+       &cmdbuf->state.cs[PANVK_SUBQUEUE_VERTEX_TILER].tracing;
+    const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    struct cs_builder *b =
+       panvk_get_cs_builder(cmdbuf, PANVK_SUBQUEUE_VERTEX_TILER);
+ 
+@@ -3583,7 +3583,7 @@ static void
+ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+ {
+    const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    VkResult result;
+ 
+    /* If there's no vertex shader, we can skip the draw. */
+@@ -5019,7 +5019,7 @@ panvk_per_arch(cmd_draw_fullscreen)(struct vk_command_buffer *cmd,
+       fs_required(&cmdbuf->state.gfx, &cmdbuf->vk.dynamic_graphics_state);
+    struct vk_rasterization_state rs = cmdbuf->vk.dynamic_graphics_state.rs;
+    const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    const struct panvk_shader_variant *fs =
+       panvk_shader_only_variant(get_fs(cmdbuf));
+    const struct panvk_shader_desc_info *vs_desc_info =
+diff --git a/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c
+index 613a342c6a1..71f20b65035 100644
+--- a/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c
+@@ -413,7 +413,7 @@ panvk_draw_prepare_varyings(struct panvk_cmd_buffer *cmdbuf,
+ {
+    struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
+    const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    const struct panvk_shader_link *link = &cmdbuf->state.gfx.link;
+    struct pan_ptr bufs = panvk_cmd_alloc_desc_array(
+       cmdbuf, PANVK_VARY_BUF_MAX + 1, ATTRIBUTE_BUFFER);
+@@ -623,7 +623,7 @@ panvk_draw_prepare_vs_attribs(struct panvk_cmd_buffer *cmdbuf,
+ {
+    const struct panvk_shader *vs = cmdbuf->state.gfx.vs.shader;
+    const struct panvk_shader_variant *vs_variant =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    const struct vk_dynamic_graphics_state *dyns =
+       &cmdbuf->vk.dynamic_graphics_state;
+    const struct vk_vertex_input_state *vi = dyns->vi;
+@@ -807,7 +807,7 @@ panvk_emit_vertex_dcd(struct panvk_cmd_buffer *cmdbuf,
+                       struct mali_draw_packed *dcd)
+ {
+    const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    const struct panvk_shader_desc_state *vs_desc_state =
+       &cmdbuf->state.gfx.vs.desc;
+ 
+@@ -894,7 +894,7 @@ panvk_emit_tiler_primitive(struct panvk_cmd_buffer *cmdbuf,
+                            struct mali_primitive_packed *prim)
+ {
+    const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    const struct panvk_shader_variant *fs =
+       panvk_shader_only_variant(get_fs(cmdbuf));
+    const struct vk_dynamic_graphics_state *dyns =
+@@ -954,7 +954,7 @@ panvk_emit_tiler_primitive_size(struct panvk_cmd_buffer *cmdbuf,
+                                 struct mali_primitive_size_packed *primsz)
+ {
+    const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    const bool writes_point_size =
+       vs->info.vs.writes_point_size && draw->info.prim == MESA_PRIM_POINTS;
+ 
+@@ -1206,7 +1206,7 @@ panvk_cmd_prepare_draw_link_shaders(struct panvk_cmd_buffer *cmd)
+       return VK_SUCCESS;
+ 
+    const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmd->state.gfx.vs.shader);
++      panvk_hw_vs_variant(cmd->state.gfx.vs.shader);
+    const struct panvk_shader_variant *fs =
+       panvk_shader_only_variant(get_fs(cmd));
+ 
+@@ -1225,7 +1225,7 @@ prepare_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_data *draw)
+ {
+    struct panvk_batch *batch = cmdbuf->cur_batch;
+    const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    struct panvk_shader_desc_state *vs_desc_state = &cmdbuf->state.gfx.vs.desc;
+    struct panvk_shader_desc_state *fs_desc_state = &cmdbuf->state.gfx.fs.desc;
+    struct panvk_descriptor_state *desc_state = &cmdbuf->state.gfx.desc_state;
+@@ -1386,7 +1386,7 @@ prepare_draw_layer(struct panvk_cmd_buffer *cmdbuf,
+                    struct panvk_draw_data *draw, uint32_t layer)
+ {
+    const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    const struct panvk_shader_variant *fs =
+       panvk_shader_only_variant(get_fs(cmdbuf));
+    VkResult result;
+@@ -1448,7 +1448,8 @@ prepare_draw_layer(struct panvk_cmd_buffer *cmdbuf,
+ static void
+ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_data *draw)
+ {
+-   const struct panvk_shader_variant *vs = panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++   const struct panvk_shader_variant *vs =
++      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    VkResult result;
+ 
+    /* If there's no vertex shader, we can skip the draw. */
+@@ -1519,7 +1520,8 @@ static void
+ panvk_cmd_draw_indirect(struct panvk_cmd_buffer *cmdbuf,
+                         struct panvk_draw_data *draw)
+ {
+-   const struct panvk_shader_variant *vs = panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++   const struct panvk_shader_variant *vs =
++      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    VkResult result;
+ 
+    /* If there's no vertex shader, we can skip the draw. */
+@@ -1752,7 +1754,7 @@ padded_vertex_count(struct panvk_cmd_buffer *cmdbuf, uint32_t vertex_count,
+       return vertex_count;
+ 
+    const struct panvk_shader_variant *vs =
+-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    bool idvs = vs->info.vs.idvs;
+ 
+    /* Index-Driven Vertex Shading requires different instances to
+diff --git a/src/panfrost/vulkan/panvk_shader.h b/src/panfrost/vulkan/panvk_shader.h
+index 91dddbf449a..18d2a266b05 100644
+--- a/src/panfrost/vulkan/panvk_shader.h
++++ b/src/panfrost/vulkan/panvk_shader.h
+@@ -562,12 +562,17 @@ panvk_shader_only_variant(const struct panvk_shader *shader)
+ }
+ 
+ static const struct panvk_shader_variant *
+-panvk_shader_hw_variant(const struct panvk_shader *shader)
++panvk_hw_vs_variant(const struct panvk_shader *shader)
+ {
+-   if (!shader)
+-      return NULL;
++   assert(shader->vk.stage == MESA_SHADER_VERTEX);
++   return &shader->variants[PANVK_VS_VARIANT_HW];
++}
+ 
+-   return &shader->variants[0];
++static const struct panvk_shader_variant *
++panvk_sw_vs_variant(const struct panvk_shader *shader)
++{
++   assert(shader->vk.stage == MESA_SHADER_VERTEX);
++   return &shader->variants[PANVK_VS_VARIANT_SW];
+ }
+ 
+ static const struct panvk_shader_variant *

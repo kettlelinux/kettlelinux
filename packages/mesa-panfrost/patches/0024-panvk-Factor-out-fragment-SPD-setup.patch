@@ -1,0 +1,167 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Gmeiner <cgmeiner@igalia.com>
+Date: Wed, 15 Jul 2026 22:56:28 +0200
+Subject: [PATCH 24/57] panvk: Factor out fragment SPD setup
+
+The clip prolog linking code needs to fill the same fragment shader
+program descriptor fields as panvk_shader_upload(). Move them into a
+helper so there is only one place that knows these fields.
+
+The vertex_warp_limit branch in the remaining non-fragment path was
+unreachable, the surrounding block already excludes vertex shaders.
+Drop it.
+
+Signed-off-by: Christian Gmeiner <cgmeiner@igalia.com>
+Reviewed-by: Olivia Lee <olivia.lee@collabora.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/40343>
+---
+ src/panfrost/vulkan/panvk_shader.h    |  9 ++++
+ src/panfrost/vulkan/panvk_vX_shader.c | 62 ++++++++++++++++-----------
+ 2 files changed, 45 insertions(+), 26 deletions(-)
+
+diff --git a/src/panfrost/vulkan/panvk_shader.h b/src/panfrost/vulkan/panvk_shader.h
+index 2a52ab14e9f..319d0b934bb 100644
+--- a/src/panfrost/vulkan/panvk_shader.h
++++ b/src/panfrost/vulkan/panvk_shader.h
+@@ -636,6 +636,15 @@ panvk_shader_link_cleanup(struct panvk_shader_link *link)
+ }
+ #endif
+ 
++#if PAN_ARCH >= 9
++struct MALI_SHADER_PROGRAM;
++
++void panvk_per_arch(prepare_fs_spd)(const struct pan_shader_info *info,
++                                    uint64_t binary, unsigned work_reg_count,
++                                    uint64_t preload,
++                                    struct MALI_SHADER_PROGRAM *cfg);
++#endif
++
+ bool panvk_per_arch(nir_lower_input_attachment_loads)(
+    nir_shader *nir,
+    const struct vk_graphics_pipeline_state *state,
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index 6045ba6184e..510f4aa6da1 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -1178,10 +1178,10 @@ panvk_compile_nir(struct panvk_device *dev, nir_shader *nir,
+ 
+ #if PAN_ARCH >= 9
+ static enum mali_flush_to_zero_mode
+-shader_ftz_mode(struct panvk_shader_variant *shader)
++shader_ftz_mode(const struct pan_shader_info *info)
+ {
+-   if (shader->info.ftz_fp32) {
+-      if (shader->info.ftz_fp16)
++   if (info->ftz_fp32) {
++      if (info->ftz_fp16)
+          return MALI_FLUSH_TO_ZERO_MODE_ALWAYS;
+       else
+          return MALI_FLUSH_TO_ZERO_MODE_DX11;
+@@ -1189,10 +1189,25 @@ shader_ftz_mode(struct panvk_shader_variant *shader)
+       /* We don't have a "flush FP16, preserve FP32" mode, but APIs
+        * should not be able to generate that.
+        */
+-      assert(!shader->info.ftz_fp16 && !shader->info.ftz_fp32);
++      assert(!info->ftz_fp16 && !info->ftz_fp32);
+       return MALI_FLUSH_TO_ZERO_MODE_PRESERVE_SUBNORMALS;
+    }
+ }
++
++void
++panvk_per_arch(prepare_fs_spd)(const struct pan_shader_info *info,
++                               uint64_t binary, unsigned work_reg_count,
++                               uint64_t preload,
++                               struct MALI_SHADER_PROGRAM *cfg)
++{
++   cfg->stage = MALI_SHADER_STAGE_FRAGMENT;
++   cfg->fragment_coverage_bitmask_type = MALI_COVERAGE_BITMASK_TYPE_GL;
++   cfg->register_allocation = pan_register_allocation(work_reg_count);
++   cfg->binary = binary;
++   cfg->preload.r48_r63 = preload >> 48;
++   cfg->requires_helper_threads = info->contains_barrier;
++   cfg->flush_to_zero_mode = shader_ftz_mode(info);
++}
+ #endif
+ 
+ static VkResult
+@@ -1249,23 +1264,18 @@ panvk_shader_upload(struct panvk_device *dev,
+          return panvk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+ 
+       panvk_priv_mem_write_desc(shader->spd, 0, SHADER_PROGRAM, cfg) {
+-         cfg.stage = pan_shader_stage(&shader->info);
+-
+-         if (cfg.stage == MALI_SHADER_STAGE_FRAGMENT)
+-            cfg.fragment_coverage_bitmask_type = MALI_COVERAGE_BITMASK_TYPE_GL;
+-#if PAN_ARCH < 12
+-         else if (cfg.stage == MALI_SHADER_STAGE_VERTEX)
+-            cfg.vertex_warp_limit = MALI_WARP_LIMIT_HALF;
+-#endif
+-
+-         cfg.register_allocation =
+-            pan_register_allocation(shader->info.work_reg_count);
+-         cfg.binary = panvk_shader_variant_get_dev_addr(shader);
+-         cfg.preload.r48_r63 = (shader->info.preload >> 48);
+-         cfg.flush_to_zero_mode = shader_ftz_mode(shader);
+-
+-         if (cfg.stage == MALI_SHADER_STAGE_FRAGMENT)
+-            cfg.requires_helper_threads = shader->info.contains_barrier;
++         if (shader->info.stage == MESA_SHADER_FRAGMENT) {
++            panvk_per_arch(prepare_fs_spd)(
++               &shader->info, panvk_shader_variant_get_dev_addr(shader),
++               shader->info.work_reg_count, shader->info.preload, &cfg);
++         } else {
++            cfg.stage = pan_shader_stage(&shader->info);
++            cfg.register_allocation =
++               pan_register_allocation(shader->info.work_reg_count);
++            cfg.binary = panvk_shader_variant_get_dev_addr(shader);
++            cfg.preload.r48_r63 = (shader->info.preload >> 48);
++            cfg.flush_to_zero_mode = shader_ftz_mode(&shader->info);
++         }
+       }
+    } else {
+ #if PAN_ARCH >= 12
+@@ -1281,7 +1291,7 @@ panvk_shader_upload(struct panvk_device *dev,
+             pan_register_allocation(shader->info.work_reg_count);
+          cfg.binary = panvk_shader_variant_get_dev_addr(shader);
+          cfg.preload.r48_r63 = (shader->info.preload >> 48);
+-         cfg.flush_to_zero_mode = shader_ftz_mode(shader);
++         cfg.flush_to_zero_mode = shader_ftz_mode(&shader->info);
+       }
+ 
+       shader->spds.all_triangles =
+@@ -1297,7 +1307,7 @@ panvk_shader_upload(struct panvk_device *dev,
+          cfg.binary = panvk_shader_variant_get_dev_addr(shader) +
+                       shader->info.vs.no_psiz_offset;
+          cfg.preload.r48_r63 = (shader->info.preload >> 48);
+-         cfg.flush_to_zero_mode = shader_ftz_mode(shader);
++         cfg.flush_to_zero_mode = shader_ftz_mode(&shader->info);
+       }
+ #else
+       shader->spds.pos_points =
+@@ -1313,7 +1323,7 @@ panvk_shader_upload(struct panvk_device *dev,
+             pan_register_allocation(shader->info.work_reg_count);
+          cfg.binary = panvk_shader_variant_get_dev_addr(shader);
+          cfg.preload.r48_r63 = (shader->info.preload >> 48);
+-         cfg.flush_to_zero_mode = shader_ftz_mode(shader);
++         cfg.flush_to_zero_mode = shader_ftz_mode(&shader->info);
+       }
+ 
+       shader->spds.pos_triangles =
+@@ -1330,7 +1340,7 @@ panvk_shader_upload(struct panvk_device *dev,
+          cfg.binary = panvk_shader_variant_get_dev_addr(shader) +
+                       shader->info.vs.no_psiz_offset;
+          cfg.preload.r48_r63 = (shader->info.preload >> 48);
+-         cfg.flush_to_zero_mode = shader_ftz_mode(shader);
++         cfg.flush_to_zero_mode = shader_ftz_mode(&shader->info);
+       }
+ 
+       if (shader->info.vs.secondary_enable) {
+@@ -1348,7 +1358,7 @@ panvk_shader_upload(struct panvk_device *dev,
+             cfg.binary = panvk_shader_variant_get_dev_addr(shader) +
+                          shader->info.vs.secondary_offset;
+             cfg.preload.r48_r63 = (shader->info.vs.secondary_preload >> 48);
+-            cfg.flush_to_zero_mode = shader_ftz_mode(shader);
++            cfg.flush_to_zero_mode = shader_ftz_mode(&shader->info);
+          }
+       }
+ #endif

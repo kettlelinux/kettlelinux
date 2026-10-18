@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Thu, 1 Oct 2026 18:36:50 -0500
+Subject: [PATCH 57/57] panvk/csf: Don't lose occlusion queries across render
+ pass suspension
+
+EndRendering() drops the occlusion query state when suspending a render
+pass, so a query that ended in the suspended part was never chained and
+its availability never signalled. And issue_fragment_jobs() only walks
+the subqueue's query chain when the command buffer ending the render
+pass chained queries itself: nodes chained by the command buffer that
+suspended it stayed on the chain, pointing into that command buffer's
+memory once it was reset.
+
+Chain a query that ended when suspending, and always walk the chain
+when ending a render pass that was resumed.
+
+Assisted-by: LLM
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index d02c84356e4..da6f1443afa 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -5821,7 +5821,10 @@ issue_fragment_jobs(struct panvk_cmd_buffer *cmdbuf)
+    const struct cs_tracing_ctx *tracing_ctx =
+       &cmdbuf->state.cs[PANVK_SUBQUEUE_FRAGMENT].tracing;
+    struct cs_builder *b = panvk_get_cs_builder(cmdbuf, PANVK_SUBQUEUE_FRAGMENT);
+-   bool has_oq_chain = cmdbuf->state.gfx.render.oq.chain != 0;
++   /* Queries that ended before the render pass was suspended were chained
++    * by the command buffer that suspended it. */
++   bool has_oq_chain = cmdbuf->state.gfx.render.oq.chain != 0 ||
++                       inherits_render_ctx(cmdbuf);
+ 
+    /* Now initialize the fragment bits. */
+    cs_update_frag_ctx(b) {
+@@ -6197,6 +6200,16 @@ panvk_per_arch(CmdEndRendering)(VkCommandBuffer commandBuffer)
+       }
+    }
+ 
++   /* A query that ended in the part of the render pass we're suspending
++    * would be forgotten with the state below: chain it now, the command
++    * buffer ending the render pass signals the chain. */
++   if (suspending && cmdbuf->state.gfx.render.oq.last !=
++                        cmdbuf->state.gfx.occlusion_query.syncobj) {
++      result = wrap_prev_oq(cmdbuf);
++      if (result != VK_SUCCESS)
++         return;
++   }
++
+    memset(&cmdbuf->state.gfx.render.fbds, 0,
+           sizeof(cmdbuf->state.gfx.render.fbds));
+    memset(&cmdbuf->state.gfx.render.oq, 0, sizeof(cmdbuf->state.gfx.render.oq));

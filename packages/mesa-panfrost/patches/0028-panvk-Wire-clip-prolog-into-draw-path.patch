@@ -1,0 +1,353 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Gmeiner <cgmeiner@igalia.com>
+Date: Thu, 12 Mar 2026 12:37:42 +0100
+Subject: [PATCH 28/57] panvk: Wire clip prolog into draw path
+
+When a draw uses shader clip distance, get the clip distance FS prolog
+from the device's linked shader cache. It is compiled once per clip
+distance count, against the VS's varying layout so its LD_VAR_BUF byte
+offsets for CLIP_DIST0/1 match what the main FS reads, and keeps the
+registers any FS may preload. It ends with a jump to the address in the
+FAU word reserved for it. For each main FS, cache an SPD descriptor
+pointing at the prolog.
+
+Draws without a fragment shader still have to clip, so bind a
+standalone prolog in that case. It keeps its own ATEST to commit the
+coverage result, and the tiler must run the varying shader, which is
+normally skipped without a fragment shader. Rasterizer discard skips
+the standalone prolog.
+
+Set skip_atest on the linked prolog so it does not emit a second ATEST
+alongside the main FS's. Account for the prolog's discard in
+shader_modifies_coverage, allow_forward_pixel_to_kill, early-Z /
+late-Z update fields and the v13+ HSR fields.
+
+Signed-off-by: Christian Gmeiner <cgmeiner@igalia.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/40343>
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c | 231 +++++++++++++++++++-
+ 1 file changed, 223 insertions(+), 8 deletions(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index de0ae2fcd3c..4a59820c541 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -31,6 +31,7 @@
+ #include "panvk_image_view.h"
+ #include "panvk_instance.h"
+ #include "panvk_instr.h"
++#include "panvk_linked_shader_cache.h"
+ #include "panvk_priv_bo.h"
+ #include "panvk_query_pool.h"
+ #include "panvk_shader.h"
+@@ -2461,6 +2462,170 @@ prepare_hw_vs(struct panvk_cmd_buffer *cmdbuf)
+    }
+ }
+ 
++/* Registers a v9+ fragment shader may have preloaded */
++#define FS_PRELOAD_REGS BITFIELD64_RANGE(57, 7)
++
++static const struct panvk_fs_prolog *
++get_fs_prolog(struct panvk_cmd_buffer *cmdbuf,
++              const struct pan_fs_prolog_key *prolog_key, bool linked,
++              const struct pan_varying_layout *varying_layout)
++{
++   struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
++   struct panvk_fs_prolog_cache_key key = {
++      .prolog = *prolog_key,
++      .linked = linked,
++   };
++
++   struct panvk_fs_prolog *prolog =
++      panvk_linked_shader_cache_lookup_prolog(&dev->linked_shader_cache, &key);
++   if (prolog)
++      return prolog;
++
++   prolog = rzalloc(NULL, struct panvk_fs_prolog);
++   if (!prolog) {
++      vk_command_buffer_set_error(&cmdbuf->vk, VK_ERROR_OUT_OF_HOST_MEMORY);
++      return NULL;
++   }
++
++   struct panvk_physical_device *phys_dev =
++      to_panvk_physical_device(dev->vk.physical);
++   const nir_shader_compiler_options *nir_options =
++      pan_get_nir_shader_compiler_options(PAN_ARCH, MESA_SHADER_FRAGMENT,
++                                          false);
++
++   nir_shader *prolog_nir = pan_nir_build_fs_prolog(prolog_key, nir_options);
++
++   struct pan_compile_inputs prolog_inputs = {
++      .gpu_id = phys_dev->kmod.dev->props.gpu_id,
++      .gpu_variant = phys_dev->kmod.dev->props.gpu_variant,
++      /* When linked, the main FS emits the ATEST. A standalone prolog needs
++       * its own to commit the coverage result. */
++      .skip_atest = linked,
++      .preserved_regs = linked ? FS_PRELOAD_REGS : 0,
++      .next_shader_fau =
++         linked ? sysval_offset(graphics, fs_prolog_next) / sizeof(uint32_t)
++                : 0,
++      /* Must match the VS layout so LD_VAR_BUF offsets match the main FS. */
++      .varying_layout = varying_layout,
++   };
++
++   struct util_dynarray prolog_binary = UTIL_DYNARRAY_INIT;
++   struct pan_shader_info prolog_info = {0};
++
++   panvk_per_arch(compiler_lock)();
++   pan_postprocess_nir(prolog_nir, &prolog_inputs, &prolog_info);
++   pan_shader_compile(prolog_nir, &prolog_inputs, &prolog_binary, &prolog_info);
++   panvk_per_arch(compiler_unlock)();
++   ralloc_free(prolog_nir);
++
++   assert(prolog_info.tls_size == 0);
++
++   prolog->key = key;
++   prolog->work_reg_count = prolog_info.work_reg_count;
++   prolog->preload = prolog_info.preload;
++   prolog->code_mem = panvk_pool_upload_aligned(
++      &dev->mempools.exec, util_dynarray_begin(&prolog_binary),
++      util_dynarray_num_elements(&prolog_binary, uint8_t), 128);
++   util_dynarray_fini(&prolog_binary);
++
++   if (!panvk_priv_mem_check_alloc(prolog->code_mem))
++      goto err_oom;
++
++   if (!linked) {
++      prolog->spd = panvk_pool_alloc_desc(&dev->mempools.rw, SHADER_PROGRAM);
++      if (!panvk_priv_mem_check_alloc(prolog->spd))
++         goto err_oom;
++
++      panvk_priv_mem_write_desc(prolog->spd, 0, SHADER_PROGRAM, cfg) {
++         panvk_per_arch(prepare_fs_spd)(
++            &prolog_info, panvk_priv_mem_dev_addr(prolog->code_mem),
++            prolog_info.work_reg_count, prolog_info.preload, &cfg);
++      }
++   }
++
++   return panvk_linked_shader_cache_insert_prolog(&dev->linked_shader_cache,
++                                                  prolog);
++
++err_oom:
++   panvk_pool_free_mem(&prolog->code_mem);
++   ralloc_free(prolog);
++   vk_command_buffer_set_error(&cmdbuf->vk, VK_ERROR_OUT_OF_DEVICE_MEMORY);
++   return NULL;
++}
++
++static uint64_t
++link_fs_prolog(struct panvk_cmd_buffer *cmdbuf,
++               const struct panvk_shader_variant *fs)
++{
++   const struct panvk_shader_variant *vs =
++      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++
++   if (!vs || vs->info.vs.clip_distance_array_size == 0)
++      return 0;
++
++   /* The cache key only holds the clip distance count, which is enough
++    * because clip distances always pack first in the varying buffer. */
++   ASSERTED const struct pan_varying_slot *clip_slot =
++      pan_varying_layout_find_slot(&vs->info.varyings.formats,
++                                   VARYING_SLOT_CLIP_DIST0);
++   assert(clip_slot && clip_slot->offset == 0);
++
++   struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
++   const struct pan_fs_prolog_key prolog_key = {
++      .clip_distance_array_size = vs->info.vs.clip_distance_array_size,
++   };
++
++   if (!fs) {
++      const struct panvk_fs_prolog *prolog = get_fs_prolog(
++         cmdbuf, &prolog_key, false, &vs->info.varyings.formats);
++      return prolog ? panvk_priv_mem_dev_addr(prolog->spd) : 0;
++   }
++
++   struct panvk_linked_shader_key key = {
++      .main_binary = fs->bin_ptr,
++      .fs_prolog = prolog_key,
++   };
++
++   struct panvk_linked_shader_entry *entry =
++      panvk_linked_shader_cache_lookup(&dev->linked_shader_cache, &key);
++   if (entry)
++      return panvk_priv_mem_dev_addr(entry->spd);
++
++   const struct panvk_fs_prolog *prolog = get_fs_prolog(
++      cmdbuf, &prolog_key, true, &vs->info.varyings.formats);
++   if (!prolog)
++      return 0;
++
++   const uint64_t prolog_code = panvk_priv_mem_dev_addr(prolog->code_mem);
++
++   assert(!(fs->info.preload & ~FS_PRELOAD_REGS));
++   assert((prolog_code >> 32) ==
++          (panvk_shader_variant_get_dev_addr(fs) >> 32));
++
++   struct panvk_priv_mem spd =
++      panvk_pool_alloc_desc(&dev->mempools.rw, SHADER_PROGRAM);
++   if (!panvk_priv_mem_check_alloc(spd)) {
++      vk_command_buffer_set_error(&cmdbuf->vk, VK_ERROR_OUT_OF_DEVICE_MEMORY);
++      return 0;
++   }
++
++   panvk_priv_mem_write_desc(spd, 0, SHADER_PROGRAM, cfg) {
++      panvk_per_arch(prepare_fs_spd)(
++         &fs->info, prolog_code,
++         MAX2(prolog->work_reg_count, fs->info.work_reg_count),
++         prolog->preload | fs->info.preload, &cfg);
++   }
++
++   entry = panvk_linked_shader_cache_insert(&dev->linked_shader_cache, &key,
++                                            spd);
++   if (!entry) {
++      vk_command_buffer_set_error(&cmdbuf->vk, VK_ERROR_OUT_OF_HOST_MEMORY);
++      return 0;
++   }
++
++   return panvk_priv_mem_dev_addr(entry->spd);
++}
++
+ static void
+ prepare_fs(struct panvk_cmd_buffer *cmdbuf,
+            const struct panvk_shader_variant *fs)
+@@ -2482,9 +2647,19 @@ prepare_fs(struct panvk_cmd_buffer *cmdbuf,
+       if (fs_desc_dirty(cmdbuf))
+          cs_move64_to(b, cs_sr_reg64(b, IDVS, FRAGMENT_SRT),
+                       fs ? fs_desc_state->res_table : 0);
+-      if (fs_user_dirty(cmdbuf))
+-         cs_move64_to(b, cs_sr_reg64(b, IDVS, FRAGMENT_SPD),
+-                      fs ? panvk_priv_mem_dev_addr(fs->spd) : 0);
++      if (fs_user_dirty(cmdbuf) || gfx_state_dirty(cmdbuf, VS)) {
++         const struct vk_rasterization_state *rs =
++            &cmdbuf->vk.dynamic_graphics_state.rs;
++         uint64_t fs_spd = 0;
++
++         if (fs || !rs->rasterizer_discard_enable)
++            fs_spd = link_fs_prolog(cmdbuf, fs);
++
++         if (!fs_spd && fs)
++            fs_spd = panvk_priv_mem_dev_addr(fs->spd);
++
++         cs_move64_to(b, cs_sr_reg64(b, IDVS, FRAGMENT_SPD), fs_spd);
++      }
+    }
+ }
+ 
+@@ -2763,11 +2938,17 @@ build_dcd_flags(struct panvk_cmd_buffer *cmdbuf,
+    uint8_t rt_mask = cmdbuf->state.gfx.render.bound_attachments &
+                      MESA_VK_RP_ATTACHMENT_ANY_COLOR_BITS;
+ 
++   const struct panvk_shader_variant *vs =
++      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
++   bool has_fs_prolog = vs && vs->info.vs.clip_distance_array_size > 0 &&
++                           !rs->rasterizer_discard_enable;
++
+    if (fs) {
+       out->rt_written = color_attachment_written_mask(fs, &dyns->cal);
+       out->rt_read = color_attachment_read_mask(fs, &dyns->ial, rt_mask);
+       shader_modifies_coverage = fs->info.fs.writes_coverage ||
+-                                 fs->info.fs.can_discard || alpha_to_coverage;
++                                 fs->info.fs.can_discard || has_fs_prolog ||
++                                 alpha_to_coverage;
+    }
+ 
+    bool msaa = dyns->ms.rasterization_samples > 1;
+@@ -2805,7 +2986,8 @@ build_dcd_flags(struct panvk_cmd_buffer *cmdbuf,
+          cfg.allow_forward_pixel_to_kill =
+             fs->info.fs.can_fpk && !(rt_mask & ~out->rt_written) &&
+             !(out->rt_read & out->rt_written) && !alpha_to_coverage &&
+-            !cmdbuf->state.gfx.cb.info.any_dest_read && !roa_color;
++            !cmdbuf->state.gfx.cb.info.any_dest_read && !roa_color &&
++            !has_fs_prolog;
+ 
+          cfg.allow_forward_pixel_to_be_killed = !fs->info.writes_global;
+ 
+@@ -2825,6 +3007,10 @@ build_dcd_flags(struct panvk_cmd_buffer *cmdbuf,
+             pan_earlyzs_get(fs->fs.earlyzs_lut, writes_zs || oq,
+                             alpha_to_coverage, zs_always_passes, zs_read);
+ 
++         /* The clip prolog's discard must be visible to Z/S writes and OQ */
++         if (has_fs_prolog && (writes_zs || oq))
++            out->earlyzs.update = MALI_PIXEL_KILL_FORCE_LATE;
++
+          cfg.pixel_kill_operation = (enum mali_pixel_kill)out->earlyzs.kill;
+          cfg.zs_update_operation = (enum mali_pixel_kill)out->earlyzs.update;
+ 
+@@ -2838,6 +3024,16 @@ build_dcd_flags(struct panvk_cmd_buffer *cmdbuf,
+                                    (dyns->ms.rasterization_samples > 1);
+ 
+          cfg.shader_modifies_coverage = shader_modifies_coverage;
++      } else if (has_fs_prolog) {
++         /* No main FS, but the clip prolog runs and demotes fragments,
++          * so Z/S updates must wait for the shader coverage result. */
++         cfg.allow_forward_pixel_to_kill = false;
++         cfg.allow_forward_pixel_to_be_killed = true;
++         out->earlyzs.kill = MALI_PIXEL_KILL_FORCE_EARLY;
++         out->earlyzs.update = MALI_PIXEL_KILL_FORCE_LATE;
++         cfg.pixel_kill_operation = (enum mali_pixel_kill)out->earlyzs.kill;
++         cfg.zs_update_operation = (enum mali_pixel_kill)out->earlyzs.update;
++         cfg.shader_modifies_coverage = true;
+       } else {
+          cfg.allow_forward_pixel_to_kill = true;
+          cfg.allow_forward_pixel_to_be_killed = true;
+@@ -2941,6 +3137,17 @@ build_dcd_flags(struct panvk_cmd_buffer *cmdbuf,
+             &cmdbuf->vk.dynamic_graphics_state.ds;
+          cfg.z_write_or_stencil =
+             writes_z || (has_stencil_att(cmdbuf) && ds->stencil.test_enable);
++      } else if (has_fs_prolog) {
++         cfg.hsr_can_cull = false;
++         cfg.hsr_can_be_culled = false;
++         cfg.z_write_or_stencil =
++            writes_z || (has_stencil_att(cmdbuf) &&
++                         dyns->ds.stencil.test_enable);
++         /* The prolog reads the clip distance varyings before demoting */
++         cfg.enable_varying_shading_in_pre_pass = true;
++         cfg.hsr_update_operation = MALI_HSR_UPDATE_LATE;
++         cfg.hsr_prepass_kill_operation =
++            MALI_HSR_PREPASS_KILL_FOLLOW_HSR_UPDATE;
+       } else {
+          cfg.hsr_can_cull = false;
+          cfg.hsr_can_be_culled = false;
+@@ -2974,7 +3181,9 @@ prepare_dcd(struct panvk_cmd_buffer *cmdbuf,
+                  dyn_gfx_state_dirty(cmdbuf, DS_STENCIL_WRITE_MASK) ||
+                  dyn_gfx_state_dirty(cmdbuf, CB_BLEND_ENABLES) ||
+                  dyn_gfx_state_dirty(cmdbuf, CB_BLEND_EQUATIONS) ||
+-                 dyn_gfx_state_dirty(cmdbuf, CB_WRITE_MASKS);
++                 dyn_gfx_state_dirty(cmdbuf, CB_WRITE_MASKS) ||
++                 /* The HSR fields depend on the VS clip distance config */
++                 gfx_state_dirty(cmdbuf, VS);
+ #endif
+    bool dcd0_dirty =
+       dyn_gfx_state_dirty(cmdbuf, RS_RASTERIZER_DISCARD_ENABLE) ||
+@@ -3005,7 +3214,9 @@ prepare_dcd(struct panvk_cmd_buffer *cmdbuf,
+       dyn_gfx_state_dirty(cmdbuf, INPUT_ATTACHMENT_MAP) ||
+       fs_user_dirty(cmdbuf) || gfx_state_dirty(cmdbuf, RENDER_STATE) ||
+       gfx_state_dirty(cmdbuf, IDVS) ||
+-      gfx_state_dirty(cmdbuf, OQ) || dcd2_dirty;
++      gfx_state_dirty(cmdbuf, OQ) ||
++      /* has_fs_prolog depends on the VS clip distance config */
++      gfx_state_dirty(cmdbuf, VS) || dcd2_dirty;
+    bool dcd1_dirty = dyn_gfx_state_dirty(cmdbuf, MS_RASTERIZATION_SAMPLES) ||
+                      dyn_gfx_state_dirty(cmdbuf, MS_SAMPLE_MASK) ||
+                      /* line mode needs primitive topology */
+@@ -3073,6 +3284,10 @@ set_tiler_idvs_flags(struct cs_builder *b, struct panvk_cmd_buffer *cmdbuf,
+    bool extended_fifo = writes_point_size || vs->info.vs.needs_extended_fifo;
+    bool writes_prim_id = vs->info.outputs_written & VARYING_BIT_PRIMITIVE_ID;
+    bool fs_reads_prim_id = fs ? fs->info.fs.reads_primitive_id : false;
++   /* The clip prolog reads the clip distance varyings even without a main FS */
++   bool needs_varyings =
++      fs != NULL || (vs->info.vs.clip_distance_array_size > 0 &&
++                     !rs->rasterizer_discard_enable);
+ 
+    bool dirty = gfx_state_dirty(cmdbuf, VS) || fs_user_dirty(cmdbuf) ||
+                 gfx_state_dirty(cmdbuf, IDVS) ||
+@@ -3100,7 +3315,7 @@ set_tiler_idvs_flags(struct cs_builder *b, struct panvk_cmd_buffer *cmdbuf,
+          cfg.low_depth_cull = cfg.high_depth_cull =
+             vk_rasterization_state_depth_clip_enable(rs);
+ 
+-         cfg.secondary_shader = vs->info.vs.secondary_enable && fs != NULL;
++         cfg.secondary_shader = vs->info.vs.secondary_enable && needs_varyings;
+          cfg.primitive_restart = cmdbuf->state.gfx.idvs.restart;
+ #if PAN_ARCH < 14
+          cfg.view_mask = cmdbuf->state.gfx.render.view_mask;

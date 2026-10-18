@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Thu, 1 Oct 2026 06:40:41 -0500
+Subject: [PATCH 52/57] nir/divergence: poly system values are uniform
+
+They're per-draw parameters. PanVK runs divergence analysis before it
+lowers them to sysvals.
+
+Assisted-by: LLM
+---
+ src/compiler/nir/nir_divergence_analysis.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/compiler/nir/nir_divergence_analysis.c b/src/compiler/nir/nir_divergence_analysis.c
+index d45de5bf25b..79fdb37e8ce 100644
+--- a/src/compiler/nir/nir_divergence_analysis.c
++++ b/src/compiler/nir/nir_divergence_analysis.c
+@@ -401,6 +401,14 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
+    case nir_intrinsic_load_ttmp_register_amd:
+    case nir_intrinsic_load_scalar_arg_amd:
+    case nir_intrinsic_load_ro_sink_address_poly:
++   case nir_intrinsic_load_input_topology_poly:
++   case nir_intrinsic_load_index_size_poly:
++   case nir_intrinsic_load_vs_outputs_poly:
++   case nir_intrinsic_load_vertex_param_buffer_poly:
++   case nir_intrinsic_load_geometry_param_buffer_poly:
++   case nir_intrinsic_load_tess_param_buffer_poly:
++   case nir_intrinsic_load_stat_query_address_poly:
++   case nir_intrinsic_load_provoking_last:
+    case nir_intrinsic_load_frame_arg_pan:
+    case nir_intrinsic_load_noperspective_varyings_pan:
+    case nir_intrinsic_load_multisampled_pan:
+@@ -761,6 +769,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
+ 
+    /* Intrinsics with divergence depending on sources */
+    case nir_intrinsic_convert_alu_types:
++   case nir_intrinsic_ro_to_rw_poly:
+    case nir_intrinsic_ddx:
+    case nir_intrinsic_ddx_fine:
+    case nir_intrinsic_ddx_coarse:

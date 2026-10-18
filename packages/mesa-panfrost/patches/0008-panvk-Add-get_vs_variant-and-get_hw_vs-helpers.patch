@@ -1,0 +1,174 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Faith Ekstrand <faith.ekstrand@collabora.com>
+Date: Tue, 18 Nov 2025 11:50:36 -0500
+Subject: [PATCH 08/57] panvk: Add get_vs_variant() and get_hw_vs() helpers
+
+(cherry picked from commit 520aa2d0a2d2e84da9a03a76a2a84fcfa4f5b9b4)
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c | 33 +++++++-------
+ src/panfrost/vulkan/panvk_cmd_draw.h        | 50 +++++++++++++++++++++
+ 2 files changed, 67 insertions(+), 16 deletions(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index 19524ab4bcb..ac977a60171 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -553,8 +553,7 @@ static void
+ emit_varying_descs(const struct panvk_cmd_buffer *cmdbuf,
+                    struct mali_attribute_packed *descs)
+ {
+-   const struct panvk_shader_variant *vs =
+-      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
++   const struct panvk_shader_variant *vs = get_hw_vs(cmdbuf);
+    const struct panvk_shader_variant *fs =
+       panvk_shader_only_variant(get_fs(cmdbuf));
+ 
+@@ -642,7 +641,7 @@ static bool
+ fs_desc_dirty(struct panvk_cmd_buffer *cmdbuf)
+ {
+    return fs_user_dirty(cmdbuf) ||
+-          gfx_state_dirty(cmdbuf, VS) ||
++          hw_vs_user_dirty(cmdbuf) || /* Used by get_varying_slots() */
+           gfx_state_dirty(cmdbuf, DESC_STATE);
+ }
+ 
+@@ -1158,8 +1157,7 @@ prepare_tiler_primitive_size(struct panvk_cmd_buffer *cmdbuf,
+     */
+ #if PAN_ARCH < 13
+    case MESA_PRIM_POINTS: {
+-      const struct panvk_shader_variant *vs =
+-         panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
++      const struct panvk_shader_variant *vs = get_hw_vs(cmdbuf);
+ 
+       if (vs->info.vs.writes_point_size)
+          return;
+@@ -2351,7 +2349,7 @@ prepare_push_uniforms(struct panvk_cmd_buffer *cmdbuf,
+          vs_repeat_count = draw->indirect.draw_count;
+    }
+ 
+-   if (gfx_state_dirty(cmdbuf, VS_PUSH_UNIFORMS)) {
++   if (vs_user_dirty(cmdbuf) || gfx_state_dirty(cmdbuf, VS_PUSH_UNIFORMS)) {
+       struct pan_ptr push_uniforms;
+       result = panvk_per_arch(cmd_prepare_gfx_push_uniforms)(
+          cmdbuf, vs, &push_uniforms, vs_repeat_count);
+@@ -2881,8 +2879,7 @@ static void
+ set_tiler_idvs_flags(struct cs_builder *b, struct panvk_cmd_buffer *cmdbuf,
+                      const struct panvk_draw_info *draw)
+ {
+-   const struct panvk_shader_variant *vs =
+-      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
++   const struct panvk_shader_variant *vs = get_hw_vs(cmdbuf);
+    const struct panvk_shader_variant *fs =
+       panvk_shader_only_variant(get_fs(cmdbuf));
+    const struct vk_dynamic_graphics_state *dyns =
+@@ -2964,8 +2961,7 @@ static VkResult
+ prepare_draw(struct panvk_cmd_buffer *cmdbuf,
+              const struct panvk_draw_info *draw)
+ {
+-   const struct panvk_shader_variant *vs =
+-      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
++   const struct panvk_shader_variant *vs = get_vs_variant(cmdbuf);
+    const struct panvk_shader_variant *fs =
+       panvk_shader_only_variant(get_fs(cmdbuf));
+    ASSERTED bool idvs = vs->info.vs.idvs;
+@@ -3414,8 +3410,7 @@ launch_indirect_draw(struct panvk_cmd_buffer *cmdbuf,
+ {
+    const struct cs_tracing_ctx *tracing_ctx =
+       &cmdbuf->state.cs[PANVK_SUBQUEUE_VERTEX_TILER].tracing;
+-   const struct panvk_shader_variant *vs =
+-      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
++   const struct panvk_shader_variant *vs = get_vs_variant(cmdbuf);
+    struct cs_builder *b =
+       panvk_get_cs_builder(cmdbuf, PANVK_SUBQUEUE_VERTEX_TILER);
+ 
+@@ -3582,19 +3577,25 @@ launch_indirect_draw(struct panvk_cmd_buffer *cmdbuf,
+ static void
+ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+ {
+-   const struct panvk_shader_variant *vs =
+-      panvk_hw_vs_variant(cmdbuf->state.gfx.vs.shader);
+    VkResult result;
+ 
+    /* If there's no vertex shader, we can skip the draw. */
+-   if (!panvk_priv_mem_check_alloc(vs->spd))
++   if (!panvk_priv_mem_check_alloc(get_vs_variant(cmdbuf)->spd))
+       return;
+ 
+    /* Needs to be done before get_fs() is called because it depends on
+-    * fs.required being initialized. */
++    * fs.required being initialized.
++    */
+    cmdbuf->state.gfx.fs.required =
+       fs_required(&cmdbuf->state.gfx, &cmdbuf->vk.dynamic_graphics_state);
+ 
++   /* If there's no hardware vertex shader, then nothing is going to generate
++    * positions so it's all undefined and we can skip the draw.  If we don't,
++    * we can end up in a situation where the IDVS faults.
++    */
++   if (!panvk_priv_mem_dev_addr(get_hw_vs(cmdbuf)->spd))
++      return;
++
+    if (cmdbuf->state.gfx.vi.base_instance != draw.instance.base) {
+       cmdbuf->state.gfx.vi.base_instance = draw.instance.base;
+       gfx_state_set_dirty(cmdbuf, BASE_INSTANCE);
+diff --git a/src/panfrost/vulkan/panvk_cmd_draw.h b/src/panfrost/vulkan/panvk_cmd_draw.h
+index c7feb2be749..c7b45a00d6c 100644
+--- a/src/panfrost/vulkan/panvk_cmd_draw.h
++++ b/src/panfrost/vulkan/panvk_cmd_draw.h
+@@ -329,6 +329,56 @@ panvk_select_tiler_hierarchy_mask(const struct panvk_physical_device *phys_dev,
+    return hierarchy_mask;
+ }
+ 
++static inline const struct panvk_shader_variant *
++panvk_gfx_state_get_vs_variant(const struct panvk_cmd_graphics_state *gfx)
++{
++   if (gfx->gs.shader || gfx->tes.shader)
++      return &gfx->vs.shader->variants[PANVK_VS_VARIANT_SW];
++   else
++      return &gfx->vs.shader->variants[PANVK_VS_VARIANT_HW];
++}
++
++#define get_vs_variant(__cmdbuf)                                               \
++   panvk_gfx_state_get_vs_variant(&(__cmdbuf)->state.gfx)
++
++/* Anything that might change the value returned by get_vs_variant() makes
++ * users of the vertex shader dirty.
++ */
++#define vs_user_dirty(__cmdbuf)                                                \
++   (gfx_state_dirty(cmdbuf, VS) ||                                             \
++    gfx_state_dirty(cmdbuf, TES) ||                                            \
++    gfx_state_dirty(cmdbuf, GS))
++
++static inline const struct panvk_shader_variant *
++panvk_gfx_state_get_hw_vs(const struct panvk_cmd_graphics_state *gfx)
++{
++   if (gfx->gs.shader)
++      return panvk_rast_gs_variant(gfx->gs.shader);
++   else if (gfx->tes.shader)
++      UNREACHABLE("Tessellation not yet supported");
++   else
++      return panvk_hw_vs_variant(gfx->vs.shader);
++}
++
++/* Anything that might change the value returned by get_hw_vs() makes
++ * users of the vertex shader dirty.
++ */
++#define hw_vs_user_dirty(__cmdbuf)                                             \
++   (gfx_state_dirty(cmdbuf, VS) ||                                             \
++    gfx_state_dirty(cmdbuf, TES) ||                                            \
++    gfx_state_dirty(cmdbuf, GS))
++
++#define get_hw_vs(__cmdbuf)                                               \
++   panvk_gfx_state_get_hw_vs(&(__cmdbuf)->state.gfx)
++
++/* Anything that might change the value returned by get_vs_variant() makes
++ * users of the vertex shader dirty.
++ */
++#define vs_user_dirty(__cmdbuf)                                                \
++   (gfx_state_dirty(cmdbuf, VS) ||                                             \
++    gfx_state_dirty(cmdbuf, TES) ||                                            \
++    gfx_state_dirty(cmdbuf, GS))
++
+ static inline bool
+ fs_required(const struct panvk_cmd_graphics_state *state,
+             const struct vk_dynamic_graphics_state *dyn_state)

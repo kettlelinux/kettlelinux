@@ -1,0 +1,381 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Faith Ekstrand <faith.ekstrand@collabora.com>
+Date: Fri, 7 Nov 2025 17:32:24 -0500
+Subject: [PATCH 11/57] panvk/csf: Run the geometry shader pipeline before the
+ draw
+
+From mesa!38401 (draft geometry shader support), originally titled "STUFF".
+(cherry picked from commit 023bc6c568168b08d6874f43b46dbcfeaf56c5ca)
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c | 220 ++++++++++++++++++++
+ src/panfrost/vulkan/panvk_cmd_draw.h        |  13 ++
+ src/panfrost/vulkan/panvk_shader.h          |   6 -
+ src/panfrost/vulkan/panvk_vX_cmd_draw.c     |  22 ++
+ src/panfrost/vulkan/panvk_vX_shader.c       |   7 +
+ 5 files changed, 262 insertions(+), 6 deletions(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index 55c1a1da133..cee1f33d212 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -765,6 +765,109 @@ prepare_descs(struct panvk_cmd_buffer *cmdbuf,
+    return VK_SUCCESS;
+ }
+ 
++static VkResult
++prepare_poly(struct panvk_cmd_buffer *cmdbuf,
++             const struct panvk_draw_info *draw)
++{
++   const struct panvk_shader *gs = cmdbuf->state.gfx.gs.shader;
++   memset(&cmdbuf->state.gfx.poly, 0, sizeof(cmdbuf->state.gfx.poly));
++   if (!gs)
++      return VK_SUCCESS;
++
++   /* NOTE: that there are no dirty checks here.  The geometry buffers are
++    * also used written by the compute shaders we'll launch so we need fresh
++    * buffers every time.  That's just the cost of geometry shaders.
++    */
++
++   const struct panvk_shader_variant *vs =
++      panvk_sw_vs_variant(cmdbuf->state.gfx.vs.shader);
++
++   /* We use 1x1x1 workgroups and hope the hardware merges them. */
++   const uint32_t wg_size[3] = {1, 1, 1};
++
++   struct poly_vertex_params *vp = &cmdbuf->state.gfx.poly.vp;
++   poly_vertex_params_init(vp, vs->info.outputs_written, wg_size);
++
++   if (draw->index.index_size) {
++      vp->index_size_B = draw->index.index_size;
++      vp->index_buffer = draw->index.buffer_dev_addr;
++      vp->index_buffer_range_el =
++         draw->index.buffer_size / draw->index.index_size;
++   }
++
++   if (!draw->indirect.buffer_dev_addr) {
++      poly_vertex_params_set_draw(vp, draw->vertex.count, draw->instance.count);
++
++      const uint32_t vb_size =
++         poly_tcs_in_size(draw->vertex.count * draw->instance.count,
++                          vs->info.outputs_written);
++      struct pan_ptr vb =
++         panvk_cmd_alloc_dev_mem(cmdbuf, desc, vb_size, 16);
++      if (vb_size && !vb.gpu)
++         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
++
++      vp->output_buffer = vb.gpu;
++   }
++
++   struct pan_ptr vp_mem =
++      panvk_cmd_upload_dev_mem(cmdbuf, desc, vp, sizeof(*vp), 8);
++   if (!vp_mem.gpu)
++      return VK_ERROR_OUT_OF_DEVICE_MEMORY;
++
++   cmdbuf->state.gfx.poly.vp_addr = vp_mem.gpu;
++
++   const struct poly_gs_info *gsi = &gs->gs_info;
++   const struct panvk_shader *tes = cmdbuf->state.gfx.tes.shader;
++   const bool indirect_draw = draw->indirect.buffer_dev_addr ||
++                              draw->index.restart_enable || tes;
++
++   enum mesa_prim prim = draw->prim;
++   if (draw->index.restart_enable)
++      prim = u_decomposed_prim(prim);
++
++   struct poly_geometry_params *gp = &cmdbuf->state.gfx.poly.gp;
++   poly_geometry_params_init(gp, prim, wg_size);
++
++   if (indirect_draw) {
++      if (gsi->shape == POLY_GS_SHAPE_DYNAMIC_INDEXED) {
++         UNREACHABLE("TODO");
++      } else {
++         gp->draw.index_count =
++            poly_gs_rast_vertices(gsi->shape, gsi->max_indices, 1, 0);
++      }
++   } else {
++      poly_geometry_params_set_draw(gp, prim, gsi->shape, gsi->max_indices,
++                                    draw->vertex.count, draw->instance.count);
++
++      if (gsi->shape == POLY_GS_SHAPE_DYNAMIC_INDEXED) {
++         struct pan_ptr gs_index_buffer = panvk_cmd_alloc_dev_mem(
++            cmdbuf, desc, gp->draw.index_count * 4, 4);
++         if (!gs_index_buffer.gpu)
++            return VK_ERROR_OUT_OF_DEVICE_MEMORY;
++
++         gp->output_index_buffer = gs_index_buffer.gpu;
++      }
++   }
++   if (gsi->shape == POLY_GS_SHAPE_STATIC_INDEXED) {
++      struct pan_ptr gs_index_buffer = panvk_cmd_alloc_dev_mem(
++         cmdbuf, desc, gsi->max_indices * 4, 4);
++      if (!gs_index_buffer.gpu)
++         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
++
++      memcpy(gs_index_buffer.cpu, gsi->topology, gsi->max_indices * 4);
++      gp->output_index_buffer = gs_index_buffer.gpu;
++   }
++
++   struct pan_ptr gp_mem =
++      panvk_cmd_upload_dev_mem(cmdbuf, desc, gp, sizeof(*gp), 8);
++   if (!gp_mem.gpu)
++      return VK_ERROR_OUT_OF_DEVICE_MEMORY;
++
++   cmdbuf->state.gfx.poly.gp_addr = gp_mem.gpu;
++
++   return VK_SUCCESS;
++}
++
+ static bool
+ has_depth_att(struct panvk_cmd_buffer *cmdbuf)
+ {
+@@ -3256,6 +3359,102 @@ launch_gfx_cs(struct panvk_cmd_buffer *cmdbuf,
+    compute_state_set_dirty(cmdbuf, PUSH_UNIFORMS);
+ }
+ 
++static struct panvk_draw_info
++launch_gs(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
++{
++   struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
++   const struct panvk_shader_variant *vs =
++      panvk_sw_vs_variant(cmdbuf->state.gfx.vs.shader);
++   const struct poly_vertex_params *vp = &cmdbuf->state.gfx.poly.vp;
++
++   if (vs->bin_size) {
++      struct panvk_dispatch_info vs_disp;
++      if (draw.indirect.buffer_dev_addr) {
++         vs_disp = (struct panvk_dispatch_info) {
++            .indirect.buffer_dev_addr = cmdbuf->state.gfx.poly.vp_addr +
++               offsetof(struct poly_vertex_params, grid),
++         };
++      } else {
++         assert(vp->grid[2] == 1);
++         vs_disp = (struct panvk_dispatch_info) {
++            .direct.wg_count = {
++               .x = vp->grid[0],
++               .y = vp->grid[1],
++               .z = vp->grid[2],
++            }
++         };
++      }
++      launch_gfx_cs(cmdbuf, vs, &cmdbuf->state.gfx.vs.desc, &vs_disp);
++   }
++
++   const struct panvk_shader *gs = cmdbuf->state.gfx.gs.shader;
++   const struct poly_geometry_params *gp = &cmdbuf->state.gfx.poly.gp;
++   const struct poly_gs_info *gsi = &gs->gs_info;
++   const struct panvk_shader_variant *main = panvk_main_gs_variant(gs);
++   const struct panvk_shader_variant *count = panvk_count_gs_variant(gs);
++   const struct panvk_shader_variant *pre = panvk_pre_gs_variant(gs);
++
++   (void)count; (void)pre;
++
++   if (main->bin_size) {
++      const struct panvk_cs_deps deps = {
++         .src[PANVK_SUBQUEUE_COMPUTE].wait_sb_mask =
++            dev->csf.sb.all_iters_mask,
++         .dst[PANVK_SUBQUEUE_COMPUTE].wait_subqueue_mask =
++            BITFIELD_BIT(PANVK_SUBQUEUE_COMPUTE),
++      };
++      panvk_per_arch(emit_barrier)(cmdbuf, deps);
++
++      struct panvk_dispatch_info gs_disp;
++      if (draw.indirect.buffer_dev_addr) {
++         gs_disp = (struct panvk_dispatch_info) {
++            .indirect.buffer_dev_addr = cmdbuf->state.gfx.poly.gp_addr +
++               offsetof(struct poly_geometry_params, grid),
++         };
++      } else {
++         assert(gp->grid[2] == 1);
++         gs_disp = (struct panvk_dispatch_info) {
++            .direct.wg_count = {
++               .x = gp->grid[0],
++               .y = gp->grid[1],
++               .z = gp->grid[2],
++            }
++         };
++      };
++      launch_gfx_cs(cmdbuf, main, &cmdbuf->state.gfx.gs.desc, &gs_disp);
++   }
++
++   if (poly_gs_indexed(gsi->shape)) {
++      if (draw.indirect.buffer_dev_addr) {
++         UNREACHABLE("TODO");
++      } else {
++         return (struct panvk_draw_info) {
++            .index.buffer_dev_addr = gp->output_index_buffer,
++            .index.buffer_size = gp->draw.index_count * 4,
++            .index.index_size = poly_gs_index_size(gsi->shape),
++            .index.offset = gp->draw.first_index,
++            .index.restart_enable = true,
++            .vertex.count = gp->draw.index_count,
++            .instance.count = gp->draw.instance_count,
++            .prim = gs->gs_info.mode,
++            .need_cs_sync = true,
++         };
++      }
++   } else {
++      if (draw.indirect.buffer_dev_addr) {
++         UNREACHABLE("TODO");
++      } else {
++         return (struct panvk_draw_info) {
++            .vertex.count = gp->draw.vertex_count,
++            .vertex.base = gp->draw.first_vertex,
++            .instance.count = gp->draw.instance_count,
++            .prim = gs->gs_info.mode,
++            .need_cs_sync = true,
++         };
++      }
++   }
++}
++
+ static void
+ launch_draw(struct panvk_cmd_buffer *cmdbuf,
+             const struct panvk_draw_info *draw)
+@@ -3632,6 +3831,7 @@ launch_indirect_draw(struct panvk_cmd_buffer *cmdbuf,
+ static void
+ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+ {
++   struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
+    VkResult result;
+ 
+    /* If there's no vertex shader, we can skip the draw. */
+@@ -3673,6 +3873,10 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+    if (result != VK_SUCCESS)
+       return;
+ 
++   result = prepare_poly(cmdbuf, &draw);
++   if (result != VK_SUCCESS)
++      return;
++
+    /* The VS push uniforms have to be ready before the geometry pipeline runs.
+     * prepare_draw() updates the sysvals again once the blend descriptors are
+     * known, which only dirties the FS push uniforms.
+@@ -3688,6 +3892,22 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+    if (draw.indirect.buffer_dev_addr)
+       patch_vs_attribs(cmdbuf, &draw);
+ 
++   const struct panvk_shader *gs = cmdbuf->state.gfx.gs.shader;
++   assert(cmdbuf->state.gfx.tcs.shader == NULL);
++
++   if (gs)
++      draw = launch_gs(cmdbuf, draw);
++
++   if (draw.need_cs_sync) {
++      const struct panvk_cs_deps deps = {
++         .src[PANVK_SUBQUEUE_COMPUTE].wait_sb_mask =
++            dev->csf.sb.all_iters_mask,
++         .dst[PANVK_SUBQUEUE_VERTEX_TILER].wait_subqueue_mask =
++            BITFIELD_BIT(PANVK_SUBQUEUE_COMPUTE),
++      };
++      panvk_per_arch(emit_barrier)(cmdbuf, deps);
++   }
++
+    result = prepare_draw(cmdbuf, &draw);
+    if (result != VK_SUCCESS)
+       return;
+diff --git a/src/panfrost/vulkan/panvk_cmd_draw.h b/src/panfrost/vulkan/panvk_cmd_draw.h
+index 54fff197856..8b8257edac9 100644
+--- a/src/panfrost/vulkan/panvk_cmd_draw.h
++++ b/src/panfrost/vulkan/panvk_cmd_draw.h
+@@ -21,6 +21,7 @@
+ 
+ #include "vk_command_buffer.h"
+ #include "vk_format.h"
++#include "poly/geometry.h"
+ #include "vk_meta.h"
+ #include "util/u_tristate.h"
+ 
+@@ -206,6 +207,14 @@ struct panvk_cmd_graphics_state {
+       struct panvk_shader_desc_state desc;
+    } tcs;
+ 
++   struct {
++      struct poly_vertex_params vp;
++      uint64_t vp_addr;
++
++      struct poly_geometry_params gp;
++      uint64_t gp_addr;
++   } poly;
++
+    struct {
+       const struct panvk_shader *shader;
+       struct panvk_shader_desc_state desc;
+@@ -519,6 +528,10 @@ struct panvk_draw_info {
+ 
+    enum mesa_prim prim;
+ 
++#if PAN_ARCH >= 9
++   bool need_cs_sync;
++#endif
++
+ #if PAN_ARCH < 9
+    uint32_t layer_id;
+ #endif
+diff --git a/src/panfrost/vulkan/panvk_shader.h b/src/panfrost/vulkan/panvk_shader.h
+index 18d2a266b05..2a52ab14e9f 100644
+--- a/src/panfrost/vulkan/panvk_shader.h
++++ b/src/panfrost/vulkan/panvk_shader.h
+@@ -184,12 +184,6 @@ struct panvk_graphics_sysvals {
+       int32_t first_vertex;
+       int32_t base_instance;
+       uint32_t noperspective_varyings;
+-
+-      /* Size of an index in the index buffer or 0 for no indexing */
+-      uint32_t index_size;
+-
+-      /* Address to struct poly_ia_state */
+-      uint64_t ia_buffer;
+    } vs;
+ 
+    struct {
+diff --git a/src/panfrost/vulkan/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/panvk_vX_cmd_draw.c
+index 078017c510a..13104a1c685 100644
+--- a/src/panfrost/vulkan/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/panvk_vX_cmd_draw.c
+@@ -939,6 +939,28 @@ panvk_per_arch(cmd_prepare_draw_sysvals)(struct panvk_cmd_buffer *cmdbuf,
+    if (dyn_gfx_state_dirty(cmdbuf, INPUT_ATTACHMENT_MAP))
+       prepare_iam_sysvals(cmdbuf, dirty_sysvals);
+ 
++    set_gfx_sysval(cmdbuf, dirty_sysvals, poly.vertex_params,
++                   cmdbuf->state.gfx.poly.vp_addr);
++    set_gfx_sysval(cmdbuf, dirty_sysvals, poly.geometry_params,
++                   cmdbuf->state.gfx.poly.gp_addr);
++
++   if (dyn_gfx_state_dirty(cmdbuf, IA_PRIMITIVE_TOPOLOGY) ||
++       dyn_gfx_state_dirty(cmdbuf, RS_PROVOKING_VERTEX)) {
++      const struct vk_input_assembly_state *ia =
++         &cmdbuf->vk.dynamic_graphics_state.ia;
++      const struct vk_rasterization_state *rs =
++         &cmdbuf->vk.dynamic_graphics_state.rs;
++
++      unsigned provoking;
++      if (rs->provoking_vertex == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT)
++         provoking = 2;
++      else if (ia->primitive_topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN)
++         provoking = 1;
++      else
++         provoking = 0;
++      set_gfx_sysval(cmdbuf, dirty_sysvals, poly.provoking_vertex, provoking);
++   }
++
+ #if PAN_ARCH < 9
+    struct panvk_descriptor_state *desc_state = &cmdbuf->state.gfx.desc_state;
+    struct panvk_shader_desc_state *vs_desc_state = &cmdbuf->state.gfx.vs.desc;
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index b931753e8b6..fba885df837 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -224,6 +224,13 @@ panvk_lower_sysvals(nir_builder *b, nir_instr *instr, void *data)
+       val = load_sysval(b, graphics, bit_size, poly.provoking_vertex);
+       break;
+ 
++   case nir_intrinsic_load_stat_query_address_poly:
++      /* TODO */
++      val = load_sysval(b, graphics, bit_size, poly.geometry_params);
++      val = nir_ushr_imm(b, val, 50);
++      val = nir_ior_imm(b, val, 0xc0ffee000);
++      break;
++
+    default:
+       return false;
+    }

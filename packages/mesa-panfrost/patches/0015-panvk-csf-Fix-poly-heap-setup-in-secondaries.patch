@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Faith Ekstrand <faith.ekstrand@collabora.com>
+Date: Thu, 20 Nov 2025 18:36:24 -0500
+Subject: [PATCH 15/57] panvk/csf: Fix poly heap setup in secondaries
+
+From mesa!38401 (draft geometry shader support), originally titled "FIXUP: panvk/csf: Fix poly heap setup in secondaries".
+In CmdExecuteCommands(), the call to init the poly heap on the primary
+was inside an assert so it wouldn't actually happen in release builds.
+Also, cmd_init_poly_heap() would never set uses_poly_heap on secondaries
+so it did nothing.
+
+(cherry picked from commit f2ed990cd0645c7813bccf51483af65a6968d685)
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c | 17 +++++++++++++----
+ 1 file changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c
+index fcbcb019971..4de045f0e78 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c
+@@ -756,10 +756,14 @@ panvk_per_arch(cmd_init_poly_heap)(struct panvk_cmd_buffer *cmdbuf)
+     * For secondary command buffers, the heap may already have been
+     * initialized in the primary, so we don't want to reset it again. If not,
+     * it will be initialized in the primary before executing the secondary. */
+-   if (cmdbuf->state.uses_poly_heap ||
+-       cmdbuf->vk.level == VK_COMMAND_BUFFER_LEVEL_SECONDARY)
++   if (cmdbuf->state.uses_poly_heap)
+       return VK_SUCCESS;
+ 
++   if (cmdbuf->vk.level == VK_COMMAND_BUFFER_LEVEL_SECONDARY) {
++      cmdbuf->state.uses_poly_heap = true;
++      return VK_SUCCESS;
++   }
++
+    VkResult result = panvk_per_arch(device_init_poly_heap)(dev);
+    if (result != VK_SUCCESS)
+       return result;
+@@ -1059,8 +1063,13 @@ panvk_per_arch(CmdExecuteCommands)(VkCommandBuffer commandBuffer,
+    for (uint32_t i = 0; i < commandBufferCount; i++) {
+       VK_FROM_HANDLE(panvk_cmd_buffer, secondary, pCommandBuffers[i]);
+ 
+-      if (secondary->state.uses_poly_heap)
+-         assert(panvk_per_arch(cmd_init_poly_heap)(primary) == VK_SUCCESS);
++      if (secondary->state.uses_poly_heap) {
++         VkResult result = panvk_per_arch(cmd_init_poly_heap)(primary);
++         if (result != VK_SUCCESS) {
++            vk_command_buffer_set_error(&primary->vk, result);
++            break;
++         }
++      }
+ 
+       /* make sure the CS context is setup properly
+        * to inherit the primary command buffer state

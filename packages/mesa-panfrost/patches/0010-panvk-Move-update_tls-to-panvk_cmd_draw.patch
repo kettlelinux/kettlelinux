@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Faith Ekstrand <faith.ekstrand@collabora.com>
+Date: Tue, 18 Nov 2025 11:03:55 -0500
+Subject: [PATCH 10/57] panvk: Move update_tls() to panvk_cmd_draw()
+
+We need to handle TLS before we execute the polygon pipeline.
+
+(cherry picked from commit 98ab36209eaa517fbf92f349af06116b666046d7)
+---
+ src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+index 693a9a8b90e..55c1a1da133 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_draw.c
+@@ -3049,10 +3049,6 @@ prepare_draw(struct panvk_cmd_buffer *cmdbuf,
+       set_provoking_vertex_mode(cmdbuf, first_provoking_vertex);
+    }
+ 
+-   result = update_tls(cmdbuf);
+-   if (result != VK_SUCCESS)
+-      return result;
+-
+    if (!cmdbuf->vk.dynamic_graphics_state.rs.rasterizer_discard_enable) {
+       ASSERTED const struct pan_fb_layout *fb =
+          &cmdbuf->state.gfx.render.fb.layout;
+@@ -3673,6 +3669,10 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info draw)
+    if (result != VK_SUCCESS)
+       return;
+ 
++   result = update_tls(cmdbuf);
++   if (result != VK_SUCCESS)
++      return;
++
+    /* The VS push uniforms have to be ready before the geometry pipeline runs.
+     * prepare_draw() updates the sysvals again once the blend descriptors are
+     * known, which only dirties the FS push uniforms.
