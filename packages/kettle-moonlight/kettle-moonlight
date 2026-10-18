@@ -1,10 +1,21 @@
 #!/bin/bash
 # Kettle Linux: starts Moonlight for a game stream, the command Game Mode's Moonlight shortcuts
-# run (kettle-moonlight stream <host> <app> [options]). Around the stream it tunes the device
+# run: kettle-moonlight launch <host uuid> <app>, which streams with the host's settings as the
+# Moonlight plugin last wrote them (~/.config/kettle-moonlight/<uuid>.args: the host's name, then
+# one moonlight `stream` option per line), or kettle-moonlight stream <host> <app> [options],
+# straight to moonlight. Around the stream it tunes the device
 # through kettle-stream-link (as root, by pkexec), on a device whose /usr/lib/kettle/stream-link
 # asks for it, and puts it back when Moonlight quits, crashes or Steam stops the shortcut.
 CONF=/usr/lib/kettle/stream-link
 HELPER=/usr/lib/kettle/kettle-stream-link
+
+if [ "${1:-}" = launch ]; then
+  [ $# = 3 ] || { echo "usage: kettle-moonlight launch <host uuid> <app>" >&2; exit 2; }
+  case "$2" in *[!0-9A-Fa-f-]*|"") echo "kettle-moonlight: not a host: $2" >&2; exit 2 ;; esac
+  args="$HOME/.config/kettle-moonlight/$2.args"
+  mapfile -t a <"$args" || { echo "kettle-moonlight: no settings for host $2 (pair with it in Game Mode's Moonlight)" >&2; exit 1; }
+  set -- stream "${a[0]}" "$3" "${a[@]:1}"
+fi
 
 tuned=0
 if [ -r "$CONF" ] && pkexec "$HELPER" start; then

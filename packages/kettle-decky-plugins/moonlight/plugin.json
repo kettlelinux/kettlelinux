@@ -1,0 +1,11 @@
+{
+  "name": "Moonlight",
+  "author": "Kettle Linux",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["streaming", "moonlight", "sunshine", "apollo"],
+    "description": "Play games streamed from your PC through Sunshine or Apollo: pair with a PIN, add the PC's games to your Steam library and stream them with low latency.",
+    "image": ""
+  }
+}
