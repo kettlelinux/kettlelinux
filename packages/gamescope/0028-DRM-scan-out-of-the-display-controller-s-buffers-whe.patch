@@ -1,0 +1,158 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gennro <gennro2004@gmail.com>
+Date: Sun, 18 Oct 2026 12:28:48 -0500
+Subject: [PATCH] DRM: scan out of the display controller's buffers when it
+ isn't the Vulkan GPU
+
+With the display controller apart from a render-only GPU (0027), gamescope's scanout images were the GPU's own memory, exported to the display controller. A GPU may map its own memory cached where the display controller doesn't snoop: on the CIX P1 (Panthor beside linlondp) composited frames showed short dashes of stale cache lines. Make each scanout image a dumb buffer on the display controller instead, imported into Vulkan (linear) as a client's buffer is, as Mesa's kmsro does for GL; if the GPU can't import it, fall back to its own memory.
+---
+ src/Backends/DRMBackend.cpp | 50 +++++++++++++++++++++++++++++++++++++
+ src/rendervulkan.cpp        | 32 ++++++++++++++++++++++++
+ src/rendervulkan.hpp        |  3 +++
+ 3 files changed, 85 insertions(+)
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 29493bcf..62ccfa77 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -1817,6 +1817,55 @@ static char *find_kms_device()
+ 	return nullptr;
+ }
+ 
++// Set by init_drm when the display controller isn't the Vulkan GPU (find_kms_device)
++static bool s_bSeparateDisplayController = false;
++
++bool drm_alloc_scanout_dmabuf( uint32_t width, uint32_t height, uint32_t drmFormat, wlr_dmabuf_attributes *pDmabuf )
++{
++	if ( !s_bSeparateDisplayController )
++		return false;
++	// single-plane 32- and 64-bit formats, the ones gamescope scans out
++	uint32_t uBytes = DRMFormatGetBPP( drmFormat );
++	if ( uBytes != 4 && uBytes != 8 )
++		return false;
++
++	// rows padded to 64 bytes, which GPUs want of a linear image they import (Mali's PanVK does)
++	const uint32_t uRowAlign = 64;
++	struct drm_mode_create_dumb create = {
++		.height = height,
++		.width = ( width * uBytes + uRowAlign - 1 ) / uRowAlign * uRowAlign / uBytes,
++		.bpp = uBytes * 8,
++	};
++	if ( drmIoctl( g_DRM.fd, DRM_IOCTL_MODE_CREATE_DUMB, &create ) != 0 )
++	{
++		drm_log.errorf_errno( "DRM_IOCTL_MODE_CREATE_DUMB failed" );
++		return false;
++	}
++	int fd = -1;
++	int ret = create.pitch % uRowAlign ? -EINVAL :
++		drmPrimeHandleToFD( g_DRM.fd, create.handle, DRM_CLOEXEC | DRM_RDWR, &fd ) ? -errno : 0;
++	// the dmabuf keeps the buffer
++	struct drm_mode_destroy_dumb destroy = { .handle = create.handle };
++	drmIoctl( g_DRM.fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy );
++	if ( ret != 0 )
++	{
++		drm_log.errorf( "No scanout buffer from the display controller (pitch %u): %s", create.pitch, strerror( -ret ) );
++		return false;
++	}
++
++	*pDmabuf = {
++		.width = int( width ),
++		.height = int( height ),
++		.format = drmFormat,
++		.modifier = DRM_FORMAT_MOD_LINEAR,
++		.n_planes = 1,
++	};
++	pDmabuf->offset[0] = 0;
++	pDmabuf->stride[0] = create.pitch;
++	pDmabuf->fd[0] = fd;
++	return true;
++}
++
+ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+ {
+ 	load_pnps();
+@@ -1872,6 +1921,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+ 			drm_log.errorf( "Could not open KMS device '%s'", drm->device_name );
+ 			return false;
+ 		}
++		s_bSeparateDisplayController = true;
+ 	}
+ 
+ 	if (drmSetClientCap(drm->fd, DRM_CLIENT_CAP_ATOMIC, 1) != 0) {
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 54e4efc3..e073eade 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -2179,6 +2179,20 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
+ 		imageInfo.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+ 	}
+ 
++	// A render-only GPU beside a separate display controller (see init_drm): scan out of the
++	// display controller's own (dumb) buffers, imported here as a client's are, not of the GPU's
++	// exported memory, which it may map cached where the display controller doesn't snoop (stale
++	// cache lines on screen on the CIX P1). Mesa's kmsro does the same for GL.
++	wlr_dmabuf_attributes scanoutDmabuf = {};
++	bool bScanoutDmabuf = false;
++	if ( flags.bFlippable && !pDMA && !pExistingImageToReuseMemory && g_device.supportsModifiers() &&
++	     drm_alloc_scanout_dmabuf( width, height, drmFormat, &scanoutDmabuf ) )
++	{
++		pDMA = &scanoutDmabuf;
++		flags.bExportable = false;
++		bScanoutDmabuf = true;
++	}
++
+ 	if ( pDMA != nullptr )
+ 	{
+ 		assert( drmFormat == pDMA->format );
+@@ -2217,6 +2231,15 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
+ 		}
+ 	}
+ 
++	if ( bScanoutDmabuf && tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT )
++	{
++		// the GPU can't import it linear: scan out of its own memory after all
++		wlr_dmabuf_attributes_finish( &scanoutDmabuf );
++		pDMA = nullptr;
++		flags.bExportable = true;
++		bScanoutDmabuf = false;
++	}
++
+ 	std::vector<uint64_t> modifiers = {};
+ 	// TODO(JoshA): Move this code to backend for making flippable image.
+ 	if ( GetBackend()->UsesModifiers() && flags.bFlippable && g_device.supportsModifiers() && !pDMA )
+@@ -2420,9 +2443,18 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
+ 	if ( res != VK_SUCCESS )
+ 	{
+ 		vk_errorf( res, "vkBindImageMemory failed" );
++		if ( bScanoutDmabuf )
++			wlr_dmabuf_attributes_finish( &scanoutDmabuf );
+ 		return false;
+ 	}
+ 
++	if ( bScanoutDmabuf )
++	{
++		// ours from here on, as an exported image's is; the rest is as for gamescope's own memory
++		m_dmabuf = scanoutDmabuf;
++		pDMA = nullptr;
++	}
++
+ 	if ( flags.bMappable == true )
+ 	{
+ 		assert( tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT );
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index fa519db6..306cf89e 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -1059,6 +1059,9 @@ uint32_t VulkanFormatToDRM( VkFormat vkFormat, std::optional<bool> obHasAlphaOve
+ VkFormat DRMFormatToVulkan( uint32_t nDRMFormat, bool bSrgb );
+ bool DRMFormatHasAlpha( uint32_t nDRMFormat );
+ uint32_t DRMFormatGetBPP( uint32_t nDRMFormat );
++// A dumb buffer on the display controller for a scanout image, when that isn't the Vulkan GPU
++// (DRMBackend.cpp); false otherwise, or when it can't make one.
++bool drm_alloc_scanout_dmabuf( uint32_t width, uint32_t height, uint32_t drmFormat, wlr_dmabuf_attributes *pDmabuf );
+ 
+ gamescope::OwningRc<CVulkanTexture> vulkan_create_flat_texture( uint32_t width, uint32_t height, uint8_t r, uint8_t g, uint8_t b, uint8_t a );
+ 
+-- 
+2.56.0
+

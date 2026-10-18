@@ -53,9 +53,12 @@ place of the Qualcomm options (`CMDLINE_SOC`).
 - **DXVK**: games get `DXVK_CONFIG=d3d11.maxFeatureLevel=11_0;dxgi.maxDeviceMemory=4096`
   (`/usr/lib/kettle/game-env`): PanVK has no tessellation, and reports ~3/4 of RAM as VRAM. A
   game's own `DXVK_CONFIG` replaces it.
-- **Starts in the desktop** (Plasma, as 06n-arch ran it): on 20261018.1 Game Mode (gamescope on
-  linlondp + Panthor) gave a black screen while the system kept running. Game Mode is a switch
-  away until that is fixed.
+- **Starts in the desktop** (Plasma, as 06n-arch ran it), Game Mode a switch away.
+- **Game Mode**: gamescope renders on Panthor (card0, no KMS) and scans out on linlondp (card1):
+  gamescope 0027 finds the display controller, 0028 composites into its own buffers. Panthor maps
+  its own memory cached (kernel 3001) and linlondp doesn't snoop, so frames in Panthor memory
+  showed short dashes of stale cache lines; every frame is composited (`--force-composition` in
+  `gamescope.conf`), never a client's buffer scanned out. Tested 2026-10-18: clean, AFBC on.
 - **No built-in gamepad, battery or panel**: no `PAD_NAME`, so no InputPlumber, desktop controller
   or Quick Access button services; Steam takes USB and Bluetooth controllers as they are. Game
   Mode's `gamescope.conf` sets nothing: the monitor's EDID decides.
