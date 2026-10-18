@@ -3,6 +3,11 @@
 #    (arm/mali/arch12.8), which Panthor loads
 #  - Arch linux-firmware-realtek (same): the two RTL8125B 2.5 GbE ports' rtl_nic/rtl8125b-2.fw
 #    (r8169), redistributable as linux-firmware's WHENCE says
+#  - Wi-Fi and Bluetooth for whatever card or USB adapter goes in the board's M.2 slot or USB
+#    ports, which the cix kernel has drivers for: all of linux-firmware-realtek (rtw88, rtw89,
+#    rtlwifi, rtl_bt) and -mediatek (mt76), and from -intel, -atheros, -broadcom and -marvell
+#    their Wi-Fi and Bluetooth files (iwlwifi, ibt; ath9k_htc, ath10k QCA6174/QCA9377, ath11k
+#    WCN6855, ath12k WCN7850, qca; brcm and cypress for brcmfmac; mrvl for mwifiex). An RTL8821CU stick found nothing to load on 20261018.2.
 #  - CIX's VPU firmware (github.com/cixtech/cix_opensource__vpu_driver, pinned commit, the
 #    driver's own repo; the driver is the cix kernel's 40-kettle/3007): one image per codec,
 #    firmware-binaries/*.fwb. The repo's only licence statement (debian/copyright) puts every file
@@ -12,8 +17,8 @@ pkgname=kettle-firmware-radxa-o6n
 _linux_fw=20260221-1
 _vpu_rev=51d1ec01c0952d1d3a8b6ef2fc34a0ca84fe9436
 pkgver=${_linux_fw%-*}.${_vpu_rev:0:8}
-pkgrel=1
-pkgdesc='Firmware for the Radxa Orion O6N (Mali GPU, VPU, 2.5 GbE)'
+pkgrel=2
+pkgdesc='Firmware for the Radxa Orion O6N (Mali GPU, VPU, 2.5 GbE, Wi-Fi and Bluetooth cards)'
 arch=(any)
 url='https://github.com/cixtech/cix_opensource__vpu_driver'
 license=(LicenseRef-linux-firmware GPL-2.0-or-later)
@@ -23,12 +28,27 @@ options=(!strip)
 _mirror=https://steamdeck-packages.steamos.cloud/archlinux-deckard/archlinux/mash-20260305/core/os/aarch64
 source=("cix-vpu::git+https://github.com/cixtech/cix_opensource__vpu_driver.git#commit=$_vpu_rev"
         "$_mirror/linux-firmware-other-$_linux_fw-any.pkg.tar.zst"
-        "$_mirror/linux-firmware-realtek-$_linux_fw-any.pkg.tar.zst")
+        "$_mirror/linux-firmware-realtek-$_linux_fw-any.pkg.tar.zst"
+        "$_mirror/linux-firmware-mediatek-$_linux_fw-any.pkg.tar.zst"
+        "$_mirror/linux-firmware-intel-$_linux_fw-any.pkg.tar.zst"
+        "$_mirror/linux-firmware-atheros-$_linux_fw-any.pkg.tar.zst"
+        "$_mirror/linux-firmware-broadcom-$_linux_fw-any.pkg.tar.zst"
+        "$_mirror/linux-firmware-marvell-$_linux_fw-any.pkg.tar.zst")
 noextract=("linux-firmware-other-$_linux_fw-any.pkg.tar.zst"
-           "linux-firmware-realtek-$_linux_fw-any.pkg.tar.zst")
+           "linux-firmware-realtek-$_linux_fw-any.pkg.tar.zst"
+           "linux-firmware-mediatek-$_linux_fw-any.pkg.tar.zst"
+           "linux-firmware-intel-$_linux_fw-any.pkg.tar.zst"
+           "linux-firmware-atheros-$_linux_fw-any.pkg.tar.zst"
+           "linux-firmware-broadcom-$_linux_fw-any.pkg.tar.zst"
+           "linux-firmware-marvell-$_linux_fw-any.pkg.tar.zst")
 sha256sums=('SKIP'
             '0cab80b21991081e7c06ecad16f322feac4a0d10cffad92aa436aebcd7cceb92'
-            'f85c9d3dfb60fa91437d1edc5df00f1e70712914d8b6afb985784cd407e6f6fe')
+            'f85c9d3dfb60fa91437d1edc5df00f1e70712914d8b6afb985784cd407e6f6fe'
+            'e4a394ef4c40b621e4b0ad1d7ac71683acb54f9934e91bbf3f2cf5336a02e0bc'
+            'ca57a4700289a98a84345affba2dfac89b4e02162fc4bfcc64bf5f088b32b354'
+            '59e0a43b634246312db82bc0e4944faee72cc846fb71ab918e5a13135d7837d1'
+            '986e0153bb66cbd04d236d060149a490a23fe7e9092c7f2e1a044461c81d690f'
+            '633fb93500dad5c4bcdeca63ea641527c7383d44282131cdb7e48dc8b496611d')
 
 package() {
   local fw="$pkgdir/usr/lib/firmware"
@@ -38,7 +58,24 @@ package() {
   bsdtar -xf "$srcdir/linux-firmware-other-$_linux_fw-any.pkg.tar.zst" -C "$pkgdir" \
     'usr/lib/firmware/arm/mali/arch12.8/*' \
     usr/share/licenses/linux-firmware-other/LICENCE.mali_csffw
-  bsdtar -xf "$srcdir/linux-firmware-realtek-$_linux_fw-any.pkg.tar.zst" -C "$pkgdir" \
-    usr/lib/firmware/rtl_nic/rtl8125b-2.fw.zst
+  # all of Realtek's and MediaTek's (the 2.5 GbE ports' rtl_nic/rtl8125b-2.fw among them)
+  bsdtar -xf "$srcdir/linux-firmware-realtek-$_linux_fw-any.pkg.tar.zst" -C "$pkgdir" usr
+  bsdtar -xf "$srcdir/linux-firmware-mediatek-$_linux_fw-any.pkg.tar.zst" -C "$pkgdir" usr
+  # Intel's and Qualcomm Atheros's Wi-Fi and Bluetooth
+  bsdtar -xf "$srcdir/linux-firmware-intel-$_linux_fw-any.pkg.tar.zst" -C "$pkgdir" \
+    'usr/lib/firmware/iwlwifi-*' 'usr/lib/firmware/intel/iwlwifi/*' 'usr/lib/firmware/intel/ibt-*' \
+    usr/share/licenses/linux-firmware-intel/LICENCE.iwlwifi_firmware \
+    usr/share/licenses/linux-firmware-intel/LICENCE.ibt_firmware
+  bsdtar -xf "$srcdir/linux-firmware-atheros-$_linux_fw-any.pkg.tar.zst" -C "$pkgdir" \
+    'usr/lib/firmware/ath9k_htc/*' 'usr/lib/firmware/htc_*' 'usr/lib/firmware/qca/*' \
+    'usr/lib/firmware/ath10k/QCA6174/*' 'usr/lib/firmware/ath10k/QCA9377/*' \
+    'usr/lib/firmware/ath11k/WCN6855/*' 'usr/lib/firmware/ath12k/WCN7850/*' \
+    'usr/share/licenses/linux-firmware-atheros/*'
+  bsdtar -xf "$srcdir/linux-firmware-broadcom-$_linux_fw-any.pkg.tar.zst" -C "$pkgdir" \
+    'usr/lib/firmware/brcm/*' 'usr/lib/firmware/cypress/*' \
+    usr/share/licenses/linux-firmware-broadcom/LICENCE.broadcom_bcm43xx \
+    usr/share/licenses/linux-firmware-broadcom/LICENCE.cypress
+  bsdtar -xf "$srcdir/linux-firmware-marvell-$_linux_fw-any.pkg.tar.zst" -C "$pkgdir" \
+    'usr/lib/firmware/mrvl/*' 'usr/share/licenses/linux-firmware-marvell/*'
   find "$pkgdir" -type d -exec chmod 755 {} + && find "$fw" -type f -exec chmod 644 {} +
 }
