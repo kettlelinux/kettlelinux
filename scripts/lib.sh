@@ -126,8 +126,36 @@ pacman_root() {
     --cachedir "$PKG_CACHE" --noconfirm --noprogressbar "$@"
 }
 
-# The kernel's src_hash (generated.config is build-kernel.sh's output, not its input)
-kernel_src_hash() { src_hash kernel ':!kernel/config/generated.config'; }
+# Kernel flavours, one kernel per SoC family. qcom (the default) is kernel/ itself: kernel.conf,
+# patches/, config/ and dts/, built into out/kernel. Each other flavour is kernel/<flavour>/ with
+# its own kernel.conf, patches/ and config/base.config, built into out/kernel-<flavour>; the
+# fragments in kernel/config are shared. A device picks one with KERNEL_FLAVOUR in device.conf.
+# Sets KFLAVOUR, KDIR (its tree) and KOUT (its output).
+kernel_flavour() {
+  KFLAVOUR="${1:-qcom}"
+  if [ "$KFLAVOUR" = qcom ]; then
+    KDIR="$ROOT/kernel" KOUT="$ROOT/out/kernel"
+  else
+    [[ "$KFLAVOUR" =~ ^[a-z0-9-]+$ ]] && [ -f "$ROOT/kernel/$KFLAVOUR/kernel.conf" ] ||
+      die "no kernel flavour '$KFLAVOUR' (kernel/$KFLAVOUR/kernel.conf)"
+    KDIR="$ROOT/kernel/$KFLAVOUR" KOUT="$ROOT/out/kernel-$KFLAVOUR"
+  fi
+}
+
+# A flavour's src_hash (generated.config is build-kernel.sh's output, not its input): qcom's
+# leaves out the other flavours' directories, theirs take in the shared fragments
+kernel_src_hash() {
+  local f="${1:-qcom}" d ex=()
+  if [ "$f" = qcom ]; then
+    for d in "$ROOT"/kernel/*/kernel.conf; do
+      [ -f "$d" ] || continue
+      d="${d%/kernel.conf}"; ex+=(":!kernel/${d##*/}")
+    done
+    src_hash kernel ':!kernel/config/generated.config' "${ex[@]}"
+  else
+    src_hash "kernel/$f" kernel/config ":!kernel/$f/config/generated.config" ':!kernel/config/generated.config'
+  fi
+}
 
 # Build IDs (YYYYMMDD.N), oldest first, from names like kettle-<buildid>-<device>.*
 sort_buildids() { sort -u -t. -k1,1n -k2,2n; }
