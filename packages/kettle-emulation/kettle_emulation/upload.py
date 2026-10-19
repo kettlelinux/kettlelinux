@@ -414,6 +414,9 @@ button, label.btn { display:inline-block; font:inherit; font-weight:600; padding
     <div style="margin-bottom:12px">Drop files or folders anywhere on this page, or</div>
     <label class="btn">Choose files<input id="pick" type="file" multiple hidden></label>
     <div class="mute" style="margin-top:12px">Pick a disc's .cue together with its .bin tracks.</div>
+    <div id="dropmsg" class="bad" style="margin-top:12px" hidden>Your browser passed a link to the file,
+      not the file itself (Firefox does this with files dragged from KDE's file manager, most of all
+      when it runs as a Flatpak or Snap). Use Choose files instead, or drag from another browser.</div>
   </div>
   <div id="list" class="card" hidden></div>
   <div id="result" class="card" hidden></div>
@@ -502,7 +505,14 @@ window.addEventListener("dragleave", () => { if (depth && --depth === 0) drop.cl
 window.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = ready() ? "copy" : "none"; });
 window.addEventListener("drop", async (e) => {
   e.preventDefault(); depth = 0; drop.classList.remove("over");
-  if (ready()) add(await dropped(e.dataTransfer));
+  if (!ready()) return;
+  const dt = e.dataTransfer;
+  // Firefox can hand over only a link to a file dragged from KDE's file manager (text/x-moz-url,
+  // no file in it; seen on the Portal's upload page): a page can't read that, so say so
+  const link = dt.getData("text/x-moz-url") || dt.getData("text/uri-list");
+  const files = await dropped(dt);
+  $("dropmsg").hidden = !!files.length || !link;
+  add(files);
 });
 </script></main></body></html>
 """

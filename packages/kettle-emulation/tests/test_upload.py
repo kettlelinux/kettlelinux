@@ -231,6 +231,9 @@ class Upload(Env):
         self.assertIn('window.addEventListener("drop"', upload.PAGE)
         self.assertIn('dropEffect = ready() ? "copy"', upload.PAGE)
         self.assertIn("webkitGetAsEntry", upload.PAGE)
+        # a drop that brings only a link (Firefox from KDE's file manager) says why nothing came
+        self.assertIn('dt.getData("text/x-moz-url")', upload.PAGE)
+        self.assertIn('id="dropmsg"', upload.PAGE)
 
     def test_safe_name(self):
         self.assertEqual(upload.safe_name("C:\\games\\Mario.nes"), "Mario.nes")
