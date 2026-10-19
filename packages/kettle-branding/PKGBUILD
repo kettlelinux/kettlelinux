@@ -16,8 +16,8 @@
 pkgbase=kettle-branding
 pkgname=(kettle-plymouth-theme kettle-steam-startup kettle-plasma-splash kettle-wallpaper
          kettle-desktop-art)
-pkgver=1.0.0
-pkgrel=5
+pkgver=1.1.0
+pkgrel=1
 arch=(any)
 license=(BSD-3-Clause)
 makedepends=(librsvg ffmpeg python)

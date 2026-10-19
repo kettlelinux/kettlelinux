@@ -8,8 +8,8 @@
 #   libSkiaSharp.so  SkiaSharp's arm64 releases (MIT; NuGet), one per milestone, as games need
 #                    their own: 2.80 (Stardew Valley) and 2.88
 pkgname=kettle-native
-pkgver=0.2.0
-pkgrel=2
+pkgver=0.3.0
+pkgrel=1
 _skia=(2.80.4 2.88.9)
 pkgdesc='Run Steam games natively on ARM64 where their engine allows'
 arch=(aarch64)

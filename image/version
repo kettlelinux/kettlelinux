@@ -1,3 +1,6 @@
 # Kettle Linux version (VERSION_ID in os-release, semantic versioning). Each image build also gets
 # a BUILD_ID, YYYYMMDD.N, which is what the update server orders releases by.
-0.1.0
+# This is the version of the next public release: test and beta builds carry it too. Once a public
+# release is out, bump it here: the minor for new features, the patch for a fix-only release
+# (docs/UPDATES.md, Versions).
+0.2.0

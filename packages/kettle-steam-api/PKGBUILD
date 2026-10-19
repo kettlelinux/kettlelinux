@@ -4,8 +4,8 @@
 # which Steam method each of its functions calls, and this library follows that map. Our own code
 # (steam_api.c, gen-flat.py), no Steamworks SDK files: see steam_api.c.
 pkgname=kettle-steam-api
-pkgver=0.1.0
-pkgrel=3
+pkgver=0.2.0
+pkgrel=1
 pkgdesc="Steam API for ARM64 games, passed through to Steam's ARM64 client"
 arch=(aarch64)
 license=(BSD-3-Clause)

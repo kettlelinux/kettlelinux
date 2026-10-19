@@ -3,8 +3,8 @@
 # Their one writer, as root; serves org.kettlelinux.Leds1 to Device Settings'
 # Lights tab (kettle-decky-device-settings). Sources live next to this PKGBUILD.
 pkgname=kettle-leds
-pkgver=0.1.0
-pkgrel=5
+pkgver=0.2.0
+pkgrel=1
 pkgdesc='Kettle Linux stick lights daemon'
 arch=(any)
 license=(BSD-3-Clause)

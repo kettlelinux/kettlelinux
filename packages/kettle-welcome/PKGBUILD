@@ -19,8 +19,8 @@
 # And Battle.net: Blizzard's installer, from Blizzard's own download link, added to Steam with
 # Proton-CachyOS by welcome-battlenet (also used by Game Mode's Game Stores, kettle-decky-stores).
 pkgname=kettle-welcome
-pkgver=2.0.0
-pkgrel=13
+pkgver=2.1.0
+pkgrel=1
 pkgdesc='Kettle Linux welcome and setup hub for the desktop'
 arch=(aarch64)
 license=(BSD-3-Clause)

@@ -5,8 +5,8 @@
 # files: Valve's alsa-ucm-conf stays untouched.
 pkgbase=kettle-ucm-ayn
 pkgname=(kettle-ucm-odin2portal kettle-ucm-thor kettle-ucm-rpnova)
-pkgver=1.0.0
-pkgrel=5
+pkgver=1.1.0
+pkgrel=1
 pkgdesc='ALSA UCM profiles for AYN SM8550 handhelds'
 arch=(any)
 license=(BSD-3-Clause)

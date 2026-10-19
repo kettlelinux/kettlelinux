@@ -10,8 +10,8 @@
 # The Thor's bottom screen starts it in Game Mode, where it follows the running game and shares
 # Steam's values with Quick Access > Performance.
 pkgname=kettle-power-applet
-pkgver=1.1.0
-pkgrel=7
+pkgver=1.2.0
+pkgrel=1
 pkgdesc='Kettle Linux power, fan and clock controls: the desktop tray applet and the Performance app'
 arch=(aarch64)
 license=(BSD-3-Clause)

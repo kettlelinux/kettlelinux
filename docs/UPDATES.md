@@ -111,6 +111,20 @@ image has no update server and updates come as new images. Kettle's is
 `https://updates.kettlelinux.org`. It can't change for images already out there, so it is the
 project's own domain, whichever host is behind it.
 
+## Versions
+
+- **Kettle** (`image/version`, VERSION_ID): the next public release's version, which test and
+  beta builds carry too. After a public release, the minor goes up for the next one with new
+  features, the patch for a fix-only one. Builds are told apart by BUILD_ID, which is what
+  updates go by.
+- **Kettle's own packages** (`packages/kettle-*` and the like, whose source lives here): a change to
+  what the package does raises `pkgver` (the minor for something new, the patch for a fix) and
+  resets `pkgrel` to 1. `pkgrel` alone goes up only for a packaging change or a rebuild with the
+  same code.
+- **Other projects' packages:** `pkgver` follows their release or commit; `pkgrel` counts our
+  changes on top. Kettle's other repositories (Remora, kettle-framegen, OpenABL) version
+  themselves.
+
 ## Update server
 
 The update server is static files (made by `scripts/publish-update.sh`):

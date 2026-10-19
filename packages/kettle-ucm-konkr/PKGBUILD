@@ -5,8 +5,8 @@
 # DisplayPort device, disable sequences, and keeps the amps at unity gain (PipeWire sets the
 # volume). Only new files: Valve's alsa-ucm-conf stays untouched.
 pkgname=kettle-ucm-pocketfitelite
-pkgver=1.0.0
-pkgrel=2
+pkgver=1.1.0
+pkgrel=1
 pkgdesc='ALSA UCM profile for the KONKR Pocket FIT Elite'
 arch=(any)
 license=(BSD-3-Clause)

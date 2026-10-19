@@ -10,8 +10,8 @@
 #                         /usr/local/bin/firefox (ahead of Valve's /usr/bin/firefox in PATH, for
 #                         apps that start "firefox") both go through it
 pkgname=kettle-firefox-desktop
-pkgver=1.1.0
-pkgrel=3
+pkgver=1.2.0
+pkgrel=1
 pkgdesc='Menu entry, icons, launcher and default-browser setting for Firefox'
 arch=(aarch64)
 license=(BSD-3-Clause)
