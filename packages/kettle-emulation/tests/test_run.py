@@ -465,3 +465,9 @@ class EdenPad(unittest.TestCase):
         self.write(f"[Controls]\nplayer_0_button_a\\default=false\nplayer_0_button_a={mine}\n")
         seed.keep_eden()
         self.assertEqual(self.read()["Controls"]["player_0_button_a"], mine)
+
+
+class Environment(unittest.TestCase):
+    def test_cpu_vulkan_hidden(self):
+        env = seed.environment("eden", {"kind": "flatpak"})
+        self.assertEqual(env["VK_LOADER_DRIVERS_DISABLE"], "lvp_icd*")

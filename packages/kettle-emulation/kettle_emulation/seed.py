@@ -831,4 +831,9 @@ def seed(eid=None):
 
 
 def environment(eid, emu):
-    return dict(os.environ)
+    env = dict(os.environ)
+    # Mesa's CPU Vulkan driver (llvmpipe) out of the Flatpaks' sight: Eden takes Vulkan device 0,
+    # which in its runtime was llvmpipe (the Portal: a game drawn on the CPU, stuck at its
+    # launch screen), and no emulator should ever draw on the CPU when there's a GPU
+    env["VK_LOADER_DRIVERS_DISABLE"] = "lvp_icd*"
+    return env

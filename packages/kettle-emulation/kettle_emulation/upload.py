@@ -29,7 +29,7 @@ import urllib.parse
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import importer, storage
+from . import awake, importer, storage
 
 MAX_SIZE = 64 << 30
 MAX_BAD_PINS = 10       # from one address
@@ -116,6 +116,8 @@ class Server(ThreadingHTTPServer):
         self.last = time.monotonic()
         self.active = 0
         self.uploaded = []
+        # no sleep while files come in (or for a minute after one, as the next follows)
+        self.awake = awake.Awake("Uploading games", linger=60)
 
     @property
     def locked(self):
@@ -323,6 +325,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"error": "folder nested too deep"})
         fd, tmp = tempfile.mkstemp(suffix=".part", dir=self.server.tmpdir)
         self.server.active += 1
+        self.server.awake.hold()
         try:
             left = length
             with os.fdopen(fd, "wb") as f:
@@ -347,6 +350,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(500, {"error": str(e)})
         finally:
             self.server.active -= 1
+            self.server.awake.release()
             self.server.touch()
         entry = {"name": os.path.relpath(dest, self.server.inbox), "bytes": length}
         self.server.uploaded.append(entry)

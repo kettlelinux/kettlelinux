@@ -26,3 +26,14 @@ polkit.addRule(function(action, subject) {
         return polkit.Result.YES;
     return polkit.Result.NOT_HANDLED;
 });
+
+// While games are uploaded from a phone or PC, or copied in from a card or stick, the plugin's
+// upload server and importer hold off sleep (kettle_emulation/awake.py: systemd-inhibit), or a
+// long copy dies when the device goes to sleep. Taking a sleep inhibitor outside the login
+// session needs an admin's password by default; Decky's plugin backends get it without one.
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.freedesktop.login1.inhibit-block-sleep" ||
+         action.id == "org.freedesktop.login1.inhibit-block-idle") && fromDecky(subject))
+        return polkit.Result.YES;
+    return polkit.Result.NOT_HANDLED;
+});
