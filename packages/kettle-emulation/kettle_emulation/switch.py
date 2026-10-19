@@ -202,3 +202,195 @@ def kind(tid):
     if low == 0x800:
         return "update"
     return "game" if low == 0 else "dlc"
+
+
+# --- firmware -------------------------------------------------------------------------------
+# A Switch firmware is the system's NCAs (dozens to a few hundred files, no game in them), as a
+# zip or a folder of .nca files. The user's goes in Emulation/bios/switch/firmware; Kettle puts it
+# where each emulator's own "Install Firmware" would, so the emulators' desktop windows are never
+# needed:
+# - Ryujinx (Ryubing src/Ryujinx.HLE/FileSystem/ContentManager.cs, InstallFirmware,
+#   InstallFromZip, SaveNca, FinishInstallation): bis/system/Contents/registered, each NCA a
+#   folder "<id>.nca" holding the file "00" (".cnmt" dropped from the name); the whole folder is
+#   replaced, and LoadEntries reads it at start.
+# - Eden (src/qt_common/util/content.cpp, InstallFirmware): nand/system/Contents/registered, the
+#   .nca files flat under their own names (".cnmt.nca" kept), after the folder is emptied; it's
+#   scanned at start.
+FIRMWARE_MIN = 20  # a firmware has dozens of NCAs at least; fewer is something else
+MARKER = ".kettle-firmware"  # beside registered: the installed firmware's source and identity
+
+
+def _zip_ncas(path):
+    """The .nca members of a zip ([(member name, file name)]), or None when it isn't a zip;
+    fragmented NCAs ("<id>.nca/00") count by their folder's name."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as z:
+            names = z.namelist()
+    except (OSError, zipfile.BadZipFile, EOFError):
+        return None
+    out = []
+    for n in names:
+        parts = [p for p in n.replace("\\", "/").split("/") if p]
+        if not parts or ".." in parts:
+            continue
+        if parts[-1].lower().endswith(".nca"):
+            out.append((n, parts[-1]))
+        elif parts[-1] == "00" and len(parts) > 1 and parts[-2].lower().endswith(".nca"):
+            out.append((n, parts[-2]))
+    return out
+
+
+def _dir_ncas(path):
+    """The .nca files of a folder, or of the one folder it holds (a zip's top folder unpacked)."""
+    try:
+        here = [os.path.join(path, n) for n in sorted(os.listdir(path))]
+    except OSError:
+        return []
+    ncas = [p for p in here if p.lower().endswith(".nca") and os.path.isfile(p)]
+    if ncas:
+        return ncas
+    subs = [p for p in here if os.path.isdir(p) and not os.path.basename(p).startswith(".")]
+    return _dir_ncas(subs[0]) if len(subs) == 1 else []
+
+
+def _has_game(names):
+    return any(n.lower().endswith((".nsp", ".xci")) for n in names)
+
+
+def is_firmware(path):
+    """A zip or folder holding a firmware: FIRMWARE_MIN .nca files or more, and no game."""
+    if os.path.isdir(path):
+        names = []
+        for d, _, files in os.walk(path):
+            names += files
+        return _has_game(names) is False and len(_dir_ncas(path)) >= FIRMWARE_MIN
+    if path.lower().endswith(".zip"):
+        ncas = _zip_ncas(path)
+        if not ncas or len(ncas) < FIRMWARE_MIN:
+            return False
+        import zipfile
+        with zipfile.ZipFile(path) as z:
+            return not _has_game(z.namelist())
+    return False
+
+
+def firmware_dir():
+    from . import bios
+    return os.path.join(bios.install_dir(), "switch", "firmware")
+
+
+def find_firmware(folder=None):
+    """The user's firmware: (kind "zip"|"dir", path, label) from Emulation/bios/switch/firmware,
+    or None. A folder of .nca files wins over a zip; of several zips, the newest."""
+    folder = folder or firmware_dir()
+    if not os.path.isdir(folder):
+        return None
+    if len(_dir_ncas(folder)) >= FIRMWARE_MIN:
+        d = os.path.dirname(_dir_ncas(folder)[0])
+        return ("dir", d, os.path.basename(d) if d != folder else "firmware")
+    zips = sorted((os.path.join(folder, n) for n in os.listdir(folder) if n.lower().endswith(".zip")),
+                  key=lambda p: os.path.getmtime(p), reverse=True)
+    for z in zips:
+        if is_firmware(z):
+            return ("zip", z, os.path.basename(z)[:-4])
+    return None
+
+
+def _identity(found):
+    import hashlib
+    kind, path, _ = found
+    if kind == "dir":
+        items = sorted((os.path.basename(p), os.path.getsize(p)) for p in _dir_ncas(path))
+    else:
+        import zipfile
+        with zipfile.ZipFile(path) as z:
+            items = sorted((i.filename, i.file_size) for i in z.infolist())
+    return hashlib.sha1(repr(items).encode()).hexdigest()
+
+
+def _ryujinx_name(name):
+    """Ryujinx's folder name for an NCA: "<id>.nca" ("abc.cnmt.nca" -> "abc.nca")."""
+    return name.split(".", 1)[0] + ".nca"
+
+
+def _put(src, dst):
+    """A firmware file into place: a hard link when it's on the same disk (it's read only),
+    otherwise a copy."""
+    import shutil
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copyfile(src, dst)
+
+
+def installed_firmware(registered):
+    """The label of the firmware Kettle put in `registered` (its marker), "installed" for one
+    put there another way, or None."""
+    try:
+        if not any(os.scandir(registered)):
+            return None
+    except OSError:
+        return None
+    try:
+        with open(os.path.join(os.path.dirname(registered), MARKER)) as f:
+            return f.read().split("\n", 2)[1] or "installed"
+    except (OSError, IndexError):
+        return "installed"
+
+
+def install_firmware(layout, registered, folder=None):
+    """The user's firmware into an emulator's `registered` folder, laid out as `layout`
+    ("ryujinx" or "eden") does it. Staged beside it and swapped in whole, so two versions are
+    never mixed; done again only when the firmware changes. Returns the label installed, None
+    when there's no firmware to install."""
+    import shutil
+    import zipfile
+    found = find_firmware(folder)
+    if not found:
+        return None
+    ident = _identity(found)
+    contents = os.path.dirname(registered)
+    marker = os.path.join(contents, MARKER)
+    try:
+        with open(marker) as f:
+            if f.read().split("\n", 1)[0] == ident and any(os.scandir(registered)):
+                return found[2]
+    except OSError:
+        pass
+    os.makedirs(contents, exist_ok=True)
+    stage, old = os.path.join(contents, ".kettle-firmware-new"), os.path.join(contents, ".kettle-firmware-old")
+    for d in (stage, old):
+        shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(stage)
+
+    def target(name):
+        if layout == "ryujinx":
+            d = os.path.join(stage, _ryujinx_name(name))
+            os.makedirs(d, exist_ok=True)
+            return os.path.join(d, "00")
+        return os.path.join(stage, name)
+
+    try:
+        if found[0] == "dir":
+            for p in _dir_ncas(found[1]):
+                _put(p, target(os.path.basename(p)))
+        else:
+            with zipfile.ZipFile(found[1]) as z:
+                for member, name in _zip_ncas(found[1]):
+                    with z.open(member) as src, open(target(name), "wb") as dst:
+                        shutil.copyfileobj(src, dst, 1 << 20)
+        if os.path.isdir(registered):
+            os.rename(registered, old)
+        os.rename(stage, registered)
+    except BaseException:
+        shutil.rmtree(stage, ignore_errors=True)
+        if os.path.isdir(old) and not os.path.exists(registered):
+            os.rename(old, registered)
+        raise
+    shutil.rmtree(old, ignore_errors=True)
+    tmp = marker + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(f"{ident}\n{found[2]}\n")
+    os.replace(tmp, marker)
+    return found[2]

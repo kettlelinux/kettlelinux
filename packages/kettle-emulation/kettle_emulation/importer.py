@@ -20,7 +20,7 @@ import time
 import zipfile
 import zlib
 
-from . import bios, identify, storage, systems
+from . import bios, identify, storage, switch, systems
 
 # folders of an Emulation tree that are never imported from
 TREE_DIRS = ("roms", "bios", "saves", "states", "backups", "screenshots")
@@ -288,11 +288,33 @@ class Importer:
                     found[p[:len(p) - len(tail)]] = sid
         return found
 
+    @staticmethod
+    def _firmware_folders(files):
+        """The folders holding a Switch firmware (switch.FIRMWARE_MIN .nca files or more, and no
+        game): {folder: [its .nca files]}."""
+        by_dir = {}
+        for p in files:
+            if p.lower().endswith(".nca"):
+                by_dir.setdefault(os.path.dirname(p), []).append(p)
+        games = [p for p in files if p.lower().endswith((".nsp", ".xci"))]
+        return {d: sorted(ncas) for d, ncas in by_dir.items()
+                if len(ncas) >= switch.FIRMWARE_MIN and not any(_inside(g, d) for g in games)}
+
     def plan(self, path, hint=None):
         """The Items for everything under `path` (hint: a system for files no folder names)."""
         files = list(self._walk(path))
-        folders = self._game_folders(files)
         items = []
+        firmware = self._firmware_folders(files)
+        if firmware:
+            root = os.path.realpath(path) if os.path.isdir(path) else None
+            for d, ncas in sorted(firmware.items()):
+                items.append(Item("firmware", d, "switch", identify.Match("switch", 1.0, "Switch firmware"),
+                                  [os.path.relpath(p, d) for p in ncas],
+                                  size=sum(os.path.getsize(p) for p in ncas),
+                                  name="root" if os.path.realpath(d) == root else None))
+            taken = {p for ncas in firmware.values() for p in ncas}
+            files = [p for p in files if p not in taken]
+        folders = self._game_folders(files)
         if folders:
             inside = lambda p, d: p.startswith(d + os.sep)  # noqa: E731
             root = os.path.realpath(path) if os.path.isdir(path) else None
@@ -342,6 +364,10 @@ class Importer:
             except OSError:
                 continue
             h = self._hint(p, path) or hint
+            if systems.ext_of(p) == "zip" and switch.is_firmware(p):
+                items.append(Item("firmware", p, "switch", identify.Match("switch", 1.0, "Switch firmware"),
+                                  size=size))
+                continue
             if p not in refs_of and size <= bios.MAX_SIZE:
                 try:
                     rec = bios.recognise(p, cache=cache)
@@ -551,6 +577,40 @@ class Importer:
             self.stats["identical"] += 1
         return action, dst
 
+    def _firmware(self, item, base, total):
+        """A Switch firmware (a zip, or a folder's .nca files) into internal storage's
+        Emulation/bios/switch/firmware, replacing the one there whole (emu-run installs it into
+        the emulators: switch.install_firmware). Staged and swapped in, so a failed copy leaves
+        the old one; a move removes the source only once the new one is in place."""
+        dest = switch.firmware_dir()
+        parent = os.path.dirname(dest)
+        stage, old = os.path.join(parent, ".firmware-new"), os.path.join(parent, ".firmware-old")
+        for d in (stage, old):
+            shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(stage)
+        members = [os.path.join(item.src, r) for r in item.refs] if os.path.isdir(item.src) else [item.src]
+        mode, self.mode = self.mode, "copy"
+        try:
+            done = base
+            for m in members:
+                done += self._transfer(m, os.path.join(stage, os.path.basename(m)), done, total)
+            if os.path.isdir(dest):
+                os.rename(dest, old)
+            os.rename(stage, dest)
+        except BaseException:
+            shutil.rmtree(stage, ignore_errors=True)
+            if os.path.isdir(old) and not os.path.exists(dest):
+                os.rename(old, dest)
+            raise
+        finally:
+            self.mode = mode
+        shutil.rmtree(old, ignore_errors=True)
+        if self.mode == "move":
+            self._drop(members)
+            if os.path.isdir(item.src):
+                self._prune(members, item.src, keep_top=item.name == "root")
+        return "installed", dest
+
     def _unsorted(self, item, base, total):
         """Moved to inbox/unsorted for the plugin to ask about. A copy (from a card or stick) leaves
         it where it is: whatever else is on a stick isn't the inbox's business."""
@@ -641,6 +701,9 @@ class Importer:
                     action, dst = bios.install(item.src, item.entry, self.mode == "move")
                     self.stats["bios"].append({"system": item.system, "file": item.entry["file"],
                                                "dest": dst})
+                elif item.kind == "firmware":
+                    action, dst = self._firmware(item, base, total)
+                    self.stats["bios"].append({"system": "switch", "file": "firmware", "dest": dst})
                 elif item.kind == "game":
                     action, dst = self._game(item, base, total)
                 elif item.kind == "extract":
@@ -689,6 +752,9 @@ def scan(path):
     for i in items:
         if i.kind in ("game", "extract") and i.system:
             games[i.system] = games.get(i.system, 0) + 1
+        elif i.kind == "firmware":
+            found.append({"system": "switch", "file": "firmware", "src": i.src,
+                          "installed": switch.find_firmware() is not None})
         elif i.kind == "bios":
             have = any(e["found"] for e in status.get(i.system, {}).get("entries", ())
                        if e["file"] == i.entry["file"])

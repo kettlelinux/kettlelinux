@@ -597,6 +597,19 @@ EDEN_INI = os.path.join(app_dir("dev.eden_emu.eden"), "eden/qt-config.ini")
 EDEN_KEYS = os.path.join(app_dir("dev.eden_emu.eden", "data"), "eden/keys")
 RYUJINX_DIR = os.path.join(app_dir("io.github.ryubing.Ryujinx"), "Ryujinx")
 SWITCH_KEYS = os.path.join(EMU, "bios/switch")
+# where each emulator's own Install Firmware puts the system's NCAs (switch.py)
+RYUJINX_FIRMWARE = os.path.join(RYUJINX_DIR, "bis/system/Contents/registered")
+EDEN_FIRMWARE = os.path.join(app_dir("dev.eden_emu.eden", "data"), "eden/nand/system/Contents/registered")
+
+
+def _install_firmware(layout, registered):
+    """The firmware from Emulation/bios/switch/firmware, when there's one (a broken one is left
+    to the launch check: the game is refused for want of firmware)."""
+    from . import switch
+    try:
+        switch.install_firmware(layout, registered)
+    except Exception as e:  # a broken zip too: never what stops a launch here
+        print(f"emu-run: couldn't install the Switch firmware: {e}", file=sys.stderr)
 
 
 def _copy_keys(dest):
@@ -636,6 +649,7 @@ def keep_eden():
     }), **qt_settings({"fullscreen": "true", "confirmStop": "2", "check_for_updates": "false",
                        "firstStart": "false"}))}, qt=True)
     _copy_keys(EDEN_KEYS)
+    _install_firmware("eden", EDEN_FIRMWARE)
 
 
 def keep_ryujinx():
@@ -644,6 +658,7 @@ def keep_ryujinx():
     session has Ryujinx's default keys. Its hotkeys (KeyboardHotkeys, snake_case): pause F1,
     turbo mode (fast-forward) Space, screenshot F8; it has no save states and no quit key."""
     _copy_keys(os.path.join(RYUJINX_DIR, "system"))
+    _install_firmware("ryujinx", RYUJINX_FIRMWARE)
     path = os.path.join(RYUJINX_DIR, "Config.json")
     conf = _read_json(path, None)
     if not isinstance(conf, dict):

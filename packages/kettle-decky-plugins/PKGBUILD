@@ -85,7 +85,8 @@
 #              (cores.py; a non-free one after its license is shown), "install what my games need",
 #              Switch games by their title ID (updates and DLC left out) with artwork from
 #              SteamGridDB (the user's free key, asked for with a QR code),
-#              BIOS status, the emulator per system and per game, saves and backups, Get started
+#              BIOS status (the Switch's firmware too: where it is and which emulators have
+#              it), the emulator per system and per game, saves and backups, Get started
 #              for the first visit, and the running game's hotkeys as Quick Access buttons (those
 #              its emulator has). Kettle builds none of the emulators (up to 1.12.0-65 the image
 #              was to ship them)
@@ -97,7 +98,7 @@ pkgname=(kettle-decky-welcome kettle-decky-device-settings
          kettle-decky-emulation)
 # every plugin's package.json "version" is this pkgver (what the plugin loader shows): change them together
 pkgver=1.13.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)

@@ -93,6 +93,7 @@ export type BiosEntry = {
   elsewhere: string | null; // a right file somewhere else, for bios_install to copy into place
   bad: string | null;
   folder?: boolean; // a folder its core needs (system_dirs), downloaded with it (Emulators tab)
+  firmware?: boolean; // the Switch's firmware (Emulation/bios/switch/firmware), installed into the emulators
 };
 export type BiosSystem = { id: string; name: string; state: BiosState; entries: BiosEntry[] };
 

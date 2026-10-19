@@ -370,6 +370,12 @@ class Launch(Env):
             self.assertIn("prod.keys", str(cm.exception))
             # its own copy will do as well as Emulation/bios/switch
             self.write(".var/app/io.github.ryubing.Ryujinx/config/Ryujinx/system/prod.keys", "k")
+            # then the firmware: any NCA in Ryujinx's registered folder (a glob check)
+            with self.assertRaises(run.Refused) as cm:
+                run.check_needs(emu)
+            self.assertIn("firmware", str(cm.exception))
+            self.write(".var/app/io.github.ryubing.Ryujinx/config/Ryujinx/bis/system/Contents/registered/"
+                       "a.nca/00", "nca")
             run.check_needs(emu)
         run.check_needs(DB["emulators"]["play"])  # nothing emu-run can check
 

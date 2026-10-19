@@ -5,6 +5,9 @@
 # - systems.json (/usr/share/kettle/emulation): every system, the emulators that run it (their
 #   Flatpaks, licenses, hotkeys, save folders and the setup they need), the Flatpaks' permissions,
 #   folders, file types and BIOS files (by md5; no BIOS is ever shipped).
+# - the Switch's keys and firmware from Emulation/bios/switch put where Ryujinx and Eden read
+#   them (kettle_emulation/switch.py: a firmware laid out as each emulator's own Install
+#   Firmware does it), and a game newer than the keys refused with a toast.
 # - emu-run (/usr/lib/kettle): the command of every ROM's Steam shortcut. It picks the emulator
 #   (the game's choice, the system's, the default), refuses a missing card, BIOS, setup step or
 #   emulator with a toast, gives the Flatpak its folders, keeps the standard controls in every
@@ -20,7 +23,7 @@
 #   ~/Emulation, pkexec: 50-kettle-emulation-share.rules).
 pkgname=kettle-emulation
 pkgver=0.1.0
-pkgrel=5
+pkgrel=6
 pkgdesc='Kettle Linux: emulator launcher, standard controls and ROM/BIOS import'
 arch=(any)
 license=(BSD-3-Clause)

@@ -107,6 +107,16 @@ def command(system, emu, rom):
     return run + [rom if a == "{rom}" else a for a in emu["exec"]]
 
 
+def met(check):
+    """A "needs" check: a path under $HOME that exists, or a glob there matching anything (an
+    emulator's installed firmware: registered/*.nca)."""
+    path = os.path.join(seed.HOME, check)
+    if any(c in check for c in "*?["):
+        import glob
+        return bool(glob.glob(path))
+    return os.path.exists(path)
+
+
 def check_needs(emu):
     """The setup an emulator needs that emu-run can see (systems.json "needs" with a "check":
     paths under $HOME, any one of which will do)."""
@@ -114,7 +124,7 @@ def check_needs(emu):
         if not isinstance(need, dict) or not need.get("check"):
             continue
         checks = need["check"] if isinstance(need["check"], list) else [need["check"]]
-        if not any(os.path.exists(os.path.join(seed.HOME, c)) for c in checks):
+        if not any(met(c) for c in checks):
             raise Refused("needs", f"{emu['name']}: {need['text']}")
 
 

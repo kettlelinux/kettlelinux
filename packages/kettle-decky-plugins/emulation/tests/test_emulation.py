@@ -571,6 +571,35 @@ class Plugin(unittest.TestCase):
             st = m._with_system_dirs({"msx": {"state": "missing-required", "entries": [bfile]}}, db)
             self.assertFalse(m._needs_only_folders(st["msx"]))
 
+    def test_bios_page_reports_switch_firmware(self):
+        from unittest import mock
+        from kettle_emulation import seed, switch
+        m = self.main
+        db = {"systems": {"switch": {"name": "Nintendo Switch"}}}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(seed, "RYUJINX_FIRMWARE", os.path.join(tmp, "ryu", "registered")), \
+                mock.patch.object(seed, "EDEN_FIRMWARE", os.path.join(tmp, "eden", "registered")), \
+                mock.patch.object(switch, "firmware_dir", lambda: os.path.join(tmp, "fw")):
+            st = m._with_switch_firmware({}, db)
+            fw = st["switch"]["entries"][-1]
+            self.assertEqual((fw["file"], fw["found"], st["switch"]["state"]), ("firmware/", None, "missing-required"))
+            # one in Emulation/bios/switch/firmware, then installed in Ryujinx
+            for i in range(switch.FIRMWARE_MIN):
+                touch(os.path.join(tmp, "fw", f"{i:032x}.nca"))
+            st = m._with_switch_firmware({}, db)
+            self.assertEqual(st["switch"]["state"], "ok")
+            self.assertIn("when a game starts", st["switch"]["entries"][-1]["note"])
+            switch.install_firmware("ryujinx", os.path.join(tmp, "ryu", "registered"), os.path.join(tmp, "fw"))
+            self.assertIn("in Ryujinx", m._with_switch_firmware({}, db)["switch"]["entries"][-1]["note"])
+
+    def test_needs_checks_take_globs(self):
+        from unittest import mock
+        m = self.main
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(m, "HOME", tmp):
+            self.assertFalse(m._check_met("reg/*.nca"))
+            touch(os.path.join(tmp, "reg", "a.nca"))
+            self.assertTrue(m._check_met("reg/*.nca"))
+
     def test_core_downloads_one_at_a_time(self):
         import asyncio
         import threading

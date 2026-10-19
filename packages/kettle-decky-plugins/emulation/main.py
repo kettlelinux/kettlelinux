@@ -30,6 +30,7 @@
 # name it was shown.
 import asyncio
 import base64
+import glob
 import json
 import os
 import select
@@ -249,6 +250,35 @@ def _with_system_dirs(bst: dict, db: dict) -> dict:
             v["state"] = "ok"
         else:
             v["state"] = "missing-optional"
+    return _with_switch_firmware(bst, db)
+
+
+def _with_switch_firmware(bst: dict, db: dict) -> dict:
+    """The Switch's firmware as a needed entry of its own: found when Emulation/bios/switch/
+    firmware has one (emu-run installs it into Ryujinx and Eden before a game starts) or an
+    emulator has one installed already; the note names it and where it's in."""
+    if "switch" not in db["systems"]:
+        return bst
+    from kettle_emulation import seed, switch
+    src = switch.find_firmware()
+    there = [name for name, reg in (("Ryujinx", seed.RYUJINX_FIRMWARE), ("Eden", seed.EDEN_FIRMWARE))
+             if switch.installed_firmware(reg)]
+    if src:
+        note = f"{src[2]}" + (f" · in {', '.join(there)}" if there else " · installed into the emulator when a game starts")
+    elif there:
+        note = f"installed in {', '.join(there)}"
+    else:
+        note = "a zip or folder of .nca files from your Switch, in Emulation/bios/switch/firmware"
+    v = bst.setdefault("switch", {"state": "none", "entries": []})
+    v["entries"] = list(v.get("entries", [])) + [
+        {"file": "firmware/", "required": True, "one_of": False, "firmware": True, "note": note,
+         "found": src[1] if src else (there[0] if there else None), "elsewhere": None, "bad": None}]
+    if bios.unmet(v["entries"]):
+        v["state"] = "missing-required"
+    elif all(e["found"] for e in v["entries"]):
+        v["state"] = "ok"
+    else:
+        v["state"] = "missing-optional"
     return bst
 
 
@@ -286,6 +316,15 @@ def _is_installed(e: dict, inst: dict) -> bool:
     return bool(e.get("flatpak")) and e["flatpak"] in inst
 
 
+def _check_met(check: str) -> bool:
+    """A "needs" check (emu-run's run.met): a path under the home folder, or a glob there that
+    matches something (an emulator's installed firmware)."""
+    path = os.path.join(HOME, check)
+    if any(c in check for c in "*?["):
+        return bool(glob.glob(path))
+    return os.path.exists(path)
+
+
 def _needs(e: dict) -> list[dict]:
     """An emulator's setup notes: [{text, met}]; met says whether a "check" path (from the home
     folder; any of a list) is there, None for a note emu-run can't see."""
@@ -296,7 +335,7 @@ def _needs(e: dict) -> list[dict]:
             continue
         checks = n.get("check") or []
         checks = [checks] if isinstance(checks, str) else checks
-        met = any(os.path.exists(os.path.join(HOME, c)) for c in checks if isinstance(c, str) and ".." not in c.split("/")) \
+        met = any(_check_met(c) for c in checks if isinstance(c, str) and ".." not in c.split("/")) \
             if checks else None
         out.append({"text": n.get("text", ""), "met": met})
     return out
