@@ -1,7 +1,7 @@
 # Kernel patch stack: cix flavour (CIX P1 / Sky1, Radxa Orion O6N)
 
 Applied in directory order, then file order, with `patch -p1 --fuzz=0` by
-`KERNEL_FLAVOUR=cix scripts/build-kernel.sh` (or `KETTLE_DEVICE=radxa-o6n`). Base: Linux 7.3-rc7,
+`KERNEL_FLAVOUR=cix scripts/build-kernel.sh` (or `KETTLE_DEVICE=radxa-o6n`). Base: Linux 7.3,
 the same source as the qcom kernel (`../kernel.conf`). The board boots UEFI with ACPI only, so
 there are no device trees here.
 
@@ -14,7 +14,7 @@ there are no device trees here.
 
 The 7.2 series applied in order to a git tree of the 7.3-rc7 tarball, one commit per patch,
 exported with each original header: of its 90 patches 80 applied as they are (3 with fuzz), 7
-are ported and 3 dropped; 3005-3007 are new.
+are ported and 3 dropped; 3005-3007 are new. It applies unchanged to the 7.3 release (2026-10-19).
 
 Dropped, upstream in 7.3: 00050 (Sky1 audss CRU bindings), 00051 (the audss clock driver),
 00060 (the audss reset driver). Upstream's versions are CIX's reworked after review (devm probe,

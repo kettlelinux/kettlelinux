@@ -1,7 +1,7 @@
 # Kernel patch stack
 
 Applied in directory order, then file order, with `patch -p1 --fuzz=0` by
-`scripts/build-kernel.sh`. Base: Linux 7.3-rc7 until 7.3 is released (pinned in `../kernel.conf`); see "Linux 7.3 rebase" below.
+`scripts/build-kernel.sh`. Base: Linux 7.3 (pinned in `../kernel.conf`); see "Linux 7.3 rebase" below.
 
 | Dir | Source | Notes |
 |---|---|---|
@@ -29,6 +29,8 @@ series (v9, not merged); the Portal panel driver lands upstream in 7.3 as
 
 Rebased onto 7.3-rc7 (2026-10-16) with the stack applied in order to a git tree of the
 rc tarball; patches that only needed fuzz were rewritten as `refresh-patches.sh` does.
+Moved to the 7.3 release (2026-10-19): the stack applies to it unchanged, and rc7..7.3 touches
+none of drm/msm, ath11k/ath12k or the Qualcomm SoC drivers we patch.
 
 Dropped, upstream in 7.3:
 - `20-sm8550/0060` SY7758 backlight: 7.3 has Neil Armstrong's driver, same compatible. It
