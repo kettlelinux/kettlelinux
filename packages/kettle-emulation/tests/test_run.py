@@ -369,3 +369,45 @@ class SwitchKeys(unittest.TestCase):
         self.put(self.src, "keys", 1000)
         seed._copy_keys(self.dst)
         self.assertEqual(self.read(), "keys")
+
+
+class RyujinxPad(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        for name, value in (("RYUJINX_DIR", self.tmp.name), ("SWITCH_KEYS", os.path.join(self.tmp.name, "none")),
+                            ("RYUJINX_TEMPLATE", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                              "..", "defaults", "ryujinx-Config.json"))):
+            p = mock.patch.object(seed, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        p = mock.patch.object(seed, "_install_firmware", lambda *a: None)
+        p.start()
+        self.addCleanup(p.stop)
+        self.path = os.path.join(self.tmp.name, "Config.json")
+
+    def conf(self):
+        with open(self.path) as f:
+            return json.load(f)
+
+    def test_first_run_gets_the_template_and_the_pad(self):
+        seed.keep_ryujinx()
+        c = self.conf()
+        self.assertEqual(c["version"], 70)
+        self.assertFalse(c["docked_mode"])
+        [p] = c["input_config"]
+        self.assertEqual((p["backend"], p["id"], p["player_index"]), ("GamepadSDL2", seed.STEAM_PAD_ID, "Player1"))
+        # by position: Switch A is the east button (SDL's B)
+        self.assertEqual(p["right_joycon"]["button_a"], "B")
+
+    def test_default_keyboard_replaced_users_pad_kept(self):
+        with open(self.path, "w") as f:
+            json.dump({"version": 70, "input_config": [{"backend": "WindowKeyboard", "id": "0",
+                                                        "player_index": "Player1"}]}, f)
+        seed.keep_ryujinx()
+        self.assertEqual(self.conf()["input_config"][0]["backend"], "GamepadSDL2")
+        mine = {"backend": "GamepadSDL2", "id": "0-mine", "player_index": "Player1"}
+        with open(self.path, "w") as f:
+            json.dump({"version": 70, "input_config": [mine]}, f)
+        seed.keep_ryujinx()
+        self.assertEqual(self.conf()["input_config"], [mine])

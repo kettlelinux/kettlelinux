@@ -652,17 +652,56 @@ def keep_eden():
     _install_firmware("eden", EDEN_FIRMWARE)
 
 
+# Ryujinx's own Config.json from a first run (version 70, Ryubing 1.3.3), written when it has
+# none: its loader takes every field from the file, so a partial one won't do, and without one
+# its first session has the keyboard as player 1 (the Portal's game sat at "press L + R").
+# Older templates are fine: Ryujinx migrates a config forward from its "version".
+RYUJINX_TEMPLATE = os.path.join(os.environ.get("KETTLE_EMU_DEFAULTS", "/usr/share/kettle/emulation"),
+                                "ryujinx-Config.json")
+# Steam's virtual pad as Ryujinx's SDL2 driver names it: "<n>-" + its SDL GUID with the name
+# CRC zeroed (SDL2GamepadDriver.GenerateGamepadId), bus 0003, vendor 28de, product 11ff, version 1
+STEAM_PAD_ID = "0-00000003-28de-0000-ff11-000001000000"
+
+
+def ryujinx_pad():
+    """Player 1: Steam's virtual pad as a Pro Controller, by position (Switch A east, B south,
+    X north, Y west), as Ryujinx's own default for a gamepad (InputViewModel)."""
+    stick = lambda side, button: {"joystick": side, "invert_stick_x": False,  # noqa: E731
+                                  "invert_stick_y": False, "rotate90_cw": False,
+                                  "stick_button": button}
+    return {
+        "left_joycon_stick": stick("Left", "LeftStick"),
+        "right_joycon_stick": stick("Right", "RightStick"),
+        "deadzone_left": 0.1, "deadzone_right": 0.1, "range_left": 1.0, "range_right": 1.0,
+        "trigger_threshold": 0.5,
+        "motion": {"motion_backend": "GamepadDriver", "enable_motion": True, "sensitivity": 100,
+                   "gyro_deadzone": 1.0},
+        "rumble": {"strong_rumble": 1.0, "weak_rumble": 1.0, "enable_rumble": True},
+        "led": {"enable_led": False, "turn_off_led": False, "use_rainbow": False, "led_color": 0},
+        "left_joycon": dict(button_minus="Minus", button_l="LeftShoulder", button_zl="LeftTrigger",
+                            button_sl="Unbound", button_sr="Unbound", dpad_up="DpadUp",
+                            dpad_down="DpadDown", dpad_left="DpadLeft", dpad_right="DpadRight"),
+        "right_joycon": dict(button_plus="Plus", button_r="RightShoulder", button_zr="RightTrigger",
+                             button_sl="Unbound", button_sr="Unbound", button_x="Y", button_b="A",
+                             button_y="X", button_a="B"),
+        "version": 1, "backend": "GamepadSDL2", "id": STEAM_PAD_ID, "name": "Steam Virtual Gamepad",
+        "controller_type": "ProController", "player_index": "Player1",
+    }
+
+
 def keep_ryujinx():
-    """Config.json is patched only once Ryujinx has written it: its loader takes every field
-    from the file (a partial one would load with empty input and graphics settings), so the first
-    session has Ryujinx's default keys. Its hotkeys (KeyboardHotkeys, snake_case): pause F1,
-    turbo mode (fast-forward) Space, screenshot F8; it has no save states and no quit key."""
+    """Its keys, firmware and Config.json (from RYUJINX_TEMPLATE when it has none). Player 1
+    becomes Steam's virtual pad while it's still Ryujinx's default keyboard (a gamepad the user
+    set up is theirs). Its hotkeys (KeyboardHotkeys, snake_case): pause F1, turbo mode
+    (fast-forward) Space, screenshot F8; it has no save states and no quit key."""
     _copy_keys(os.path.join(RYUJINX_DIR, "system"))
     _install_firmware("ryujinx", RYUJINX_FIRMWARE)
     path = os.path.join(RYUJINX_DIR, "Config.json")
     conf = _read_json(path, None)
     if not isinstance(conf, dict):
-        return
+        conf = _read_json(RYUJINX_TEMPLATE, None)
+        if not isinstance(conf, dict):
+            return
     conf.update({"check_updates_on_start": False, "show_confirm_exit": False,
                  "start_fullscreen": True})
     hk = conf.setdefault("hotkeys", {})
@@ -670,6 +709,11 @@ def keep_ryujinx():
         if hk[k] in ("F1", "F2", "F4", "F6", "F7", "F8", "F9", "Space", "R", "Escape"):
             hk[k] = "Unbound"
     hk.update({"pause": "F1", "turbo_mode": "Space", "screenshot": "F8"})
+    players = [p for p in conf.get("input_config") or [] if isinstance(p, dict)]
+    first = next((p for p in players if p.get("player_index") == "Player1"), None)
+    if first is None or first.get("backend") == "WindowKeyboard":
+        players = [p for p in players if p is not first] + [ryujinx_pad()]
+    conf["input_config"] = players
     _replace(path, json.dumps(conf, indent=2) + "\n")
 
 

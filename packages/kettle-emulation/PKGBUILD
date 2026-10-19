@@ -23,7 +23,7 @@
 #   ~/Emulation, pkexec: 50-kettle-emulation-share.rules).
 pkgname=kettle-emulation
 pkgver=0.1.0
-pkgrel=6
+pkgrel=7
 pkgdesc='Kettle Linux: emulator launcher, standard controls and ROM/BIOS import'
 arch=(any)
 license=(BSD-3-Clause)
@@ -39,7 +39,7 @@ package() {
   install -Dm755 "$startdir"/emu-run -t "$lib"
   install -Dm755 "$startdir"/{kettle-emu-import,kettle-emu-upload,kettle-emu-share} -t "$lib"
   install -Dm644 "$startdir"/kettle_emulation/*.py -t "$lib/kettle_emulation"
-  install -Dm644 "$startdir/systems.json" "$srcdir"/layouts/*.vdf -t "$share"
+  install -Dm644 "$startdir/systems.json" "$srcdir"/layouts/*.vdf "$startdir"/defaults/*.json -t "$share"
   install -Dm644 "$startdir/org.kettle.emulation.share.policy" -t "$pkgdir/usr/share/polkit-1/actions"
   install -Dm644 "$startdir/50-kettle-emulation-share.rules" -t "$pkgdir/usr/share/polkit-1/rules.d"
   install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
