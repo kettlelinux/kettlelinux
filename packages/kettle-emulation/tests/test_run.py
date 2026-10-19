@@ -306,3 +306,24 @@ class Seed(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Dirs(unittest.TestCase):
+    def test_emulator_folders_exist_before_a_launch(self):
+        # RetroArch falls back to its own folders when a configured one is missing
+        db = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "systems.json")
+        with tempfile.TemporaryDirectory() as home, \
+                mock.patch.dict(os.environ, {"KETTLE_EMU_SYSTEMS": db}), \
+                mock.patch.object(seed, "HOME", home), \
+                mock.patch.object(seed, "EMU", os.path.join(home, "Emulation")), \
+                mock.patch.object(seed, "RA_DIR", os.path.join(home, "ra")):
+            seed.ensure_dirs(seed.EMU)
+            for key, d in seed.retroarch_kept().items():
+                if key.endswith("_directory") and d.startswith(seed.EMU):
+                    self.assertTrue(os.path.isdir(d), key)
+            self.assertTrue(os.path.isdir(os.path.join(home, "Emulation/saves/retroarch")))
+
+    def test_kept_audio_and_no_screensaver_inhibit(self):
+        kept = seed.retroarch_kept()
+        self.assertEqual(kept["audio_driver"], "pulse")
+        self.assertEqual(kept["suspend_screensaver_enable"], "false")

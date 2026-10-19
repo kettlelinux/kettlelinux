@@ -42,6 +42,22 @@ DRAIN_MAX = 1 << 16  # a bigger body than this where none is needed closes the c
 SPARE = 256 << 20  # left free on the disk
 
 
+MAX_DEPTH = 32  # folders a dropped folder's file may sit in (a PS3 game nests deep)
+
+
+def safe_path(path):
+    """A relative path under the inbox from what the browser sent for a file of a dropped
+    folder ("FF7/Disc1/FF7 (Disc 1).cue"): each folder made a plain name as safe_name does,
+    ".", ".." and empty parts dropped. A plain file name otherwise; None when it's nested
+    deeper than MAX_DEPTH (cut short, a game's layout would be wrong)."""
+    parts = [p for p in path.replace("\\", "/").split("/") if p.strip() not in ("", ".", "..")]
+    if len(parts) <= 1:
+        return safe_name(path)
+    if len(parts) - 1 > MAX_DEPTH:
+        return None
+    return os.path.join(*(safe_name(p) for p in parts))
+
+
 def safe_name(name):
     """A plain file name from whatever the browser sent: no folders, control characters or
     leading dots, at most 200 bytes (keeping the extension)."""
@@ -141,6 +157,7 @@ class Server(ThreadingHTTPServer):
         """Rename a finished upload into the inbox under a name nothing else has (another upload
         of the same name, or a file copied in over the share), never over one."""
         with self.lock:
+            os.makedirs(os.path.dirname(os.path.join(self.inbox, name)), exist_ok=True)
             while True:
                 dest = importer.free_name(os.path.join(self.inbox, name))
                 try:
@@ -300,7 +317,10 @@ class Handler(BaseHTTPRequestHandler):
         if shutil.disk_usage(self.server.inbox).free < length + SPARE:
             self.close_connection = True
             return self._send(507, {"error": "not enough space on the device"})
-        name = safe_name(urllib.parse.parse_qs(url.query).get("name", [""])[0])
+        name = safe_path(urllib.parse.parse_qs(url.query).get("name", [""])[0])
+        if name is None:
+            self.close_connection = True
+            return self._send(400, {"error": "folder nested too deep"})
         fd, tmp = tempfile.mkstemp(suffix=".part", dir=self.server.tmpdir)
         self.server.active += 1
         try:
@@ -328,7 +348,7 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             self.server.active -= 1
             self.server.touch()
-        entry = {"name": os.path.basename(dest), "bytes": length}
+        entry = {"name": os.path.relpath(dest, self.server.inbox), "bytes": length}
         self.server.uploaded.append(entry)
         self.server.emit(dict(entry, event="uploaded"))
         self._send(200, entry)
@@ -387,7 +407,7 @@ button, label.btn { display:inline-block; font:inherit; font-weight:600; padding
 </form>
 <section id="up" hidden>
   <div id="drop" class="card">
-    <div style="margin-bottom:12px">Drop files here, or</div>
+    <div style="margin-bottom:12px">Drop files or folders anywhere on this page, or</div>
     <label class="btn">Choose files<input id="pick" type="file" multiple hidden></label>
     <div class="mute" style="margin-top:12px">Pick a disc's .cue together with its .bin tracks.</div>
   </div>
@@ -404,20 +424,41 @@ $("login").onsubmit = async (e) => {
   if (r.ok) { $("login").hidden = true; $("up").hidden = false; }
   else { const j = await r.json().catch(() => ({})); $("loginmsg").textContent = j.error || "Wrong PIN"; }
 };
+// files: [{f: File, path: "folder/sub/name" or the file's name}]
 function add(files) {
+  if (!files.length) return;
   $("list").hidden = false;
-  for (const f of files) {
+  for (const {f, path} of files) {
     const row = document.createElement("div"); row.className = "file";
     row.innerHTML = '<div></div><div class="bar"><i></i></div><div class="mute">waiting</div>';
-    row.firstChild.textContent = f.name;
-    $("list").appendChild(row); queue.push({f, row});
+    row.firstChild.textContent = path;
+    $("list").appendChild(row); queue.push({f, path, row});
   }
   if (!busy) next();
+}
+const plain = (list) => Array.from(list, (f) => ({f, path: f.webkitRelativePath || f.name}));
+// a dropped folder's files, with their paths in it (Firefox and Chrome: webkitGetAsEntry)
+function walk(entry, prefix) {
+  return new Promise((res) => {
+    if (entry.isFile) return entry.file((f) => res([{f, path: prefix + f.name}]), () => res([]));
+    const reader = entry.createReader(), all = [];
+    const more = () => reader.readEntries(async (batch) => {
+      if (!batch.length) return res((await Promise.all(all)).flat());
+      for (const e of batch) all.push(walk(e, prefix + entry.name + "/"));
+      more();
+    }, () => res([]));
+    more();
+  });
+}
+async function dropped(dt) {
+  const entries = Array.from(dt.items || [], (i) => i.kind === "file" && i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (!entries.length) return plain(dt.files);
+  return (await Promise.all(entries.map((e) => walk(e, "")))).flat();
 }
 function put(item) {
   return new Promise((res) => {
     const x = new XMLHttpRequest();
-    x.open("PUT", "/api/upload?name=" + encodeURIComponent(item.f.name));
+    x.open("PUT", "/api/upload?name=" + encodeURIComponent(item.path));
     const bar = item.row.querySelector("i"), msg = item.row.querySelector(".mute");
     x.upload.onprogress = (e) => { if (e.lengthComputable) { bar.style.width = (100 * e.loaded / e.total) + "%";
       msg.textContent = Math.round(100 * e.loaded / e.total) + "%"; } };
@@ -447,10 +488,17 @@ async function next() {
   $("result").hidden = false;
   $("result").textContent = lines.length ? "Sorted: " + lines.join(" · ") : "Nothing new to sort.";
 }
-$("pick").onchange = (e) => { add(e.target.files); e.target.value = ""; };
-const drop = $("drop");
-drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
-drop.ondragleave = () => drop.classList.remove("over");
-drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); add(e.dataTransfer.files); };
+$("pick").onchange = (e) => { add(plain(e.target.files)); e.target.value = ""; };
+// the whole page takes a drop: Firefox opens a file dropped anywhere else, and refuses a drop
+// whose effect stays the file manager's "move"
+const drop = $("drop"); let depth = 0;
+const ready = () => !$("up").hidden;
+window.addEventListener("dragenter", (e) => { e.preventDefault(); if (ready() && ++depth === 1) drop.classList.add("over"); });
+window.addEventListener("dragleave", () => { if (depth && --depth === 0) drop.classList.remove("over"); });
+window.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = ready() ? "copy" : "none"; });
+window.addEventListener("drop", async (e) => {
+  e.preventDefault(); depth = 0; drop.classList.remove("over");
+  if (ready()) add(await dropped(e.dataTransfer));
+});
 </script></main></body></html>
 """

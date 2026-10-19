@@ -203,6 +203,35 @@ class Upload(Env):
         self.assertIn('if (x.action === "error") failed.push', upload.PAGE)
         self.assertIn('x.kind === "bios" && x.dest', upload.PAGE)
 
+    def test_safe_path(self):
+        self.assertEqual(upload.safe_path("FF7/Disc1/FF7 (Disc 1).cue"), "FF7/Disc1/FF7 (Disc 1).cue")
+        self.assertEqual(upload.safe_path("Mario.nes"), "Mario.nes")
+        self.assertEqual(upload.safe_path("../../etc/passwd"), "etc/passwd")
+        self.assertEqual(upload.safe_path("/abs/./x/../y.bin"), "abs/x/y.bin")
+        self.assertEqual(upload.safe_path("a\\b\\c.iso"), "a/b/c.iso")
+        self.assertEqual(upload.safe_path(".git/.config"), "git/config")
+        self.assertIsNone(upload.safe_path("/".join(["d"] * 40) + "/f.bin"))
+        self.assertEqual(upload.safe_path("/".join(["d"] * 20) + "/f.bin").count("/"), 20)
+
+    def test_folder_upload_kept_in_its_folders(self):
+        box = os.path.join(self.home, "inbox")
+        srv = upload.Server(("127.0.0.1", 0), box, self.home, lambda ev: None)
+        try:
+            t = os.path.join(srv.tmpdir, "x.part")
+            with open(t, "w") as f:
+                f.write("cue")
+            dest = srv.claim(t, upload.safe_path("FF7/Disc1/FF7 (Disc 1).cue"))
+            self.assertEqual(os.path.relpath(dest, box), "FF7/Disc1/FF7 (Disc 1).cue")
+            self.assertTrue(os.path.realpath(dest).startswith(os.path.realpath(box) + os.sep))
+        finally:
+            srv.server_close()
+
+    def test_page_takes_drops_anywhere_as_copies(self):
+        # Firefox opens a file dropped outside a handler, and refuses a drop left on "move"
+        self.assertIn('window.addEventListener("drop"', upload.PAGE)
+        self.assertIn('dropEffect = ready() ? "copy"', upload.PAGE)
+        self.assertIn("webkitGetAsEntry", upload.PAGE)
+
     def test_safe_name(self):
         self.assertEqual(upload.safe_name("C:\\games\\Mario.nes"), "Mario.nes")
         self.assertEqual(upload.safe_name("../.hidden"), "hidden")

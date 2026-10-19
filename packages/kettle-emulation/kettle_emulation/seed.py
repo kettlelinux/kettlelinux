@@ -57,8 +57,18 @@ def ensure_dirs(root=EMU):
     from . import systems
     for d in FOLDERS:
         os.makedirs(os.path.join(root, d), exist_ok=True)
-    for sysdef in systems.load()["systems"].values():
+    db = systems.load()
+    for sysdef in db["systems"].values():
         os.makedirs(os.path.join(root, "roms", sysdef["folders"][0]), exist_ok=True)
+    # the save, state and screenshot folders the emulators are pointed at: RetroArch quietly
+    # falls back to its own when a configured one doesn't exist (the Portal's first saves did)
+    if root == EMU:
+        wanted = [os.path.join(HOME, s["dir"]) for e in db["emulators"].values()
+                  for s in e.get("saves", ())]
+        wanted += [v for k, v in retroarch_kept().items() if k.endswith("_directory")]
+        for d in wanted:
+            if os.path.realpath(d).startswith(os.path.realpath(EMU) + os.sep):
+                os.makedirs(d, exist_ok=True)
 
 
 def _replace(path, text):
@@ -135,6 +145,13 @@ def retroarch_kept():
         "video_fullscreen": "true",
         "pause_nonactive": "false",
         "menu_swap_ok_cancel_buttons": "true" if confirm_south() else "false",
+        # PipeWire's PulseAudio server: an older retroarch.cfg can hold "null" (no sound; seen
+        # on the Portal), which RetroArch saves after a failed audio start
+        "audio_driver": "pulse",
+        # its own screensaver inhibit fails over D-Bus in the Flatpak under gamescope, and
+        # libdbus aborts RetroArch on the way out (seen on the Portal); Game Mode keeps the
+        # screen on while a game runs anyway
+        "suspend_screensaver_enable": "false",
         "input_joypad_driver": "sdl2",
         "input_autodetect_enable": "true",
         # the cores the plugin downloads from libretro's buildbot
@@ -144,8 +161,13 @@ def retroarch_kept():
         "savefile_directory": os.path.join(EMU, "saves/retroarch"),
         "savestate_directory": os.path.join(EMU, "states/retroarch"),
         "screenshot_directory": os.path.join(EMU, "screenshots"),
+        # <dir>/<ROM folder>/<game>.srm, where the Saves page looks: no core-name folder (an
+        # older retroarch.cfg had sorting by core on), so a game's saves stay its own when the
+        # system's core changes
         "sort_savefiles_by_content_enable": "true",
         "sort_savestates_by_content_enable": "true",
+        "sort_savefiles_enable": "false",
+        "sort_savestates_enable": "false",
         "savestate_thumbnail_enable": "true",
         "savestate_auto_index": "false",
         "notification_show_autoconfig": "false",
