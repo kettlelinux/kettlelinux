@@ -24,14 +24,16 @@ be_nice() {
 # Re-exec the calling script inside a user+mount+pid namespace (subuid-mapped fake root).
 enter_ns() {
   [ "${KETTLE_IN_NS:-}" = 1 ] && return 0
-  [ -x "$QEMU" ] || die "missing $QEMU (extract usr/bin/qemu-aarch64-static from Arch's qemu-user-static package)"
+  [ "$(uname -m)" = aarch64 ] || [ -x "$QEMU" ] || die "missing $QEMU (extract usr/bin/qemu-aarch64-static from Arch's qemu-user-static package)"
   if [ -f "$ROOT/local.env" ]; then set -a; . "$ROOT/local.env"; set +a; fi
   exec env KETTLE_IN_NS=1 unshare --map-auto --map-root-user --mount --pid --fork \
     --mount-proc "$0" "$@"
 }
 
-# Namespace-local binfmt_misc entry so aarch64 binaries run via qemu (kernel >= 6.7).
+# Namespace-local binfmt_misc entry so aarch64 binaries run via qemu (kernel >= 6.7); none needed
+# on an aarch64 build host (scripts/build-packages-remote.sh).
 register_binfmt() {
+  [ "$(uname -m)" != aarch64 ] || return 0
   [ -e /proc/sys/fs/binfmt_misc/register ] || mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc
   [ -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ] && return 0
   printf ':qemu-aarch64:M::\\x7fELF\\x02\\x01\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02\\x00\\xb7\\x00:\\xff\\xff\\xff\\xff\\xff\\xfe\\xfe\\x00\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xfe\\xff\\xff\\xff:%s:FC' \

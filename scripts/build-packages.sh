@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build packages/<name>/PKGBUILD for aarch64 into our local repo (out/repo/aarch64,
-# repo "kettle"), rootless: makepkg runs in an aarch64 chroot via qemu binfmt.
+# repo "kettle"), rootless: makepkg runs in an aarch64 chroot via qemu binfmt, or natively on the
+# build host KETTLE_BUILD_HOST if one is set (scripts/build-packages-remote.sh).
 #
 # Usage: scripts/build-packages.sh [name...]     (default: every dir under packages/)
 # A package is built after the ones of ours in the same run it depends on (depends,
@@ -10,6 +11,13 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib.sh"
+# on a native aarch64 build host instead, when there is one (KETTLE_BUILD_HOST, here or in local.env)
+if [ "${KETTLE_IN_NS:-}" != 1 ] && [ -z "${KETTLE_BUILD_HOST+set}" ] && [ -f "$ROOT/local.env" ]; then
+  KETTLE_BUILD_HOST="$(. "$ROOT/local.env"; echo "${KETTLE_BUILD_HOST:-}")"
+fi
+if [ "${KETTLE_IN_NS:-}" != 1 ] && [ -n "${KETTLE_BUILD_HOST:-}" ]; then
+  export KETTLE_BUILD_HOST; exec "$ROOT/scripts/build-packages-remote.sh" "$@"
+fi
 be_nice
 enter_ns "$@"
 
