@@ -97,8 +97,8 @@ pkgname=(kettle-decky-welcome kettle-decky-device-settings
          kettle-decky-stores kettle-decky-moonlight
          kettle-decky-emulation)
 # every plugin's package.json "version" is this pkgver (what the plugin loader shows): change them together
-pkgver=1.13.0
-pkgrel=2
+pkgver=1.14.0
+pkgrel=1
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)
