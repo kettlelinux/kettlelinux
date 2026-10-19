@@ -23,6 +23,7 @@ const BUTTONS: [HotkeyAction, string][] = [
   ["slot_up", "Slot +"],
   ["rewind", "Rewind"],
   ["screenshot", "Screenshot"],
+  ["swap_screens", "Swap screens"],
 ];
 
 // The keys go to the window that has the focus: Quick Access closes first, and the key is sent
@@ -46,25 +47,28 @@ function RunningPanel({ r, face }: { r: Running; face: "xbox" | "nintendo" }) {
           <div style={{ ...small, ...dim, marginBottom: "6px" }}>{r.emulator_name}</div>
         </PanelSectionRow>
         {r.bridge ? (
-          <PanelSectionRow>
-            <Focusable style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px" }}>
-              {/* melonDS has no screenshot key (F8 is RetroArch's, PPSSPP's and Dolphin's) */}
-              {BUTTONS.filter(([a]) => (a !== "rewind" || r.rewind) && (a !== "screenshot" || r.emulator !== "melonds")).map(([a, label]) => (
-                <DialogButton key={a} style={{ minWidth: 0, padding: "8px 4px" }} onClick={() => press(a)}>
-                  {label}
-                </DialogButton>
-              ))}
-              {/* only the melonDS binary has a swap key (F9); RetroArch's DS core doesn't */}
-              {r.emulator === "melonds" && (
-                <DialogButton style={{ minWidth: 0, padding: "8px 4px" }} onClick={() => press("swap_screens")}>
-                  Swap screens
-                </DialogButton>
-              )}
-              <DialogButton style={{ minWidth: 0, padding: "8px 4px" }} onClick={() => press("quit")}>
-                Quit
-              </DialogButton>
-            </Focusable>
-          </PanelSectionRow>
+          <>
+            <PanelSectionRow>
+              <Focusable style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px" }}>
+                {/* only the hotkeys this emulator has (systems.json's "hotkeys") */}
+                {BUTTONS.filter(([a]) => r.hotkeys.includes(a)).map(([a, label]) => (
+                  <DialogButton key={a} style={{ minWidth: 0, padding: "8px 4px" }} onClick={() => press(a)}>
+                    {label}
+                  </DialogButton>
+                ))}
+                {r.hotkeys.includes("quit") && (
+                  <DialogButton style={{ minWidth: 0, padding: "8px 4px" }} onClick={() => press("quit")}>
+                    Quit
+                  </DialogButton>
+                )}
+              </Focusable>
+            </PanelSectionRow>
+            {!r.hotkeys.includes("quit") && (
+              <PanelSectionRow>
+                <div style={{ ...small, ...dim }}>Quit from the Steam menu (Exit game).</div>
+              </PanelSectionRow>
+            )}
+          </>
         ) : (
           <PanelSectionRow>
             <div style={small}>The buttons need the game to be started again. The Select hotkeys work.</div>
@@ -194,7 +198,13 @@ export default definePlugin(() => {
       body: "Open Quick Access > Emulation to import them",
     });
   };
-  const onError = (e: { message: string }) => toaster.toast({ title: "Can't start the game", body: e.message });
+  // emu-run's refusal; one an install or a setup step fixes opens the Emulators tab
+  const onError = (e: { message: string; reason?: string }) =>
+    toaster.toast({
+      title: "Can't start the game",
+      body: e.message,
+      onClick: e.reason === "emulator" || e.reason === "needs" ? () => Navigation.Navigate(`${ROUTE}/emulators`) : undefined,
+    });
   const onSyncDone = onSync((busy, r) => {
     if (!busy && r && (r.added || r.removed))
       toaster.toast({ title: "Emulation", body: [r.added && `${plural(r.added, "game")} added`, r.removed && `${r.removed} removed`].filter(Boolean).join(", ") });

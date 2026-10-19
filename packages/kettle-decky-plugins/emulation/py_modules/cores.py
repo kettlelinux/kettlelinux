@@ -1,11 +1,10 @@
-# Extra cores: the libretro cores Kettle can't ship (systems.json's emulators with "download"),
-# fetched on the user's request from libretro's own aarch64 buildbot into
-# ~/.config/retroarch/cores, where emu-run finds them. Two reasons keep a core out of the image:
-# most (Snes9x, Genesis Plus GX, PicoDrive, FinalBurn Neo, MAME 2003-Plus) are licensed for
-# non-commercial use only, and Kettle may be sold; blueMSX is free to use, but its V9938 video
-# code's license allows it in MSX emulators only, which is incompatible with the GPL, so it
-# can't be distributed with Kettle's GPL software. Each core's license is shown before it's
-# downloaded. A download is checked to be an aarch64 ELF library.
+# The libretro cores: every core systems.json names (its "libretro" emulators), fetched on the
+# user's request from libretro's own aarch64 buildbot into the RetroArch Flatpak's cores folder
+# (~/.var/app/org.libretro.RetroArch/config/retroarch/cores), where emu-run's RetroArch finds
+# them. Kettle ships none. A free core (systems.json "free") downloads with a tap; one whose
+# license isn't free (Snes9x, Genesis Plus GX, PicoDrive, FinalBurn Neo, MAME 2003-Plus:
+# non-commercial use only) shows its terms first and needs the user's yes. A download is checked
+# to be an aarch64 ELF library.
 #
 # A core that needs files of its own in RetroArch's system folder (~/Emulation/bios) gets them
 # with it, from libretro's buildbot too (SYSTEM_FILES: blueMSX's Machines and Databases
@@ -66,8 +65,11 @@ TERMS = {
 EM_AARCH64 = 0xB7
 
 
+RETROARCH = "org.libretro.RetroArch"
+
+
 def core_dir(home: str) -> str:
-    return os.path.join(home, ".config", "retroarch", "cores")
+    return os.path.join(home, ".var", "app", RETROARCH, "config", "retroarch", "cores")
 
 
 def path(home: str, core: str) -> str:
@@ -83,20 +85,31 @@ def missing_system_dirs(bios: str, core: str) -> list[str]:
     return [d for d in SYSTEM_FILES.get(core, {}).get("dirs", []) if not os.path.isdir(os.path.join(bios, d))]
 
 
+def known(db: dict) -> dict:
+    """core -> its emulator entry (with "id"), for every libretro emulator in systems.json."""
+    return {e["core"]: {**e, "id": eid} for eid, e in db["emulators"].items() if e.get("kind") == "libretro"}
+
+
+def terms(e: dict) -> str:
+    """What the core's license allows, as the user reads it ("" for a free core)."""
+    if e.get("free", True) and e["core"] not in TERMS:
+        return ""
+    return TERMS.get(e["core"], "This core's license doesn't allow it to be sold or shipped with Kettle.")
+
+
 def listing(home: str, db: dict, bios: str | None = None) -> list[dict]:
-    """[{core, emulator, name, license, terms, installed, size, systems, system_dirs, missing}]:
-    installed means the core and its system folders are there (missing: the folders that aren't)."""
+    """[{core, emulator, name, license, free, terms, installed, size, systems, system_dirs,
+    missing}] for every libretro core: installed means the core and its system folders are there
+    (missing: the folders that aren't)."""
     out = []
-    for eid, e in db["emulators"].items():
-        if not e.get("download"):
-            continue
-        p = path(home, e["core"])
-        systems = [s["name"] for s in db["systems"].values() if eid in s["emulators"]]
-        missing = missing_system_dirs(bios or bios_dir(home), e["core"]) if os.path.exists(p) else []
-        out.append({"core": e["core"], "emulator": eid, "name": e["name"], "license": e.get("license", ""),
-                    "terms": TERMS.get(e["core"], "This core's license doesn't allow it to be sold or shipped with Kettle."),
+    for core, e in sorted(known(db).items(), key=lambda kv: kv[1]["name"].lower()):
+        p = path(home, core)
+        systems = [s["name"] for s in db["systems"].values() if e["id"] in s["emulators"]]
+        missing = missing_system_dirs(bios or bios_dir(home), core) if os.path.exists(p) else []
+        out.append({"core": core, "emulator": e["id"], "name": e["name"], "license": e.get("license", ""),
+                    "free": bool(e.get("free", True)), "terms": terms(e),
                     "installed": os.path.exists(p) and not missing, "size": os.path.getsize(p) if os.path.exists(p) else 0,
-                    "systems": systems, "system_dirs": SYSTEM_FILES.get(e["core"], {}).get("dirs", []),
+                    "systems": systems, "system_dirs": SYSTEM_FILES.get(core, {}).get("dirs", []),
                     "missing": missing})
     return out
 
@@ -226,11 +239,14 @@ def unpack_system_files(data: bytes, bios: str, dirs: list[str], keep: list[str]
                 shutil.rmtree(stage, ignore_errors=True)
 
 
-def download(home: str, core: str, known: set[str], bios: str | None = None) -> str:
-    """Fetches the core, and its SYSTEM_FILES into the system folder (`bios`, ~/Emulation/bios),
-    both checked before either is put in place."""
-    if core not in known:
-        raise ValueError(f"not an extra core: {core}")
+def download(home: str, core: str, cores: dict, bios: str | None = None, accepted: bool = False) -> str:
+    """Fetches the core (one of known()'s), and its SYSTEM_FILES into the system folder (`bios`,
+    ~/Emulation/bios), both checked before either is put in place. A core whose license isn't
+    free needs `accepted` (the user said yes to its terms)."""
+    if core not in cores:
+        raise ValueError(f"not a core Kettle knows: {core}")
+    if not cores[core].get("free", True) and not accepted:
+        raise ValueError(f"{cores[core]['name']}'s license has to be accepted first")
     data = _fetch(f"{BUILDBOT}/{core}_libretro.so.zip")
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         name = f"{core}_libretro.so"
@@ -249,11 +265,11 @@ def download(home: str, core: str, known: set[str], bios: str | None = None) -> 
     return dest
 
 
-def remove(home: str, core: str, known: set[str]):
+def remove(home: str, core: str, cores: dict):
     """The core goes; its folders in Emulation/bios stay (the user's BIOS folder: they may have
     put their own machines there)."""
-    if core not in known:
-        raise ValueError(f"not an extra core: {core}")
+    if core not in cores:
+        raise ValueError(f"not a core Kettle knows: {core}")
     try:
         os.remove(path(home, core))
     except FileNotFoundError:

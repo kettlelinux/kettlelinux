@@ -65,3 +65,24 @@ def bios_entries():
 def rom_extensions():
     """Every extension some system takes."""
     return {e for s in systems().values() for e in s.get("extensions", ())}
+
+
+def flatpaks():
+    return load().get("flatpaks", {})
+
+
+def flatpak_of(emu):
+    """The Flatpak app an emulator runs in: its own, or RetroArch's for a libretro core."""
+    return emu["flatpak"] if emu["kind"] == "flatpak" else RETROARCH
+
+
+RETROARCH = "org.libretro.RetroArch"
+LAYOUTS = "/usr/share/kettle/emulation"
+
+
+def layout(eid, face):
+    """The Steam Input layout a game needs (mkvdf.py): the emulator's own when its hotkeys have
+    their own keys, else the standard one of the device's face buttons (xbox or nintendo)."""
+    face = "nintendo" if face == "nintendo" else "xbox"
+    own = "keys" in emulators().get(eid, {})
+    return f"local://{LAYOUTS}/emulation-{face}{'-' + eid if own else ''}.vdf"

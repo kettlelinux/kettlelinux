@@ -104,7 +104,7 @@ class Identify(Env):
         psx = pvd("PLAYSTATION", files={"SYSTEM.CNF": b"BOOT = cdrom:\\SLUS_000.01;1\r\n"})
         self.assertEqual(sysof(self.id("a.iso", cooked_disc(psx))), "psx")
         ps2 = pvd("PLAYSTATION", files={"SYSTEM.CNF": b"BOOT2 = cdrom0:\\SLUS_200.02;1\r\n"})
-        self.assertIsNone(self.id("b.iso", cooked_disc(ps2)))
+        self.assertEqual(sysof(self.id("b.iso", cooked_disc(ps2))), "ps2")
 
     def test_dos_iso_by_folder(self):
         self.assertEqual(sysof(self.id("dos/doom.iso", cooked_disc(pvd("LINUX")), hint="dos")), "dos")

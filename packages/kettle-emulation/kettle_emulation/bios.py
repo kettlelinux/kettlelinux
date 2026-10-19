@@ -1,7 +1,7 @@
 """BIOS files: which ones each system wants (systems.json), which are installed in ~/Emulation/bios,
 and recognising one anywhere by its md5, whatever its name. Kettle never ships a BIOS; the only
 system ROMs it downloads are C-BIOS, which is free (BSD): blueMSX's MSX BIOS, in the Machines
-folder that comes with that core from Extra cores (the plugin's cores.py). The real MSX,
+folder that comes with that core from Emulation > Emulators (the plugin's cores.py). The real MSX,
 ColecoVision and Spectravideo ROMs in the same buildbot pack are left out; users put their own in
 Emulation/bios/Machines.
 

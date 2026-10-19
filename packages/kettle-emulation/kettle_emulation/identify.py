@@ -28,6 +28,10 @@ Match = namedtuple("Match", "system confidence reason extract refs needs_cue",
 SYNC = b"\x00" + b"\xff" * 10 + b"\x00"
 GC_MAGIC = 0xC2339F3D   # big endian at 0x1C of a GameCube disc
 WII_MAGIC = 0x5D1C9EA3  # big endian at 0x18 of a Wii disc
+XBOX_MEDIA = b"MICROSOFT*XBOX*MEDIA"
+# where an Xbox disc's XDVDFS volume descriptor sits: an extracted XISO, then the game partition
+# of a redump-style full image (XGD1, XGD2, XGD3)
+XBOX_OFFSETS = (0x10000, 0x18310000, 0xFDA0000, 0x2090000)
 A2600_SIZES = {2048, 4096, 6144, 8192, 10240, 12288, 16384, 24576, 28672, 32768, 65536}
 ARCHIVES = {"zip", "7z"}
 CHIP_MAX = 1 << 20  # a .bin or .rom in an archive smaller than this is a chip, not a disc
@@ -111,10 +115,12 @@ def disc_system(f, base=0):
         sysid = pvd[8:40].strip()
         if sysid.startswith(b"PSP GAME"):
             return _match("psp", 1.0, "PSP UMD image")
+        if d.iso_file("PS3_DISC.SFB") is not None:
+            return _match("ps3", 1.0, "PlayStation 3 disc image")
         if sysid.startswith(b"PLAYSTATION"):
             cnf = d.iso_file("SYSTEM.CNF") or b""
             if b"BOOT2" in cnf:
-                return None  # PlayStation 2: no emulator for it
+                return _match("ps2", 1.0, "PlayStation 2 disc (SYSTEM.CNF BOOT2)")
             return _match("psx", 1.0, "PlayStation disc")
     if b"Sony Computer Entertainment" in d.sector(4):
         return _match("psx", 1.0, "PlayStation licence sector")
@@ -135,6 +141,26 @@ def nintendo_disc(head):
         return _match("gc", 1.0, "GameCube disc header")
     if _u32be(head, 0x18) == WII_MAGIC:
         return _match("wii", 1.0, "Wii disc header")
+    return None
+
+
+def xbox_disc(f):
+    for off in XBOX_OFFSETS:
+        try:
+            f.seek(off)
+            if f.read(len(XBOX_MEDIA)) == XBOX_MEDIA:
+                return _match("xbox", 1.0, "Xbox disc (XDVDFS)")
+        except (OSError, ValueError):
+            return None
+    return None
+
+
+def n3ds(f):
+    """A 3DS cartridge image (NCSD) or executable (NCCH): their magic at 0x100."""
+    f.seek(0x100)
+    magic = f.read(4)
+    if magic in (b"NCSD", b"NCCH"):
+        return _match("n3ds", 1.0, f"3DS {magic.decode()} image")
     return None
 
 
@@ -160,7 +186,7 @@ def _image(f, ext):
             return _match("psp", 1.0, "PSP CSO image")
         f.seek(0x8000)
         return nintendo_disc(f.read(0x100))
-    return disc_system(f)
+    return disc_system(f) or xbox_disc(f)
 
 
 # --- cue, gdi, m3u, chd ----------------------------------------------------------------------
@@ -466,12 +492,14 @@ def identify_stream(name, f, size, folder_hint=None):
     m = None
     if ext == "bin":
         m = _bin(f, size)
-    elif ext in ("iso", "gcm", "rvz", "gcz", "wia", "ciso", "cso", "wbfs", "img"):
+    elif ext in ("iso", "xiso", "gcm", "rvz", "gcz", "wia", "ciso", "cso", "wbfs", "img"):
         m = _image(f, ext)
     elif ext == "chd":
         m = _chd(f)
     elif ext == "gb":
         m = _gb(f)
+    elif ext in ("3ds", "cci", "cxi"):
+        m = n3ds(f)
     if m and m.confidence >= 1.0:
         return m
     hinted = by_extension(name, folder_hint)

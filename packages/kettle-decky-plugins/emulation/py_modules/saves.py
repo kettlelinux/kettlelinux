@@ -1,15 +1,18 @@
-# Each game's saves and save states, wherever its emulator keeps them, and backing them up.
+# Each game's saves and save states, wherever its emulator keeps them (systems.json: each
+# emulator's "saves", [{dir: from the home folder, glob}]), and backing them up.
 #
-# RetroArch (kettle-emulation's kept config) sorts them by the ROM's folder:
-#   ~/Emulation/saves/retroarch/<ROM's folder>/<ROM name>.srm
-#   ~/Emulation/states/retroarch/<ROM's folder>/<ROM name>.state[1-9|.auto], each with a .png
-# melonDS keeps <ROM name>.sav and .ml1-.ml8 next to the ROM. PPSSPP and Dolphin keep theirs by
-# the game's disc id (SAVEDATA folders, StateSaves), shown as games of their own.
+# RetroArch's (its cores' "saves", kettle-emulation's kept config) are sorted by the ROM's folder,
+# so they're matched to the ROM: <dir>/<ROM's folder>/<ROM name>.srm, .state[1-9|.auto] (each
+# state with a .png). A standalone emulator keeps its own by the game's id or name (PPSSPP's
+# SAVEDATA folders, Dolphin's StateSaves, ...): each entry its glob finds under its dir is a game
+# of its own, named after the file or folder at the top of it. melonDS keeps <ROM name>.sav and
+# .ml1-.ml8 next to the ROM.
 #
 # A backup is a zip in an Emulation/backups folder: a file under the home folder is stored as
 # "home/<path from it>", one on a card as "storage/<filesystem uuid>/<path from its mount>", so a
-# restore puts it back where it was (a card's only while it's in). A name that isn't UTF-8 goes
-# in as its bytes, without the zip's UTF-8 flag, and comes back as them.
+# restore puts it back where it was (a card's only while it's in), and only into Emulation/ and
+# the emulators' save folders. A name that isn't UTF-8 goes in as its bytes, without the zip's
+# UTF-8 flag, and comes back as them.
 import glob
 import os
 import re
@@ -18,8 +21,45 @@ import time
 import zipfile
 
 STATE_RE = re.compile(r"\.state(\d*|\.auto)$")
-# the folders under the home folder a restore may write to
-HOME_SAVE_DIRS = ("Emulation/", ".config/ppsspp/PSP/", ".local/share/dolphin-emu/")
+STATE_WORDS = re.compile(r"state", re.I)  # a standalone's dir or file holding save states
+# the BIOS folder is the user's own, never a save: not listed, backed up, deleted or restored into
+BIOS_DIR = "Emulation/bios"
+
+
+def _in_bios(rel: str) -> bool:
+    rel = rel.strip("/")
+    return rel == BIOS_DIR or rel.startswith(BIOS_DIR + "/")
+
+
+def _rel_dir(d: str) -> str | None:
+    """A saves dir from systems.json, as a path under the home folder (None: not one)."""
+    d = (d or "").strip("/")
+    if not d or d.startswith("~") or any(p in ("", ".", "..") for p in d.split("/")) or _in_bios(d):
+        return None
+    return d
+
+
+def save_dirs(db: dict) -> tuple[list[str], list[dict]]:
+    """(the RetroArch cores' save dirs, [{emulator, name, dir, glob}] of the standalones)."""
+    ra, other, seen = [], [], set()
+    for eid, e in db.get("emulators", {}).items():
+        for sv in e.get("saves") or ():
+            d = _rel_dir(sv.get("dir", ""))
+            if not d:
+                continue
+            if e.get("kind") == "libretro":
+                if d not in ra:
+                    ra.append(d)
+            elif (d, sv.get("glob", "*")) not in seen:
+                seen.add((d, sv.get("glob", "*")))
+                other.append({"emulator": eid, "name": e.get("name", eid), "dir": d, "glob": sv.get("glob") or "*"})
+    return ra, other
+
+
+def home_save_dirs(db: dict) -> tuple[str, ...]:
+    """The folders under the home folder a restore may write to."""
+    ra, other = save_dirs(db)
+    return ("Emulation/",) + tuple(d + "/" for d in ra) + tuple(o["dir"] + "/" for o in other)
 
 
 def _file(path: str, kind: str, slot: str = "") -> dict | None:
@@ -36,20 +76,24 @@ def _stem(path: str) -> str:
     return base.rpartition(".")[0] if "." in base.lstrip(".") else base
 
 
-def rom_files(home: str, rom: dict) -> list[dict]:
-    """The saves and states of one ROM ({system, path}) from RetroArch and melonDS."""
+def rom_files(home: str, rom: dict, ra_dirs: list[str] = ()) -> list[dict]:
+    """The saves and states of one ROM ({system, path}): RetroArch's in `ra_dirs`, and melonDS's
+    next to the ROM."""
     out = []
     stem = _stem(rom["path"])
     folder = os.path.basename(os.path.dirname(rom["path"]))
-    emu = os.path.join(home, "Emulation")
-    s = _file(os.path.join(emu, "saves", "retroarch", folder, stem + ".srm"), "save")
-    if s:
-        out.append(s)
-    for p in glob.glob(os.path.join(glob.escape(os.path.join(emu, "states", "retroarch", folder, stem)) + ".state*")):
-        m = STATE_RE.search(p)
-        if m:
-            slot = m.group(1).lstrip(".") or "0"
-            f = _file(p, "state", slot)
+    for d in ra_dirs:
+        base = os.path.join(home, d, folder, stem)
+        for p in sorted(glob.glob(glob.escape(base) + ".*")):
+            if p.endswith(".png") or os.path.isdir(p):
+                continue
+            m = STATE_RE.search(p)
+            if m:
+                f = _file(p, "state", m.group(1).lstrip(".") or "0")
+            elif p.rpartition(".")[0] == base:
+                f = _file(p, "save")
+            else:
+                continue
             if f:
                 out.append(f)
     d = os.path.dirname(rom["path"])
@@ -66,46 +110,50 @@ def rom_files(home: str, rom: dict) -> list[dict]:
     return out
 
 
-def by_id_files(home: str) -> list[dict]:
-    """PPSSPP's and Dolphin's saves, a game per disc id: [{id, title, system, files}]."""
+def _walk_files(top: str) -> list[str]:
+    if os.path.isfile(top):
+        return [top]
+    out = []
+    for d, dirs, files in os.walk(top):
+        dirs.sort()
+        out += [os.path.join(d, f) for f in sorted(files)]
+    return out
+
+
+def emulator_files(home: str, entries: list[dict]) -> list[dict]:
+    """The standalones' saves, a game per entry their glob finds under their dir: [{id, title,
+    system: "", emulator, files}]. A file is a state when its name or its folder's says so."""
     games = {}
-    psp = os.path.join(home, ".config", "ppsspp", "PSP")
-    for d in sorted(glob.glob(os.path.join(psp, "SAVEDATA", "*"))):
-        gid = os.path.basename(d)[:9]
-        for p in glob.glob(os.path.join(glob.escape(d), "*")):
-            f = _file(p, "save")
-            if f:
-                games.setdefault(("psp", gid), []).append(f)
-    for p in sorted(glob.glob(os.path.join(psp, "PPSSPP_STATE", "*.ppst"))):
-        m = re.match(r"(.{9})_.*_(\d+)\.ppst$", os.path.basename(p))
-        if m:
-            f = _file(p, "state", m.group(2))
-            if f:
-                games.setdefault(("psp", m.group(1)), []).append(f)
-    dolphin = os.path.join(home, ".local", "share", "dolphin-emu")
-    for p in sorted(glob.glob(os.path.join(dolphin, "StateSaves", "*.s[0-9][0-9]"))):
-        gid, _, slot = os.path.basename(p).partition(".s")
-        f = _file(p, "state", str(int(slot)))
-        if f:
-            games.setdefault(("gc", gid), []).append(f)
-    for p in sorted(glob.glob(os.path.join(dolphin, "GC", "*", "Card ?", "*.gci"))):
-        f = _file(p, "save")
-        if f:
-            games.setdefault(("gc", os.path.basename(p).split("-")[1] if "-" in os.path.basename(p) else "card"), []).append(f)
-    return [{"id": f"{sys_}:{gid}", "title": gid, "system": sys_, "files": files}
-            for (sys_, gid), files in games.items()]
+    for e in entries:
+        root = os.path.join(home, e["dir"])
+        for top in sorted(glob.glob(os.path.join(glob.escape(root), e["glob"]))):
+            if os.path.islink(top) or not os.path.realpath(top).startswith(os.path.realpath(root) + "/"):
+                continue
+            name = os.path.relpath(top, root).split("/")[0]
+            for p in _walk_files(top):
+                if _in_bios(os.path.relpath(os.path.realpath(p), os.path.realpath(home))):
+                    continue
+                if p.endswith(".png") and os.path.exists(p[:-4]):
+                    continue  # a state's picture
+                kind = "state" if STATE_WORDS.search(os.path.relpath(p, home)) else "save"
+                f = _file(p, kind)
+                if f:
+                    games.setdefault((e["emulator"], e["name"], e["dir"], name), []).append(f)
+    return [{"id": f"{eid}:{d}:{name}", "title": name, "system": "", "emulator": ename, "files": files}
+            for (eid, ename, d, name), files in games.items()]
 
 
-def listing(home: str, roms: dict) -> list[dict]:
+def listing(home: str, roms: dict, db: dict) -> list[dict]:
     """Every game with saves or states: [{id, title, system, files}], newest first."""
+    ra, other = save_dirs(db)
     out = []
     for rid, r in roms.items():
         if r.get("deleted"):
             continue
-        files = rom_files(home, r)
+        files = rom_files(home, r, ra)
         if files:
             out.append({"id": rid, "title": r.get("title") or _stem(r["path"]), "system": r["system"], "files": files})
-    out += by_id_files(home)
+    out += emulator_files(home, other)
     out.sort(key=lambda g: -max(f["mtime"] for f in g["files"]))
     return out
 
@@ -114,11 +162,13 @@ def all_paths(games: list[dict]) -> set[str]:
     return {f["path"] for g in games for f in g["files"]} | {f["thumb"] for g in games for f in g["files"] if f["thumb"]}
 
 
-def delete(paths: list[str], allowed: set[str]) -> int:
+def delete(paths: list[str], allowed: set[str], home: str | None = None) -> int:
     n = 0
     for p in paths:
         if p not in allowed:
             raise ValueError(f"not a save: {p}")
+        if home and _in_bios(os.path.relpath(os.path.realpath(p), os.path.realpath(home))):
+            raise ValueError(f"a BIOS file isn't a save: {p}")
         for q in (p, p + ".png"):
             try:
                 os.remove(q)
@@ -180,6 +230,8 @@ def backup(paths: list[str], dest_dir: str, home: str, storages: list[dict]) -> 
     tmp = name + ".part"
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
         for p in paths:
+            if _in_bios(os.path.relpath(os.path.realpath(p), os.path.realpath(home))):
+                continue
             for q in (p, p + ".png"):
                 arc = _arcname(q, home, storages) if os.path.exists(q) else None
                 if arc:
@@ -198,8 +250,9 @@ def backups(dirs: list[str]) -> list[dict]:
     return out
 
 
-def restore(zip_path: str, home: str, storages: list[dict]) -> dict:
-    """Puts a backup's files back; files of a card that isn't in are skipped."""
+def restore(zip_path: str, home: str, storages: list[dict], allowed: tuple[str, ...] = ("Emulation/",)) -> dict:
+    """Puts a backup's files back, under the home folder only into `allowed` (home_save_dirs());
+    files of a card that isn't in are skipped."""
     mounts = {s["uuid"]: s["path"] for s in storages if s.get("uuid") and not s.get("internal")}
     done, skipped = 0, 0
     with zipfile.ZipFile(zip_path) as z:
@@ -214,10 +267,11 @@ def restore(zip_path: str, home: str, storages: list[dict]) -> dict:
             if parts[0] == "home" and len(parts) > 1:
                 base, rel = home, parts[1:]
                 # only where saves live: a backup can't write anything else in the home folder
-                if not any("/".join(rel).startswith(r) for r in HOME_SAVE_DIRS):
+                if _in_bios("/".join(rel)) or not any("/".join(rel).startswith(r) for r in allowed):
                     skipped += 1
                     continue
-            elif parts[0] == "storage" and len(parts) > 3 and parts[1] in mounts and parts[2] == "Emulation":
+            elif parts[0] == "storage" and len(parts) > 3 and parts[1] in mounts and parts[2] == "Emulation" \
+                    and parts[3] != "bios":
                 base, rel = mounts[parts[1]], parts[2:]
             else:
                 skipped += 1

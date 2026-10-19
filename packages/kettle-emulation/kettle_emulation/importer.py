@@ -13,6 +13,7 @@ import hashlib
 import itertools
 import os
 import shutil
+import struct
 import subprocess
 import tempfile
 import time
@@ -144,11 +145,42 @@ def _safe_member(name):
 
 
 class Item:
-    __slots__ = ("kind", "src", "system", "match", "refs", "entry", "size", "hint")
+    __slots__ = ("kind", "src", "system", "match", "refs", "entry", "size", "hint", "name")
 
-    def __init__(self, kind, src, system=None, match=None, refs=(), entry=None, size=0, hint=None):
+    def __init__(self, kind, src, system=None, match=None, refs=(), entry=None, size=0, hint=None,
+                 name=None):
         self.kind, self.src, self.system, self.match = kind, src, system, match
         self.refs, self.entry, self.size, self.hint = list(refs), entry, size, hint
+        self.name = name  # a game folder's name when it isn't src's own (one at the walk's root)
+
+
+# what a PS3 disc game folder holds; one found right in the inbox or a stick's root is these
+PS3_MEMBERS = ("PS3_GAME", "PS3_DISC.SFB", "PS3_UPDATE")
+
+
+def sfo_title(path):
+    """The TITLE of a PS3 PARAM.SFO, or None."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read(64 << 10)
+        if data[:4] != b"\0PSF":
+            return None
+        keys, values, count = struct.unpack_from("<III", data, 8)
+        for i in range(count):
+            koff, _fmt, length, _max, voff = struct.unpack_from("<HHIII", data, 20 + 16 * i)
+            key = data[keys + koff:data.index(b"\0", keys + koff)]
+            if key == b"TITLE":
+                return data[values + voff:values + voff + length].split(b"\0")[0].decode(
+                    "utf-8", "replace").strip() or None
+    except (OSError, struct.error, ValueError):
+        return None
+    return None
+
+
+def _folder_name(title):
+    """A folder name from a game's title: no slashes, no leading dots."""
+    name = "".join("_" if c in '/\\\0' else c for c in title).strip().lstrip(".")
+    return name[:120] or "PS3 game"
 
 
 class Importer:
@@ -241,9 +273,49 @@ class Importer:
                 return None
             d = os.path.dirname(d)
 
+    @staticmethod
+    def _game_folders(files):
+        """The folders that are one game whole (systems.json "game_folders": a PS3 disc game is
+        the folder holding PS3_GAME/PARAM.SFO): {folder: system}."""
+        found = {}
+        for sid, s in systems.systems().items():
+            marker = s.get("game_folders", {}).get("marker")
+            if not marker:
+                continue
+            tail = os.sep + marker.lower().replace("/", os.sep)
+            for p in files:
+                if p.lower().endswith(tail):
+                    found[p[:len(p) - len(tail)]] = sid
+        return found
+
     def plan(self, path, hint=None):
         """The Items for everything under `path` (hint: a system for files no folder names)."""
         files = list(self._walk(path))
+        folders = self._game_folders(files)
+        items = []
+        if folders:
+            inside = lambda p, d: p.startswith(d + os.sep)  # noqa: E731
+            root = os.path.realpath(path) if os.path.isdir(path) else None
+            taken = []
+            for d, sid in sorted(folders.items()):
+                at_root = os.path.realpath(d) == root
+                if at_root:
+                    # PS3_GAME/ right in the inbox or a stick's root: never the walk root itself;
+                    # its members go into a folder named after the game
+                    members = [p for p in files if any(
+                        p == os.path.join(d, m) or inside(p, os.path.join(d, m)) for m in PS3_MEMBERS)]
+                    name = _folder_name(sfo_title(os.path.join(d, "PS3_GAME", "PARAM.SFO"))
+                                        or "PS3 game")
+                else:
+                    members = [p for p in files if inside(p, d)]
+                    name = None
+                taken += members
+                size = sum(os.path.getsize(p) for p in members if os.path.isfile(p))
+                items.append(Item("game", d, sid, identify.Match(sid, 1.0, "game folder"),
+                                  [os.path.relpath(p, d) for p in members], size=size, name=name))
+            taken = set(taken)
+            files = [p for p in files if p not in taken and not any(
+                inside(p, d) for d in folders if os.path.realpath(d) != root)]
         settled = {_key(p) for p in files} if self.settle else None
         consumed = set()
         held = set()  # sheets with a file still being copied, and what they list: next round
@@ -262,7 +334,6 @@ class Importer:
                 refs_of[p] = refs
                 consumed.update(keys)
         cache = bios._Md5Cache()
-        items = []
         for p in files:
             if _key(p) in consumed or _key(p) in held:
                 continue
@@ -421,9 +492,56 @@ class Importer:
             f.write(f'FILE "{os.path.basename(bin_path)}" BINARY\n  TRACK 01 {mode}\n    INDEX 01 00:00:00\n')
         return cue
 
+    def _place_folder(self, item, target_dir, base, total):
+        """A game that is a folder (a PS3 disc game) into target_dir/<its name>, every file in its
+        place; a different game of that name goes to "<name> (n)"."""
+        name = item.name or os.path.basename(item.src)
+        members = [os.path.join(item.src, r) for r in item.refs]
+        dst = os.path.join(target_dir, name)
+        if _samefile(item.src, dst):
+            return "identical", dst
+        for cand in itertools.chain([dst], numbered(dst, ext=False)):
+            if not os.path.lexists(cand):
+                dst = cand
+                break
+            if os.path.isdir(cand) and all(
+                    os.path.isfile(os.path.join(cand, r)) and _same_file(m, os.path.join(cand, r))
+                    for m, r in zip(members, item.refs)):
+                self._drop(members)
+                return "identical", cand
+        done = base
+        for m, r in zip(members, item.refs):
+            if not _inside(os.path.join(dst, r), dst):
+                raise ValueError(f"{name} holds a file outside it: {r}")
+            done += self._transfer(m, os.path.join(dst, r), done, total)
+        if self.mode == "move":
+            self._prune(members, item.src, keep_top=bool(item.name))
+        return ("moved" if self.mode == "move" else "copied"), dst
+
+    @staticmethod
+    def _prune(members, top, keep_top):
+        """After a move: the folders the members left empty, deepest first, up to top (top too,
+        unless it's the walk's root: keep_top). Nothing that still holds a file goes."""
+        dirs = set()
+        for m in members:
+            d = os.path.dirname(m)
+            while _inside(d, top) and d != top:
+                dirs.add(d)
+                d = os.path.dirname(d)
+        if not keep_top:
+            dirs.add(top)
+        for d in sorted(dirs, key=len, reverse=True):
+            try:
+                os.rmdir(d)
+            except OSError:
+                pass
+
     def _game(self, item, base, total):
         target = os.path.join(self.dest, "roms", systems.folder(item.system))
-        action, dst = self._place(item, target, base, total)
+        if os.path.isdir(item.src):
+            action, dst = self._place_folder(item, target, base, total)
+        else:
+            action, dst = self._place(item, target, base, total)
         if action != "identical" and item.match and item.match.needs_cue:
             dst = self._write_cue(dst, item.system)
         if action != "identical":

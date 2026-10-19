@@ -1,26 +1,38 @@
 """First-run configs and the settings Kettle keeps the same in every emulator.
 
-Two kinds:
-- **kept**: hotkeys (the keys mkvdf.py's layer sends), folders under ~/Emulation, fullscreen,
-  no confirm-on-quit, no updaters. Rewritten on every launch, so the standard controls can't
-  drift. RetroArch reads them from an append-config; the standalones get the keys set in their
-  own files before each start.
-- **seeded**: everything else (video, per-device resolution). Written once, when the file is
-  missing; after that it's the user's (and the plugin's settings page's).
+The emulators are Flathub's, so their configs live in ~/.var/app/<app id>/{config,data}/. Two
+kinds of settings:
+- **kept**: hotkeys (the keys mkvdf.py's layer sends, or the emulator's own where systems.json
+  gives it "keys"), folders under ~/Emulation, fullscreen, no confirm-on-quit, no updaters.
+  Rewritten before every launch, so the standard controls can't drift. RetroArch reads them from
+  an append-config; the others get them set in their own files.
+- **seeded**: everything else (video, per-device resolution, pad layouts). Written once, when the
+  file is missing; after that it's the user's.
 
-seeded.json records each emulator's seed version, so a later version adds what's new without
-redoing what the user changed.
+seeded.json records each emulator's seed version. The Flatpak permissions are applied before every
+launch (an app installed outside the plugin gets them too, and so does one whose overrides were
+reset).
 """
 import configparser
 import json
 import os
+import shutil
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
 
 HOME = os.path.expanduser("~")
 EMU = os.path.join(HOME, "Emulation")
 CONF = os.path.join(HOME, ".config/kettle/emulation")
 SEEDED = os.path.join(CONF, "seeded.json")
-RA_DIR = os.path.join(HOME, ".config/retroarch")
+APPS = os.path.join(HOME, ".var/app")
+RA_DIR = os.path.join(APPS, "org.libretro.RetroArch/config/retroarch")
 FOLDERS = ("roms", "bios", "saves", "states", "screenshots", "backups", "inbox")
+
+
+def app_dir(app, kind="config"):
+    """A Flatpak app's own XDG folder: ~/.var/app/<app>/<config|data|cache>."""
+    return os.path.join(APPS, app, kind)
 
 
 def device():
@@ -49,17 +61,46 @@ def ensure_dirs(root=EMU):
         os.makedirs(os.path.join(root, "roms", sysdef["folders"][0]), exist_ok=True)
 
 
-def write_cfg(path, values):
-    """RetroArch's key = "value" format."""
+def _replace(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        for k, v in values.items():
-            f.write(f'{k} = "{v}"\n')
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
     os.replace(tmp, path)
 
 
-# --- RetroArch -------------------------------------------------------------------------------
+def write_cfg(path, values):
+    """RetroArch's key = "value" format."""
+    _replace(path, "".join(f'{k} = "{v}"\n' for k, v in values.items()))
+
+
+def _read_json(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+# --- Flatpak permissions ----------------------------------------------------------------------
+def permissions(app):
+    """Gives a Flatpak app what systems.json "permissions" lists (~/Emulation, the cards), before
+    every launch: cheap and idempotent, and it covers an app installed some other way or whose
+    overrides were reset. Best effort: a failure is logged, and the emulator then shows its own
+    error."""
+    from . import systems
+    want = systems.flatpaks().get(app, {}).get("permissions", [])
+    if not want:
+        return
+    args = [p if p.startswith("--") else f"--filesystem={p}" for p in want]
+    try:
+        subprocess.run(["flatpak", "override", "--user", *args, app], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=30)
+    except (OSError, subprocess.SubprocessError) as err:
+        print(f"emu-run: flatpak override {app} failed: {err}", file=sys.stderr)
+
+
+# --- RetroArch (org.libretro.RetroArch) -------------------------------------------------------
 RA_KEYS = {
     "input_exit_emulator": "escape",
     "input_save_state": "f2",
@@ -96,8 +137,8 @@ def retroarch_kept():
         "menu_swap_ok_cancel_buttons": "true" if confirm_south() else "false",
         "input_joypad_driver": "sdl2",
         "input_autodetect_enable": "true",
-        "libretro_directory": "/usr/lib/libretro",
-        "libretro_info_path": "/usr/share/libretro/info",
+        # the cores the plugin downloads from libretro's buildbot
+        "libretro_directory": os.path.join(RA_DIR, "cores"),
         "core_updater_buildbot_cores_url": "https://buildbot.libretro.com/nightly/linux/aarch64/latest/",
         "system_directory": os.path.join(EMU, "bios"),
         "savefile_directory": os.path.join(EMU, "saves/retroarch"),
@@ -150,14 +191,16 @@ def retroarch_core_options():
 
 
 def append_configs(system):
-    """The `--appendconfig` list for a game: what Kettle keeps, then the system's own."""
+    """The `--appendconfig` list for a game: what Kettle keeps, then the system's own. In
+    RetroArch's own config folder, which its sandbox can always read."""
     from . import systems
-    kept = os.path.join(CONF, "retroarch-kettle.cfg")
+    kdir = os.path.join(RA_DIR, "kettle")
+    kept = os.path.join(kdir, "retroarch-kettle.cfg")
     write_cfg(kept, retroarch_kept())
     paths = [kept]
     extra = systems.load()["systems"].get(system, {}).get("retroarch")
     if extra:
-        p = os.path.join(CONF, f"retroarch-{system}.cfg")
+        p = os.path.join(kdir, f"retroarch-{system}.cfg")
         write_cfg(p, extra)
         paths.append(p)
     return "|".join(paths)
@@ -173,10 +216,11 @@ def seed_retroarch(have):
     return 1
 
 
-# --- standalones: the kept keys are filled in from each emulator's own format ----------------
-def set_ini(path, sections, create_only=None):
-    """Sets these keys in an ini file, leaving every other line as it is."""
-    cp = configparser.RawConfigParser(strict=False, interpolation=None)
+# --- ini files --------------------------------------------------------------------------------
+def set_ini(path, sections, create_only=None, qt=False):
+    """Sets these keys in an ini file, leaving every other line as it is. qt: a QSettings file
+    (key=value, no spaces; keys such as Shortcuts\\Main%20Window\\Exit\\KeySeq kept as they are)."""
+    cp = configparser.RawConfigParser(strict=False, interpolation=None, delimiters=("=",))
     cp.optionxform = str
     if os.path.exists(path):
         cp.read(path, encoding="utf-8")
@@ -193,8 +237,33 @@ def set_ini(path, sections, create_only=None):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        cp.write(f, space_around_delimiters=True)
+        cp.write(f, space_around_delimiters=not qt)
     os.replace(tmp, path)
+
+
+def _qt_key(name):
+    """A shortcut's name as a QSettings key: its "/" become "\\" (the frontends' AdjustKey: the
+    "Continue/Pause Emulation" group), then spaces %20."""
+    return name.replace("/", "\\").replace(" ", "%20")
+
+
+def qt_shortcuts(group, keys):
+    """QSettings keys for Qt emulators' hotkeys (Azahar, Eden): name -> key sequence ("" none)."""
+    out = {}
+    for name, seq in keys.items():
+        base = "Shortcuts\\" + _qt_key(group) + "\\" + _qt_key(name)
+        out[base + "\\KeySeq"] = seq
+        out[base + "\\KeySeq\\default"] = "false"
+    return out
+
+
+def qt_settings(values):
+    """QSettings values with their \\default=false marker (Citra-family configs)."""
+    out = {}
+    for k, v in values.items():
+        out[k] = v
+        out[k + "\\default"] = "false"
+    return out
 
 
 def bios_file(name):
@@ -202,8 +271,8 @@ def bios_file(name):
     return p if os.path.isfile(p) else ""
 
 
-# --- PPSSPP (~/.config/ppsspp/PSP/SYSTEM) ----------------------------------------------------
-PPSSPP_DIR = os.path.join(HOME, ".config/ppsspp/PSP/SYSTEM")
+# --- PPSSPP (org.ppsspp.PPSSPP) ---------------------------------------------------------------
+PPSSPP_DIR = os.path.join(app_dir("org.ppsspp.PPSSPP"), "ppsspp/PSP/SYSTEM")
 # controls.ini: "<device>-<keycode>"; 1 keyboard (Android NKCODEs), 10 the first SDL pad
 PPSSPP_KEYS = {
     "Save State": "1-132", "Load State": "1-134", "Pause": "1-131", "SpeedToggle": "1-62",
@@ -233,8 +302,8 @@ def keep_ppsspp():
     })
 
 
-# --- Dolphin (~/.config/dolphin-emu) ---------------------------------------------------------
-DOLPHIN_DIR = os.path.join(HOME, ".config/dolphin-emu")
+# --- Dolphin (org.DolphinEmu.dolphin-emu) -----------------------------------------------------
+DOLPHIN_DIR = os.path.join(app_dir("org.DolphinEmu.dolphin-emu"), "dolphin-emu")
 DOLPHIN_PAD = "SDL/0/Steam Virtual Gamepad"
 
 
@@ -311,46 +380,73 @@ def keep_dolphin():
             set_ini(p, {section: values})
 
 
-# --- melonDS (~/.config/melonDS/melonDS.toml) ------------------------------------------------
-MELONDS_TOML = os.path.join(HOME, ".config/melonDS/melonDS.toml")
+# --- melonDS (net.kuribo64.melonDS) -----------------------------------------------------------
+MELONDS_TOML = os.path.join(app_dir("net.kuribo64.melonDS"), "melonDS/melonDS.toml")
+# Qt key codes
 QT_KEY = {"F1": 0x01000030, "F2": 0x01000031, "F4": 0x01000033, "F6": 0x01000035,
-          "F7": 0x01000036, "F8": 0x01000037, "F9": 0x01000038, "Escape": 0x01000000,
-          "Space": 0x20}
+          "F7": 0x01000036, "F8": 0x01000037, "F9": 0x01000038, "F10": 0x01000039,
+          "Escape": 0x01000000, "Space": 0x20, "P": 0x50}
+
+
+def _tkey(k):
+    return k if k and all(c.isalnum() or c in "-_" for c in k) else json.dumps(k)
+
+
+def _tval(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, list):
+        return "[" + ", ".join(_tval(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{" + ", ".join(f"{_tkey(k)} = {_tval(x)}" for k, x in v.items()) + "}"
+    return json.dumps(str(v))
+
+
+def _tables(v):
+    return isinstance(v, list) and v and all(isinstance(x, dict) for x in v)
 
 
 def toml_dump(d, prefix=""):
-    """The subset of TOML melonDS writes: tables, strings, ints, floats, bools."""
-    def val(v):
-        if isinstance(v, bool):
-            return "true" if v else "false"
-        if isinstance(v, (int, float)):
-            return repr(v)
-        if isinstance(v, list):
-            return "[" + ", ".join(val(x) for x in v) + "]"
-        return json.dumps(str(v))
-    lines = [f"{k} = {val(v)}" for k, v in d.items() if not isinstance(v, dict)]
+    """TOML as melonDS and xemu write it: tables, arrays of tables ([[a.b]]: xemu's
+    input.gamepad_mappings), strings, ints, floats, bools, so keys Kettle doesn't own survive."""
+    lines = [f"{_tkey(k)} = {_tval(v)}" for k, v in d.items()
+             if not isinstance(v, dict) and not _tables(v)]
     for k, v in d.items():
+        name = f"{prefix}.{_tkey(k)}" if prefix else _tkey(k)
         if isinstance(v, dict):
-            name = f"{prefix}.{k}" if prefix else k
             lines += ["", f"[{name}]", toml_dump(v, name)]
+        elif _tables(v):
+            for item in v:
+                lines += ["", f"[[{name}]]", toml_dump(item, name)]
     return "\n".join(lines)
 
 
-def keep_melonds():
+def _toml(path):
     import tomllib
     try:
-        with open(MELONDS_TOML, "rb") as f:
-            conf = tomllib.load(f)
+        with open(path, "rb") as f:
+            return tomllib.load(f)
     except (OSError, ValueError):
-        conf = {}
+        return {}
+
+
+def keep_melonds():
+    """Upstream melonDS: its state keys are fixed menu shortcuts (Shift+F1 save slot 1, F1 load
+    it: systems.json "keys"); pause, fast-forward and swap screens are hotkeys of its own."""
+    conf = _toml(MELONDS_TOML)
     new = not conf
     inst = conf.setdefault("Instance0", {})
     inst.setdefault("Keyboard", {}).update({
-        "HK_SaveState": QT_KEY["F2"], "HK_LoadState": QT_KEY["F4"], "HK_Pause": QT_KEY["F1"],
-        "HK_FastForwardToggle": QT_KEY["Space"], "HK_FastForward": -1,
-        "HK_PrevStateSlot": QT_KEY["F6"], "HK_NextStateSlot": QT_KEY["F7"],
-        "HK_Quit": QT_KEY["Escape"], "HK_SwapScreens": QT_KEY["F9"], "HK_FullscreenToggle": -1,
+        "HK_Pause": QT_KEY["P"], "HK_FrameLimitToggle": QT_KEY["Space"], "HK_FastForward": -1,
+        # F9 is its load-state-from-file shortcut
+        "HK_SwapScreens": QT_KEY["F10"], "HK_FullscreenToggle": -1,
     })
+    inst["SaveFilePath"] = os.path.join(EMU, "saves/melonds")
+    inst["SavestatePath"] = os.path.join(EMU, "states/melonds")
+    for d in (inst["SaveFilePath"], inst["SavestatePath"]):
+        os.makedirs(d, exist_ok=True)
     if new:
         # by position: DS A east, B south, X north, Y west (SDL joystick indices of an xpad)
         inst["JoystickID"] = 0
@@ -365,27 +461,198 @@ def keep_melonds():
     emu["ExternalBIOSEnable"] = all(files)
     ds = conf.setdefault("DS", {})
     ds["BIOS9Path"], ds["BIOS7Path"], ds["FirmwarePath"] = files
-    os.makedirs(os.path.dirname(MELONDS_TOML), exist_ok=True)
-    tmp = MELONDS_TOML + ".tmp"
-    with open(tmp, "w") as f:
-        f.write(toml_dump(conf) + "\n")
-    os.replace(tmp, MELONDS_TOML)
+    _replace(MELONDS_TOML, toml_dump(conf) + "\n")
+
+
+# --- Play! (org.purei.Play): PlayStation 2 ----------------------------------------------------
+PLAY_CONFIG = os.path.join(app_dir("org.purei.Play"), "Play Data Files/config.xml")
+
+
+def keep_play():
+    """Its keys are fixed (Ctrl+Shift+1 save, Ctrl+1 load, Ctrl+R pause: systems.json "keys"; its
+    Ctrl+Q lives in the menu bar fullscreen hides, so Steam's Exit game quits it); this turns off
+    the exit question and pausing in the background."""
+    try:
+        root = ET.parse(PLAY_CONFIG).getroot()
+    except (OSError, ET.ParseError):
+        root = ET.Element("Config")
+    prefs = {p.get("Name"): p for p in root.findall("Preference")}
+    for name, typ, value in (("ui.showexitconfirmation", "boolean", "false"),
+                             ("ui.pausewhenfocuslost", "boolean", "false")):
+        p = prefs.get(name)
+        if p is None:
+            p = ET.SubElement(root, "Preference", {"Name": name})
+        p.set("Type", typ)
+        p.set("Value", value)
+    # Play!'s parser takes only double-quoted attributes: ElementTree's declaration is single-quoted
+    _replace(PLAY_CONFIG, '<?xml version="1.0" encoding="UTF-8"?>\n'
+             + ET.tostring(root, encoding="unicode") + "\n")
+
+
+# --- RPCS3 (net.rpcs3.RPCS3): PlayStation 3 ---------------------------------------------------
+RPCS3_DIR = os.path.join(app_dir("net.rpcs3.RPCS3"), "rpcs3")
+RPCS3_SHORTCUTS = {  # GuiConfigs/CurrentSettings.ini [Shortcuts]; "" unbinds
+    # its savestate key saves, then kills and reboots the game from the state: not a hotkey
+    "game_window_savestate": "",
+    "gw_home_menu": "F1",
+    "game_window_frame_limit": "Space",
+    "game_window_screenshot": "F8",
+    "game_window_stop": "Esc",
+    # Esc leaves fullscreen by default
+    "game_window_exit_fullscreen": "",
+    "main_window_exit_fullscreen": "",
+}
+
+
+def set_yaml(path, section, values):
+    """Sets `key: value` lines of one top-level section of a block YAML file (RPCS3's
+    config.yml), keeping every other line."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    start = next((i for i, l in enumerate(lines) if l.rstrip() == f"{section}:"), None)
+    if start is None:
+        lines += [f"{section}:"]
+        start = len(lines) - 1
+    end = start + 1
+    while end < len(lines) and (lines[end].startswith(" ") or not lines[end].strip()):
+        end += 1
+    body = lines[start + 1:end]
+    for k, v in values.items():
+        for i, l in enumerate(body):
+            if l.startswith(f"  {k}:"):
+                body[i] = f"  {k}: {v}"
+                break
+        else:
+            body.append(f"  {k}: {v}")
+    lines[start + 1:end] = body
+    _replace(path, "\n".join(lines) + "\n")
+
+
+def keep_rpcs3():
+    set_ini(os.path.join(RPCS3_DIR, "GuiConfigs/CurrentSettings.ini"), {
+        "Shortcuts": RPCS3_SHORTCUTS,
+        "main_window": {"confirmationBoxExitGame": "false", "infoBoxEnabledWelcome": "false",
+                        "confirmationBoxBootGame": "false"},
+        "Meta": {"checkUpdateStart": "false"},
+    }, qt=True)
+    set_yaml(os.path.join(RPCS3_DIR, "config.yml"), "Miscellaneous", {
+        "Start games in fullscreen mode": "true",
+        # with --no-gui: back to Steam when the game stops
+        "Exit RPCS3 when process finishes": "true",
+    })
+
+
+# --- xemu (app.xemu.xemu): Xbox ---------------------------------------------------------------
+XEMU_TOML = os.path.join(app_dir("app.xemu.xemu", "data"), "xemu/xemu/xemu.toml")
+XBOX = os.path.join(EMU, "bios/xbox")
+
+
+def keep_xemu():
+    """Its keys are fixed (F1 menu, F5 load / Shift+F5 save the snapshot bound to F5, F12
+    screenshot, Ctrl+Q quit: systems.json "keys"); this binds F5 to a "kettle" snapshot and
+    points it at the console files in Emulation/bios/xbox."""
+    conf = _toml(XEMU_TOML)
+    g = conf.setdefault("general", {})
+    g["show_welcome"] = False
+    g["skip_boot_anim"] = True
+    g.setdefault("updates", {})["check"] = False
+    g.setdefault("snapshots", {}).setdefault("shortcuts", {})["f5"] = "kettle"
+    conf.setdefault("display", {}).setdefault("window", {})["fullscreen_on_startup"] = True
+    files = conf.setdefault("sys", {}).setdefault("files", {})
+    files.update({"bootrom_path": os.path.join(XBOX, "mcpx_1.0.bin"),
+                  "flashrom_path": os.path.join(XBOX, "xbox_bios.bin"),
+                  "hdd_path": os.path.join(XBOX, "xbox_hdd.qcow2"),
+                  "eeprom_path": os.path.join(XBOX, "eeprom.bin")})
+    os.makedirs(XBOX, exist_ok=True)
+    _replace(XEMU_TOML, toml_dump(conf) + "\n")
+
+
+# --- Eden (dev.eden_emu.eden), Ryujinx (io.github.ryubing.Ryujinx): Switch --------------------
+EDEN_INI = os.path.join(app_dir("dev.eden_emu.eden"), "eden/qt-config.ini")
+EDEN_KEYS = os.path.join(app_dir("dev.eden_emu.eden", "data"), "eden/keys")
+RYUJINX_DIR = os.path.join(app_dir("io.github.ryubing.Ryujinx"), "Ryujinx")
+SWITCH_KEYS = os.path.join(EMU, "bios/switch")
+
+
+def _copy_keys(dest):
+    """prod.keys and title.keys from Emulation/bios/switch, where the emulator reads its own."""
+    for name in ("prod.keys", "title.keys"):
+        src = os.path.join(SWITCH_KEYS, name)
+        dst = os.path.join(dest, name)
+        if os.path.isfile(src) and not os.path.exists(dst):
+            os.makedirs(dest, exist_ok=True)
+            shutil.copyfile(src, dst)
+
+
+def keep_eden():
+    set_ini(EDEN_INI, {"UI": dict(**qt_shortcuts("Main Window", {
+        "Continue/Pause Emulation": "F1",
+        "Toggle Turbo Speed": "Space",
+        "Capture Screenshot": "F8",
+        "Exit Eden": "Esc",
+        # its defaults on keys the layer sends
+        "Exit Fullscreen": "", "Load/Remove Amiibo": "", "Restart Emulation": "",
+        "Change Adapting Filter": "", "Change GPU Mode": "",
+    }), **qt_settings({"fullscreen": "true", "confirmStop": "2", "check_for_updates": "false",
+                       "firstStart": "false"}))}, qt=True)
+    _copy_keys(EDEN_KEYS)
+
+
+def keep_ryujinx():
+    """Config.json is patched only once Ryujinx has written it: its loader takes every field
+    from the file (a partial one would load with empty input and graphics settings), so the first
+    session has Ryujinx's default keys. Its hotkeys (KeyboardHotkeys, snake_case): pause F1,
+    turbo mode (fast-forward) Space, screenshot F8; it has no save states and no quit key."""
+    _copy_keys(os.path.join(RYUJINX_DIR, "system"))
+    path = os.path.join(RYUJINX_DIR, "Config.json")
+    conf = _read_json(path, None)
+    if not isinstance(conf, dict):
+        return
+    conf.update({"check_updates_on_start": False, "show_confirm_exit": False,
+                 "start_fullscreen": True})
+    hk = conf.setdefault("hotkeys", {})
+    for k in list(hk):
+        if hk[k] in ("F1", "F2", "F4", "F6", "F7", "F8", "F9", "Space", "R", "Escape"):
+            hk[k] = "Unbound"
+    hk.update({"pause": "F1", "turbo_mode": "Space", "screenshot": "F8"})
+    _replace(path, json.dumps(conf, indent=2) + "\n")
+
+
+# --- Azahar (org.azahar_emu.Azahar): 3DS ------------------------------------------------------
+AZAHAR_INI = os.path.join(app_dir("org.azahar_emu.Azahar"), "azahar-emu/qt-config.ini")
+
+
+def keep_azahar():
+    set_ini(AZAHAR_INI, {"UI": dict(**qt_shortcuts("Main Window", {
+        "Quick Save": "F2",
+        "Quick Load": "F4",
+        "Continue/Pause Emulation": "F1",
+        "Toggle Turbo Mode": "Space",
+        "Capture Screenshot": "F8",
+        "Swap Screens": "F9",
+        "Exit Azahar": "Esc",
+        # its defaults on keys the layer sends
+        "Load Amiibo": "", "Rotate Screens Upright": "", "Restart Emulation": "",
+        "Toggle Custom Textures": "", "Exit Fullscreen": "",
+    }), **qt_settings({"confirmClose": "false"})),
+        "Miscellaneous": qt_settings({"check_for_update_on_start": "false"})}, qt=True)
 
 
 SEEDERS = {"retroarch": seed_retroarch}
-# the standalones' kept settings, for the emulator about to start (seed(eid))
-KEEPERS = {"ppsspp": keep_ppsspp, "dolphin": keep_dolphin, "melonds": keep_melonds}
+# the kept settings of the emulator about to start (seed(eid))
+KEEPERS = {"ppsspp": keep_ppsspp, "dolphin": keep_dolphin, "melonds": keep_melonds,
+           "play": keep_play, "rpcs3": keep_rpcs3, "xemu": keep_xemu, "eden": keep_eden,
+           "ryujinx": keep_ryujinx, "azahar": keep_azahar}
 
 
 def seed(eid=None):
     """Every emulator's first-run config (once), and the kept settings of the one about to start."""
     ensure_dirs()
     os.makedirs(CONF, exist_ok=True)
-    try:
-        with open(SEEDED) as f:
-            have = json.load(f)
-    except (OSError, ValueError):
-        have = {}
+    have = _read_json(SEEDED, {})
     changed = False
     for name, fn in SEEDERS.items():
         version = fn(have.get(name, 0))
@@ -395,16 +662,8 @@ def seed(eid=None):
     if eid in KEEPERS:
         KEEPERS[eid]()
     if changed:
-        tmp = SEEDED + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(have, f)
-        os.replace(tmp, SEEDED)
+        _replace(SEEDED, json.dumps(have))
 
 
 def environment(eid, emu):
-    env = dict(os.environ)
-    if emu["kind"] == "standalone":
-        # gamescope's games are X11 clients
-        env["QT_QPA_PLATFORM"] = "xcb"
-        env["SDL_VIDEODRIVER"] = "x11"
-    return env
+    return dict(os.environ)

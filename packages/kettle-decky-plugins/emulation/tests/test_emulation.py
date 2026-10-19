@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sys
+import struct
 import tempfile
 import unittest
 import zipfile
@@ -19,6 +20,59 @@ SYSTEMS = {
     "snes": {"name": "SNES", "folders": ["snes"], "extensions": ["sfc", "smc"]},
     "megadrive": {"name": "Genesis", "folders": ["megadrive", "genesis"], "extensions": ["md", "bin"]},
 }
+
+
+RA_SAVES = [{"dir": "Emulation/saves/retroarch"}, {"dir": "Emulation/states/retroarch"}]
+ALL_KEYS = ["save_state", "load_state", "menu", "fast_forward", "slot_down", "slot_up", "rewind", "screenshot",
+            "swap_screens", "quit"]
+# systems.json v2 as the plugin reads it: emulators from Flathub, RetroArch's cores from the buildbot
+DB_V2 = {
+    "version": 2,
+    "flatpaks": {
+        "org.libretro.RetroArch": {"name": "RetroArch", "permissions": ["~/Emulation", "/run/media"]},
+        "org.ppsspp.PPSSPP": {"name": "PPSSPP", "permissions": ["~/Emulation:ro", "--filesystem=/run/media"]},
+        "org.purei.Play": {"name": "Play!", "permissions": ["~/Emulation"]},
+        "net.rpcs3.RPCS3": {"name": "RPCS3", "permissions": ["~/Emulation"]},
+        "io.github.ryubing.Ryujinx": {"name": "Ryujinx", "permissions": []},
+        "dev.eden_emu.eden": {"name": "Eden", "permissions": []},
+    },
+    "emulators": {
+        "ra-snes9x": {"name": "Snes9x", "kind": "libretro", "core": "snes9x", "license": "Snes9x (non-commercial)",
+                      "free": False, "hotkeys": ALL_KEYS, "saves": RA_SAVES},
+        "ra-bsnes": {"name": "bsnes", "kind": "libretro", "core": "bsnes", "license": "GPL-3.0", "free": True,
+                     "hotkeys": ALL_KEYS, "saves": RA_SAVES},
+        "ra-bluemsx": {"name": "blueMSX", "kind": "libretro", "core": "bluemsx", "license": "GPL-2.0", "free": True,
+                       "hotkeys": ALL_KEYS, "saves": RA_SAVES},
+        "ppsspp": {"name": "PPSSPP", "kind": "flatpak", "flatpak": "org.ppsspp.PPSSPP", "license": "GPL-2.0", "free": True,
+                   "hotkeys": ["save_state", "load_state", "menu", "fast_forward", "slot_down", "slot_up", "screenshot", "quit"],
+                   "saves": [{"dir": ".var/app/org.ppsspp.PPSSPP/config/ppsspp/PSP/SAVEDATA"},
+                             {"dir": ".var/app/org.ppsspp.PPSSPP/config/ppsspp/PSP/PPSSPP_STATE", "glob": "*.ppst"}]},
+        "play": {"name": "Play!", "kind": "flatpak", "flatpak": "org.purei.Play", "license": "BSD-2-Clause", "free": True,
+                 "hotkeys": ["quit"], "saves": []},
+        "rpcs3": {"name": "RPCS3", "kind": "flatpak", "flatpak": "net.rpcs3.RPCS3", "license": "GPL-2.0", "free": True,
+                  "experimental": True, "hotkeys": ["quit"], "needs": ["Install the PS3 firmware in RPCS3 first."]},
+        "ryujinx": {"name": "Ryujinx", "kind": "flatpak", "flatpak": "io.github.ryubing.Ryujinx", "license": "MIT", "free": True,
+                    "hotkeys": ["quit"], "needs": ["Add your keys and firmware in Ryujinx."]},
+        "eden": {"name": "Eden", "kind": "flatpak", "flatpak": "dev.eden_emu.eden", "license": "GPL-3.0", "free": True,
+                 "experimental": True, "hotkeys": ["quit"]},
+    },
+    "systems": {
+        "snes": {"name": "SNES", "folders": ["snes"], "extensions": ["sfc", "smc"], "emulators": ["ra-bsnes", "ra-snes9x"],
+                 "thumbnails": "Nintendo_-_Super_Nintendo_Entertainment_System", "rewind": True},
+        "msx": {"name": "MSX", "folders": ["msx"], "extensions": ["rom"], "emulators": ["ra-bluemsx"]},
+        "psp": {"name": "PSP", "folders": ["psp"], "extensions": ["iso"], "emulators": ["ppsspp"]},
+        "ps2": {"name": "PlayStation 2", "folders": ["ps2"], "extensions": ["iso"], "emulators": ["play"]},
+        "ps3": {"name": "PlayStation 3", "folders": ["ps3"], "extensions": ["pkg"], "emulators": ["rpcs3"]},
+        "switch": {"name": "Switch", "folders": ["switch"], "extensions": ["nsp"], "emulators": ["ryujinx", "eden"]},
+    },
+}
+
+
+def write_db(dirname, db=DB_V2):
+    p = os.path.join(dirname, "systems.json")
+    with open(p, "w") as f:
+        json.dump(db, f)
+    return p
 
 
 def touch(path, data=b"x"):
@@ -394,7 +448,7 @@ class Plugin(unittest.TestCase):
             raw = os.fsdecode(os.path.join(os.fsencode(emu), b"roms", b"snes", b"caf\xe9 \"q\"", b"caf\xe9.sfc"))
             touch(raw)
             roots = [{"path": home, "emulation": emu, "uuid": "int", "internal": True, "label": "Internal"}]
-            env = {"KETTLE_EMU_SYSTEMS": os.path.join(PKGS, "kettle-emulation", "systems.json")}
+            env = {"KETTLE_EMU_SYSTEMS": write_db(tmp)}
             with mock.patch.dict(os.environ, env), mock.patch.object(m, "_roots", return_value=roots), \
                     mock.patch.object(m, "STATE", os.path.join(tmp, "roms.json")), \
                     mock.patch.object(m, "CHOICES", os.path.join(tmp, "choices.json")), \
@@ -417,7 +471,7 @@ class Plugin(unittest.TestCase):
                 self._strict(gs)
                 self.assertEqual(gs[0]["title"], "caf\ufffd")
                 with open(os.path.join(tmp, "running.json"), "w") as f:
-                    json.dump({"pid": os.getpid(), "rom": raw, "system": "snes", "emulator": "ra-snes9x"}, f)
+                    json.dump({"pid": os.getpid(), "rom": raw, "system": "snes", "emulator": "ra-bsnes"}, f)
                 run = asyncio.run(p.running())
                 self._strict(run)
                 self.assertEqual(run["id"], a["id"])  # found by the raw path kept in roms.json
@@ -562,42 +616,51 @@ def _pkgnames(pkg):
 
 
 class Packaging(unittest.TestCase):
-    """systems.json's emulators against what Kettle builds and what Extra cores offers."""
+    """The real systems.json against what the plugin reads (systems.json v2: Flathub emulators)."""
 
     @classmethod
     def setUpClass(cls):
         with open(os.path.join(PKGS, "kettle-emulation", "systems.json")) as f:
             cls.db = json.load(f)
+        if cls.db.get("version", 1) < 2:
+            raise unittest.SkipTest("systems.json isn't v2 yet")
 
-    def test_every_emulator_is_packaged_downloadable_or_a_flatpak(self):
-        built = set()
-        for pkg in ("libretro-cores", "libretro-cores-heavy", "melonds", "ppsspp", "dolphin-emu"):
-            built |= _pkgnames(pkg)
-        with open(os.path.join(PKGS, "kettle-emulation", "PKGBUILD")) as f:
-            pkgbuild = f.read()
+    def test_every_emulator_runs_from_a_known_flatpak(self):
+        apps = self.db["flatpaks"]
+        self.assertIn(cores.RETROARCH, apps)
         for eid, e in self.db["emulators"].items():
-            if "package" in e:
-                self.assertIn(e["package"], built, eid)
-                self.assertIn(f"'{e['package']}: ", pkgbuild, eid)
-                self.assertFalse(e.get("download"), eid)
-            elif e["kind"] == "flatpak":
-                self.assertIn("'flatpak: ", pkgbuild, eid)
+            self.assertIn(e["kind"], ("libretro", "flatpak"), eid)
+            if e["kind"] == "libretro":
+                self.assertTrue(e.get("core"), eid)
             else:
-                self.assertTrue(e.get("download"), f"{eid}: not built and not a download")
+                self.assertIn(e["flatpak"], apps, eid)
+            self.assertIn("free", e, eid)
+            for a in e.get("hotkeys") or ():
+                self.assertIn(a, ALL_KEYS, eid)
+            for sv in e.get("saves") or ():
+                self.assertIsNotNone(saves._rel_dir(sv["dir"]), eid)
         for sid, s in self.db["systems"].items():
             self.assertTrue(s["emulators"], sid)
+            for eid in s["emulators"]:
+                self.assertIn(eid, self.db["emulators"], sid)
 
     def test_msx_needs_bluemsx_system_dirs(self):
         self.assertEqual(self.db["systems"]["msx"]["system_dirs"], cores.SYSTEM_FILES["bluemsx"]["dirs"])
         self.assertIn("Emulation/bios", cores.TERMS["bluemsx"])
 
-    def test_downloads_have_their_terms(self):
+    def test_non_free_cores_have_their_terms(self):
         listed = {c["core"]: c for c in cores.listing("/nonexistent", self.db)}
-        self.assertIn("bluemsx", listed)
         self.assertEqual(listed["bluemsx"]["systems"], ["MSX"])
-        for core in listed:
-            self.assertIn(core, cores.TERMS, core)
+        for core, c in listed.items():
+            if not c["free"]:
+                self.assertIn(core, cores.TERMS, core)
+                self.assertTrue(c["terms"], core)
         self.assertIn("MSX emulators only", cores.TERMS["bluemsx"])
+
+    def test_permissions_are_override_options(self):
+        import flatpaks
+        for app, f in self.db["flatpaks"].items():
+            flatpaks.override_args(f.get("permissions") or [])
 
 
 def _zip(entries):
@@ -781,26 +844,35 @@ class SystemFiles(unittest.TestCase):
             fetched.append(url)
             return _zip([("bluemsx_libretro.so", bytes(so))]) if url.endswith(".so.zip") else _zip(self.GOOD)
 
-        db = {"emulators": {"ra-bluemsx": {"name": "blueMSX", "core": "bluemsx", "download": True}},
+        db = {"emulators": {"ra-bluemsx": {"name": "blueMSX", "kind": "libretro", "core": "bluemsx", "free": True},
+                            "ra-snes9x": {"name": "Snes9x", "kind": "libretro", "core": "snes9x", "free": False}},
               "systems": {"msx": {"name": "MSX", "emulators": ["ra-bluemsx"]}}}
         with tempfile.TemporaryDirectory() as home, mock.patch.object(cores, "_fetch", fetch):
             bios = os.path.join(home, "Emulation", "bios")
-            cores.download(home, "bluemsx", {"bluemsx"}, bios)
+            cores.download(home, "bluemsx", cores.known(db), bios)
+            # into the RetroArch Flatpak's cores folder
+            self.assertTrue(os.path.exists(os.path.join(home, ".var/app/org.libretro.RetroArch/config/retroarch/cores/bluemsx_libretro.so")))
             self.assertEqual(fetched, [f"{cores.BUILDBOT}/bluemsx_libretro.so.zip", cores.SYSTEM_FILES["bluemsx"]["url"]])
             self.assertTrue(os.path.isdir(os.path.join(bios, "Databases")))
             self.assertTrue(os.path.exists(os.path.join(bios, "Machines", "MSX2", "config.ini")))
             self.assertFalse(os.path.exists(os.path.join(bios, "Machines", "Shared Roms")))  # a real BIOS: left out
-            (c,) = cores.listing(home, db, bios)
+            c = next(c for c in cores.listing(home, db, bios) if c["core"] == "bluemsx")
             self.assertTrue(c["installed"])
             import shutil
             shutil.rmtree(os.path.join(bios, "Databases"))
-            (c,) = cores.listing(home, db, bios)
+            c = next(c for c in cores.listing(home, db, bios) if c["core"] == "bluemsx")
             self.assertEqual((c["installed"], c["missing"]), (False, ["Databases"]))
             # a core without system files fetches only itself
             fetched.clear()
             with mock.patch.object(cores, "_fetch", lambda url: fetched.append(url) or _zip([("snes9x_libretro.so", bytes(so))])):
-                cores.download(home, "snes9x", {"snes9x"}, bios)
+                # a core whose license isn't free: only after a yes to its terms
+                with self.assertRaises(ValueError):
+                    cores.download(home, "snes9x", cores.known(db), bios)
+                self.assertEqual(fetched, [])
+                cores.download(home, "snes9x", cores.known(db), bios, accepted=True)
             self.assertEqual(len(fetched), 1)
+            with self.assertRaises(ValueError):
+                cores.download(home, "nope", cores.known(db), bios, accepted=True)
 
 
 class Saves(unittest.TestCase):
@@ -812,7 +884,7 @@ class Saves(unittest.TestCase):
             touch(os.path.join(home, "Emulation", "saves", "retroarch", "snes", "Game (USA).srm"), b"save")
             touch(os.path.join(home, "Emulation", "states", "retroarch", "snes", "Game (USA).state1"), b"st")
             touch(os.path.join(home, "Emulation", "states", "retroarch", "snes", "Game (USA).state1.png"), b"png")
-            games = saves.listing(home, {"r1": {"system": "snes", "path": rom, "title": "Game"}})
+            games = saves.listing(home, {"r1": {"system": "snes", "path": rom, "title": "Game"}}, DB_V2)
             self.assertEqual(len(games), 1)
             kinds = sorted((f["kind"], f["slot"]) for f in games[0]["files"])
             self.assertEqual(kinds, [("save", ""), ("state", "1")])
@@ -825,13 +897,620 @@ class Saves(unittest.TestCase):
                     e.writestr("home/.bashrc", "x")
                     e.writestr("home/../escape", "x")
             saves.delete(paths, saves.all_paths(games))
-            self.assertEqual(saves.listing(home, {"r1": {"system": "snes", "path": rom}}), [])
-            r = saves.restore(zp, home, [])
+            self.assertEqual(saves.listing(home, {"r1": {"system": "snes", "path": rom}}, DB_V2), [])
+            allowed = saves.home_save_dirs(DB_V2)
+            r = saves.restore(zp, home, [], allowed)
             self.assertEqual(r["restored"], 3)
-            self.assertEqual(saves.restore(z2, home, []), {"restored": 0, "skipped": 2})
+            self.assertEqual(saves.restore(z2, home, [], allowed), {"restored": 0, "skipped": 2})
             self.assertFalse(os.path.exists(os.path.join(home, ".bashrc")))
             with self.assertRaises(ValueError):
                 saves.delete(["/etc/passwd"], saves.all_paths(games))
+
+
+class FlathubEmulators(unittest.TestCase):
+    """The emulators from Flathub: what the games need, the install job, hotkeys, saves."""
+
+    @classmethod
+    def setUpClass(cls):
+        Plugin.setUpClass.__func__(cls)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def setUp(self):
+        from unittest import mock
+        self.mock = mock
+        self.dir = tempfile.TemporaryDirectory()
+        self.home = os.path.join(self.dir.name, "home")
+        self.patches = [mock.patch.dict(os.environ, {"KETTLE_EMU_SYSTEMS": write_db(self.dir.name)}),
+                        mock.patch.object(self.main, "HOME", self.home),
+                        mock.patch.object(self.main, "STATE", os.path.join(self.dir.name, "roms.json")),
+                        mock.patch.object(self.main, "CHOICES", os.path.join(self.dir.name, "choices.json")),
+                        mock.patch.object(self.main, "SETUP_LOG", os.path.join(self.dir.name, "setup.log"))]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in reversed(self.patches):
+            p.stop()
+        self.dir.cleanup()
+
+    def test_what_the_games_need(self):
+        need = self.main.needed(DB_V2, {"snes": 2, "ps2": 1, "switch": 1, "psp": 0}, {"systems": {"switch": "eden"}}, {},
+                                lambda c: False)
+        self.assertEqual(need["flatpaks"], ["org.libretro.RetroArch", "org.purei.Play", "dev.eden_emu.eden"])
+        self.assertEqual([c["core"] for c in need["cores"]], ["bsnes"])
+        self.assertTrue(need["cores"][0]["free"])
+        self.assertEqual(need["systems"], ["snes", "ps2", "switch"])
+        inst = {a: {"version": "1", "origin": "flathub", "installation": "user"}
+                for a in ("org.libretro.RetroArch", "org.purei.Play")}
+        need = self.main.needed(DB_V2, {"snes": 2, "ps2": 1, "switch": 1}, {"systems": {"switch": "eden"}}, inst,
+                                lambda c: c == "bsnes")
+        self.assertEqual((need["flatpaks"], need["cores"], need["systems"]), (["dev.eden_emu.eden"], [], ["switch"]))
+        # a non-free core chosen for a system: its terms go along
+        need = self.main.needed(DB_V2, {"snes": 1}, {"systems": {"snes": "ra-snes9x"}}, inst, lambda c: False)
+        (c,) = need["cores"]
+        self.assertEqual((c["core"], c["free"]), ("snes9x", False))
+        self.assertTrue(c["terms"])
+        # a choice that isn't the system's emulator falls back to the first
+        need = self.main.needed(DB_V2, {"psp": 1}, {"systems": {"psp": "ra-bsnes"}}, {}, lambda c: False)
+        self.assertEqual(need["flatpaks"], ["org.ppsspp.PPSSPP"])
+        # no choice and another of its emulators installed: emu-run starts that one, nothing needed
+        ryu = {"io.github.ryubing.Ryujinx": {"version": "1", "origin": "flathub", "installation": "system"}}
+        self.assertEqual(self.main.needed(DB_V2, {"switch": 1}, {}, ryu, lambda c: False)["systems"], [])
+        # with Snes9x's core there, SNES needs no bsnes
+        need = self.main.needed(DB_V2, {"snes": 1}, {}, inst, lambda c: c == "snes9x")
+        self.assertEqual(need["cores"], [])
+        # the user's choice, not installed, is what's needed even then
+        self.assertEqual(self.main.needed(DB_V2, {"switch": 1}, {"systems": {"switch": "eden"}}, ryu, lambda c: False)["flatpaks"],
+                         ["dev.eden_emu.eden"])
+
+    def test_installed_state(self):
+        db = DB_V2
+        inst = {"org.libretro.RetroArch": {"version": "1.22.2", "origin": "flathub", "installation": "user"}}
+        emus = {e["id"]: e for e in self.main._emulators(db, "snes", inst)}
+        self.assertFalse(emus["ra-bsnes"]["installed"])  # RetroArch without the core
+        touch(os.path.join(self.home, ".var/app/org.libretro.RetroArch/config/retroarch/cores/bsnes_libretro.so"))
+        emus = {e["id"]: e for e in self.main._emulators(db, "snes", inst)}
+        self.assertTrue(emus["ra-bsnes"]["installed"])
+        self.assertEqual((emus["ra-snes9x"]["free"], emus["ra-bsnes"]["flatpak"]), (False, "org.libretro.RetroArch"))
+        (rpcs3,) = self.main._emulators(db, "ps3", inst)
+        self.assertEqual((rpcs3["installed"], rpcs3["experimental"], rpcs3["needs"]),
+                         (False, True, [{"text": "Install the PS3 firmware in RPCS3 first.", "met": None}]))
+
+    def test_running_offers_only_the_emulators_hotkeys(self):
+        import asyncio
+        m = self.main
+        with open(os.path.join(self.dir.name, "running.json"), "w") as f:
+            json.dump({"pid": os.getpid(), "rom": "/x/game.iso", "system": "psp", "emulator": "ppsspp"}, f)
+        with self.mock.patch.object(m.keys, "runtime_dir", return_value=self.dir.name), \
+                self.mock.patch.object(m.flatpaks, "installed", return_value={}):
+            r = asyncio.run(m.Plugin().running())
+            self.assertNotIn("rewind", r["hotkeys"])
+            self.assertNotIn("swap_screens", r["hotkeys"])
+            self.assertIn("save_state", r["hotkeys"])
+            with open(os.path.join(self.dir.name, "running.json"), "w") as f:
+                json.dump({"pid": os.getpid(), "rom": "/x/g.sfc", "system": "snes", "emulator": "ra-bsnes"}, f)
+            self.assertEqual(asyncio.run(m.Plugin().running())["hotkeys"], ALL_KEYS)
+            # the same core on a system without "rewind": no rewind (seed.py turns it on there alone)
+            with open(os.path.join(self.dir.name, "running.json"), "w") as f:
+                json.dump({"pid": os.getpid(), "rom": "/x/g.rom", "system": "msx", "emulator": "ra-bluemsx"}, f)
+            self.assertNotIn("rewind", asyncio.run(m.Plugin().running())["hotkeys"])
+
+    def test_controls_group_retroarch_cores(self):
+        import asyncio
+        rows = asyncio.run(self.main.Plugin().controls())
+        self.assertEqual(rows[0]["name"], "RetroArch")
+        ppsspp = next(r for r in rows if r["name"] == "PPSSPP")
+        self.assertNotIn("rewind", ppsspp["hotkeys"])
+        self.assertEqual(next(r for r in rows if r["name"] == "Play!")["hotkeys"], ["quit"])
+        # blueMSX runs only MSX, which doesn't rewind: its row has no rewind; the SNES cores' has
+        ra = [r for r in rows if r["name"] == "RetroArch"]
+        self.assertEqual({tuple(sorted(r["emulators"])): "rewind" in r["hotkeys"] for r in ra},
+                         {("Snes9x", "bsnes"): True, ("blueMSX",): False})
+
+    def test_flatpak_rows(self):
+        p = self.main.Plugin()
+        inst = {"org.ppsspp.PPSSPP": {"version": "1.20.4", "origin": "flathub", "installation": "user"},
+                "net.rpcs3.RPCS3": {"version": "0.0.38", "origin": "flathub", "installation": "system"}}
+        rows = {r["id"]: r for r in p._flatpak_rows(DB_V2, inst, {"org.ppsspp.PPSSPP"})}
+        self.assertEqual(list(rows)[0], "org.libretro.RetroArch")  # first: the most systems run in it
+        self.assertEqual(sorted(rows["org.libretro.RetroArch"]["systems"]), ["MSX", "SNES"])
+        self.assertEqual((rows["org.ppsspp.PPSSPP"]["update"], rows["org.ppsspp.PPSSPP"]["removable"]), (True, True))
+        self.assertEqual((rows["net.rpcs3.RPCS3"]["removable"], rows["net.rpcs3.RPCS3"]["experimental"]), (False, True))
+        self.assertEqual(rows["io.github.ryubing.Ryujinx"]["needs"], [{"text": "Add your keys and firmware in Ryujinx.", "met": None}])
+
+    def test_setup_job_installs_then_downloads_the_cores(self):
+        import asyncio
+        import flatpaks
+        m = self.main
+        events, started, got = [], [], []
+
+        async def emit(ev, *a):
+            events.append((ev, dict(a[0]) if a else None))
+
+        def start(home, log, cmds):
+            started.append(cmds)
+            with open(log, "w") as f:
+                f.write("Installing 1/2\u2026 \u258c 50%  1.0\u00a0MB/s  00:10\n")
+                f.write(f"Installing 2/2\u2026 100%\n{flatpaks.EXIT_MARK} 0\n")
+
+        async def go(p):
+            await p.setup_start("install", ["org.purei.Play"], ["bsnes", "snes9x"], ["snes9x"])
+            await asyncio.gather(*p._tasks)
+            return p._setup
+
+        with self.mock.patch.object(m.flatpaks, "start", start), self.mock.patch.object(m.flatpaks, "running", return_value=False), \
+                self.mock.patch.object(m.cores, "download", lambda home, c, known, bios, accepted: got.append((c, accepted))), \
+                self.mock.patch.object(m, "_emit", emit):
+            job = asyncio.run(go(m.Plugin()))
+        self.assertEqual(job["state"], "done", job)
+        self.assertEqual(got, [("bsnes", False), ("snes9x", True)])
+        (cmds,) = started
+        self.assertEqual(cmds[0][:5], [flatpaks.FLATPAK, "remote-add", "--user", "--if-not-exists", "flathub"])
+        self.assertEqual(cmds[1], [flatpaks.FLATPAK, "install", "--user", "-y", "flathub", "org.purei.Play"])
+        self.assertEqual(cmds[2], [flatpaks.FLATPAK, "override", "--user", "--filesystem=~/Emulation", "org.purei.Play"])
+        self.assertIn("setup", [e for e, _ in events])
+        # a non-free core without a yes, or an app systems.json doesn't name: refused before anything runs
+        with self.assertRaises(ValueError):
+            asyncio.run(m.Plugin().setup_start("install", [], ["snes9x"], []))
+        with self.assertRaises(ValueError):
+            asyncio.run(m.Plugin().setup_start("install", ["org.evil.App"], [], []))
+
+    def test_setup_job_failure_is_reported(self):
+        import asyncio
+        import flatpaks
+        m = self.main
+
+        async def emit(*a):
+            pass
+
+        def start(home, log, cmds):
+            with open(log, "w") as f:
+                f.write(f"error: No remote refs found for 'org.purei.Play'\n{flatpaks.EXIT_MARK} 1\n")
+
+        async def go(p):
+            await p.setup_start("install", ["org.purei.Play"], ["bsnes"], [])
+            await asyncio.gather(*p._tasks)
+            return p._setup
+
+        got = []
+        with self.mock.patch.object(m.flatpaks, "start", start), self.mock.patch.object(m.flatpaks, "running", return_value=False), \
+                self.mock.patch.object(m.cores, "download", lambda *a: got.append(a)), self.mock.patch.object(m, "_emit", emit):
+            job = asyncio.run(go(m.Plugin()))
+        self.assertEqual(job["state"], "failed")
+        self.assertIn("No remote refs", job["error"])
+        self.assertEqual(got, [])  # no cores after a failed install
+
+    def test_install_needed_leaves_out_unaccepted_cores(self):
+        import asyncio
+        m = self.main
+        calls = []
+
+        async def setup_start(self_, kind, apps, core_list, accepted):
+            calls.append((kind, apps, core_list, accepted))
+            return {}
+
+        with open(m.STATE, "w") as f:
+            json.dump({"roms": {"a": {"system": "snes", "path": "/x/a.sfc"}, "b": {"system": "ps2", "path": "/x/b.iso"}}}, f)
+        with open(m.CHOICES, "w") as f:
+            json.dump({"systems": {"snes": "ra-snes9x"}}, f)
+        with self.mock.patch.object(m.flatpaks, "installed", return_value={}), \
+                self.mock.patch.object(m.Plugin, "setup_start", setup_start):
+            asyncio.run(m.Plugin().install_needed([]))
+            asyncio.run(m.Plugin().install_needed(["snes9x"]))
+        self.assertEqual(calls[0], ("install", ["org.libretro.RetroArch", "org.purei.Play"], [], []))
+        self.assertEqual(calls[1][2], ["snes9x"])
+
+
+class SetupJobs(unittest.TestCase):
+    """The setup job: installed apps left out, declined cores, a restart halfway, layouts."""
+
+    setUpClass = classmethod(lambda cls: Plugin.setUpClass.__func__(cls))
+    tearDownClass = classmethod(lambda cls: cls.tmp.cleanup())
+
+    def setUp(self):
+        FlathubEmulators.setUp(self)
+        self.patches.append(self.mock.patch.object(self.main, "SETUP_JOB", os.path.join(self.dir.name, "setup.json")))
+        self.patches[-1].start()
+        self.events = []
+
+        async def emit(ev, *a):
+            self.events.append(ev)
+
+        self.patches.append(self.mock.patch.object(self.main, "_emit", emit))
+        self.patches[-1].start()
+
+    tearDown = FlathubEmulators.tearDown
+
+    def inst(self, *apps, where="user"):
+        return {a: {"version": "1", "origin": "flathub", "installation": where} for a in apps}
+
+    def test_installed_apps_are_left_out(self):
+        import asyncio
+        m = self.main
+        with self.mock.patch.object(m.flatpaks, "installed", return_value=self.inst("org.purei.Play", where="system")):
+            st = asyncio.run(m.Plugin().setup_start("install", ["org.purei.Play"], [], []))
+        self.assertEqual(st, {"state": "idle"})
+        with self.mock.patch.object(m.flatpaks, "installed", return_value=None):
+            with self.assertRaises(ValueError):
+                asyncio.run(m.Plugin().setup_start("install", ["org.purei.Play"], [], []))
+
+    def test_only_declined_cores_is_no_error(self):
+        import asyncio
+        m = self.main
+        with open(m.STATE, "w") as f:
+            json.dump({"roms": {"a": {"system": "snes", "path": "/x/a.sfc"}}}, f)
+        with open(m.CHOICES, "w") as f:
+            json.dump({"systems": {"snes": "ra-snes9x"}}, f)
+        with self.mock.patch.object(m.flatpaks, "installed", return_value=self.inst("org.libretro.RetroArch")):
+            st = asyncio.run(m.Plugin().install_needed([]))
+        self.assertEqual(st, {"state": "idle", "left_out": ["snes9x"]})
+
+    def test_counts_come_from_the_scan(self):
+        m = self.main
+        p = m.Plugin()
+        with open(m.STATE, "w") as f:
+            json.dump({"roms": {"a": {"system": "snes", "path": "/x/a.sfc", "deleted": True}}}, f)
+        p._found = {"a": {"system": "snes"}, "b": {"system": "ps2"}, "c": {"system": "ps2"}}
+        self.assertEqual(p._counts(), {"ps2": 2})
+        p._found = {}
+        self.assertEqual(p._counts(), {})
+
+    def test_a_restart_halfway_finishes_the_cores(self):
+        import asyncio
+        m = self.main
+        got = []
+        with open(m.SETUP_JOB, "w") as f:
+            json.dump({"kind": "install", "apps": ["org.purei.Play"], "cores": ["bsnes", "snes9x"], "accepted": ["snes9x"],
+                       "flatpak": True, "done_cores": ["bsnes"]}, f)
+        with open(m.SETUP_LOG, "w") as f:
+            f.write(f"Installing\u2026 100%\n{m.flatpaks.EXIT_MARK} 0\n")
+
+        async def go():
+            p = m.Plugin()
+            await p._resume_setup(m._read_json(m.SETUP_JOB, {}))
+            return p._setup
+
+        with self.mock.patch.object(m.flatpaks, "running", return_value=False), \
+                self.mock.patch.object(m.cores, "download", lambda home, c, known, bios, accepted: got.append((c, accepted))):
+            job = asyncio.run(go())
+        self.assertEqual(job["state"], "done", job)
+        self.assertEqual(got, [("snes9x", True)])  # bsnes was done before the restart
+        self.assertFalse(os.path.exists(m.SETUP_JOB))
+        self.assertIn("roms_changed", self.events)
+
+    def test_a_restart_after_a_failed_install(self):
+        import asyncio
+        m = self.main
+        with open(m.SETUP_JOB, "w") as f:
+            json.dump({"kind": "install", "apps": ["x.y.Z"], "cores": ["bsnes"], "accepted": [], "flatpak": True, "done_cores": []}, f)
+        with open(m.SETUP_LOG, "w") as f:
+            f.write(f"error: boom\n{m.flatpaks.EXIT_MARK} 1\n")
+        got = []
+
+        async def go():
+            p = m.Plugin()
+            await p._resume_setup(m._read_json(m.SETUP_JOB, {}))
+            return p._setup
+
+        with self.mock.patch.object(m.flatpaks, "running", return_value=False), \
+                self.mock.patch.object(m.cores, "download", lambda *a: got.append(a)):
+            job = asyncio.run(go())
+        self.assertEqual((job["state"], got), ("failed", []))
+        self.assertIn("boom", job["error"])
+
+    def test_setup_start_saves_the_job(self):
+        import asyncio
+        m = self.main
+        seen = {}
+
+        def start(home, log, cmds):
+            seen.update(m._read_json(m.SETUP_JOB, {}))
+            with open(log, "w") as f:
+                f.write(f"{m.flatpaks.EXIT_MARK} 0\n")
+
+        async def go():
+            p = m.Plugin()
+            await p.setup_start("install", ["org.purei.Play"], ["snes9x"], ["snes9x"])
+            await asyncio.gather(*p._tasks)
+
+        with self.mock.patch.object(m.flatpaks, "installed", return_value={}), self.mock.patch.object(m.flatpaks, "start", start), \
+                self.mock.patch.object(m.flatpaks, "running", return_value=False), \
+                self.mock.patch.object(m.cores, "download", lambda *a: None):
+            asyncio.run(go())
+        self.assertEqual((seen["apps"], seen["cores"], seen["accepted"], seen["flatpak"]), (["org.purei.Play"], ["snes9x"], ["snes9x"], True))
+        self.assertFalse(os.path.exists(m.SETUP_JOB))
+
+    def test_core_remove_resyncs(self):
+        import asyncio
+        m = self.main
+        with self.mock.patch.object(m.cores, "remove", lambda *a: None), self.mock.patch.object(m.cores, "listing", lambda *a: []):
+            asyncio.run(m.Plugin().core_remove("bsnes"))
+        self.assertIn("roms_changed", self.events)
+
+    def test_no_layouts_on_a_failed_list_nor_for_the_running_game(self):
+        import asyncio
+        m = self.main
+        with open(m.STATE, "w") as f:
+            json.dump({"roms": {"a": {"system": "snes", "path": "/x/a.sfc", "appid": 3000000001},
+                                "b": {"system": "snes", "path": "/x/b.sfc", "appid": 3000000002}}, "collections": {}}, f)
+        with self.mock.patch.object(m, "_face", return_value="xbox"), self.mock.patch.object(m.flatpaks, "installed", return_value=None):
+            self.assertEqual(asyncio.run(m.Plugin().library_state())["layout"], [])
+        with open(os.path.join(self.dir.name, "running.json"), "w") as f:
+            # SteamGameId of a shortcut: its appid in the top 32 bits
+            json.dump({"pid": os.getpid(), "appid": str((3000000001 << 32) | 0x02000000)}, f)
+        with self.mock.patch.object(m, "_face", return_value="xbox"), self.mock.patch.object(m.flatpaks, "installed", return_value={}), \
+                self.mock.patch.object(m.keys, "runtime_dir", return_value=self.dir.name):
+            lay = asyncio.run(m.Plugin().library_state())["layout"]
+        self.assertEqual([x["appid"] for x in lay], [3000000002])
+
+    def test_files_under_a_game_folder(self):
+        d = os.path.join(self.dir.name, "inbox", "Game")
+        touch(os.path.join(d, "PS3_GAME", "PARAM.SFO"))
+        touch(os.path.join(d, "PS3_GAME", "USRDIR", "EBOOT.BIN"))
+        self.assertEqual(sorted(os.path.relpath(p, d) for p in self.main._files_under(d)),
+                         ["PS3_GAME/PARAM.SFO", "PS3_GAME/USRDIR/EBOOT.BIN"])
+
+
+class FlatpakHelpers(unittest.TestCase):
+    def test_failed_list_is_none(self):
+        import flatpaks
+        from unittest import mock
+        with mock.patch.object(flatpaks, "_run", return_value=mock.Mock(stdout="", returncode=1)):
+            self.assertIsNone(flatpaks.installed("/h"))
+        with mock.patch.object(flatpaks, "_run", side_effect=OSError("no flatpak")):
+            self.assertIsNone(flatpaks.installed("/h"))
+
+    def test_forget_updates_clears_them(self):
+        import flatpaks
+        flatpaks._updates.update(at=1e18, apps={"a.b.C"})
+        flatpaks.forget_updates()
+        self.assertEqual(flatpaks._updates["apps"], set())
+        self.assertEqual(flatpaks._updates["at"], 0.0)
+
+    def test_the_unit_runs_in_english(self):
+        import flatpaks
+        from unittest import mock
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(flatpaks.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or mock.Mock(returncode=0, stderr="")):
+            flatpaks.start(tmp, os.path.join(tmp, "log"), [["true"]])
+        run = next(c for c in calls if c[0] == "systemd-run")
+        self.assertIn("--setenv=LC_ALL=C.UTF-8", run)
+
+
+class SavesKeepOutOfBios(unittest.TestCase):
+    def test_bios_is_never_a_save(self):
+        db = {"emulators": {"x": {"kind": "flatpak", "name": "xemu", "saves": [{"dir": "Emulation/bios/xbox", "glob": "*.qcow2"}]},
+                            "y": {"kind": "flatpak", "name": "Y", "saves": [{"dir": "Emulation", "glob": "*"}]}}}
+        with tempfile.TemporaryDirectory() as home:
+            touch(os.path.join(home, "Emulation", "bios", "xbox", "xbox_hdd.qcow2"), b"hdd")
+            touch(os.path.join(home, "Emulation", "bios", "scph5501.bin"), b"bios")
+            touch(os.path.join(home, "Emulation", "saves", "y", "game.sav"), b"save")
+            self.assertEqual(saves.save_dirs(db)[1][0]["dir"], "Emulation")  # the bios dir isn't one
+            games = saves.listing(home, {}, db)
+            files = [f["path"] for g in games for f in g["files"]]
+            self.assertTrue(files)
+            self.assertFalse([p for p in files if "/bios/" in p])
+            bios = os.path.join(home, "Emulation", "bios", "scph5501.bin")
+            with self.assertRaises(ValueError):
+                saves.delete([bios], {bios}, home)
+            zp = saves.backup([bios], os.path.join(home, "Emulation", "backups"), home, [])
+            with zipfile.ZipFile(zp) as z:
+                self.assertEqual(z.namelist(), [])
+            evil = os.path.join(home, "evil.zip")
+            with zipfile.ZipFile(evil, "w") as z:
+                z.writestr("home/Emulation/bios/scph5501.bin", "overwritten")
+                z.writestr("storage/U/Emulation/bios/x.bin", "x")
+            r = saves.restore(evil, home, [{"uuid": "U", "path": os.path.join(home, "card")}], ("Emulation/",))
+            self.assertEqual(r, {"restored": 0, "skipped": 2})
+            with open(bios, "rb") as f:
+                self.assertEqual(f.read(), b"bios")
+
+
+class Flatpaks(unittest.TestCase):
+    def test_progress(self):
+        import flatpaks
+        log = "Looking for matches\u2026\nInstalling 2/4\u2026 \u258c 45%  1.2\u00a0MB/s  00:12\n"
+        p = flatpaks.progress(log)
+        self.assertEqual((p["percent"], p["eta"]), (36.2, "00:12"))
+        self.assertAlmostEqual(p["speed"], 1.2e6 / 2**20)
+        self.assertEqual(flatpaks.progress("nothing")["percent"], 0.0)
+        self.assertEqual(flatpaks.exit_code(f"x\n{flatpaks.EXIT_MARK} 3\n"), 3)
+        self.assertIsNone(flatpaks.exit_code("still going"))
+
+    def test_commands(self):
+        import flatpaks
+        self.assertEqual(flatpaks.commands("update", ["a.b.C"], {}), [[flatpaks.FLATPAK, "update", "--user", "-y", "a.b.C"]])
+        self.assertEqual(flatpaks.commands("remove", ["a.b.C"], {})[0][:3], [flatpaks.FLATPAK, "uninstall", "--user"])
+        self.assertEqual(flatpaks.override_args(["~/Emulation", "--filesystem=/run/media:ro", "--device=input"]),
+                         ["--filesystem=~/Emulation", "--filesystem=/run/media:ro", "--device=input"])
+        for bad in (["a b; rm"], ["--x"] * 0 + ["$(id)"], []):
+            with self.assertRaises(ValueError):
+                flatpaks.commands("install", bad, {})
+        with self.assertRaises(ValueError):
+            flatpaks.override_args(["ok", "two\nlines"])
+
+    def test_installed_listing(self):
+        import flatpaks
+        from unittest import mock
+        out = "org.ppsspp.PPSSPP\t1.20.4\tflathub\tsystem\norg.ppsspp.PPSSPP\t1.20.4\tflathub\tuser\nbroken line\n"
+        with mock.patch.object(flatpaks, "_run", return_value=mock.Mock(stdout=out, returncode=0)):
+            self.assertEqual(flatpaks.installed("/h"), {"org.ppsspp.PPSSPP": {"version": "1.20.4", "origin": "flathub", "installation": "user"}})
+
+
+class StandaloneSaves(unittest.TestCase):
+    def test_saves_where_systems_json_says(self):
+        with tempfile.TemporaryDirectory() as home:
+            psp = os.path.join(home, ".var/app/org.ppsspp.PPSSPP/config/ppsspp/PSP")
+            touch(os.path.join(psp, "SAVEDATA", "ULUS10041DATA00", "DATA.BIN"), b"s")
+            touch(os.path.join(psp, "SAVEDATA", "ULUS10041DATA00", "ICON0.PNG"), b"i")
+            touch(os.path.join(psp, "PPSSPP_STATE", "ULUS10041_1.00_0.ppst"), b"st")
+            touch(os.path.join(psp, "PPSSPP_STATE", "notes.txt"), b"n")  # not its glob
+            os.symlink("/etc", os.path.join(psp, "SAVEDATA", "evil"))
+            games = {g["title"]: g for g in saves.listing(home, {}, DB_V2)}
+            self.assertEqual(set(games), {"ULUS10041DATA00", "ULUS10041_1.00_0.ppst"})
+            self.assertEqual(sorted(f["kind"] for f in games["ULUS10041DATA00"]["files"]), ["save", "save"])
+            self.assertEqual([f["kind"] for f in games["ULUS10041_1.00_0.ppst"]["files"]], ["state"])
+            self.assertEqual(games["ULUS10041DATA00"]["emulator"], "PPSSPP")
+            allowed = saves.home_save_dirs(DB_V2)
+            self.assertIn(".var/app/org.ppsspp.PPSSPP/config/ppsspp/PSP/SAVEDATA/", allowed)
+            zp = saves.backup([f["path"] for g in games.values() for f in g["files"]], os.path.join(home, "Emulation", "backups"), home, [])
+            import shutil
+            shutil.rmtree(os.path.join(psp, "SAVEDATA", "ULUS10041DATA00"))
+            self.assertEqual(saves.restore(zp, home, [], allowed)["restored"], 3)
+            self.assertTrue(os.path.exists(os.path.join(psp, "SAVEDATA", "ULUS10041DATA00", "DATA.BIN")))
+
+    def test_bad_save_dirs_are_ignored(self):
+        db = {"emulators": {"x": {"kind": "flatpak", "name": "X", "saves": [{"dir": "../etc"}, {"dir": "~/.ssh"}, {"dir": ""}]}}}
+        self.assertEqual(saves.save_dirs(db), ([], []))
+        self.assertEqual(saves.home_save_dirs(db), ("Emulation/",))
+
+
+class Layouts(unittest.TestCase):
+    """Each shortcut gets the layout of the emulator it starts with, again when that changes."""
+
+    @classmethod
+    def setUpClass(cls):
+        Plugin.setUpClass.__func__(cls)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def setUp(self):
+        from unittest import mock
+        self.mock = mock
+        self.dir = tempfile.TemporaryDirectory()
+        db = json.loads(json.dumps(DB_V2))
+        db["emulators"]["melonds"] = {"name": "melonDS", "kind": "flatpak", "flatpak": "net.kuribo64.melonDS", "free": True,
+                                      "hotkeys": ["save_state", "load_state"], "keys": {"save_state": "LEFT_SHIFT+F1", "load_state": "F1"}}
+        db["emulators"]["ra-melondsds"] = {"name": "melonDS DS", "kind": "libretro", "core": "melondsds", "free": True}
+        db["flatpaks"]["net.kuribo64.melonDS"] = {"name": "melonDS", "permissions": []}
+        db["systems"]["nds"] = {"name": "DS", "folders": ["nds"], "extensions": ["nds"], "emulators": ["ra-melondsds", "melonds"]}
+        self.db = db
+        self.patches = [mock.patch.dict(os.environ, {"KETTLE_EMU_SYSTEMS": write_db(self.dir.name, db)}),
+                        mock.patch.object(self.main, "HOME", os.path.join(self.dir.name, "home")),
+                        mock.patch.object(self.main, "STATE", os.path.join(self.dir.name, "roms.json")),
+                        mock.patch.object(self.main, "CHOICES", os.path.join(self.dir.name, "choices.json")),
+                        mock.patch.object(self.main, "_face", return_value="xbox")]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in reversed(self.patches):
+            p.stop()
+        self.dir.cleanup()
+
+    def inst(self, *apps):
+        return {a: {"version": "1", "origin": "flathub", "installation": "user"} for a in apps}
+
+    def test_effective_matches_emu_runs_choice(self):
+        eff = self.main.effective
+        db = self.db
+        # nothing installed: the first listed (its layout waits for it)
+        self.assertEqual(eff(db, "nds", None, None, {}), "ra-melondsds")
+        # only melonDS installed: the first installed, as emu-run starts it
+        self.assertEqual(eff(db, "nds", None, None, self.inst("net.kuribo64.melonDS")), "melonds")
+        # the game's choice before the system's; a choice that isn't installed is passed over
+        both = self.inst("net.kuribo64.melonDS", "org.libretro.RetroArch")
+        touch(os.path.join(self.main.HOME, ".var/app/org.libretro.RetroArch/config/retroarch/cores/melondsds_libretro.so"))
+        self.assertEqual(eff(db, "nds", "melonds", "ra-melondsds", both), "melonds")
+        self.assertEqual(eff(db, "nds", None, "melonds", both), "melonds")
+        self.assertEqual(eff(db, "nds", "melonds", None, self.inst("org.libretro.RetroArch")), "ra-melondsds")
+        self.assertEqual(eff(db, "nds", "ra-bsnes", None, both), "ra-melondsds")  # not one of the system's
+
+    def test_layout_follows_the_emulator(self):
+        import asyncio
+        from kettle_emulation import systems
+        m = self.main
+        st = {"roms": {"g": {"system": "nds", "path": "/x/g.nds", "appid": 7}, "s": {"system": "snes", "path": "/x/s.sfc", "appid": 8,
+                                                                                  "layout": True}},
+              "collections": {}}
+        with open(m.STATE, "w") as f:
+            json.dump(st, f)
+        own = systems.layout("melonds", "xbox")
+        std = systems.layout("ra-melondsds", "xbox")
+        self.assertNotEqual(own, std)
+        self.assertTrue(own.endswith("emulation-xbox-melonds.vdf"), own)
+        events = []
+
+        async def emit(ev, *a):
+            events.append(ev)
+
+        p = m.Plugin()
+        with self.mock.patch.object(m.flatpaks, "installed", return_value=self.inst("net.kuribo64.melonDS")), \
+                self.mock.patch.object(m, "_emit", emit):
+            lay = asyncio.run(p.library_state())["layout"]
+            # the DS game starts with melonDS (the only one installed): its own layout; the SNES
+            # game laid out before (True, the standard one) needs nothing
+            self.assertEqual(lay, [{"appid": 7, "path": own}])
+            asyncio.run(p.layout_done({"7": own}))
+            self.assertEqual(asyncio.run(p.library_state())["layout"], [])
+            # the system's emulator changed: laid out again, and a sync is asked for
+            with open(m.CHOICES, "w") as f:
+                json.dump({}, f)
+            asyncio.run(p.set_choice("nds", "ra-melondsds"))
+            self.assertIn("roms_changed", events)
+        with self.mock.patch.object(m.flatpaks, "installed", return_value=self.inst("net.kuribo64.melonDS", "org.libretro.RetroArch")):
+            touch(os.path.join(m.HOME, ".var/app/org.libretro.RetroArch/config/retroarch/cores/melondsds_libretro.so"))
+            self.assertEqual(asyncio.run(p.library_state())["layout"], [{"appid": 7, "path": std}])
+            # a path that isn't a layout isn't recorded
+            asyncio.run(p.layout_done({"7": "/etc/passwd"}))
+            self.assertEqual(len(asyncio.run(p.library_state())["layout"]), 1)
+
+    def test_needs_checks(self):
+        m = self.main
+        e = {"needs": ["Map the pad", {"text": "keys", "check": ["Emulation/bios/switch/prod.keys", "other/prod.keys"]},
+                       {"text": "hdd", "check": "Emulation/bios/xbox/xbox_hdd.qcow2"}, {"text": "sneaky", "check": "../../etc/passwd"}]}
+        touch(os.path.join(m.HOME, "other", "prod.keys"))
+        self.assertEqual(m._needs(e), [{"text": "Map the pad", "met": None}, {"text": "keys", "met": True},
+                                      {"text": "hdd", "met": False}, {"text": "sneaky", "met": False}])
+
+
+def _sfo(title):
+    keys = b"TITLE\0TITLE_ID\0"
+    t = title.encode() + b"\0"
+    tid = b"BLUS30443\0"
+    data = t.ljust(128, b"\0") + tid.ljust(16, b"\0")
+    n = 2
+    keys_off = 20 + 16 * n
+    data_off = keys_off + len(keys)
+    entries = struct.pack("<HHIII", 0, 0x0204, len(t), 128, 0) + struct.pack("<HHIII", 6, 0x0204, len(tid), 16, 128)
+    return struct.pack("<4sIIII", b"\0PSF", 0x101, keys_off, data_off, n) + entries + keys + data
+
+
+class GameFolders(unittest.TestCase):
+    SYS = {"ps3": {"name": "PS3", "folders": ["ps3"], "extensions": ["iso"], "game_folders": {"marker": "PS3_GAME/PARAM.SFO"}},
+           "snes": SYSTEMS["snes"]}
+
+    def test_a_folder_with_the_marker_is_one_game(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            emu = os.path.join(tmp, "Emulation")
+            game = os.path.join(emu, "roms", "ps3", "Demon's Souls (USA) v1.00")
+            touch(os.path.join(game, "PS3_GAME", "PARAM.SFO"), _sfo("Demon's Souls\nTM"))
+            touch(os.path.join(game, "PS3_GAME", "USRDIR", "EBOOT.BIN"), b"e")
+            touch(os.path.join(game, "PS3_GAME", "USRDIR", "data.iso"), b"not a game")  # inside a game: not listed
+            touch(os.path.join(emu, "roms", "ps3", "Other v2.5", "PS3_GAME", "PARAM.SFO"), b"broken sfo")
+            touch(os.path.join(emu, "roms", "ps3", "Disc.iso"), b"iso")
+            touch(os.path.join(emu, "roms", "ps3", "not a game", "readme.txt"), b"r")
+            found = roms.scan([{"path": tmp, "emulation": emu, "uuid": "U", "internal": True}], self.SYS)
+            by = {os.path.relpath(r["path"], os.path.join(emu, "roms", "ps3")): r for r in found.values()}
+            self.assertEqual(set(by), {"Demon's Souls (USA) v1.00", "Other v2.5", "Disc.iso"})
+            self.assertEqual(by["Demon's Souls (USA) v1.00"]["title"], "Demon's Souls TM")
+            self.assertEqual(by["Other v2.5"]["title"], "Other v2.5")  # the folder's name, dots kept
+            self.assertEqual(by["Disc.iso"]["title"], "Disc")
+            self.assertEqual(by["Demon's Souls (USA) v1.00"]["size"], len(_sfo("Demon's Souls\nTM")))
+
+    def test_sfo_title(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = os.path.join(tmp, "PARAM.SFO")
+            touch(p, _sfo("Ratchet & Clank"))
+            self.assertEqual(roms.sfo_title(p), "Ratchet & Clank")
+            touch(p, b"\0PSF" + b"\xff" * 30)
+            self.assertIsNone(roms.sfo_title(p))
 
 
 if __name__ == "__main__":

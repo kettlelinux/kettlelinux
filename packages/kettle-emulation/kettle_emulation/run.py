@@ -1,14 +1,20 @@
 """emu-run <system> <rom>: what every emulation shortcut runs.
 
 Steam only ever knows this command, so changing a system's or a game's emulator in the plugin
-never touches the shortcut. emu-run:
+never touches the shortcut. The emulators are Flathub's, installed per user from the plugin's
+Emulators tab (systems.json "flatpaks"); a libretro core runs in Flathub's RetroArch, from its
+cores folder (the plugin downloads them from libretro's buildbot). emu-run:
 - picks the emulator: the game's choice, then the system's, then the first installed one in
   systems.json's list (~/.config/kettle/emulation/choices.json holds the choices);
-- refuses a missing ROM (a card that isn't in), a missing required BIOS or a missing emulator by
-  writing $XDG_RUNTIME_DIR/kettle-emulation/last-error.json, which the plugin shows as a toast;
-- seeds first-run configs (seed.py) and runs the emulator under the keys bridge (keys.py);
+- refuses a missing ROM (a card that isn't in), a missing required BIOS, a setup step the
+  emulator still needs ("needs") or a missing emulator by writing
+  $XDG_RUNTIME_DIR/kettle-emulation/last-error.json, which the plugin shows as a toast;
+- gives the Flatpak its folders (systems.json "permissions", through `flatpak override --user`,
+  also for an app installed outside the plugin), seeds first-run configs (seed.py) and runs the
+  emulator under the keys bridge (keys.py), with the emulator's own key map where it has one;
 - on SIGTERM (Steam's "Exit game"), presses the emulator's quit key first so it saves on the
-  way out, and signals it only if it's still running a few seconds later.
+  way out, and signals it (the app inside the sandbox, not just `flatpak run`) only if it's
+  still running a few seconds later.
 Any other error before the emulator starts is refused the same way ("internal"), so a game
 never just closes without a word.
 """
@@ -24,7 +30,7 @@ import traceback
 from . import keys, seed, systems
 
 CHOICES = os.path.expanduser("~/.config/kettle/emulation/choices.json")
-CORE_DIRS = ("/usr/lib/libretro", os.path.expanduser("~/.config/retroarch/cores"))
+FLATPAK = "flatpak"
 QUIT_GRACE = 5  # seconds the emulator gets to quit on Esc before it's signalled
 POLL = 0.1  # how often the wait loop looks at the stop flag
 
@@ -51,25 +57,25 @@ def write_json(path, data):
 
 
 def core_path(core):
-    for d in CORE_DIRS:
-        p = os.path.join(d, f"{core}_libretro.so")
-        if os.path.exists(p):
-            return p
-    return None
+    p = os.path.join(seed.RA_DIR, "cores", f"{core}_libretro.so")
+    return p if os.path.exists(p) else None
+
+
+_installed = {}
 
 
 def flatpak_installed(app):
-    return shutil.which("flatpak") is not None and subprocess.run(
-        ["flatpak", "info", app], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    if app not in _installed:
+        _installed[app] = shutil.which(FLATPAK) is not None and subprocess.run(
+            [FLATPAK, "info", app], stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL).returncode == 0
+    return _installed[app]
 
 
 def installed(emu):
-    kind = emu["kind"]
-    if kind == "libretro":
-        return shutil.which("retroarch") is not None and core_path(emu["core"]) is not None
-    if kind == "flatpak":
-        return flatpak_installed(emu["flatpak"])
-    return shutil.which(emu["exec"][0]) is not None
+    if emu["kind"] == "libretro":
+        return flatpak_installed(systems.RETROARCH) and core_path(emu["core"]) is not None
+    return flatpak_installed(emu["flatpak"])
 
 
 def choose(db, system, rom):
@@ -84,20 +90,32 @@ def choose(db, system, rom):
         if installed(emu):
             return eid, emu
     first = db["emulators"][sysdef["emulators"][0]]
-    if first.get("download"):
-        raise Refused("emulator", f"{sysdef['name']} needs an extra core: download "
-                      f"{first['name']} in Emulation > Extra cores")
-    if first["kind"] == "flatpak":
-        raise Refused("emulator", f"{sysdef['name']} needs {first['name']}: install "
-                      f"{first['name']} from Game Stores > Flathub")
-    raise Refused("emulator", f"No emulator for {sysdef['name']} is installed")
+    if first["kind"] == "libretro":
+        what = (f"the {first['name']} core" if flatpak_installed(systems.RETROARCH)
+                else f"RetroArch and its {first['name']} core")
+    else:
+        what = first["name"]
+    raise Refused("emulator", f"{sysdef['name']} needs {what}: install it in Emulation > Emulators")
 
 
 def command(system, emu, rom):
+    # --die-with-parent: the sandbox goes with flatpak run, whatever ends it
+    run = [FLATPAK, "run", "--die-with-parent", systems.flatpak_of(emu)]
     if emu["kind"] == "libretro":
-        return ["retroarch", "-f", "--appendconfig", seed.append_configs(system),
-                "-L", core_path(emu["core"]), rom]
-    return [rom if a == "{rom}" else a for a in emu["exec"]]
+        return run + ["-f", "--appendconfig", seed.append_configs(system),
+                      "-L", core_path(emu["core"]), rom]
+    return run + [rom if a == "{rom}" else a for a in emu["exec"]]
+
+
+def check_needs(emu):
+    """The setup an emulator needs that emu-run can see (systems.json "needs" with a "check":
+    paths under $HOME, any one of which will do)."""
+    for need in emu.get("needs", ()):
+        if not isinstance(need, dict) or not need.get("check"):
+            continue
+        checks = need["check"] if isinstance(need["check"], list) else [need["check"]]
+        if not any(os.path.exists(os.path.join(seed.HOME, c)) for c in checks):
+            raise Refused("needs", f"{emu['name']}: {need['text']}")
 
 
 def check_rom(rom):
@@ -131,14 +149,14 @@ def check_bios(system):
 
 def check_system_dirs(sysdef, emu):
     """The folders a libretro core needs in RetroArch's system folder (blueMSX's Machines and
-    Databases, fetched with its core in Extra cores)."""
+    Databases, fetched with its core in Emulation > Emulators)."""
     if emu["kind"] != "libretro":
         return
     missing = [d for d in sysdef.get("system_dirs", ())
                if not os.path.isdir(os.path.join(seed.EMU, "bios", d))]
     if missing:
         raise Refused("bios", f"{emu['name']} needs its system files ({', '.join(missing)} in "
-                      "Emulation/bios): download it again in Emulation > Extra cores")
+                      "Emulation/bios): install its core again in Emulation > Emulators")
 
 
 def report(system, rom, err):
@@ -159,12 +177,14 @@ def prepare(system, rom):
     check_system_dirs(db["systems"][system], emu)
     check_bios(system)
     seed.seed(eid)
-    return command(system, emu, rom), seed.environment(eid, emu), eid
+    seed.permissions(systems.flatpak_of(emu))
+    check_needs(emu)
+    return command(system, emu, rom), seed.environment(eid, emu), eid, emu
 
 
-def start_bridge():
+def start_bridge(emu=None):
     try:
-        bridge = keys.Bridge()
+        bridge = keys.Bridge(emu)
         bridge.serve()
         return bridge
     except Exception as err:  # no uinput: the hotkey layer still works, the QAM buttons don't
@@ -172,11 +192,68 @@ def start_bridge():
         return None
 
 
+def descendants(pid):
+    """pid's processes below it, deepest first: the app flatpak run's sandbox runs."""
+    kids = {}
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            with open(f"/proc/{d}/stat") as f:
+                ppid = int(f.read().rpartition(")")[2].split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        kids.setdefault(ppid, []).append(int(d))
+    out, todo = [], [pid]
+    while todo:
+        p = todo.pop()
+        for c in kids.get(p, ()):
+            out.append(c)
+            todo.append(c)
+    return out[::-1]
+
+
+# flatpak's own processes around the app: signalling the outer bwrap ends the sandbox at once
+# (its children die by PDEATHSIG), so they're signalled last
+SANDBOX = {"bwrap", "xdg-dbus-proxy", "flatpak", "flatpak-session"}
+
+
+def _comm(pid):
+    try:
+        with open(f"/proc/{pid}/comm") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def inside(child):
+    """The app's processes in flatpak run's sandbox (not bwrap or the D-Bus proxy), deepest
+    first."""
+    return [p for p in descendants(child.pid) if _comm(p) not in SANDBOX]
+
+
+def _kill(pids, sig):
+    for p in pids:
+        try:
+            os.kill(p, sig)
+        except OSError:
+            pass
+
+
+def signal_tree(child, sig):
+    """The signal to the app inside the sandbox, so its own handler saves; to flatpak run
+    itself only when nothing is in there. True when the app got it."""
+    pids = inside(child)
+    _kill(pids or [child.pid], sig)
+    return bool(pids)
+
+
 def wait(child, bridge, stopping):
-    """The emulator's exit code. Once `stopping` holds a signal: Esc (the bridge's quit key)
-    and QUIT_GRACE seconds to save and quit, then that signal, then SIGKILL after another
-    QUIT_GRACE. The signal handlers only fill `stopping`: waiting or pressing keys inside a
-    handler would run inside child.wait(), whose lock makes poll() report the child as running."""
+    """The emulator's exit code. Once `stopping` holds a signal: the emulator's quit key (the
+    bridge's) and QUIT_GRACE seconds to save and quit; then that signal to the app inside the
+    sandbox and another QUIT_GRACE; then to flatpak run (which ends the sandbox); then SIGKILL.
+    The signal handlers only fill `stopping`: waiting or pressing keys inside a handler would run
+    inside child.wait(), whose lock makes poll() report the child as running."""
     while not stopping:
         try:
             return child.wait(timeout=POLL)
@@ -184,16 +261,19 @@ def wait(child, bridge, stopping):
             pass
     if bridge:
         try:
-            bridge.tap("quit")
-            return child.wait(timeout=QUIT_GRACE)
+            if bridge.tap("quit"):
+                return child.wait(timeout=QUIT_GRACE)
         except (OSError, subprocess.TimeoutExpired):
             pass
-    child.send_signal(stopping[0])
-    try:
-        return child.wait(timeout=QUIT_GRACE)
-    except subprocess.TimeoutExpired:
-        child.kill()
-        return child.wait()
+    for step in (lambda: signal_tree(child, stopping[0]),
+                 lambda: _kill([child.pid], stopping[0])):
+        step()
+        try:
+            return child.wait(timeout=QUIT_GRACE)
+        except subprocess.TimeoutExpired:
+            pass
+    _kill(descendants(child.pid) + [child.pid], signal.SIGKILL)
+    return child.wait()
 
 
 def run(system, rom):
@@ -209,10 +289,10 @@ def run(system, rom):
     state = bridge = None
     try:
         try:
-            argv, env, eid = prepare(system, rom)
+            argv, env, eid, emu = prepare(system, rom)
             if stopping:  # Steam gave up before the emulator started
                 return 128 + stopping[0]
-            bridge = start_bridge()
+            bridge = start_bridge(emu)
             print("emu-run: " + " ".join(argv), file=sys.stderr, flush=True)
             child = subprocess.Popen(argv, env=env)
         except Refused as err:

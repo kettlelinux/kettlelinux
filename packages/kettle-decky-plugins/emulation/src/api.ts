@@ -1,7 +1,19 @@
 // The backend's calls (main.py) and what they return.
 import { callable } from "@decky/api";
 
-export type Emulator = { id: string; name: string; installed: boolean; download: boolean; flatpak: boolean; license: string };
+export type Emulator = {
+  id: string;
+  name: string;
+  installed: boolean;
+  kind: "libretro" | "flatpak";
+  flatpak: string; // the Flatpak it runs in (RetroArch's for a core)
+  core: string; // a core's buildbot name ("" for a standalone)
+  free: boolean; // its license is free (a core that isn't needs a yes to its terms)
+  license: string;
+  experimental: boolean;
+  needs: Need[]; // what it needs set up besides the install (keys, firmware...)
+  hotkeys: HotkeyAction[]; // the standard hotkeys it has
+};
 export type BiosState = "ok" | "missing-required" | "missing-optional" | "none";
 export type System = {
   id: string;
@@ -11,7 +23,7 @@ export type System = {
   emulators: Emulator[];
   emulator: string; // the one its games start with ("" when none is installed)
   bios: BiosState;
-  bios_from_core: boolean; // what it misses is only its core's folders (system_dirs), from Extra cores
+  bios_from_core: boolean; // what it misses is only its core's folders (system_dirs), from the Emulators tab
   note: string;
   extensions: string[];
 };
@@ -39,7 +51,7 @@ export type Plan = {
 };
 export type LibraryState = {
   collections: Record<string, { name: string; id: string | null; appids: number[] }>;
-  layout: number[];
+  layout: { appid: number; path: string }[]; // shortcuts whose layout isn't their emulator's (yet)
   art: { id: string; appid: number }[];
 };
 export type Art = Record<string, { data: string; ext: string }>;
@@ -56,7 +68,7 @@ export type Running = {
   id: string | null;
   title: string;
   emulators: Emulator[];
-  rewind: boolean; // its emulator rewinds (systems.json)
+  hotkeys: HotkeyAction[]; // the standard hotkeys the running emulator has (Quick Access shows those)
   game_choice: string;
 };
 export type HotkeyAction =
@@ -79,7 +91,7 @@ export type BiosEntry = {
   found: string | null; // installed where the emulators look
   elsewhere: string | null; // a right file somewhere else, for bios_install to copy into place
   bad: string | null;
-  folder?: boolean; // a folder its core needs (system_dirs), downloaded with it in Extra cores
+  folder?: boolean; // a folder its core needs (system_dirs), downloaded with it (Emulators tab)
 };
 export type BiosSystem = { id: string; name: string; state: BiosState; entries: BiosEntry[] };
 
@@ -104,20 +116,54 @@ export type Share = { enabled: boolean; active: boolean; share: string; path: st
 
 // id: what saveDelete and backup take; thumb: the picture's id for saveThumb ("" without one); path is for showing
 export type SaveFile = { id: string; path: string; kind: "save" | "state"; slot: string; size: number; mtime: number; thumb: string };
-export type SaveGame = { id: string; title: string; system: string; files: SaveFile[] };
+// system: "" for a standalone emulator's own (by its game id or name), with emulator its name
+export type SaveGame = { id: string; title: string; system: string; emulator?: string; files: SaveFile[] };
 export type Backup = { id: string; path: string; size: number; mtime: number };
 export type Core = {
   core: string;
   emulator: string;
   name: string;
   license: string;
-  terms: string;
+  free: boolean;
+  terms: string; // what its license allows ("" for a free core): shown, and a non-free one needs a yes
   installed: boolean;
   size: number;
   systems: string[];
   system_dirs: string[]; // folders it needs in Emulation/bios, downloaded with it
   missing: string[]; // those of them that aren't there (it isn't installed until they are)
 };
+
+// a setup note; met: whether what it asks for is there (null: Kettle can't tell)
+export type Need = { text: string; met: boolean | null };
+export type Flatpak = {
+  id: string;
+  name: string;
+  installed: boolean;
+  version: string;
+  update: boolean;
+  removable: boolean; // installed for this user (one installed for everyone can't be removed here)
+  experimental: boolean;
+  emulators: string[];
+  systems: string[];
+  license: string;
+  needs: Need[];
+};
+export type NeededCore = { core: string; name: string; free: boolean; terms: string };
+export type Needed = { flatpaks: string[]; cores: NeededCore[]; systems: string[] };
+export type Setup = {
+  state: "idle" | "running" | "done" | "failed" | "cancelled";
+  kind?: "install" | "update" | "remove";
+  apps?: string[];
+  cores?: string[];
+  step?: string; // "flatpak", "core:<name>" or ""
+  percent?: number;
+  eta?: string;
+  error?: string;
+  done_cores?: string[];
+};
+// list_failed: flatpak couldn't list the installed apps (nothing is offered until it can)
+export type Emulators = { flatpaks: Flatpak[]; cores: Core[]; needed: Needed; list_failed: boolean; job: Setup };
+export type ControlsRow = { name: string; emulators: string[]; hotkeys: HotkeyAction[] };
 
 export const overview = callable<[], Overview>("overview");
 export const syncPlan = callable<[], Plan>("sync_plan");
@@ -127,7 +173,8 @@ export const synced = callable<[added: Record<string, number>, updated: string[]
 );
 export const libraryState = callable<[], LibraryState>("library_state");
 export const setCollection = callable<[system: string, id: string | null], void>("set_collection");
-export const layoutDone = callable<[appids: number[]], void>("layout_done");
+// {appid: the layout path it took}
+export const layoutDone = callable<[applied: Record<string, string>], void>("layout_done");
 export const artwork = callable<[id: string, chosen: string | null], Art>("artwork");
 export const artDone = callable<[id: string, ok: boolean], void>("art_done");
 export const artChoices = callable<[id: string], string[]>("art_choices");
@@ -161,6 +208,13 @@ export const backup = callable<[ids: string[], dest: string], string>("backup");
 export const backups = callable<[], Backup[]>("backups");
 export const restore = callable<[id: string], { restored: number; skipped: number }>("restore");
 export const cores = callable<[], Core[]>("cores");
-export const coreDownload = callable<[core: string], Core[]>("core_download");
+export const coreDownload = callable<[core: string, accepted: boolean], Core[]>("core_download");
 export const coreRemove = callable<[core: string], Core[]>("core_remove");
 export const setSettings = callable<[changes: Partial<Settings>], Settings>("set_settings");
+export const emulators = callable<[checkUpdates: boolean], Emulators>("emulators");
+export const flatpakSize = callable<[app: string], { download: number; installed: number }>("flatpak_size");
+export const setupStart = callable<[kind: "install" | "update" | "remove", apps: string[], cores: string[], accepted: string[]], Setup>("setup_start");
+export const installNeeded = callable<[accepted: string[]], Setup>("install_needed");
+export const setupStatus = callable<[], Setup>("setup_status");
+export const setupCancel = callable<[], void>("setup_cancel");
+export const controls = callable<[], ControlsRow[]>("controls");

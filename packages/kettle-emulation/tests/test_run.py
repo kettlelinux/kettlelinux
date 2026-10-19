@@ -38,6 +38,7 @@ class FakeBridge:
     def tap(self, action):
         self.taps.append(action)
         open(self.quit_file, "w").close()
+        return True
 
     def close(self):
         self.closed = True
@@ -60,7 +61,9 @@ class Run(Env):
             mock.patch.object(run, "check_bios", lambda system: None),
             mock.patch.object(run, "choose", lambda db, s, r: ("ra-fceumm", {"kind": "libretro"})),
             mock.patch.object(seed, "seed", lambda eid=None: None),
-            mock.patch.object(run.keys, "Bridge", lambda: self.bridge),
+            mock.patch.object(seed, "permissions", lambda app: None),
+            mock.patch.object(run, "check_needs", lambda emu: None),
+            mock.patch.object(run.keys, "Bridge", lambda emu=None: self.bridge),
         ]
         self.mode = "graceful"
         self.patches.append(mock.patch.object(
@@ -115,7 +118,7 @@ class Run(Env):
         self.assertEqual(self.bridge.taps, ["quit"])
 
     def test_no_bridge_signals_at_once(self):
-        def broken():
+        def broken(emu=None):
             raise OSError("no uinput")
         with mock.patch.object(run.keys, "Bridge", broken):
             self.signal_when_started()
@@ -194,11 +197,14 @@ class Choose(Env):
 
     def test_refusals(self):
         self.assertEqual(self.refusal("nosuch").reason, "system")
-        err = self.refusal("switch")
-        self.assertEqual(err.reason, "emulator")
-        self.assertIn("Game Stores > Flathub", str(err))
-        self.assertIn("Extra cores", str(self.refusal("arcade")))
-        self.assertIn("No emulator", str(self.refusal("nes")))
+        with mock.patch.object(run, "flatpak_installed", lambda app: False):
+            err = self.refusal("switch")
+            self.assertEqual(err.reason, "emulator")
+            self.assertIn("needs Ryujinx: install it in Emulation > Emulators", str(err))
+            self.assertIn("RetroArch and its FCEUmm core", str(self.refusal("nes")))
+        with mock.patch.object(run, "flatpak_installed", lambda app: True):
+            self.assertIn("needs the FinalBurn Neo core: install it in Emulation > Emulators",
+                          str(self.refusal("arcade")))
 
 
 class CheckBios(unittest.TestCase):

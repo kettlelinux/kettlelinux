@@ -1,6 +1,8 @@
 // Bringing the Steam library in line with the ROMs (main.py's sync_plan): a shortcut per game,
 // running emu-run with the game's system and path, in its system's collection, with the standard
-// controls' layout (once: a layout the user picks later stays) and its artwork. One sync runs at a
+// controls' layout of the emulator it starts with (most share one; an emulator whose hotkeys are
+// other keys has its own, kettle-emulation's mkvdf.py) and its artwork. A layout is set again only
+// when the game's emulator changes: one the user picks in Steam stays otherwise. One sync runs at a
 // time; asking during one runs another after it. What's done is reported back as it goes, and
 // each new shortcut is noted in localStorage the moment Steam makes it until the backend has it,
 // so a sync cut short (Steam's UI or the plugin reloading) doesn't add a game twice.
@@ -247,11 +249,11 @@ async function syncOnce(): Promise<SyncResult> {
     }
   }
 
-  const laid: number[] = [];
-  for (const appid of st.layout) {
-    if (inLibrary(appid) && selectLayout(appid, plan.layout)) laid.push(appid);
+  const laid: Record<string, string> = {};
+  for (const { appid, path } of st.layout) {
+    if (inLibrary(appid) && selectLayout(appid, path)) laid[appid] = path;
   }
-  if (laid.length) await layoutDone(laid);
+  if (Object.keys(laid).length) await layoutDone(laid);
 
   // artwork on its own: the downloads are the slow part, and the games are playable meanwhile
   artQueue(st.art);

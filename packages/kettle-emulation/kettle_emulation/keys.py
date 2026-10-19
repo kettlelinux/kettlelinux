@@ -1,30 +1,63 @@
 """The keys bridge: a uinput keyboard that emu-run owns while a game runs, so the plugin's QAM
 buttons send the very keys Select's hotkey layer sends (mkvdf.py), and emu-run can quit an
-emulator the graceful way (Esc) before signalling it.
+emulator the graceful way before signalling it.
 
-The plugin talks to it over $XDG_RUNTIME_DIR/kettle-emulation/keys.sock: one action name per
-connection, answered "ok" or "error <why>".
+Most emulators get the standard keys bound in their config (seed.py). An emulator whose hotkeys
+can't be rebound (Play!, xemu, melonDS's state keys) has its own key map in systems.json
+("keys": action -> "LEFT_CONTROL+1"): mkvdf.py writes it a layout of its own, and the bridge
+presses its chords. An action that emulator has no key for is "unsupported".
+
+Key names are Steam Input's (the layouts' key_press bindings); evdev() turns them into codes.
+
+The plugin talks to the bridge over $XDG_RUNTIME_DIR/kettle-emulation/keys.sock: one action
+name per connection, answered "ok" or "error <why>".
 """
 import os
 import socket
 import threading
 import time
 
-# action -> the key every seeded emulator binds to it
-ACTIONS = {
-    "save_state": "KEY_F2",
-    "load_state": "KEY_F4",
-    "menu": "KEY_F1",
-    "fast_forward": "KEY_SPACE",
-    "slot_down": "KEY_F6",
-    "slot_up": "KEY_F7",
-    "rewind": "KEY_R",
-    "screenshot": "KEY_F8",
-    "swap_screens": "KEY_F9",
-    "quit": "KEY_ESC",
+# action -> the key every seeded emulator binds to it (Steam Input names)
+STANDARD = {
+    "save_state": "F2",
+    "load_state": "F4",
+    "menu": "F1",
+    "fast_forward": "SPACE",
+    "slot_down": "F6",
+    "slot_up": "F7",
+    "rewind": "R",
+    "screenshot": "F8",
+    "swap_screens": "F9",
+    "quit": "ESCAPE",
 }
+# the same as evdev names, for callers of the first version
+ACTIONS = {a: "KEY_" + {"SPACE": "SPACE", "ESCAPE": "ESC"}.get(k, k) for a, k in STANDARD.items()}
 # held this long; rewind runs while the key is down
 HOLD = {"rewind": 2.0}
+
+# Steam Input key names that aren't evdev's KEY_<name>
+_EVDEV = {"ESCAPE": "ESC", "LEFT_CONTROL": "LEFTCTRL", "RIGHT_CONTROL": "RIGHTCTRL",
+          "LEFT_SHIFT": "LEFTSHIFT", "RIGHT_SHIFT": "RIGHTSHIFT", "LEFT_ALT": "LEFTALT",
+          "RIGHT_ALT": "RIGHTALT", "RETURN": "ENTER"}
+
+
+def chord(spec):
+    """'LEFT_CONTROL+1' -> ['LEFT_CONTROL', '1'] (Steam names, modifiers first)."""
+    return [k for k in spec.split("+") if k]
+
+
+def evdev(name):
+    """The evdev KEY_* name of a Steam Input key name."""
+    return "KEY_" + _EVDEV.get(name, name)
+
+
+def keymap(emu=None):
+    """action -> chord (Steam names) for this emulator (systems.json entry); an action missing
+    from an emulator's own "keys" has no key there."""
+    own = (emu or {}).get("keys")
+    if own is None:
+        return {a: chord(k) for a, k in STANDARD.items()}
+    return {a: chord(k) for a, k in own.items() if k}
 
 
 def runtime_dir():
@@ -35,25 +68,35 @@ def runtime_dir():
 
 
 class Bridge:
-    def __init__(self):
-        import evdev
+    def __init__(self, emu=None):
+        import evdev as ev
         from evdev import ecodes as e
 
         self.e = e
-        self.codes = {a: getattr(e, k) for a, k in ACTIONS.items()}
-        self.kbd = evdev.UInput({e.EV_KEY: sorted(set(self.codes.values()))},
-                                name="Kettle Emulation Keys")
+        self.codes = {a: [getattr(e, evdev(k)) for k in keys] for a, keys in keymap(emu).items()}
+        everything = {c for cs in self.codes.values() for c in cs} | {
+            getattr(e, evdev(k)) for k in STANDARD.values()}
+        self.kbd = ev.UInput({e.EV_KEY: sorted(everything)}, name="Kettle Emulation Keys")
         self.lock = threading.Lock()
         self.sock = None
 
+    def can(self, action):
+        return action in self.codes
+
     def tap(self, action):
-        code = self.codes[action]
+        """Presses the action's chord; False when this emulator has no key for it."""
+        codes = self.codes.get(action)
+        if not codes:
+            return False
         with self.lock:
-            self.kbd.write(self.e.EV_KEY, code, 1)
-            self.kbd.syn()
+            for c in codes:
+                self.kbd.write(self.e.EV_KEY, c, 1)
+                self.kbd.syn()
             time.sleep(HOLD.get(action, 0.06))
-            self.kbd.write(self.e.EV_KEY, code, 0)
-            self.kbd.syn()
+            for c in reversed(codes):
+                self.kbd.write(self.e.EV_KEY, c, 0)
+                self.kbd.syn()
+        return True
 
     def serve(self):
         path = os.path.join(runtime_dir(), "keys.sock")
@@ -79,11 +122,12 @@ class Bridge:
                     action = conn.recv(64).decode().strip()
                 except (OSError, UnicodeDecodeError):
                     continue
-                if action in self.codes:
-                    self.tap(action)
+                if action not in STANDARD:
+                    reply = "error unknown action"
+                elif self.tap(action):
                     reply = "ok"
                 else:
-                    reply = "error unknown action"
+                    reply = "error unsupported"
                 try:
                     conn.sendall(reply.encode() + b"\n")
                 except OSError:

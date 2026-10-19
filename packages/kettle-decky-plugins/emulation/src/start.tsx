@@ -1,20 +1,28 @@
 // Get started: the first visit's walk through, a step a screen: where games go, the ways to add
-// them (add.tsx), the BIOS files some systems need, the controls, and adding what's there to the
-// library. Finishing it opens the Library; Quick Access opens Emulation from then on.
+// them (add.tsx), the emulators those games need (emulators.tsx, from Flathub), the BIOS files
+// some systems need, the controls, and adding what's there to the library. Finishing it opens the Library; Quick Access opens Emulation from then on.
 import { DialogButton, Focusable, Navigation } from "@decky/ui";
-import { useState } from "react";
-import { bios, overview, setSettings, setUpCard } from "./api";
+import { useEffect, useState } from "react";
+import { bios, emulators, overview, setSettings, setUpCard } from "./api";
+import { SetupRow, installNeeded, useSetup } from "./emulators";
 import { CardsSection, InboxSection, JobProgress, ShareSection, UploadSection } from "./add";
 import { sync } from "./sync";
 import { ControlsTable, ROUTE, act, dim, good, plural, small, usePoll, warn } from "./ui";
 
-const STEPS = ["Welcome", "Add games", "BIOS files", "Controls", "Your library"];
+const STEPS = ["Welcome", "Add games", "Emulators", "BIOS files", "Controls", "Your library"];
+const EMULATORS = 2;
 const mono = { fontFamily: "monospace", fontSize: "13px" };
 
 export function StartPage() {
   const [step, setStep] = useState(0);
   const [ov, reload] = usePoll(overview, 0);
   const [b] = usePoll(bios, 0, [step]);
+  const [emus, reloadEmus] = usePoll(() => emulators(false), 0, [step]);
+  const job = useSetup(emus?.job ?? null);
+  // a job that's done (or failed) changes what's still needed
+  useEffect(() => {
+    if (job && job.state !== "running" && job.state !== "idle") (reloadEmus(), reload());
+  }, [job?.state]);
   const [result, setResult] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   if (!ov) return <div style={{ marginTop: "40px", padding: "16px 24px" }}>Loading…</div>;
@@ -46,9 +54,9 @@ export function StartPage() {
         <>
           <h2 style={{ margin: "4px 0 8px" }}>Play your retro games</h2>
           <p>
-            Emulation plays games of consoles from the NES to the GameCube and Wii, right from your Steam library: each game gets its own entry,
-            with artwork, in a collection per system. Everything it needs comes with Kettle; you bring the games (and, for a few systems, a
-            BIOS file from the console).
+            Emulation plays games of consoles from the NES to the PlayStation 2 and Switch, right from your Steam library: each game gets its
+            own entry, with artwork, in a collection per system. The emulators come from Flathub in one step, set up with the same controls;
+            you bring the games (and, for a few systems, a BIOS file from the console).
           </p>
           <p style={small}>Games go in a folder per system, on this device or on a card:</p>
           {ov.storages.map((s) => (
@@ -78,13 +86,45 @@ export function StartPage() {
           <ShareSection />
         </>
       )}
-      {step === 2 && (
+      {step === EMULATORS && (
+        <>
+          <h2 style={{ margin: "4px 0 8px" }}>The emulators</h2>
+          <p style={small}>
+            Kettle installs the emulators your games need from Flathub, where their own projects publish them, and RetroArch's cores from
+            libretro's build server. They update on their own, apart from Kettle.
+          </p>
+          <SetupRow job={job} />
+          {emus && (emus.needed.flatpaks.length || emus.needed.cores.length) ? (
+            <>
+              <p style={small}>
+                For the {plural(emus.needed.systems.length, "system")} you have games of:{" "}
+                {[
+                  ...emus.needed.flatpaks.map((id) => emus.flatpaks.find((f) => f.id === id)?.name ?? id),
+                  ...emus.needed.cores.map((c) => `the ${c.name} core`),
+                ].join(", ")}
+                .
+              </p>
+              <DialogButton style={{ width: "auto" }} disabled={job?.state === "running"} onClick={() => installNeeded(emus.needed.cores, reloadEmus)}>
+                Install them
+              </DialogButton>
+            </>
+          ) : (
+            emus && (
+              <p style={{ ...small, ...good }}>
+                {counted.length ? "Every system you have games of has its emulator." : "Add games first, or pick emulators yourself in the Emulators tab."}
+              </p>
+            )
+          )}
+          <p style={{ ...small, ...dim }}>The Emulators tab has every emulator, to install, update or remove one by one.</p>
+        </>
+      )}
+      {step === 3 && (
         <>
           <h2 style={{ margin: "4px 0 8px" }}>BIOS files</h2>
           <p style={small}>
             Most systems need nothing. Some need a BIOS file from the console, which Kettle can't include. Add yours the same way as games:
-            they're recognised by their content, whatever they're called. A few need folders that come with their core instead, from Extra
-            cores.
+            they're recognised by their content, whatever they're called. A few need folders that come with their core instead (the
+            Emulators tab).
           </p>
           {b &&
             b.systems
@@ -97,7 +137,7 @@ export function StartPage() {
                   ) : s.state === "missing-required" && s.entries.filter((e) => e.required && !e.found).every((e) => e.folder) ? (
                     <span style={warn}>
                       needs its {s.entries.filter((e) => e.folder && !e.found).map((e) => e.file).join(", ")} folders: they come with the core
-                      from Extra cores, no BIOS from the console
+                      (Emulators tab), no BIOS from the console
                       {noteOf(s.id) && <span style={dim}> ({noteOf(s.id)})</span>}
                     </span>
                   ) : s.state === "missing-required" ? (
@@ -115,7 +155,7 @@ export function StartPage() {
           {missing.length === 0 && <p style={{ ...small, ...good }}>Nothing you need is missing.</p>}
         </>
       )}
-      {step === 3 && (
+      {step === 4 && (
         <>
           <h2 style={{ margin: "4px 0 8px" }}>The same controls everywhere</h2>
           <p style={small}>
@@ -125,7 +165,7 @@ export function StartPage() {
           <p style={{ ...small, ...dim }}>Quick Access has the same actions as buttons while a game runs.</p>
         </>
       )}
-      {step === 4 && (
+      {step === 5 && (
         <>
           <h2 style={{ margin: "4px 0 8px" }}>Your library</h2>
           <p style={small}>

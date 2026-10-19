@@ -1,44 +1,34 @@
-# Kettle Linux's emulation core, which Game Mode's Emulation plugin (kettle-decky-emulation) drives:
-# - systems.json (/usr/share/kettle/emulation): every system, the emulators that run it (the
-#   libretro cores and standalone emulators built into the image, the non-commercial cores a user
-#   can download, a user's Flatpak Ryujinx), its folders, file types and BIOS files (by md5;
-#   no BIOS is ever shipped).
+# Kettle Linux's emulation core, which Game Mode's Emulation plugin (kettle-decky-emulation) drives.
+# The emulators themselves aren't packaged: they're Flathub's (RetroArch, PPSSPP, Dolphin,
+# melonDS, Play!, RPCS3, xemu, Ryujinx, Eden, Azahar), installed per user from the plugin's
+# Emulators tab, and RetroArch's cores come from libretro's aarch64 buildbot.
+# - systems.json (/usr/share/kettle/emulation): every system, the emulators that run it (their
+#   Flatpaks, licenses, hotkeys, save folders and the setup they need), the Flatpaks' permissions,
+#   folders, file types and BIOS files (by md5; no BIOS is ever shipped).
 # - emu-run (/usr/lib/kettle): the command of every ROM's Steam shortcut. It picks the emulator
-#   (the game's choice, the system's, the default), refuses a missing card, BIOS or emulator with a
-#   toast, keeps the standard controls in every emulator's config (kettle_emulation/seed.py) and
-#   runs it under the keys bridge, the uinput keyboard the plugin's Quick Access buttons press.
+#   (the game's choice, the system's, the default), refuses a missing card, BIOS, setup step or
+#   emulator with a toast, gives the Flatpak its folders, keeps the standard controls in every
+#   emulator's config (kettle_emulation/seed.py) and runs it under the keys bridge, the uinput
+#   keyboard the plugin's Quick Access buttons press.
 # - the standard controls' Steam Input layouts, emulation-xbox.vdf and emulation-nintendo.vdf
 #   (mkvdf.py; FACE_BUTTONS picks one): the gamepad by position, and Select held for the hotkeys,
-#   the same in every emulator.
+#   the same in every emulator; emulation-<face>-<emulator>.vdf for the emulators whose hotkeys
+#   have keys of their own (Play!, xemu, melonDS).
 # - getting games in: kettle-emu-import (sorts ROMs into their system's folder by file type and
 #   header, BIOS files by md5, from the inbox, a card or a USB stick), kettle-emu-upload (the
 #   phone/PC upload page behind the plugin's QR code) and kettle-emu-share (the Samba share of
 #   ~/Emulation, pkexec: 50-kettle-emulation-share.rules).
 pkgname=kettle-emulation
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Kettle Linux: emulator launcher, standard controls and ROM/BIOS import'
 arch=(any)
 license=(BSD-3-Clause)
-depends=(python python-evdev retroarch 7zip polkit samba avahi)
-# The image installs the emulators and cores (packages/libretro-cores, libretro-cores-heavy);
-# emu-run refuses a system whose emulators are all missing.
-optdepends=('ppsspp: PSP' 'melonds: Nintendo DS' 'dolphin-emu: GameCube and Wii'
-            'flatpak: Nintendo Switch (Ryujinx from Flathub)'
-            'libretro-fceumm: NES' 'libretro-nestopia: NES, Famicom Disk System'
-            'libretro-bsnes: SNES' 'libretro-gambatte: Game Boy, Game Boy Color'
-            'libretro-mgba: Game Boy Advance, Game Boy' 'libretro-melondsds: Nintendo DS'
-            'libretro-mupen64plus-next: Nintendo 64' 'libretro-flycast: Dreamcast'
-            'libretro-gearsystem: Master System, Game Gear, SG-1000'
-            'libretro-clownmdemu: Genesis / Mega Drive, Sega CD'
-            'libretro-pcsx-rearmed: PlayStation' 'libretro-swanstation: PlayStation'
-            'libretro-beetle-psx-hw: PlayStation' 'libretro-beetle-pce-fast: PC Engine (CD)'
-            'libretro-stella: Atari 2600' 'libretro-handy: Atari Lynx'
-            'libretro-beetle-ngp: Neo Geo Pocket' 'libretro-beetle-wswan: WonderSwan'
-            'libretro-beetle-vb: Virtual Boy' 'libretro-dosbox-pure: DOS')
+depends=(python python-evdev flatpak 7zip polkit samba avahi)
 
 build() {
-  python3 "$startdir/mkvdf.py" "$srcdir"
+  mkdir -p "$srcdir/layouts"
+  python3 "$startdir/mkvdf.py" "$srcdir/layouts" "$startdir/systems.json"
 }
 
 package() {
@@ -46,7 +36,7 @@ package() {
   install -Dm755 "$startdir"/emu-run -t "$lib"
   install -Dm755 "$startdir"/{kettle-emu-import,kettle-emu-upload,kettle-emu-share} -t "$lib"
   install -Dm644 "$startdir"/kettle_emulation/*.py -t "$lib/kettle_emulation"
-  install -Dm644 "$startdir/systems.json" "$srcdir"/emulation-{xbox,nintendo}.vdf -t "$share"
+  install -Dm644 "$startdir/systems.json" "$srcdir"/layouts/*.vdf -t "$share"
   install -Dm644 "$startdir/org.kettle.emulation.share.policy" -t "$pkgdir/usr/share/polkit-1/actions"
   install -Dm644 "$startdir/50-kettle-emulation-share.rules" -t "$pkgdir/usr/share/polkit-1/rules.d"
   install -Dm644 "$startdir/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"

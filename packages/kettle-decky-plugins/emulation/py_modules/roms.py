@@ -3,7 +3,10 @@
 #
 # A ROM is a file of one of its system's extensions under <Emulation>/roms/<a system folder>,
 # up to DEPTH folders down (a multi-disc game's folder). A .m3u, .cue or .gdi stands for the files
-# it lists, which don't show on their own. Its id is sha1("<storage uuid>:<path from Emulation>"),
+# it lists, which don't show on their own. A system with "game_folders" (PS3: a disc copied as a
+# folder holding PS3_GAME/PARAM.SFO) also has folders as games: a folder holding its "marker" is
+# one game, the folder itself the ROM's path, with nothing inside it listed; its title is the one
+# in PARAM.SFO, or the folder's name. Its id is sha1("<storage uuid>:<path from Emulation>"),
 # so it stays the same when a card mounts somewhere else. The same game (system and path in its
 # folder, any case) on internal storage and on a card shows once, from internal storage. A game
 # that moves to another storage (a card's copied in) keeps its shortcut: carry_moves().
@@ -17,6 +20,7 @@
 import hashlib
 import os
 import re
+import struct
 
 DEPTH = 3
 LIST_EXTS = ("m3u", "cue", "gdi")
@@ -66,12 +70,34 @@ _TAGS = re.compile(r"\s*[\(\[][^\)\]]*[\)\]]")
 
 
 def title(path: str) -> str:
-    """The name the library shows: the file name without its extension and No-Intro tags."""
+    """The name the library shows: the file name without its extension and No-Intro tags (a game
+    folder's name keeps its dots)."""
     stem = os.path.basename(path)
-    if _ext(stem):
+    if _ext(stem) and not os.path.isdir(path):
         stem = stem.rpartition(".")[0]
     clean = _TAGS.sub("", stem).strip(" -_")
     return clean or stem
+
+
+def sfo_title(path: str) -> str | None:
+    """TITLE from a PlayStation PARAM.SFO (header: magic, version, key table, data table, count;
+    then 16-byte entries: key offset, format, used length, max length, data offset)."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read(64 << 10)
+        magic, _, keys, values, n = struct.unpack_from("<4sIIII", data, 0)
+        if magic != b"\0PSF" or n > 256:
+            return None
+        for i in range(n):
+            koff, fmt, used, _, doff = struct.unpack_from("<HHIII", data, 20 + 16 * i)
+            end = data.index(b"\0", keys + koff)
+            if data[keys + koff:end] == b"TITLE" and fmt in (0x0204, 0x0004):
+                t = data[values + doff:values + doff + used].split(b"\0")[0].decode("utf-8", "replace")
+                t = " ".join(t.split())  # PS3 titles may hold line breaks
+                return t or None
+    except (OSError, struct.error, ValueError):
+        return None
+    return None
 
 
 class _Failed:
@@ -105,8 +131,9 @@ def _system_dirs(roms_dir: str, systems: dict, failed=None) -> list[tuple[str, s
     return out
 
 
-def _walk(top: str, failed=None):
-    """Files below top, DEPTH folders deep, hidden ones left out."""
+def _walk(top: str, failed=None, marker: str | None = None):
+    """Files below top, DEPTH folders deep, hidden ones left out; with a game folder's `marker`,
+    a folder holding it comes out itself, and nothing in it."""
     stack = [(top, 0)]
     while stack:
         d, depth = stack.pop()
@@ -121,7 +148,9 @@ def _walk(top: str, failed=None):
                 continue
             try:
                 if e.is_dir():
-                    if depth < DEPTH:
+                    if marker and os.path.isfile(os.path.join(e.path, marker)):
+                        yield e.path
+                    elif depth < DEPTH:
                         stack.append((e.path, depth + 1))
                 elif e.is_file():
                     yield e.path
@@ -134,7 +163,8 @@ def _walk(top: str, failed=None):
 def scan_folder(sid: str, folder: str, sysdef: dict, failed=None) -> list[str]:
     """The ROMs in one system folder: files of its extensions, less those a list names."""
     exts = set(sysdef.get("extensions", []))
-    files = [p for p in _walk(folder, failed) if _ext(p) in exts]
+    marker = (sysdef.get("game_folders") or {}).get("marker")
+    files = [p for p in _walk(folder, failed, marker) if _ext(p) in exts or (marker and os.path.isdir(p))]
     hidden = set()
     for p in files:
         if _ext(p) in LIST_EXTS:
@@ -187,11 +217,15 @@ def scan(roots: list[dict], systems: dict, failed: set | None = None) -> dict:
                     continue
                 seen.add(key)
                 rel = os.path.relpath(p, emu)
+                marker = (systems[sid].get("game_folders") or {}).get("marker")
+                is_folder = bool(marker) and os.path.isdir(p)
                 try:
-                    size = os.path.getsize(p)
+                    # a game folder's size: its marker's, the same wherever it's copied
+                    size = os.path.getsize(os.path.join(p, marker) if is_folder else p)
                 except OSError:
                     size = None
-                found[rom_id(uuid, rel)] = {"system": sid, "path": p, "title": title(p),
+                name = (sfo_title(os.path.join(p, marker)) if is_folder and marker.upper().endswith(".SFO") else None) or title(p)
+                found[rom_id(uuid, rel)] = {"system": sid, "path": p, "title": name,
                                             "storage": uuid, "rel": rel, "sub": key[1], "size": size}
         if err.hit and failed is not None:
             failed.add(uuid)
@@ -208,7 +242,7 @@ def _disambiguate(found: dict):
         if len(group) > 1:
             for r in group:
                 stem = os.path.basename(r["path"])
-                r["title"] = stem.rpartition(".")[0] if _ext(stem) else stem
+                r["title"] = stem.rpartition(".")[0] if _ext(stem) and not os.path.isdir(r["path"]) else stem
 
 
 def carry_moves(found: dict, state: dict, choices: dict, mounted: set[str]) -> list[tuple[str, str]]:

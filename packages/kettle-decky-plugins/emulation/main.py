@@ -10,10 +10,18 @@
 # Emulation tree used in place), the upload page for a phone or PC (kettle-emu-upload, a QR code
 # and a PIN) and the "Kettle" network share (kettle-emu-share). BIOS files are recognised by md5,
 # whatever they're called; none is shipped or downloaded (blueMSX's Machines and Databases
-# folders come with that core, their only system ROMs the free C-BIOS). Also: the emulator per system and per game (choices.json,
-# which emu-run reads), saves and states, the extra cores whose licenses keep them out of the
-# image, and Quick Access' buttons for the running game (the keys bridge emu-run owns: the same
-# keys the Select hotkeys send).
+# folders come with that core, their only system ROMs the free C-BIOS). Also: the emulator per
+# system and per game (choices.json, which emu-run reads), saves and states, and Quick Access'
+# buttons for the running game (the keys bridge emu-run owns: the same keys the Select hotkeys
+# send).
+#
+# The emulators themselves come from Flathub (flatpaks.py: RetroArch and the standalone
+# emulators, installed for the user on request, the Emulators tab and Get started), and
+# RetroArch's cores from libretro's buildbot (cores.py); Kettle builds none of them. "What my
+# games need" installs, for every system the library has games of, its emulator (the user's
+# choice or the first) and the core it runs. Quick Access offers the hotkeys the running
+# emulator has (systems.json's "hotkeys"), and the saves page looks where each emulator keeps
+# them (its "saves").
 #
 # File names that aren't UTF-8 (a card's, an upload's) come from the file system with surrogate
 # escapes. They stay so here (roms.json, the paths the plugin works with), but what goes to the
@@ -40,6 +48,7 @@ from kettle_emulation import bios, identify, keys, samba, storage, systems  # no
 
 import art  # noqa: E402
 import cores  # noqa: E402
+import flatpaks  # noqa: E402
 import roms  # noqa: E402
 import saves  # noqa: E402
 
@@ -59,9 +68,11 @@ MISSING_FOR = 600  # s between two syncs that both miss a shortcut before it cou
 INBOX_SETTLE = 30  # s a file in the inbox is left alone before it's sorted (still being copied)
 ART_TRIES = 3
 DEFAULTS = {"first_run_done": False, "auto_inbox": True, "sgdb_key": ""}
+SETUP_LOG = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "setup.log")
+SETUP_JOB = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "setup.json")  # the running job, for a restart
 
 _lock = asyncio.Lock()  # roms.json and settings.json, one writer at a time
-_cores_lock = asyncio.Lock()  # one extra core downloaded or removed at a time
+_cores_lock = asyncio.Lock()  # one core downloaded or removed at a time
 
 
 def _read_json(path: str, default):
@@ -202,7 +213,7 @@ def _root_by_path(roots: list[dict], path: str) -> dict | None:
 
 def _with_system_dirs(bst: dict, db: dict) -> dict:
     """bios.status() with each system's "system_dirs" (the folders its core needs in
-    Emulation/bios: blueMSX's Machines and Databases, downloaded with it in Extra cores) as
+    Emulation/bios: blueMSX's Machines and Databases, downloaded with it, Emulators tab) as
     needed entries of its own, found when the folder is there."""
     folder = os.path.join(EMU, "bios")
     for sid, s in db["systems"].items():
@@ -212,7 +223,7 @@ def _with_system_dirs(bst: dict, db: dict) -> dict:
         v = bst.setdefault(sid, {"state": "none", "entries": []})
         v["entries"] = list(v.get("entries", [])) + [
             {"file": d + "/", "required": True, "one_of": False, "folder": True,
-             "note": "a folder, downloaded with the core in Extra cores",
+             "note": "a folder, downloaded with the core (Emulators tab)",
              "found": os.path.join(folder, d) if os.path.isdir(os.path.join(folder, d)) else None,
              "elsewhere": None, "bad": None} for d in dirs]
         if bios.unmet(v["entries"]):
@@ -226,7 +237,7 @@ def _with_system_dirs(bst: dict, db: dict) -> dict:
 
 def _needs_only_folders(v: dict) -> bool:
     """A system missing what it needs only for its core's folders (system_dirs): they come with
-    the core from Extra cores, not as a BIOS file from the console."""
+    the core (Emulators tab), not as a BIOS file from the console."""
     entries = v.get("entries", [])
     return (v.get("state") == "missing-required" and any(e.get("folder") for e in entries)
             and not bios.unmet([e for e in entries if not e.get("folder")]))
@@ -247,18 +258,140 @@ def _entry(rid: str, r: dict, db: dict) -> dict:
             "was": r.get("was")}
 
 
-def _emulators(db: dict, sid: str) -> list[dict]:
-    from kettle_emulation import run  # installed(): the core or binary is there
+def _flatpak_of(e: dict) -> str:
+    """The Flatpak an emulator runs in: RetroArch's for a core."""
+    return cores.RETROARCH if e.get("kind") == "libretro" else e.get("flatpak", "")
+
+
+def _is_installed(e: dict, inst: dict) -> bool:
+    if e.get("kind") == "libretro":
+        return cores.RETROARCH in inst and os.path.exists(cores.path(HOME, e["core"]))
+    return bool(e.get("flatpak")) and e["flatpak"] in inst
+
+
+def _needs(e: dict) -> list[dict]:
+    """An emulator's setup notes: [{text, met}]; met says whether a "check" path (from the home
+    folder; any of a list) is there, None for a note emu-run can't see."""
+    out = []
+    for n in e.get("needs") or ():
+        if isinstance(n, str):
+            out.append({"text": n, "met": None})
+            continue
+        checks = n.get("check") or []
+        checks = [checks] if isinstance(checks, str) else checks
+        met = any(os.path.exists(os.path.join(HOME, c)) for c in checks if isinstance(c, str) and ".." not in c.split("/")) \
+            if checks else None
+        out.append({"text": n.get("text", ""), "met": met})
+    return out
+
+
+def _hotkeys(db: dict, e: dict, sids) -> list[str]:
+    """The standard hotkeys an emulator has on these systems: rewind only on a system with
+    "rewind": true (kettle-emulation's seed.py turns it on there alone)."""
+    hk = list(e.get("hotkeys") or keys.ACTIONS)
+    if "rewind" in hk and not any(db["systems"].get(s, {}).get("rewind") for s in sids):
+        hk.remove("rewind")
+    return hk
+
+
+def _emulators(db: dict, sid: str, inst: dict | None = None) -> list[dict]:
+    """A system's emulators: [{id, name, installed, kind, flatpak, core, free, license,
+    experimental, needs, hotkeys}]. `inst`: flatpaks.installed() (read here when not given; a
+    list that failed shows nothing as installed)."""
+    if inst is None:
+        inst = flatpaks.installed(HOME) or {}
     out = []
     for eid in db["systems"][sid]["emulators"]:
         e = db["emulators"][eid]
-        try:
-            ok = run.installed(e)
-        except Exception:
-            ok = False
-        out.append({"id": eid, "name": e["name"], "installed": ok, "download": bool(e.get("download")),
-                    "flatpak": e.get("kind") == "flatpak", "license": e.get("license", "")})
+        out.append({"id": eid, "name": e["name"], "installed": _is_installed(e, inst), "kind": e.get("kind", ""),
+                    "flatpak": _flatpak_of(e), "core": e.get("core", ""), "free": bool(e.get("free", True)),
+                    "license": e.get("license", ""), "experimental": bool(e.get("experimental")),
+                    "needs": _needs(e), "hotkeys": _hotkeys(db, e, [sid])})
     return out
+
+
+def needed(db: dict, counts: dict, choices: dict, inst: dict, have_core) -> dict:
+    """What the library's games need installed: for each system with games, its emulator and
+    what that runs in. {flatpaks: [app ids], cores: [{core, name, free, terms}], systems: [system
+    ids]}. The user's choice for a system is what it needs when it isn't installed; without one,
+    a system any of whose emulators is installed needs nothing (emu-run starts that one, as
+    effective() picks it), and one with none installed needs its first."""
+    def ok(e):
+        if e.get("kind") == "libretro":
+            return cores.RETROARCH in inst and have_core(e["core"])
+        return bool(e.get("flatpak")) and e["flatpak"] in inst
+
+    apps, core_list, sids = [], [], []
+    for sid, sysdef in db["systems"].items():
+        emus = sysdef["emulators"]
+        if not counts.get(sid) or not emus:
+            continue
+        want = choices.get("systems", {}).get(sid)
+        if want in emus:
+            eid = want
+        elif any(ok(db["emulators"][x]) for x in emus):
+            continue
+        else:
+            eid = emus[0]
+        e = db["emulators"][eid]
+        if ok(e):
+            continue
+        sids.append(sid)
+        app = _flatpak_of(e)
+        if app and app not in inst and app not in apps:
+            apps.append(app)
+        if e.get("kind") == "libretro" and not have_core(e["core"]) and e["core"] not in [c["core"] for c in core_list]:
+            core_list.append({"core": e["core"], "name": e["name"], "free": bool(e.get("free", True)),
+                              "terms": cores.terms(e)})
+    return {"flatpaks": apps, "cores": core_list, "systems": sids}
+
+
+def effective(db: dict, sid: str, game_eid: str | None, sys_eid: str | None, inst: dict) -> str:
+    """The emulator a game starts with, as emu-run picks it (run.choose): the game's choice, then
+    the system's, then the system's list, the first of them installed; when none is, the first
+    of them (its layout is ready for when it's installed)."""
+    emus = db["systems"][sid]["emulators"]
+    order = [e for e in (game_eid, sys_eid) if e in emus] + emus
+    return next((e for e in order if _is_installed(db["emulators"][e], inst)), order[0] if order else "")
+
+
+def _layout(eid: str, face: str) -> str:
+    """The Steam Input layout a game with this emulator needs (kettle-emulation's mkvdf.py): the
+    emulator's own when its hotkeys are other keys ("keys"), else the standard one."""
+    if hasattr(systems, "layout"):
+        return systems.layout(eid, face)
+    return LAYOUT.format(face)
+
+
+def _layouts(db: dict, st: dict, inst: dict, face: str) -> dict:
+    """rom id -> the layout its shortcut needs now."""
+    choices = _read_json(CHOICES, {})
+    game = _game_choices(st)
+    out = {}
+    for rid, r in st["roms"].items():
+        if r.get("deleted") or r["system"] not in db["systems"]:
+            continue
+        eid = effective(db, r["system"], game.get(rid), choices.get("systems", {}).get(r["system"]), inst)
+        out[rid] = _layout(eid, face) if eid else LAYOUT.format(face)
+    return out
+
+
+def _files_under(top: str) -> list[str]:
+    return [os.path.join(d, f) for d, _, files in os.walk(top) for f in files]
+
+
+def _running_appid() -> int | None:
+    """The Steam appid of the game emu-run runs (running.json's SteamGameId: a shortcut's 64-bit
+    game id, its appid in the top half), while its process lives."""
+    r = _read_json(os.path.join(keys.runtime_dir(), "running.json"), {})
+    try:
+        pid, gid = int(r.get("pid") or 0), int(r.get("appid") or 0)
+        if not pid:
+            return None
+        os.kill(pid, 0)
+    except (OSError, ValueError, TypeError):
+        return None
+    return (gid >> 32 if gid >= 1 << 32 else gid) or None
 
 
 def _chosen(choices: dict, sid: str, emus: list[dict]) -> str:
@@ -295,6 +428,7 @@ class Plugin:
         self._inbox_tried: dict = {}  # the inbox files the running inbox job was started for: {path: mtime}
         self._inbox_left: dict = {}  # those it left there (failed or skipped): not retried until they change
         self._tasks: list[asyncio.Task] = []
+        self._setup: dict = {"state": "idle"}  # an emulator install: {state, kind, apps, cores, step, percent, eta, error, done_cores}
 
     # --- the library ---------------------------------------------------------------------------
     async def overview(self) -> dict:
@@ -309,8 +443,9 @@ class Plugin:
             if not r.get("deleted"):
                 counts[r["system"]] = counts.get(r["system"], 0) + 1
         out = []
+        inst = await asyncio.to_thread(flatpaks.installed, HOME) or {}
         for sid, s in db["systems"].items():
-            emus = await asyncio.to_thread(_emulators, db, sid)
+            emus = _emulators(db, sid, inst)
             out.append({"id": sid, "name": s["name"], "folder": s["folders"][0], "count": counts.get(sid, 0),
                         "emulators": emus, "emulator": _chosen(choices, sid, emus),
                         "bios": bst.get(sid, {}).get("state", "none"), "note": s.get("note", ""),
@@ -391,8 +526,22 @@ class Plugin:
                 continue
             collections[sid] = {"name": s.get("collection", s["name"]), "id": st["collections"].get(sid),
                                 "appids": cols.get(sid, [])}
-        return {"collections": collections,
-                "layout": [r["appid"] for r in st["roms"].values() if r.get("appid") and not r.get("deleted") and not r.get("layout")],
+        # a shortcut whose layout isn't the one its emulator needs now (its game's or system's
+        # emulator changed, or it never got one); True: laid out before the layouts were per
+        # emulator, with the standard one
+        # (not while flatpak can't say what's installed: that isn't "nothing", and the layouts
+        # would follow the wrong emulators; nor on the game that's running, until it exits)
+        face = _face()
+        inst = await asyncio.to_thread(flatpaks.installed, HOME)
+        lay = []
+        if inst is not None:
+            playing = _running_appid()
+            for rid, path in _layouts(db, st, inst, face).items():
+                r = st["roms"][rid]
+                had = LAYOUT.format(face) if r.get("layout") is True else r.get("layout")
+                if r.get("appid") and had != path and r["appid"] != playing:
+                    lay.append({"appid": r["appid"], "path": path})
+        return {"collections": collections, "layout": lay,
                 "art": [{"id": rid, "appid": r["appid"]} for rid, r in st["roms"].items()
                         if r.get("appid") and not r.get("deleted") and r.get("art") is not True and r.get("art_tries", 0) < ART_TRIES]}
 
@@ -405,13 +554,14 @@ class Plugin:
                 st["collections"].pop(system, None)
             _write_json(STATE, st)
 
-    async def layout_done(self, appids: list[int]):
+    async def layout_done(self, applied: dict):
+        """{appid: the layout path Steam took for it}."""
         async with _lock:
             st = _state()
-            done = {int(a) for a in appids}
+            done = {int(a): p for a, p in applied.items() if isinstance(p, str) and p.startswith("local://")}
             for r in st["roms"].values():
                 if r.get("appid") in done:
-                    r["layout"] = True
+                    r["layout"] = done[r["appid"]]
             _write_json(STATE, st)
 
     async def artwork(self, rid: str, chosen: str | None = None) -> dict:
@@ -515,6 +665,7 @@ class Plugin:
             else:
                 c["systems"].pop(system, None)
             _write_json(CHOICES, c)
+        await _emit("roms_changed")  # the next sync gives its games the new emulator's layout
 
     async def set_game_choice(self, rid: str, emulator: str | None):
         r = _state()["roms"].get(rid)
@@ -532,6 +683,7 @@ class Plugin:
                 choices.pop(rid, None)
             _write_json(STATE, st)
             _write_choice_paths(st, self._found)
+        await _emit("roms_changed")
 
     # --- the running game ----------------------------------------------------------------------
     async def running(self) -> dict | None:
@@ -554,7 +706,8 @@ class Plugin:
         return _shown_all({**r, "id": rid, "title": roms.title(r.get("rom", "")),
                            "emulator_name": db["emulators"].get(r.get("emulator"), {}).get("name", ""),
                            "emulators": await asyncio.to_thread(_emulators, db, sid),
-                           "rewind": bool(db["systems"][sid].get("rewind")),
+                           # the hotkeys this emulator has (Quick Access shows only those)
+                           "hotkeys": _hotkeys(db, db["emulators"].get(r.get("emulator"), {}), [sid]),
                            "game_choice": _game_choices(st).get(rid, "") if rid else ""})
 
     async def hotkey(self, action: str) -> bool:
@@ -721,6 +874,9 @@ class Plugin:
                 for p in list(handled):
                     if roms._ext(p) in roms.LIST_EXTS:
                         handled.update(await asyncio.to_thread(roms.listed_files, p))
+                    elif os.path.isdir(p):
+                        # a game that's a folder (PS3): the files in it are what was tried
+                        handled.update(await asyncio.to_thread(_files_under, p))
                 left = await asyncio.to_thread(self._inbox_files, 0, False)
                 self._inbox_left.update({p: m for p, m in self._inbox_tried.items()
                                          if p in handled and left.get(p) == m})
@@ -862,10 +1018,10 @@ class Plugin:
                                            for f in g["files"]]} for g in games])
 
     async def saves(self) -> list[dict]:
-        return self._save_ids(await asyncio.to_thread(saves.listing, HOME, _state()["roms"]))
+        return self._save_ids(await asyncio.to_thread(saves.listing, HOME, _state()["roms"], systems.load()))
 
     async def _save_paths(self, ids: list[str]) -> tuple[list[str], list[dict]]:
-        games = await asyncio.to_thread(saves.listing, HOME, _state()["roms"])
+        games = await asyncio.to_thread(saves.listing, HOME, _state()["roms"], systems.load())
         paths = [_unhex(i) for i in ids]
         if not set(paths) <= saves.all_paths(games):
             raise ValueError("not a save")
@@ -880,7 +1036,7 @@ class Plugin:
 
     async def save_delete(self, ids: list[str]) -> int:
         paths, games = await self._save_paths(ids)
-        return await asyncio.to_thread(saves.delete, paths, saves.all_paths(games))
+        return await asyncio.to_thread(saves.delete, paths, saves.all_paths(games), HOME)
 
     def _backup_dirs(self, roots: list[dict]) -> list[str]:
         return [os.path.join(r["emulation"], "backups") for r in roots]
@@ -888,7 +1044,7 @@ class Plugin:
     async def backup(self, ids: list[str], dest: str = "internal") -> str:
         """Zips these saves (their ids; all of them when empty) into internal storage's or a
         card's (`dest`: its path as shown) Emulation/backups."""
-        games = await asyncio.to_thread(saves.listing, HOME, _state()["roms"])
+        games = await asyncio.to_thread(saves.listing, HOME, _state()["roms"], systems.load())
         allowed = {f["path"] for g in games for f in g["files"]}
         paths = [_unhex(i) for i in ids] or sorted(allowed)
         if not set(paths) <= allowed:
@@ -914,28 +1070,224 @@ class Plugin:
         known = {b["path"] for b in await asyncio.to_thread(saves.backups, self._backup_dirs(roots))}
         if path not in known:
             raise ValueError("not a backup")
-        return await asyncio.to_thread(saves.restore, path, HOME, roots)
+        return await asyncio.to_thread(saves.restore, path, HOME, roots, saves.home_save_dirs(systems.load()))
 
-    # --- extra cores ---------------------------------------------------------------------------
-    def _extra(self, db: dict) -> set[str]:
-        return {e["core"] for e in db["emulators"].values() if e.get("download")}
-
+    # --- cores ---------------------------------------------------------------------------------
     async def cores(self) -> list[dict]:
         return _shown_all(await asyncio.to_thread(cores.listing, HOME, systems.load(), os.path.join(EMU, "bios")))
 
-    async def core_download(self, core: str) -> list[dict]:
-        """The core, and the folders it needs in Emulation/bios (cores.SYSTEM_FILES)."""
+    async def core_download(self, core: str, accepted: bool = False) -> list[dict]:
+        """The core, and the folders it needs in Emulation/bios (cores.SYSTEM_FILES). One whose
+        license isn't free needs `accepted` (the user said yes to its terms)."""
         db = systems.load()
         async with _cores_lock:
-            await asyncio.to_thread(cores.download, HOME, core, self._extra(db), os.path.join(EMU, "bios"))
+            await asyncio.to_thread(cores.download, HOME, core, cores.known(db), os.path.join(EMU, "bios"), accepted)
         await _emit("roms_changed")
         return await self.cores()
 
     async def core_remove(self, core: str) -> list[dict]:
         db = systems.load()
         async with _cores_lock:
-            await asyncio.to_thread(cores.remove, HOME, core, self._extra(db))
+            await asyncio.to_thread(cores.remove, HOME, core, cores.known(db))
+        await _emit("roms_changed")  # its games' emulator (and layout) may be another now
         return await self.cores()
+
+    # --- the emulators (Flathub) ---------------------------------------------------------------
+    def _flatpak_rows(self, db: dict, inst: dict, upd: set) -> list[dict]:
+        rows = []
+        for app, f in db.get("flatpaks", {}).items():
+            emus = [(eid, e) for eid, e in db["emulators"].items() if _flatpak_of(e) == app]
+            sys_names = sorted({s["name"] for s in db["systems"].values()
+                                if any(eid in s["emulators"] for eid, _ in emus)})
+            have = inst.get(app)
+            # RetroArch stands for its cores: experimental only when every emulator in it is
+            rows.append({"id": app, "name": f.get("name", app), "installed": bool(have),
+                         "version": have["version"] if have else "", "update": bool(have) and app in upd,
+                         "removable": bool(have) and have["installation"] == "user",
+                         "experimental": bool(emus) and all(e.get("experimental") for _, e in emus),
+                         "emulators": [e["name"] for _, e in emus] if app != cores.RETROARCH else [],
+                         "systems": sys_names, "license": f.get("license", "") or (emus[0][1].get("license", "") if len(emus) == 1 else ""),
+                         "needs": [n for _, e in emus for n in _needs(e)]})
+        rows.sort(key=lambda r: (r["id"] != cores.RETROARCH, r["experimental"], r["name"].lower()))
+        return rows
+
+    def _counts(self) -> dict:
+        """Games per system: the last scan's (games found, before any is in Steam), less those
+        deleted in Steam; roms.json's before the first scan."""
+        roms_st = _state()["roms"]
+        src = self._found or roms_st
+        counts = {}
+        for rid, r in src.items():
+            if not roms_st.get(rid, {}).get("deleted"):
+                counts[r["system"]] = counts.get(r["system"], 0) + 1
+        return counts
+
+    def _needed(self, db: dict, inst: dict) -> dict:
+        return needed(db, self._counts(), _read_json(CHOICES, {}), inst,
+                      lambda c: os.path.exists(cores.path(HOME, c)))
+
+    async def emulators(self, check_updates: bool = False) -> dict:
+        """The Emulators tab: {flatpaks: [{id, name, installed, version, update, removable,
+        experimental, emulators, systems, license, needs}], cores: cores(), needed (needed()), job
+        (setup_status())}. Updates are looked up (network) with check_updates."""
+        db = systems.load()
+        inst = await asyncio.to_thread(flatpaks.installed, HOME)
+        upd = await asyncio.to_thread(flatpaks.updates, HOME) if check_updates else flatpaks._updates["apps"]
+        # flatpak couldn't list the apps: nothing to offer to install until it can
+        return _shown_all({"flatpaks": self._flatpak_rows(db, inst or {}, upd),
+                           "cores": await asyncio.to_thread(cores.listing, HOME, db, os.path.join(EMU, "bios")),
+                           "needed": self._needed(db, inst) if inst is not None else {"flatpaks": [], "cores": [], "systems": []},
+                           "list_failed": inst is None, "job": dict(self._setup)})
+
+    async def flatpak_size(self, app: str) -> dict:
+        """{download, installed} bytes on Flathub (0: unknown)."""
+        if app not in systems.load().get("flatpaks", {}):
+            raise ValueError("not an emulator Kettle knows")
+        return await asyncio.to_thread(flatpaks.info, HOME, app)
+
+    async def setup_start(self, kind: str, apps: list[str], core_list: list[str] | None = None,
+                          accepted: list[str] | None = None) -> dict:
+        """Installs, updates or removes these Flatpaks (systems.json's only), then (install)
+        downloads these cores; `accepted`: the non-free cores whose terms the user said yes to.
+        An install leaves out the apps installed already (in either installation)."""
+        db = systems.load()
+        known = db.get("flatpaks", {})
+        if any(a not in known for a in apps):
+            raise ValueError("not an emulator Kettle knows")
+        cknown = cores.known(db)
+        core_list = list(core_list or [])
+        if any(c not in cknown for c in core_list) or (core_list and kind != "install"):
+            raise ValueError("not a core Kettle knows")
+        accepted = set(accepted or [])
+        for c in core_list:
+            if not cknown[c].get("free", True) and c not in accepted:
+                raise ValueError(f"{cknown[c]['name']}'s license has to be accepted first")
+        if kind == "install" and apps:
+            inst = await asyncio.to_thread(flatpaks.installed, HOME)
+            if inst is None:
+                raise ValueError("Flatpak couldn't list the installed apps; try again in a moment")
+            apps = [a for a in apps if a not in inst]
+        if not apps and not core_list:
+            return {"state": "idle"}  # nothing left to do
+        # no await from here until the state is set: two jobs never start at once
+        if self._setup.get("state") == "running":
+            raise ValueError("an install is running already")
+        cmds = flatpaks.commands(kind, apps, {a: known[a].get("permissions", []) for a in apps}) if apps else []
+        self._setup = {"state": "running", "kind": kind, "apps": list(apps), "cores": core_list, "step": "",
+                       "percent": 0.0, "eta": "", "error": "", "done_cores": []}
+        # kept for a plugin restart halfway: the unit goes on by itself, the cores are this side's
+        _write_json(SETUP_JOB, {"kind": kind, "apps": list(apps), "cores": core_list, "accepted": sorted(accepted),
+                                "flatpak": bool(cmds), "done_cores": []})
+        self._tasks.append(asyncio.create_task(self._follow_setup(cmds, core_list, accepted)))
+        return dict(self._setup)
+
+    async def install_needed(self, accepted: list[str] | None = None) -> dict:
+        """Installs what the library's games need (needed()); the non-free cores among them only
+        when in `accepted`. Nothing to do (all installed, or only cores the user said no to): an
+        idle state back, with what was left out."""
+        db = systems.load()
+        inst = await asyncio.to_thread(flatpaks.installed, HOME)
+        if inst is None:
+            raise ValueError("Flatpak couldn't list the installed apps; try again in a moment")
+        need = self._needed(db, inst)
+        accepted = set(accepted or [])
+        want = [c["core"] for c in need["cores"] if c["free"] or c["core"] in accepted]
+        left_out = [c["core"] for c in need["cores"] if c["core"] not in want]
+        if not need["flatpaks"] and not want:
+            return {"state": "idle", "left_out": left_out}
+        return {**await self.setup_start("install", need["flatpaks"], want, list(accepted)), "left_out": left_out}
+
+    async def _follow_setup(self, cmds: list[list[str]], core_list: list[str], accepted: set, resume: bool = False):
+        """The job: the Flatpak part (started here, or with resume the unit a restart found, or
+        its log), then the cores not done yet."""
+        job = self._setup
+        try:
+            if cmds or resume:
+                job["step"] = "flatpak"
+                if cmds:
+                    await asyncio.to_thread(flatpaks.start, HOME, SETUP_LOG, cmds)
+                await self._watch_flatpak(job)
+            db = systems.load()
+            for c in core_list:
+                if job["state"] != "running":
+                    return
+                if c in job["done_cores"]:
+                    continue
+                job.update(step=f"core:{c}", percent=0.0)
+                await _emit("setup", dict(job))
+                async with _cores_lock:
+                    await asyncio.to_thread(cores.download, HOME, c, cores.known(db), os.path.join(EMU, "bios"),
+                                            c in accepted)
+                job["done_cores"].append(c)
+                saved = _read_json(SETUP_JOB, {})
+                if saved:
+                    _write_json(SETUP_JOB, {**saved, "done_cores": job["done_cores"]})
+            if job["state"] == "running":
+                job.update(state="done", step="", percent=100.0)
+        except Exception as e:
+            if job["state"] == "running":
+                job.update(state="failed", error=str(e)[-300:])
+        finally:
+            try:
+                os.remove(SETUP_JOB)
+            except OSError:
+                pass
+            flatpaks.forget_updates()
+            await _emit("setup", dict(job))
+            await _emit("roms_changed")
+
+    async def _watch_flatpak(self, job: dict):
+        """Until the job unit is done: its progress to the frontend; a failure is a RuntimeError."""
+        last = None
+        while True:
+            log = await asyncio.to_thread(flatpaks.tail, SETUP_LOG)
+            code = flatpaks.exit_code(log)
+            job.update(flatpaks.progress(log))
+            snap = (job["percent"], job["eta"])
+            if snap != last:
+                last = snap
+                await _emit("setup", dict(job))
+            if code is not None:
+                if code != 0:
+                    raise RuntimeError(flatpaks.error_text(log))
+                return
+            if job["state"] != "running":
+                return
+            if not await asyncio.to_thread(flatpaks.running, HOME) and flatpaks.exit_code(
+                    await asyncio.to_thread(flatpaks.tail, SETUP_LOG)) is None:
+                raise RuntimeError("the install stopped")
+            await asyncio.sleep(1)
+
+    async def _resume_setup(self, saved: dict):
+        """A job the plugin's last run started: the unit's part (still running, or its log), then
+        the cores it hadn't downloaded."""
+        self._setup = {"state": "running", "kind": saved.get("kind", "install"), "apps": saved.get("apps", []),
+                       "cores": saved.get("cores", []), "step": "", "percent": 0.0, "eta": "", "error": "",
+                       "done_cores": list(saved.get("done_cores", []))}
+        await self._follow_setup([], self._setup["cores"], set(saved.get("accepted", [])),
+                                 resume=bool(saved.get("flatpak", True)))
+
+    async def setup_status(self) -> dict:
+        return dict(self._setup)
+
+    async def setup_cancel(self):
+        if self._setup.get("state") == "running":
+            self._setup["state"] = "cancelled"
+            await asyncio.to_thread(flatpaks.stop, HOME)
+
+    async def controls(self) -> list[dict]:
+        """Which of the standard hotkeys each emulator has: [{name, emulators (names: RetroArch's
+        cores share one row), hotkeys}]."""
+        db = systems.load()
+        rows = {}
+        for eid, e in db["emulators"].items():
+            sids = [sid for sid, sd in db["systems"].items() if eid in sd["emulators"]]
+            have = _hotkeys(db, e, sids)
+            hk = tuple(a for a in keys.ACTIONS if a in have)
+            name = "RetroArch" if e.get("kind") == "libretro" else e["name"]
+            r = rows.setdefault((name, hk), {"name": name, "emulators": [], "hotkeys": list(hk)})
+            r["emulators"].append(e["name"])
+        return sorted(rows.values(), key=lambda r: (r["name"] != "RetroArch", r["name"].lower()))
 
     # --- settings ------------------------------------------------------------------------------
     async def set_settings(self, changes: dict) -> dict:
@@ -1053,6 +1405,10 @@ class Plugin:
             await asyncio.to_thread(seed.ensure_dirs, EMU)
         except Exception as e:
             decky.logger.warning("emulation: making ~/Emulation: %s", e)
+        # an emulator install the plugin's last run started and didn't see the end of: go on with it
+        saved = _read_json(SETUP_JOB, None)
+        if saved or await asyncio.to_thread(flatpaks.running, HOME):
+            self._tasks.append(asyncio.create_task(self._resume_setup(saved or {})))
         self._tasks += [asyncio.create_task(self._rescan_loop()), asyncio.create_task(self._inbox_loop()),
                         asyncio.create_task(self._error_loop())]
 

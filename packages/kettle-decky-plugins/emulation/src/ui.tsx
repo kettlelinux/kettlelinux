@@ -72,9 +72,9 @@ export const CONTROLS: [string, string][] = [
   ["Select + X", "Emulator menu"],
   ["Select + Y", "Fast-forward on or off"],
   ["Select + L1 / R1", "State slot down / up"],
-  ["Select + L2 (hold)", "Rewind (8/16-bit systems)"],
-  ["Select + R2", "Screenshot (not in melonDS)"],
-  ["Select + D-pad left/right", "Swap screens (DS, melonDS)"],
+  ["Select + L2 (hold)", "Rewind (where the emulator has it)"],
+  ["Select + R2", "Screenshot"],
+  ["Select + D-pad left/right", "Swap screens (DS, 3DS)"],
   ["Select + Start", "Quit to Steam (if an emulator hangs: Steam menu > Exit game)"],
 ];
 

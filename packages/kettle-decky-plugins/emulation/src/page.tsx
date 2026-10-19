@@ -1,5 +1,6 @@
 // The Emulation page, a tab each: Library (the systems, their games and emulators), Add games
-// (add.tsx), BIOS, Controls, Saves, Extra cores and Settings.
+// (add.tsx), Emulators (emulators.tsx: from Flathub, and RetroArch's cores), BIOS, Controls,
+// Saves and Settings.
 import {
   ConfirmModal,
   DialogButton,
@@ -13,6 +14,8 @@ import {
 } from "@decky/ui";
 import { useEffect, useMemo, useState } from "react";
 import { FaBook, FaCog, FaDownload, FaGamepad, FaMicrochip, FaPlus, FaSave } from "react-icons/fa";
+import { HotkeyAction, controls } from "./api";
+import { EmulatorsTab, offerInstall } from "./emulators";
 import {
   BiosEntry,
   Game,
@@ -26,9 +29,6 @@ import {
   backups,
   bios,
   biosInstall,
-  coreDownload,
-  coreRemove,
-  cores,
   games,
   overview,
   restore,
@@ -50,8 +50,18 @@ const page = { padding: "0 0 40px" };
 function emulatorOptions(s: System) {
   return s.emulators.map((e) => ({
     data: e.id,
-    label: e.installed ? e.name : e.download ? `${e.name} (download it in Extra cores)` : e.flatpak ? `${e.name} (install it from Game Stores > Flathub)` : `${e.name} (not installed)`,
+    label: `${e.name}${e.experimental ? " (experimental)" : ""}${e.installed ? "" : " (not installed)"}`,
   }));
+}
+
+// A system's emulator chosen; one that isn't installed is offered for install too
+function choose(s: System, eid: string, reload: () => void) {
+  act(async () => {
+    await setChoice(s.id, eid);
+    reload();
+    const e = s.emulators.find((x) => x.id === eid);
+    if (e && !e.installed) offerInstall(e, reload);
+  }, "Saving failed");
 }
 
 function ArtModal({ g, names, closeModal }: { g: Game; names: string[]; closeModal?: () => void }) {
@@ -134,9 +144,9 @@ function LibraryTab({ ov, reload }: { ov: Overview; reload: () => void }) {
           <span style={dim}>Emulation/roms/{s.folder}</span>
           {s.bios === "missing-required" && !s.bios_from_core && <span style={warn}> · needs a BIOS file (BIOS tab)</span>}
           {s.bios_from_core ? (
-            <span style={warn}> · {s.note || "needs folders that come with its core, from Extra cores"}</span>
+            <span style={warn}> · {s.note || "needs folders that come with its core (Emulators tab)"}</span>
           ) : (
-            !s.emulator && <span style={warn}> · {s.note || "no emulator installed"}</span>
+            !s.emulator && <span style={warn}> · no emulator installed{s.note ? ` · ${s.note}` : ""}</span>
           )}
         </span>
       }
@@ -144,11 +154,12 @@ function LibraryTab({ ov, reload }: { ov: Overview; reload: () => void }) {
     >
       <Focusable style={{ display: "flex", gap: "6px", alignItems: "center" }} flow-children="horizontal">
         {s.emulators.length > 1 && (
-          <DropdownItem
-            rgOptions={emulatorOptions(s)}
-            selectedOption={s.emulator || s.emulators[0].id}
-            onChange={(o) => act(async () => (await setChoice(s.id, o.data), reload()), "Saving failed")}
-          />
+          <DropdownItem rgOptions={emulatorOptions(s)} selectedOption={s.emulator || s.emulators[0].id} onChange={(o) => choose(s, o.data, reload)} />
+        )}
+        {!s.emulator && s.emulators.length > 0 && (
+          <DialogButton style={{ width: "auto", minWidth: 0 }} onClick={() => offerInstall(s.emulators[0], reload)}>
+            Install {s.emulators[0].name}
+          </DialogButton>
         )}
         {s.count > 0 && (
           <DialogButton style={{ width: "auto", minWidth: 0 }} onClick={() => showModal(<GamesModal s={s} />)}>
@@ -274,6 +285,50 @@ function BiosTab() {
   );
 }
 
+const HOTKEY_NAMES: [HotkeyAction, string][] = [
+  ["save_state", "Save"],
+  ["load_state", "Load"],
+  ["menu", "Menu"],
+  ["fast_forward", "Fast-forward"],
+  ["slot_down", "Slot"],
+  ["rewind", "Rewind"],
+  ["screenshot", "Screenshot"],
+  ["swap_screens", "Swap screens"],
+  ["quit", "Quit"],
+];
+
+// Which of the standard hotkeys each emulator has (systems.json's "hotkeys")
+function Coverage() {
+  const [rows] = usePoll(controls, 0);
+  if (!rows) return null;
+  return (
+    <table style={{ ...small, borderCollapse: "collapse", width: "100%", margin: "8px 0" }}>
+      <thead>
+        <tr>
+          <th style={{ textAlign: "left" }}>Emulator</th>
+          {HOTKEY_NAMES.map(([a, n]) => (
+            <th key={a} style={{ padding: "0 4px", fontWeight: "normal", ...dim }}>
+              {n}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.name + r.emulators.join()}>
+            <td title={r.emulators.join(", ")}>{r.name === "RetroArch" ? `RetroArch (${plural(r.emulators.length, "core")})` : r.name}</td>
+            {HOTKEY_NAMES.map(([a]) => (
+              <td key={a} style={{ textAlign: "center", ...(r.hotkeys.includes(a) || (a === "slot_down" && r.hotkeys.includes("slot_up")) ? good : dim) }}>
+                {r.hotkeys.includes(a) || (a === "slot_down" && r.hotkeys.includes("slot_up")) ? "✓" : "–"}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function ControlsTab({ ov }: { ov: Overview }) {
   return (
     <div style={{ ...page, maxWidth: "720px" }}>
@@ -282,6 +337,8 @@ function ControlsTab({ ov }: { ov: Overview }) {
         bottom one everywhere), and holding <b>Select</b> turns the buttons into hotkeys, in every emulator:
       </p>
       <ControlsTable face={ov.face} />
+      <h3 style={{ margin: "16px 0 4px" }}>What each emulator has</h3>
+      <Coverage />
       <p style={{ ...small, ...dim }}>
         The same actions are buttons in Quick Access while a game runs. The layout is Steam's "Kettle Emulation" controller layout, set for
         each game once on the device's own controls and on wired (USB) controllers: change a game's layout in Steam and it keeps yours. A
@@ -312,7 +369,7 @@ function SaveRow({ g, onChange }: { g: SaveGame; onChange: () => void }) {
     <Field
       label={g.title}
       icon={thumb ? <img src={thumb} style={{ height: "40px", borderRadius: "3px" }} /> : undefined}
-      description={`${plural(sv, "save")}, ${plural(st, "state")} · ${new Date(Math.max(...g.files.map((f) => f.mtime)) * 1000).toLocaleString()}`}
+      description={`${g.emulator ? `${g.emulator} · ` : ""}${plural(sv, "save")}, ${plural(st, "state")} · ${new Date(Math.max(...g.files.map((f) => f.mtime)) * 1000).toLocaleString()}`}
     >
       <Focusable style={{ display: "flex", gap: "6px" }} flow-children="horizontal">
         <DialogButton style={{ width: "auto", minWidth: 0 }} onClick={() => act(async () => toastDone(await backup(g.files.map((f) => f.id), "internal")), "Backing up failed")}>
@@ -383,63 +440,6 @@ function SavesTab({ ov }: { ov: Overview }) {
   );
 }
 
-function CoresTab({ reload }: { reload: () => void }) {
-  const [list, setList] = useState<Awaited<ReturnType<typeof cores>> | null>(null);
-  const [busy, setBusy] = useState("");
-  useEffect(() => {
-    cores().then(setList).catch(() => {});
-  }, []);
-  return (
-    <div style={page}>
-      <p style={{ ...small, marginTop: 0 }}>
-        These emulators are free to use at home, but their licenses don't allow them to be sold or included in Kettle. Download one and the
-        systems it plays (arcade, 32X; better Genesis and SNES) work like the rest. They come from libretro's own build server.
-      </p>
-      {list?.map((c) => (
-        <Field
-          key={c.core}
-          label={c.name}
-          description={`${c.systems.join(", ")} · ${c.terms}${c.missing.length ? ` Its ${c.missing.join(" and ")} folders are missing from Emulation/bios: download it again.` : ""}`}
-          childrenContainerWidth="max"
-        >
-          {c.installed ? (
-            <DialogButton style={{ width: "auto" }} onClick={() => act(async () => (setList(await coreRemove(c.core)), reload()), "Removing failed")}>
-              Remove
-            </DialogButton>
-          ) : (
-            <DialogButton
-              style={{ width: "auto" }}
-              disabled={!!busy}
-              onClick={() =>
-                showModal(
-                  <ConfirmModal
-                    strTitle={`Download ${c.name}?`}
-                    strDescription={`${c.terms} License: ${c.license}. By downloading it you accept that license.`}
-                    strOKButtonText="Accept and download"
-                    onOK={() =>
-                      act(async () => {
-                        setBusy(c.core);
-                        try {
-                          setList(await coreDownload(c.core));
-                          reload(); // the emulator lists of Library and Settings
-                        } finally {
-                          setBusy("");
-                        }
-                      }, "Downloading failed")
-                    }
-                  />,
-                )
-              }
-            >
-              {busy === c.core ? "Downloading…" : "Download"}
-            </DialogButton>
-          )}
-        </Field>
-      ))}
-    </div>
-  );
-}
-
 function SettingsTab({ ov, reload }: { ov: Overview; reload: () => void }) {
   const [key, setKey] = useState(ov.settings.sgdb_key);
   return (
@@ -463,7 +463,7 @@ function SettingsTab({ ov, reload }: { ov: Overview; reload: () => void }) {
             label={s.name}
             rgOptions={emulatorOptions(s)}
             selectedOption={s.emulator || s.emulators[0].id}
-            onChange={(o) => act(async () => (await setChoice(s.id, o.data), reload()), "Saving failed")}
+            onChange={(o) => choose(s, o.data, reload)}
           />
         ))}
     </div>
@@ -478,10 +478,11 @@ export function Page() {
         ? [
             { title: "Library", route: `${ROUTE}/library`, icon: <FaGamepad />, content: <LibraryTab ov={ov} reload={reload} /> },
             { title: "Add games", route: `${ROUTE}/add`, icon: <FaPlus />, content: <AddTab ov={ov} /> },
+            { title: "Emulators", route: `${ROUTE}/emulators`, icon: <FaDownload />, content: <EmulatorsTab reload={reload} /> },
             { title: "BIOS", route: `${ROUTE}/bios`, icon: <FaMicrochip />, content: <BiosTab /> },
             { title: "Controls", route: `${ROUTE}/controls`, icon: <FaBook />, content: <ControlsTab ov={ov} /> },
             { title: "Saves", route: `${ROUTE}/saves`, icon: <FaSave />, content: <SavesTab ov={ov} /> },
-            { title: "Extra cores", route: `${ROUTE}/cores`, icon: <FaDownload />, content: <CoresTab reload={reload} /> },
+
             { title: "Settings", route: `${ROUTE}/settings`, icon: <FaCog />, content: <SettingsTab ov={ov} reload={reload} /> },
           ]
         : [],
