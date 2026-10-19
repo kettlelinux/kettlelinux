@@ -411,3 +411,57 @@ class RyujinxPad(unittest.TestCase):
             json.dump({"version": 70, "input_config": [mine]}, f)
         seed.keep_ryujinx()
         self.assertEqual(self.conf()["input_config"], [mine])
+
+
+class EdenPad(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ini = os.path.join(self.tmp.name, "eden", "qt-config.ini")
+        for name, value in (("EDEN_INI", self.ini), ("EDEN_KEYS", os.path.join(self.tmp.name, "keys")),
+                            ("SWITCH_KEYS", os.path.join(self.tmp.name, "none"))):
+            p = mock.patch.object(seed, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        p = mock.patch.object(seed, "_install_firmware", lambda *a: None)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def read(self):
+        import configparser
+        cp = configparser.RawConfigParser(strict=False, interpolation=None, delimiters=("=",))
+        cp.optionxform = str
+        cp.read(self.ini, encoding="utf-8")
+        return cp
+
+    def write(self, text):
+        os.makedirs(os.path.dirname(self.ini), exist_ok=True)
+        with open(self.ini, "w") as f:
+            f.write(text)
+
+    def test_fresh_config_gets_the_pad_in_handheld_mode(self):
+        seed.keep_eden()
+        c = self.read()["Controls"]
+        guid = seed.EDEN_PAD_GUID
+        # by position: Switch A is SDL's B (button 1, east)
+        self.assertEqual(c["player_0_button_a"], f'"engine:sdl,port:0,guid:{guid},button:1"')
+        self.assertEqual(c["player_0_button_a\\default"], "false")
+        self.assertEqual(c["player_0_button_dup"], f'"engine:sdl,port:0,guid:{guid},hat:0,direction:up"')
+        self.assertIn("axis:2", c["player_0_button_zl"])
+        self.assertIn("axis_x:3,axis_y:4", c["player_0_rstick"])
+        self.assertEqual((c["player_0_type"], c["player_0_connected"]), ("0", "true"))
+        s = self.read()["System"]
+        self.assertEqual((s["use_docked_mode"], s["use_docked_mode\\default"]), ("0", "false"))
+
+    def test_default_keyboard_replaced(self):
+        self.write("[Controls]\nplayer_0_button_a\\default=false\n"
+                   "player_0_button_a=\"engine:keyboard,code:67,toggle:0\"\n")
+        seed.keep_eden()
+        self.assertIn("engine:sdl", self.read()["Controls"]["player_0_button_a"])
+        self.assertNotIn("System", self.read())  # not a new config: docked mode is the user's
+
+    def test_users_own_pad_kept(self):
+        mine = '"engine:sdl,port:0,guid:030000005e0400008e02000014010000,button:0"'
+        self.write(f"[Controls]\nplayer_0_button_a\\default=false\nplayer_0_button_a={mine}\n")
+        seed.keep_eden()
+        self.assertEqual(self.read()["Controls"]["player_0_button_a"], mine)

@@ -637,8 +637,72 @@ def _copy_keys(dest):
         os.replace(tmp, dst)
 
 
+# Steam's virtual pad as Eden's SDL2 driver names it: its SDL GUID with the name CRC (bytes 2-3)
+# zeroed, as raw hex (sdl_driver.cpp GetGUID, uuid.cpp RawString), which is also SDL's own
+# controller-database GUID for "Steam Virtual Gamepad" on Linux (bus 0003, 28de:11ff, version 1)
+EDEN_PAD_GUID = "03000000de280000ff11000001000000"
+# SDL's mapping of that pad (SDL_gamecontrollerdb.h): joystick button, hat and axis numbers
+_PAD = {"a": ("button", 0), "b": ("button", 1), "x": ("button", 2), "y": ("button", 3),
+        "lb": ("button", 4), "rb": ("button", 5), "back": ("button", 6), "start": ("button", 7),
+        "guide": ("button", 8), "ls": ("button", 9), "rs": ("button", 10),
+        "up": ("hat", "up"), "down": ("hat", "down"), "left": ("hat", "left"),
+        "right": ("hat", "right"), "lt": ("axis", 2), "rt": ("axis", 5)}
+# Eden's own default for a gamepad (sdl_driver.cpp GetDefaultButtonBinding), by position:
+# Switch A east, B south, X north, Y west
+_EDEN_BUTTONS = {"button_a": "b", "button_b": "a", "button_x": "y", "button_y": "x",
+                 "button_lstick": "ls", "button_rstick": "rs", "button_l": "lb", "button_r": "rb",
+                 "button_zl": "lt", "button_zr": "rt", "button_plus": "start", "button_minus": "back",
+                 "button_dleft": "left", "button_dup": "up", "button_dright": "right",
+                 "button_ddown": "down", "button_slleft": "lb", "button_srleft": "rb",
+                 "button_slright": "lb", "button_srright": "rb", "button_home": "guide"}
+
+
+def _eden_param(**kv):
+    """A ParamPackage as Eden writes one: key:value pairs, comma-joined, in quotes (a value with a
+    comma is quoted, config.cpp AdjustOutputString)."""
+    return '"' + ",".join(f"{k}:{v}" for k, v in kv.items()) + '"'
+
+
+def eden_pad(player=0):
+    """[Controls] keys making player `player` Steam's virtual pad as a Pro Controller, the values
+    Eden's own auto-mapping writes (sdl_driver.cpp Build*ParamPackage*)."""
+    pad = {"engine": "sdl", "port": 0, "guid": EDEN_PAD_GUID}
+    values = {"type": "0", "connected": "true"}  # ControllerType::ProController
+    for key, src in _EDEN_BUTTONS.items():
+        kind, n = _PAD[src]
+        if kind == "button":
+            values[key] = _eden_param(**pad, button=n)
+        elif kind == "hat":
+            values[key] = _eden_param(**pad, hat=0, direction=n)
+        else:
+            values[key] = _eden_param(**pad, axis=n, threshold=0.5, invert="+")
+    for key, (x, y) in (("lstick", (0, 1)), ("rstick", (3, 4))):
+        values[key] = _eden_param(**pad, axis_x=x, axis_y=y, offset_x="0.000000",
+                                  offset_y="0.000000", invert_x="+", invert_y="+")
+    return qt_settings({f"player_{player}_{k}": v for k, v in values.items()})
+
+
+def _eden_player_is_default(cp, player=0):
+    """Still Eden's own player: its button A never set (\\default true or missing) or a
+    keyboard key. A pad the user mapped is theirs."""
+    if not cp.has_section("Controls"):
+        return True
+    key = f"player_{player}_button_a"
+    if cp["Controls"].get(key + "\\default", "true").strip().lower() == "true":
+        return True
+    return "engine:keyboard" in cp["Controls"].get(key, "")
+
+
 def keep_eden():
-    set_ini(EDEN_INI, {"UI": dict(**qt_shortcuts("Main Window", {
+    """Its hotkeys and UI settings, keys, firmware, and player 1 as Steam's virtual pad while
+    Eden still has its own keyboard default there. A new config also starts in handheld mode
+    (720p; Eden's desktop default is docked, settings.h use_docked_mode)."""
+    fresh = not os.path.exists(EDEN_INI)
+    cp = configparser.RawConfigParser(strict=False, interpolation=None, delimiters=("=",))
+    cp.optionxform = str
+    if not fresh:
+        cp.read(EDEN_INI, encoding="utf-8")
+    sections = {"UI": dict(**qt_shortcuts("Main Window", {
         "Continue/Pause Emulation": "F1",
         "Toggle Turbo Speed": "Space",
         "Capture Screenshot": "F8",
@@ -647,7 +711,12 @@ def keep_eden():
         "Exit Fullscreen": "", "Load/Remove Amiibo": "", "Restart Emulation": "",
         "Change Adapting Filter": "", "Change GPU Mode": "",
     }), **qt_settings({"fullscreen": "true", "confirmStop": "2", "check_for_updates": "false",
-                       "firstStart": "false"}))}, qt=True)
+                       "firstStart": "false"}))}
+    if _eden_player_is_default(cp):
+        sections["Controls"] = eden_pad()
+    if fresh:
+        sections["System"] = qt_settings({"use_docked_mode": "0"})  # ConsoleMode::Handheld
+    set_ini(EDEN_INI, sections, qt=True)
     _copy_keys(EDEN_KEYS)
     _install_firmware("eden", EDEN_FIRMWARE)
 
