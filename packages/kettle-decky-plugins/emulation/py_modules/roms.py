@@ -233,6 +233,19 @@ def scan(roots: list[dict], systems: dict, failed: set | None = None) -> dict:
     return found
 
 
+def drop_extras(found: dict, kind_of) -> list[dict]:
+    """Takes out of `found` the Switch files that aren't a game: updates and DLC (kind_of(rom)
+    says "game", "update", "dlc" or None when it can't be told; those stay). They're installed
+    into the emulator, not played, so they never become shortcuts (and a shortcut made before
+    goes, as for a file that's gone). Returns what was taken out."""
+    out = []
+    for rid in [rid for rid, r in found.items() if r["system"] == "switch"]:
+        k = kind_of(found[rid])
+        if k in ("update", "dlc"):
+            out.append({**found.pop(rid), "kind": k})
+    return out
+
+
 def _disambiguate(found: dict):
     """Two ROMs of a system with the same title (two regions): each keeps its tags."""
     by = {}

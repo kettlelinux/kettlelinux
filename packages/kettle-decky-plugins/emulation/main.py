@@ -69,6 +69,7 @@ INBOX_SETTLE = 30  # s a file in the inbox is left alone before it's sorted (sti
 ART_TRIES = 3
 DEFAULTS = {"first_run_done": False, "auto_inbox": True, "sgdb_key": ""}
 SETUP_LOG = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "setup.log")
+SWITCH_IDS = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "switch-ids.json")  # path -> [size, mtime, title id]
 SETUP_JOB = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "setup.json")  # the running job, for a restart
 
 _lock = asyncio.Lock()  # roms.json and settings.json, one writer at a time
@@ -124,6 +125,22 @@ def _write_choice_paths(st: dict, found: dict):
     if c.get("games") != games:
         c["games"] = games
         _write_json(CHOICES, c)
+
+
+def _switch_keys_file() -> str | None:
+    """The user's prod.keys: Emulation/bios/switch's, else an emulator's copy (systems.json's
+    "needs" checks)."""
+    paths = ["Emulation/bios/switch/prod.keys"]
+    for e in systems.load()["emulators"].values():
+        for need in e.get("needs", ()):
+            if isinstance(need, dict):
+                checks = need.get("check")
+                paths += [c for c in (checks if isinstance(checks, list) else [checks]) if c and c.endswith("prod.keys")]
+    for c in paths:
+        p = os.path.join(HOME, c)
+        if os.path.isfile(p):
+            return p
+    return None
 
 
 def _settings() -> dict:
@@ -450,13 +467,51 @@ class Plugin:
                         "emulators": emus, "emulator": _chosen(choices, sid, emus),
                         "bios": bst.get(sid, {}).get("state", "none"), "note": s.get("note", ""),
                         "bios_from_core": _needs_only_folders(bst.get(sid, {})),
-                        "extensions": s.get("extensions", [])})
+                        "extensions": s.get("extensions", []),
+                        # where its artwork comes from: libretro-thumbnails, or only SteamGridDB
+                        # with the user's key (the Switch)
+                        "art_source": "libretro" if s.get("thumbnails") else "sgdb"})
         roots = await asyncio.to_thread(_roots)
         return _shown_all({"systems": out, "total": sum(counts.values()), "face": _face(), "settings": _settings(),
                            "storages": [{"path": r["path"], "emulation": r["emulation"], "label": r["label"],
                                          "internal": r["internal"],
                                          "set_up": os.path.isdir(os.path.join(r["emulation"], "roms"))}
                                         for r in roots]})
+
+    def _switch_kinds(self, found: dict) -> None:
+        """Updates and DLC out of the Switch games (roms.drop_extras): their title IDs, read from
+        the files (kettle_emulation.switch) and cached by path, size and mtime."""
+        if not any(r["system"] == "switch" for r in found.values()):
+            return
+        from kettle_emulation import switch
+        cache = _read_json(SWITCH_IDS, {})
+        keys = None
+
+        def kind_of(r):
+            nonlocal keys
+            try:
+                st = os.stat(r["path"])
+            except OSError:
+                return None
+            sig = [st.st_size, st.st_mtime_ns]
+            hit = cache.get(r["path"])
+            if hit and hit[:2] == sig:
+                tid = hit[2]
+            else:
+                if keys is None:
+                    keys = switch.read_keys(_switch_keys_file()) if _switch_keys_file() else {}
+                tid = switch.title_id(r["path"], keys)
+                cache[r["path"]] = sig + [tid]
+            return switch.kind(tid) if tid else None
+
+        dropped = roms.drop_extras(found, kind_of)
+        for r in dropped:
+            decky.logger.info("emulation: %s is a Switch %s, not a game: left out", r["path"], r["kind"])
+        cache = {p: v for p, v in cache.items() if os.path.exists(p)}
+        try:
+            _write_json(SWITCH_IDS, cache)
+        except OSError:
+            pass
 
     async def sync_plan(self) -> dict:
         """What the frontend does to the library now: add, update and remove shortcuts, and check
@@ -465,6 +520,7 @@ class Plugin:
         roots = await asyncio.to_thread(_roots)
         failed: set[str] = set()
         self._found = await asyncio.to_thread(roms.scan, roots, db["systems"], failed)
+        await asyncio.to_thread(self._switch_kinds, self._found)
         self._sig = await asyncio.to_thread(roms.signature, roots, db["systems"])
         if failed:
             decky.logger.warning("emulation: scanning %s failed: their games are kept", ", ".join(sorted(failed)))
@@ -586,17 +642,25 @@ class Plugin:
                 if chosen:
                     raise ValueError("the artwork server can't be reached; try again with the network up")
                 return None
+            # SteamGridDB (the user's key) where libretro has nothing: every Switch game, and a
+            # game libretro has no box art for. Its pictures come in Steam's shapes, as they are
             key = _settings()["sgdb_key"]
-            if key and "box" not in pics:
+            made = {}
+            if key and (not repo or "box" not in pics):
                 try:
-                    pics = {**art.sgdb(key, title, CACHE), **pics}
+                    made = art.sgdb_assets(key, title, CACHE, chosen if not repo else None)
+                except art.Offline as e:
+                    decky.logger.info("emulation: SteamGridDB %s: %s", title, e)
+                    if not pics:
+                        return None
                 except Exception as e:
                     decky.logger.info("emulation: SteamGridDB %s: %s", title, e)
-            made = art.compose(pics, os.path.join(CACHE, "art", rid))
+            if not made:
+                made = {k: (p, "png") for k, p in art.compose(pics, os.path.join(CACHE, "art", rid)).items()}
             out = {}
-            for kind, path in made.items():
+            for kind, (path, ext) in made.items():
                 with open(path, "rb") as f:
-                    out[str(kind)] = {"data": base64.b64encode(f.read()).decode(), "ext": "png"}
+                    out[str(kind)] = {"data": base64.b64encode(f.read()).decode(), "ext": ext}
             return out
 
         out = await asyncio.to_thread(work)
@@ -624,8 +688,18 @@ class Plugin:
         if not r:
             return []
         repo = systems.load()["systems"][r["system"]].get("thumbnails")
+        if not repo:
+            # no libretro art (the Switch): SteamGridDB's games for the title
+            key = _settings()["sgdb_key"]
+            if not key:
+                return []
+            try:
+                found = await asyncio.to_thread(art.sgdb_search, key, _shown(r["title"]))
+            except Exception as e:
+                raise ValueError(f"SteamGridDB can't be reached: {e}")
+            return _shown_all([g["name"] for g in found[:5]])
         name = _shown(os.path.basename(r["path"]).rpartition(".")[0])
-        return _shown_all(await asyncio.to_thread(art.candidates, repo, name, CACHE)) if repo else []
+        return _shown_all(await asyncio.to_thread(art.candidates, repo, name, CACHE))
 
     async def games(self, system: str) -> list[dict]:
         """A system's games: [{id, title, path (both to show), appid, emulator (the game's own
@@ -1295,8 +1369,21 @@ class Plugin:
             if k not in DEFAULTS or type(v) is not type(DEFAULTS[k]):
                 raise ValueError(f"no such setting: {k}")
         async with _lock:
-            s = {**_settings(), **changes}
+            before = _settings()
+            s = {**before, **changes}
             _write_json(SETTINGS, s)
+            # a new SteamGridDB key: the games still without artwork are tried again with it
+            if s["sgdb_key"] and s["sgdb_key"] != before["sgdb_key"]:
+                st = _state()
+                for r in st["roms"].values():
+                    if not r.get("art"):
+                        r["art_tries"] = 0
+                _write_json(STATE, st)
+                retry = True
+            else:
+                retry = False
+        if retry:
+            await _emit("roms_changed")
         return s
 
     # --- watching ------------------------------------------------------------------------------

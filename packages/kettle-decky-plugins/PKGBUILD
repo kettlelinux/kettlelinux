@@ -83,6 +83,8 @@
 #              Flathub, installed for the user (flatpaks.py: RetroArch, PPSSPP, Dolphin, Azahar,
 #              Play!, RPCS3, xemu, Ryujinx, Eden...) and RetroArch's cores from libretro's buildbot
 #              (cores.py; a non-free one after its license is shown), "install what my games need",
+#              Switch games by their title ID (updates and DLC left out) with artwork from
+#              SteamGridDB (the user's free key, asked for with a QR code),
 #              BIOS status, the emulator per system and per game, saves and backups, Get started
 #              for the first visit, and the running game's hotkeys as Quick Access buttons (those
 #              its emulator has). Kettle builds none of the emulators (up to 1.12.0-65 the image
@@ -94,7 +96,7 @@ pkgname=(kettle-decky-welcome kettle-decky-device-settings
          kettle-decky-stores kettle-decky-moonlight
          kettle-decky-emulation)
 pkgver=1.12.0
-pkgrel=66
+pkgrel=67
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
 license=(BSD-3-Clause)

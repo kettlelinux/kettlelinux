@@ -223,21 +223,44 @@ def pictures(repo: str, rom_name: str, cache: str, chosen: str | None = None) ->
 
 
 # --- SteamGridDB (the user's key) --------------------------------------------------------------
-def sgdb(key: str, title: str, cache: str) -> dict:
-    """{box|snap: local file} from SteamGridDB: the first match's 600x900 grid and its hero."""
+SGDB = "https://www.steamgriddb.com/api/v2"
+# Steam's custom artwork types: the portrait capsule, the hero, the logo, the wide capsule
+SGDB_ASSETS = ((0, "grids", "dimensions=600x900"), (1, "heroes", ""), (2, "logos", ""),
+               (3, "grids", "dimensions=920x430,460x215"))
+MIMES = "mimes=image/png,image/jpeg"  # what Steam takes (no webp or animated)
+
+
+def sgdb_search(key: str, title: str) -> list[dict]:
+    """SteamGridDB's games for a title, best first: [{id, name}]."""
     h = {"Authorization": f"Bearer {key}"}
-    base = "https://www.steamgriddb.com/api/v2"
-    found = json.loads(_get(f"{base}/search/autocomplete/{urllib.parse.quote(title)}", h)).get("data") or []
-    if not found:
+    found = json.loads(_get(f"{SGDB}/search/autocomplete/{urllib.parse.quote(title)}", h)).get("data") or []
+    return [{"id": g["id"], "name": g.get("name", "")} for g in found if "id" in g]
+
+
+def sgdb_assets(key: str, title: str, cache: str, chosen: str | None = None) -> dict:
+    """{Steam artwork type: (local file, "png"|"jpg")} from SteamGridDB for a game without
+    libretro art (the Switch): its capsule, hero, logo and wide capsule, as they are (SteamGridDB
+    makes them in Steam's shapes). `chosen`: a name from sgdb_search (Fix artwork)."""
+    h = {"Authorization": f"Bearer {key}"}
+    games = sgdb_search(key, chosen or title)
+    if chosen:
+        games = [g for g in games if g["name"] == chosen] or games
+    if not games:
         return {}
-    gid = found[0]["id"]
+    gid = games[0]["id"]
     out = {}
-    for kind, path in (("box", f"grids/game/{gid}?dimensions=600x900"), ("snap", f"heroes/game/{gid}")):
-        items = json.loads(_get(f"{base}/{path}", h)).get("data") or []
-        if items:
-            p = _fetch(items[0]["url"], cache)
+    for kind, path, query in SGDB_ASSETS:
+        q = "&".join(x for x in (query, MIMES) if x)
+        items = json.loads(_get(f"{SGDB}/{path}/game/{gid}?{q}", h)).get("data") or []
+        for item in items[:3]:
+            url = item.get("url", "")
+            ext = "jpg" if url.lower().endswith((".jpg", ".jpeg")) else "png" if url.lower().endswith(".png") else None
+            if not ext:
+                continue
+            p = _fetch(url, cache)
             if p:
-                out[kind] = p
+                out[kind] = (p, ext)
+                break
     return out
 
 

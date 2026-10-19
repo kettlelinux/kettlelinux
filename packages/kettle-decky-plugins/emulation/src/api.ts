@@ -24,6 +24,7 @@ export type System = {
   emulator: string; // the one its games start with ("" when none is installed)
   bios: BiosState;
   bios_from_core: boolean; // what it misses is only its core's folders (system_dirs), from the Emulators tab
+  art_source: "libretro" | "sgdb"; // its artwork: libretro-thumbnails, or only SteamGridDB with the user's key (the Switch)
   note: string;
   extensions: string[];
 };

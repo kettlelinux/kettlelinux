@@ -20,11 +20,11 @@
 #   ~/Emulation, pkexec: 50-kettle-emulation-share.rules).
 pkgname=kettle-emulation
 pkgver=0.1.0
-pkgrel=3
+pkgrel=4
 pkgdesc='Kettle Linux: emulator launcher, standard controls and ROM/BIOS import'
 arch=(any)
 license=(BSD-3-Clause)
-depends=(python python-evdev flatpak 7zip polkit samba avahi)
+depends=(python python-evdev python-cryptography flatpak 7zip polkit samba avahi)  # cryptography: switch.py
 
 build() {
   mkdir -p "$srcdir/layouts"

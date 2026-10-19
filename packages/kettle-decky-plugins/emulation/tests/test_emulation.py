@@ -1104,6 +1104,120 @@ class FlathubEmulators(unittest.TestCase):
         self.assertEqual(calls[1][2], ["snes9x"])
 
 
+class SwitchArt(unittest.TestCase):
+    """Switch games: updates and DLC left out, artwork from SteamGridDB with the user's key."""
+
+    @classmethod
+    def setUpClass(cls):
+        Plugin.setUpClass.__func__(cls)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def setUp(self):
+        from unittest import mock
+        self.mock = mock
+        self.dir = tempfile.TemporaryDirectory()
+        self.home = os.path.join(self.dir.name, "home")
+        self.events = []
+
+        async def emit(ev, *a):
+            self.events.append(ev)
+
+        self.patches = [mock.patch.dict(os.environ, {"KETTLE_EMU_SYSTEMS": write_db(self.dir.name)}),
+                        mock.patch.object(self.main, "HOME", self.home),
+                        mock.patch.object(self.main, "STATE", os.path.join(self.dir.name, "roms.json")),
+                        mock.patch.object(self.main, "SETTINGS", os.path.join(self.dir.name, "settings.json")),
+                        mock.patch.object(self.main, "SWITCH_IDS", os.path.join(self.dir.name, "switch-ids.json")),
+                        mock.patch.object(self.main, "_emit", emit),
+                        mock.patch.object(self.main.decky, "logger", mock.Mock(), create=True)]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in reversed(self.patches):
+            p.stop()
+        self.dir.cleanup()
+
+    def test_drop_extras(self):
+        found = {"a": {"system": "switch", "path": "/g/Wonder.nsp"}, "b": {"system": "switch", "path": "/g/Wonder Update.nsp"},
+                 "c": {"system": "switch", "path": "/g/Wonder DLC.nsp"}, "d": {"system": "switch", "path": "/g/unknown.nsp"},
+                 "e": {"system": "snes", "path": "/g/x.sfc"}}
+        kinds = {"/g/Wonder.nsp": "game", "/g/Wonder Update.nsp": "update", "/g/Wonder DLC.nsp": "dlc"}
+        out = roms.drop_extras(found, lambda r: kinds.get(r["path"]))
+        self.assertEqual(sorted(found), ["a", "d", "e"])
+        self.assertEqual(sorted(r["kind"] for r in out), ["dlc", "update"])
+
+    def test_switch_kinds_cached_and_updates_left_out(self):
+        game = os.path.join(self.home, "Emulation/roms/switch/Wonder [010015100B514000].nsp")
+        upd = os.path.join(self.home, "Emulation/roms/switch/Wonder [010015100B514800][v65536].nsp")
+        touch(game)
+        touch(upd)
+        found = {"g": {"system": "switch", "path": game}, "u": {"system": "switch", "path": upd}}
+        p = self.main.Plugin()
+        p._switch_kinds(found)
+        self.assertEqual(list(found), ["g"])
+        with open(self.main.SWITCH_IDS) as f:
+            self.assertEqual(json.load(f)[upd][2], "010015100b514800")
+        # from the cache: no file is read again
+        found = {"g": {"system": "switch", "path": game}, "u": {"system": "switch", "path": upd}}
+        with self.mock.patch("kettle_emulation.switch.title_id", side_effect=AssertionError("read again")):
+            p._switch_kinds(found)
+        self.assertEqual(list(found), ["g"])
+
+    def test_sgdb_assets(self):
+        urls = []
+
+        def get(url, headers=None, **kw):
+            urls.append(url)
+            self.assertEqual(headers, {"Authorization": "Bearer KEY"})
+            if "/search/autocomplete/" in url:
+                return json.dumps({"data": [{"id": 7, "name": "Super Mario Bros. Wonder"}]}).encode()
+            if "/grids/" in url and "600x900" in url:
+                return json.dumps({"data": [{"url": "https://cdn/x.webp"}, {"url": "https://cdn/grid.png"}]}).encode()
+            if "/grids/" in url:
+                return json.dumps({"data": [{"url": "https://cdn/wide.jpg"}]}).encode()
+            if "/heroes/" in url:
+                return json.dumps({"data": [{"url": "https://cdn/hero.png"}]}).encode()
+            return json.dumps({"data": []}).encode()  # no logo
+
+        with self.mock.patch.object(art, "_get", get), \
+                self.mock.patch.object(art, "_fetch", lambda url, cache: "/c/" + url.rsplit("/", 1)[1]):
+            out = art.sgdb_assets("KEY", "Super Mario Bros. Wonder", self.dir.name)
+        self.assertEqual(out, {0: ("/c/grid.png", "png"), 1: ("/c/hero.png", "png"), 3: ("/c/wide.jpg", "jpg")})
+        self.assertTrue(all("mimes=image/png,image/jpeg" in u for u in urls if "/game/7" in u))
+
+    def test_a_new_key_retries_the_games_without_artwork(self):
+        with open(self.main.STATE, "w") as f:
+            json.dump({"roms": {"a": {"system": "switch", "art": False, "art_tries": 3},
+                                "b": {"system": "snes", "art": True, "art_tries": 0}}}, f)
+        asyncio_run = __import__("asyncio").run
+        asyncio_run(self.main.Plugin().set_settings({"sgdb_key": "KEY"}))
+        with open(self.main.STATE) as f:
+            st = json.load(f)
+        self.assertEqual(st["roms"]["a"]["art_tries"], 0)
+        self.assertIn("roms_changed", self.events)
+        self.events.clear()
+        asyncio_run(self.main.Plugin().set_settings({"sgdb_key": "KEY"}))  # the same key again
+        self.assertNotIn("roms_changed", self.events)
+
+    def test_fix_artwork_offers_steamgriddb_names(self):
+        with open(self.main.STATE, "w") as f:
+            json.dump({"roms": {"a": {"system": "switch", "path": "/g/Wonder.nsp", "title": "Wonder"}}}, f)
+        with open(self.main.SETTINGS, "w") as f:
+            json.dump({"sgdb_key": "KEY"}, f)
+        found = [{"id": i, "name": f"Game {i}"} for i in range(8)]
+        with self.mock.patch.object(art, "sgdb_search", lambda key, title: found):
+            names = __import__("asyncio").run(self.main.Plugin().art_choices("a"))
+        self.assertEqual(names, [f"Game {i}" for i in range(5)])
+
+    def test_overview_says_where_art_comes_from(self):
+        ov = __import__("asyncio").run(self.main.Plugin().overview())
+        src = {s["id"]: s["art_source"] for s in ov["systems"]}
+        self.assertEqual((src["snes"], src["switch"]), ("libretro", "sgdb"))
+
+
 class SetupJobs(unittest.TestCase):
     """The setup job: installed apps left out, declined cores, a restart halfway, layouts."""
 

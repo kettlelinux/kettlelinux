@@ -178,7 +178,7 @@ export function CardsSection() {
   );
 }
 
-function Qr({ text }: { text: string }) {
+export function Qr({ text }: { text: string }) {
   const qr = qrcode(0, "M");
   qr.addData(text);
   qr.make();

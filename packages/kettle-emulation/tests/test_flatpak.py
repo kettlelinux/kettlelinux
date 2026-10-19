@@ -397,13 +397,14 @@ class Launch(Env):
         bindir = os.path.join(self.tmp, "bin")
         saved = os.path.join(self.tmp, "saved")
         app = self.write("bin/kettle-test-app", "#!/bin/sh\ntrap 'echo saved > \"$SAVED\"; exit 0' TERM\n"
-                                                "while :; do sleep 0.05; done\n")
+                                                ": > \"$SAVED.ready\"\nwhile :; do sleep 0.05; done\n")
         bwrap = self.write("bin/bwrap", '#!/bin/sh\n"$1" &\nwait $!\n')
         for p in (app, bwrap):
             os.chmod(p, 0o755)
         child = subprocess.Popen([bwrap, app], env=dict(os.environ, SAVED=saved))
-        for _ in range(200):
-            if any(run._comm(p) == "kettle-test-app" for p in run.inside(child)):
+        # until its trap is set (the process name shows before the script has run that far)
+        for _ in range(250):
+            if os.path.exists(saved + ".ready"):
                 break
             time.sleep(0.02)
         self.assertNotIn("bwrap", [run._comm(p) for p in run.inside(child)])

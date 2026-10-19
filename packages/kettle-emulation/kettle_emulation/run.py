@@ -118,6 +118,25 @@ def check_needs(emu):
             raise Refused("needs", f"{emu['name']}: {need['text']}")
 
 
+def check_switch_keys(system, emu, rom):
+    """A Switch game made for a newer system version than the user's prod.keys: said here,
+    where the emulator would start and show nothing (switch.py)."""
+    if system != "switch" or emu["kind"] != "flatpak":
+        return
+    paths = [c for need in emu.get("needs", ()) if isinstance(need, dict)
+             for c in (need["check"] if isinstance(need.get("check"), list) else [need.get("check")])
+             if c and c.endswith("prod.keys")]
+    # the emulator's own copy first (the one it reads), then Emulation/bios/switch's
+    paths.sort(key=lambda c: c.startswith("Emulation/"))
+    found = next((os.path.join(seed.HOME, c) for c in paths
+                  if os.path.isfile(os.path.join(seed.HOME, c))), None)
+    if found and os.path.isfile(rom):
+        from . import switch
+        message = switch.too_new(rom, found)
+        if message:
+            raise Refused("needs", message)
+
+
 def check_rom(rom):
     if os.path.exists(rom):
         return
@@ -179,6 +198,7 @@ def prepare(system, rom):
     seed.seed(eid)
     seed.permissions(systems.flatpak_of(emu))
     check_needs(emu)
+    check_switch_keys(system, emu, rom)
     return command(system, emu, rom), seed.environment(eid, emu), eid, emu
 
 

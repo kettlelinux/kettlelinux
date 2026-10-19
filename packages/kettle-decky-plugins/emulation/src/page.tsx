@@ -40,7 +40,7 @@ import {
   setGameChoice,
   setSettings,
 } from "./api";
-import { AddTab } from "./add";
+import { AddTab, Qr } from "./add";
 import { applyArt, inLibrary, onSync, play, sync } from "./sync";
 import { toaster } from "@decky/api";
 import { ControlsTable, ROUTE, act, dim, good, openStart, plural, size, small, usePoll, warn } from "./ui";
@@ -95,7 +95,12 @@ function GamesModal({ s, closeModal }: { s: System; closeModal?: () => void }) {
   const fixArt = (g: Game) =>
     act(async () => {
       const names = await artChoices(g.id);
-      if (!names.length) throw new Error("libretro-thumbnails has nothing close to its name");
+      if (!names.length)
+        throw new Error(
+          s.art_source === "sgdb"
+            ? "SteamGridDB found nothing: add your free API key in Settings, or the name doesn't match a game there"
+            : "libretro-thumbnails has nothing close to its name",
+        );
       showModal(<ArtModal g={g} names={names} />);
     }, "Finding artwork failed");
   return (
@@ -183,6 +188,7 @@ function LibraryTab({ ov, reload }: { ov: Overview; reload: () => void }) {
         {plural(ov.total, "game")} in your library, a collection per system. New games show up on their own; a game whose shortcut you delete
         in Steam stays out.
       </p>
+      {!ov.settings.sgdb_key && withGames.some((s) => s.art_source === "sgdb") && <SgdbNotice systems={withGames} />}
       {withGames.map(row)}
       {withGames.length > 0 && (
         <Field label="Deleted from Steam" description="Bring back the games of every system whose shortcuts were deleted in Steam">
@@ -440,17 +446,40 @@ function SavesTab({ ov }: { ov: Overview }) {
   );
 }
 
+const SGDB_KEY_URL = "https://www.steamgriddb.com/profile/preferences/api";
+
+// Games of a system libretro-thumbnails has nothing for (the Switch) get artwork only from
+// SteamGridDB, with the user's own free key: how to get one, with a QR code to open on a phone
+function SgdbNotice({ systems }: { systems?: System[] }) {
+  const names = (systems ?? []).filter((s) => s.art_source === "sgdb").map((s) => s.name);
+  return (
+    <Field
+      label={names.length ? `${names.join(", ")} artwork comes from SteamGridDB` : "Artwork from SteamGridDB"}
+      description={
+        <span>
+          Add your free SteamGridDB API key in Settings: sign in at steamgriddb.com (a Steam account works), then copy the key from{" "}
+          {SGDB_KEY_URL.replace("https://www.", "")}. Scan the code to open that page on your phone.
+        </span>
+      }
+      childrenContainerWidth="min"
+    >
+      <Qr text={SGDB_KEY_URL} />
+    </Field>
+  );
+}
+
 function SettingsTab({ ov, reload }: { ov: Overview; reload: () => void }) {
   const [key, setKey] = useState(ov.settings.sgdb_key);
   return (
     <div style={{ ...page, maxWidth: "720px" }}>
       <Field
         label="SteamGridDB API key"
-        description="Optional: artwork from SteamGridDB for games libretro-thumbnails doesn't have. Get a key at steamgriddb.com/profile/preferences/api."
+        description="Artwork from SteamGridDB: every Switch game's, and others' that libretro-thumbnails doesn't have. Games still without artwork are tried again when you save a key."
         childrenContainerWidth="max"
       >
         <TextField value={key} onChange={(e) => setKey(e.target.value)} />
       </Field>
+      {!ov.settings.sgdb_key && <SgdbNotice />}
       <DialogButton style={{ width: "auto" }} onClick={() => act(async () => (await setSettings({ sgdb_key: key.trim() }), reload()), "Saving failed")}>
         Save the key
       </DialogButton>
