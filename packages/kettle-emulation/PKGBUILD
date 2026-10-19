@@ -20,7 +20,7 @@
 #   ~/Emulation, pkexec: 50-kettle-emulation-share.rules).
 pkgname=kettle-emulation
 pkgver=0.1.0
-pkgrel=4
+pkgrel=5
 pkgdesc='Kettle Linux: emulator launcher, standard controls and ROM/BIOS import'
 arch=(any)
 license=(BSD-3-Clause)

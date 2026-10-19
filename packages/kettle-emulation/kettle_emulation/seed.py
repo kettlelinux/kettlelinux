@@ -600,13 +600,28 @@ SWITCH_KEYS = os.path.join(EMU, "bios/switch")
 
 
 def _copy_keys(dest):
-    """prod.keys and title.keys from Emulation/bios/switch, where the emulator reads its own."""
+    """prod.keys and title.keys from Emulation/bios/switch, where the emulator reads its own:
+    copied when the emulator has none, and again when the user puts newer ones there (the
+    Portal's keys were replaced and the emulator kept the old ones). Keys installed in the
+    emulator itself after them are left alone."""
     for name in ("prod.keys", "title.keys"):
         src = os.path.join(SWITCH_KEYS, name)
         dst = os.path.join(dest, name)
-        if os.path.isfile(src) and not os.path.exists(dst):
-            os.makedirs(dest, exist_ok=True)
-            shutil.copyfile(src, dst)
+        if not os.path.isfile(src):
+            continue
+        if os.path.exists(dst):
+            try:
+                if os.path.getmtime(src) <= os.path.getmtime(dst):
+                    continue
+                with open(src, "rb") as a, open(dst, "rb") as b:
+                    if a.read() == b.read():
+                        continue
+            except OSError:
+                continue
+        os.makedirs(dest, exist_ok=True)
+        tmp = dst + ".tmp"
+        shutil.copyfile(src, tmp)
+        os.replace(tmp, dst)
 
 
 def keep_eden():

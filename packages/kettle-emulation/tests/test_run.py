@@ -327,3 +327,45 @@ class Dirs(unittest.TestCase):
         kept = seed.retroarch_kept()
         self.assertEqual(kept["audio_driver"], "pulse")
         self.assertEqual(kept["suspend_screensaver_enable"], "false")
+
+
+class SwitchKeys(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.src = os.path.join(self.tmp.name, "bios")
+        self.dst = os.path.join(self.tmp.name, "emu")
+        os.makedirs(self.src)
+        os.makedirs(self.dst)
+        p = mock.patch.object(seed, "SWITCH_KEYS", self.src)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def put(self, folder, text, when):
+        path = os.path.join(folder, "prod.keys")
+        with open(path, "w") as f:
+            f.write(text)
+        os.utime(path, (when, when))
+        return path
+
+    def read(self):
+        with open(os.path.join(self.dst, "prod.keys")) as f:
+            return f.read()
+
+    def test_newer_keys_replace_the_emulators(self):
+        # the Portal: new keys put in Emulation/bios/switch, the emulator still had the old ones
+        self.put(self.dst, "old", 1000)
+        self.put(self.src, "new", 2000)
+        seed._copy_keys(self.dst)
+        self.assertEqual(self.read(), "new")
+
+    def test_keys_installed_in_the_emulator_later_are_kept(self):
+        self.put(self.src, "bios", 1000)
+        self.put(self.dst, "installed in the emulator", 2000)
+        seed._copy_keys(self.dst)
+        self.assertEqual(self.read(), "installed in the emulator")
+
+    def test_copied_when_the_emulator_has_none(self):
+        self.put(self.src, "keys", 1000)
+        seed._copy_keys(self.dst)
+        self.assertEqual(self.read(), "keys")
