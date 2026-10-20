@@ -22,7 +22,7 @@
 #   phone/PC upload page behind the plugin's QR code) and kettle-emu-share (the Samba share of
 #   ~/Emulation, pkexec: 50-kettle-emulation-share.rules).
 pkgname=kettle-emulation
-pkgver=0.3.0
+pkgver=0.3.4
 pkgrel=1
 pkgdesc='Kettle Linux: emulator launcher, standard controls and ROM/BIOS import'
 arch=(any)

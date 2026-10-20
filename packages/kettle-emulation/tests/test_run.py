@@ -520,3 +520,72 @@ class Ps3Firmware(unittest.TestCase):
         with mock.patch.object(seed.subprocess, "run", self.fake_rpcs3):
             seed._install_ps3_firmware()
         self.assertEqual(self.calls, [])
+
+
+class Rpcs3Pad(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, "input_configs/global/Default.yml")
+        p = mock.patch.object(seed, "RPCS3_INPUT", self.path)
+        p.start()
+        self.addCleanup(p.stop)
+        p = mock.patch.object(seed, "rpcs3_pad_name", lambda: "Steam Virtual Gamepad 1")
+        p.start()
+        self.addCleanup(p.stop)
+
+    def write(self, text):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path, "w") as f:
+            f.write(text)
+
+    def read(self):
+        with open(self.path) as f:
+            return f.read()
+
+    def test_fresh_gets_steams_pad_through_sdl(self):
+        seed._keep_rpcs3_pad()
+        self.assertEqual(self.read(), "Player 1 Input:\n  Handler: SDL\n"
+                                      "  Device: Steam Virtual Gamepad 1\n")
+
+    def test_kettles_earlier_evdev_entry_replaced(self):
+        # the Flathub build has no evdev handler: 0.3.1's entry left player 1 with none
+        self.write("Player 1 Input:\n  Handler: Evdev\n  Device: Microsoft X-Box 360 pad 0\n")
+        seed._keep_rpcs3_pad()
+        self.assertIn("Handler: SDL", self.read())
+
+    def test_default_keyboard_replaced_other_players_kept(self):
+        self.write("Player 1 Input:\n  Handler: Keyboard\n  Device: Keyboard\n  Config:\n"
+                   "    Cross: X\n    Circle: C\n  Buddy Device: \"\"\n"
+                   "Player 2 Input:\n  Handler: Null\n  Device: Null\n")
+        seed._keep_rpcs3_pad()
+        text = self.read()
+        self.assertTrue(text.startswith("Player 1 Input:\n  Handler: SDL\n  Device: Steam Virtual Gamepad 1\n"))
+        self.assertNotIn("Cross: X", text)
+        self.assertIn("Player 2 Input:\n  Handler: Null\n", text)
+
+    def test_users_own_pad_kept(self):
+        mine = "Player 1 Input:\n  Handler: SDL\n  Device: DualSense Wireless Controller 1\n"
+        self.write(mine)
+        seed._keep_rpcs3_pad()
+        self.assertEqual(self.read(), mine)
+
+
+class Rpcs3PadName(unittest.TestCase):
+    def test_the_name_rpcs3s_sdl_gives_it(self):
+        done = subprocess.CompletedProcess([], 0, stdout="Steam Deck\n")
+        with mock.patch.object(seed.subprocess, "run", return_value=done) as run:
+            self.assertEqual(seed.rpcs3_pad_name(), "Steam Deck 1")
+        argv = run.call_args[0][0]
+        self.assertIn("net.rpcs3.RPCS3", argv)
+        self.assertIn("--env=SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD=1", argv)
+
+    def test_falls_back_when_sdl_says_nothing(self):
+        for result in (subprocess.CompletedProcess([], 1, stdout=""), OSError("no flatpak")):
+            kw = {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
+            with mock.patch.object(seed.subprocess, "run", **kw):
+                self.assertEqual(seed.rpcs3_pad_name(), "Steam Virtual Gamepad 1")
+
+    def test_rpcs3_launched_with_the_hint(self):
+        env = seed.environment("rpcs3", {"kind": "flatpak"})
+        self.assertEqual(env["SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD"], "1")

@@ -589,8 +589,94 @@ def _install_ps3_firmware():
         print("emu-run: RPCS3 didn't install the PS3 firmware", file=sys.stderr)
 
 
+# Player 1's pad: RPCS3's own default is the keyboard (cfg_input::load, pad_config.cpp, when
+# input_configs/global/Default.yml is missing or empty). Its evdev handler names a pad by its
+# evdev name, which for Steam's virtual pad is known exactly (/proc/bus/input/devices on the
+# Portal; evdev_joystick_handler.cpp get_device_name/add_device), where the SDL handler's name
+# can be the real controller's (SDL3 reads Steam's virtual gamepad info). Only Handler and
+# Device are written: the handler's own defaults fill in the rest when RPCS3 loads it
+# (pad_thread.cpp InitPadConfig, then "Reload with proper defaults"), and the evdev defaults
+# are by position (Cross BTN_A south, Circle BTN_B east, Square BTN_X west, Triangle BTN_Y north).
+RPCS3_INPUT = os.path.join(RPCS3_DIR, "input_configs/global/Default.yml")
+# Steam's virtual pad through RPCS3's SDL handler, which names a pad "<SDL3's name> <n>" and
+# wants it exactly (sdl_pad_handler.cpp). The Flathub build has no evdev handler ("Evdev" is an
+# invalid enum there: the Portal's game said "please connect controller"). SDL3 hides Steam's
+# virtual pad without SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD, and can name it after the
+# controller behind it, so the name is asked of RPCS3's own SDL3 before each launch, with the
+# launch's own environment (the Portal: "SteamOS Handheld Controller" under Steam, "Steam Virtual
+# Gamepad" over SSH).
+STEAM_PAD_SDL_NAME = "Steam Virtual Gamepad"
+STEAM_PAD_HINT = {"SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD": "1"}
+# run inside RPCS3's sandbox (python3 is in its runtime, SDL3 in /app/lib): the name SDL3 gives
+# Steam's virtual pad. Under Steam that's the controller behind it, with its product ID too (the
+# Portal: "SteamOS Handheld Controller", 28de:12f0, not the pad's 11ff), and Steam's ignore
+# list leaves only the virtual pad, so it's the first Valve gamepad SDL lists
+_SDL_PROBE = """
+import ctypes
+sdl = ctypes.CDLL("libSDL3.so.0")
+sdl.SDL_Init.argtypes = [ctypes.c_uint32]; sdl.SDL_Init.restype = ctypes.c_bool
+sdl.SDL_GetGamepads.argtypes = [ctypes.POINTER(ctypes.c_int)]
+sdl.SDL_GetGamepads.restype = ctypes.POINTER(ctypes.c_uint32)
+sdl.SDL_GetGamepadVendorForID.argtypes = [ctypes.c_uint32]; sdl.SDL_GetGamepadVendorForID.restype = ctypes.c_uint16
+sdl.SDL_OpenGamepad.argtypes = [ctypes.c_uint32]; sdl.SDL_OpenGamepad.restype = ctypes.c_void_p
+sdl.SDL_GetGamepadName.argtypes = [ctypes.c_void_p]; sdl.SDL_GetGamepadName.restype = ctypes.c_char_p
+if sdl.SDL_Init(0x2000):
+    n = ctypes.c_int(0); ids = sdl.SDL_GetGamepads(ctypes.byref(n))
+    for i in range(n.value):
+        if sdl.SDL_GetGamepadVendorForID(ids[i]) == 0x28de:
+            # the opened pad's name, as RPCS3 reads it: before it's opened SDL3 still says
+            # "Steam Virtual Gamepad" (the Portal, under Steam)
+            pad = sdl.SDL_OpenGamepad(ids[i])
+            print((sdl.SDL_GetGamepadName(pad) or b"").decode(errors="replace") if pad else "")
+            break
+"""
+
+
+def rpcs3_pad_name():
+    """What RPCS3 will call Steam's virtual pad ("<name> 1"), from its own SDL3."""
+    env = {**os.environ, **STEAM_PAD_HINT}
+    try:
+        r = subprocess.run(["flatpak", "run", "--command=python3", "--env=LD_LIBRARY_PATH=/app/lib",
+                            *(f"--env={k}={v}" for k, v in STEAM_PAD_HINT.items()),
+                            "net.rpcs3.RPCS3", "-"], input=_SDL_PROBE, env=env, text=True,
+                           capture_output=True, timeout=30)
+        name = r.stdout.strip().splitlines()[0] if r.stdout.strip() else ""
+    except (OSError, subprocess.SubprocessError, IndexError):
+        name = ""
+    return f"{name or STEAM_PAD_SDL_NAME} 1"
+
+
+def _keep_rpcs3_pad():
+    """Player 1 becomes Steam's virtual pad while it's RPCS3's default (no file, the keyboard,
+    no handler) or Kettle's own (an earlier Steam pad entry, or 0.3.1's Evdev one); a pad the
+    user set up stays."""
+    try:
+        with open(RPCS3_INPUT, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    start = next((i for i, l in enumerate(lines) if l.rstrip() == "Player 1 Input:"), None)
+    if start is None:
+        start, end = len(lines), len(lines)
+    else:
+        end = start + 1
+        while end < len(lines) and (lines[end].startswith(" ") or not lines[end].strip()):
+            end += 1
+        block = {l.split(":", 1)[0].strip(): l.split(":", 1)[1].strip()
+                 for l in lines[start + 1:end] if ":" in l and l.startswith("  ") and not l.startswith("   ")}
+        handler, device = block.get("Handler", ""), block.get("Device", "")
+        ours = handler == "Evdev" or (handler == "SDL" and device.startswith(
+            (STEAM_PAD_SDL_NAME, "SteamOS Handheld Controller", "Steam Deck", "Steam Controller")))
+        if handler not in ("", "Keyboard", "Null") and not ours:
+            return
+    device = rpcs3_pad_name()
+    lines[start:end] = ["Player 1 Input:", "  Handler: SDL", f"  Device: {device}"]
+    _replace(RPCS3_INPUT, "\n".join(lines) + "\n")
+
+
 def keep_rpcs3():
     _install_ps3_firmware()
+    _keep_rpcs3_pad()
     set_ini(os.path.join(RPCS3_DIR, "GuiConfigs/CurrentSettings.ini"), {
         "Shortcuts": RPCS3_SHORTCUTS,
         "main_window": {"confirmationBoxExitGame": "false", "infoBoxEnabledWelcome": "false",
@@ -873,4 +959,6 @@ def environment(eid, emu):
     # which in its runtime was llvmpipe (the Portal: a game drawn on the CPU, stuck at its
     # launch screen), and no emulator should ever draw on the CPU when there's a GPU
     env["VK_LOADER_DRIVERS_DISABLE"] = "lvp_icd*"
+    if eid == "rpcs3":
+        env.update(STEAM_PAD_HINT)  # SDL3 shows it Steam's virtual pad only with this
     return env
