@@ -113,7 +113,20 @@ def dest_of(entry):
     return os.path.join(install_dir(), entry.get("dest", entry["file"]))
 
 
+def _has_magic(entry, path):
+    """An entry with "magic" (a firmware too big to md5, the PS3's PS3UPDAT.PUP: "SCEUF"):
+    whether the file starts with it."""
+    magic = entry["magic"].encode()
+    try:
+        with open(path, "rb") as f:
+            return f.read(len(magic)) == magic
+    except OSError:
+        return False
+
+
 def _right(entry, path, size, cache):
+    if entry.get("magic"):
+        return _has_magic(entry, path)
     md5s = [m.lower() for m in entry.get("md5", ())]
     if md5s:
         try:
@@ -223,9 +236,14 @@ def recognise(path, md5=None, cache=None):
         size = os.path.getsize(path)
     except OSError:
         return None
-    if size > MAX_SIZE or size == 0:
+    if size == 0:
         return None
     entries = systems.bios_entries()
+    for sid, b in entries:  # by their first bytes, whatever their size or name
+        if b.get("magic") and _has_magic(b, path):
+            return sid, b
+    if size > MAX_SIZE:
+        return None
     name = os.path.basename(path).lower()
     if md5 is None:
         try:

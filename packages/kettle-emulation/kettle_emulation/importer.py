@@ -368,7 +368,8 @@ class Importer:
                 items.append(Item("firmware", p, "switch", identify.Match("switch", 1.0, "Switch firmware"),
                                   size=size))
                 continue
-            if p not in refs_of and size <= bios.MAX_SIZE:
+            # small files by md5, big ones only by their first bytes (the PS3's 200 MB PUP)
+            if p not in refs_of:
                 try:
                     rec = bios.recognise(p, cache=cache)
                 except OSError:

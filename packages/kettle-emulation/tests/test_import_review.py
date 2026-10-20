@@ -44,6 +44,16 @@ class Review(Env):
 
     # --- BIOS: found only where the emulators look --------------------------------------------
 
+    def test_ps3_firmware_recognised_by_its_signature_whatever_its_size(self):
+        # PS3UPDAT.PUP is about 200 MB, far over the md5 limit: matched by "SCEUF"
+        pup = os.path.join(self.box, "PS3UPDAT.PUP")
+        with open(pup, "wb") as f:
+            f.write(b"SCEUF\0\0\0")
+            f.truncate(bios.MAX_SIZE * 3)
+        self.inbox()
+        self.assertTrue(os.path.isfile(os.path.join(self.home, "bios/ps3/PS3UPDAT.PUP")))
+        self.assertFalse(os.path.exists(os.path.join(self.box, "unsorted", "PS3UPDAT.PUP")))
+
     def test_bios_under_another_name_is_elsewhere_until_installed(self):
         bdir = os.path.join(self.home, "bios")
         self.write("PSX BIOS (USA).bin", FAKE_BIOS, bdir)

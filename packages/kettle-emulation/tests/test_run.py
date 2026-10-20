@@ -471,3 +471,52 @@ class Environment(unittest.TestCase):
     def test_cpu_vulkan_hidden(self):
         env = seed.environment("eden", {"kind": "flatpak"})
         self.assertEqual(env["VK_LOADER_DRIVERS_DISABLE"], "lvp_icd*")
+
+
+class Ps3Firmware(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.pup = os.path.join(self.tmp.name, "bios/ps3/PS3UPDAT.PUP")
+        self.rpcs3 = os.path.join(self.tmp.name, "rpcs3")
+        os.makedirs(os.path.dirname(self.pup))
+        with open(self.pup, "wb") as f:
+            f.write(b"SCEUF\0\0\0" + b"\0" * 64)
+        for name, value in (("PS3_FIRMWARE", self.pup), ("RPCS3_DIR", self.rpcs3)):
+            p = mock.patch.object(seed, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        p = mock.patch.object(seed, "permissions", lambda app: None)
+        p.start()
+        self.addCleanup(p.stop)
+        self.calls = []
+
+    def fake_rpcs3(self, argv, **kw):
+        # what --installfw leaves (then it aborts at teardown: exit 134)
+        self.calls.append(argv)
+        vsh = os.path.join(self.rpcs3, "dev_flash/vsh/module/vsh.self")
+        os.makedirs(os.path.dirname(vsh), exist_ok=True)
+        open(vsh, "w").close()
+        return subprocess.CompletedProcess(argv, 134)
+
+    def test_installed_once_then_left_alone(self):
+        with mock.patch.object(seed.subprocess, "run", self.fake_rpcs3):
+            seed._install_ps3_firmware()
+            seed._install_ps3_firmware()
+        self.assertEqual(len(self.calls), 1)
+        self.assertIn("--installfw", self.calls[0])
+        self.assertIn("--headless", self.calls[0])
+
+    def test_a_new_file_is_installed_again(self):
+        with mock.patch.object(seed.subprocess, "run", self.fake_rpcs3):
+            seed._install_ps3_firmware()
+            with open(self.pup, "ab") as f:
+                f.write(b"newer")
+            seed._install_ps3_firmware()
+        self.assertEqual(len(self.calls), 2)
+
+    def test_no_firmware_file_nothing_runs(self):
+        os.unlink(self.pup)
+        with mock.patch.object(seed.subprocess, "run", self.fake_rpcs3):
+            seed._install_ps3_firmware()
+        self.assertEqual(self.calls, [])

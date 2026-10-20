@@ -553,7 +553,44 @@ def set_yaml(path, section, values):
     _replace(path, "\n".join(lines) + "\n")
 
 
+PS3_FIRMWARE = os.path.join(EMU, "bios/ps3/PS3UPDAT.PUP")
+
+
+def _install_ps3_firmware():
+    """The PS3 system software from Emulation/bios/ps3 into RPCS3 when it's new or changed:
+    `rpcs3 --headless --installfw` installs and exits with no window (rpcs3.cpp, checked on the
+    Portal: 4.93, 1075 files in dev_flash, about 4 s). It aborts on its way out (exit 134, a
+    teardown check) after a good install, so success is the installed vsh.self, not the exit
+    code. A marker keeps it from reinstalling the same file every launch."""
+    try:
+        st = os.stat(PS3_FIRMWARE)
+    except OSError:
+        return
+    marker = os.path.join(RPCS3_DIR, ".kettle-firmware")
+    vsh = os.path.join(RPCS3_DIR, "dev_flash/vsh/module/vsh.self")
+    stamp = f"{st.st_size} {int(st.st_mtime)}"
+    try:
+        with open(marker) as f:
+            if f.read().strip() == stamp and os.path.exists(vsh):
+                return
+    except OSError:
+        pass
+    permissions("net.rpcs3.RPCS3")  # it reads the file from ~/Emulation
+    try:
+        subprocess.run(["flatpak", "run", "--command=rpcs3", "net.rpcs3.RPCS3", "--headless",
+                        "--installfw", PS3_FIRMWARE], stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
+    except (OSError, subprocess.SubprocessError) as err:
+        print(f"emu-run: installing the PS3 firmware failed: {err}", file=sys.stderr)
+        return
+    if os.path.exists(vsh):
+        _replace(marker, stamp + "\n")
+    else:
+        print("emu-run: RPCS3 didn't install the PS3 firmware", file=sys.stderr)
+
+
 def keep_rpcs3():
+    _install_ps3_firmware()
     set_ini(os.path.join(RPCS3_DIR, "GuiConfigs/CurrentSettings.ini"), {
         "Shortcuts": RPCS3_SHORTCUTS,
         "main_window": {"confirmationBoxExitGame": "false", "infoBoxEnabledWelcome": "false",
