@@ -23,8 +23,13 @@
 #   header, BIOS files by md5, from the inbox, a card or a USB stick), kettle-emu-upload (the
 #   phone/PC upload page behind the plugin's QR code) and kettle-emu-share (the Samba share of
 #   ~/Emulation, pkexec: 50-kettle-emulation-share.rules).
+# - the storage manager's side (kettle_emulation/storage.py, transfer.py): where new games go and
+#   where the game data lives (storage.json: saves, states, screenshots and the emulator data
+#   systems.json's "data" lists, internal or on a card), kettle-emu-import transfer (games moved
+#   or copied between storages) and data-move; emu-run points the emulators at the data and
+#   refuses a game whose data is on a card that isn't in.
 pkgname=kettle-emulation
-pkgver=0.4.0
+pkgver=0.5.0
 pkgrel=1
 pkgdesc='Kettle Linux: emulator launcher, standard controls and ROM/BIOS import'
 arch=(any)

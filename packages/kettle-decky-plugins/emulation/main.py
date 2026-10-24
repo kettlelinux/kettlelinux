@@ -5,6 +5,11 @@
 # frontend does what touches Steam (sync.ts); this side finds the ROMs (roms.py), tells it what
 # to change, and keeps what was done in roms.json.
 #
+# The Storage tab: each storage's space and games, games moved, copied or deleted between them
+# (kettle-emu-import transfer, a job like an import's), where new games go and where the game data
+# lives (kettle_emulation.storage: storage.json, which emu-run reads too; moving the data is
+# kettle-emu-import data-move).
+#
 # Getting games in, the four ways: the inbox (Emulation/inbox on any storage, sorted on its own,
 # kettle-emu-import), a card or stick put in (an offer to import what's on it, or its own
 # Emulation tree used in place), the upload page for a phone or PC (kettle-emu-upload, a QR code
@@ -432,6 +437,25 @@ def _layouts(db: dict, st: dict, inst: dict, face: str) -> dict:
     return out
 
 
+def _saves_db() -> tuple[dict, object]:
+    """(systems.json, where a saves dir is now): the game data's storage, which may be a card
+    (nothing listed from one that isn't in)."""
+    db = systems.load()
+
+    try:
+        root = storage.data_root()
+    except storage.DataMissing:
+        root = None
+
+    def locate(rel: str) -> str | None:
+        if root is not None and not root["internal"]:
+            return storage.locate(rel, db, root)
+        if root is None and storage.movable(rel, db):
+            return None
+        return os.path.join(HOME, rel)
+    return db, locate
+
+
 def _files_under(top: str) -> list[str]:
     return [os.path.join(d, f) for d, _, files in os.walk(top) for f in files]
 
@@ -484,6 +508,7 @@ class Plugin:
         self._inbox_tried: dict = {}  # the inbox files the running inbox job was started for: {path: mtime}
         self._inbox_left: dict = {}  # those it left there (failed or skipped): not retried until they change
         self._tasks: list[asyncio.Task] = []
+        self._storage_paths: set[str] = set()  # the games the Storage tab showed: what its actions may touch
         self._setup: dict = {"state": "idle"}  # an emulator install: {state, kind, apps, cores, step, percent, eta, error, done_cores}
 
     # --- the library ---------------------------------------------------------------------------
@@ -895,7 +920,9 @@ class Plugin:
         r = _root_by_path(roots, path)
         if r:
             path = r["path"]
-        if dest != "internal":
+        if dest == "default":
+            dest = await asyncio.to_thread(storage.new_games_dir)
+        elif dest != "internal":
             d = _root_by_path(roots, dest)
             if d:
                 dest = d["path"]
@@ -934,6 +961,10 @@ class Plugin:
         t["bios"] += ev.get("bios") or []
         for k in ("unsorted", "identical", "errors"):
             t[k] += ev.get(k, 0)
+        # a data move's: newer files kept where they were, and whether the data storage changed
+        for k in ("kept", "switched"):
+            if k in ev:
+                t[k] = ev[k]
         return t
 
     async def _follow_job(self, proc: asyncio.subprocess.Process, job: dict):
@@ -1122,6 +1153,139 @@ class Plugin:
         await asyncio.to_thread(samba.disable)
         return _shown_all(await asyncio.to_thread(samba.status))
 
+    # --- storage -------------------------------------------------------------------------------
+    def _storage_overview(self) -> dict:
+        from kettle_emulation import transfer
+        import shutil
+        db = systems.load()
+        roots = _roots()
+        conf = storage.settings()
+        try:
+            data_key = storage.key(storage.data_root())
+            data_missing = ""
+        except storage.DataMissing as e:
+            data_key, data_missing = conf["data"], e.label or "a card"
+        names = {sid: s["name"] for sid, s in db["systems"].items()}
+        # where they really go: internal storage's while the chosen card isn't in
+        new_games = os.path.realpath(storage.new_games_dir())
+        paths, out = set(), []
+        for r in roots:
+            set_up = storage.is_set_up(r)
+            games = []
+            if set_up:
+                # each storage on its own: a game on internal storage and on a card shows on both
+                for g in roms.scan([r], db["systems"]).values():
+                    paths.add(g["path"])
+                    games.append({"id": _hex(g["path"]), "title": g["title"], "system": g["system"],
+                                  "system_name": names.get(g["system"], g["system"]),
+                                  "size": transfer.game_size(g["path"])})
+            games.sort(key=lambda g: (g["system_name"].lower(), g["title"].lower()))
+            try:
+                du = shutil.disk_usage(r["emulation"] if os.path.isdir(r["emulation"]) else r["path"])
+                total, free = du.total, du.free
+            except OSError:
+                total = free = 0
+            k = storage.key(r)
+            out.append({"key": k, "path": r["path"], "emulation": r["emulation"], "label": r["label"],
+                        "internal": r["internal"], "set_up": set_up, "fstype": r.get("fstype", ""),
+                        "total": total, "free": free, "games": games,
+                        "games_bytes": sum(g["size"] for g in games),
+                        "data_bytes": transfer.data_size(r, db) if set_up or r["internal"] else 0,
+                        "new_games": os.path.realpath(r["emulation"]) == new_games,
+                        "data": k == data_key})
+        self._storage_paths = paths
+        moves = ["saves, save states and screenshots (RetroArch, melonDS)"]
+        stays = []
+        for e in db["emulators"].values():
+            for item in e.get("data") or ():
+                moves.append(f"{e['name']}: {item.get('name', item['dir'])}")
+            dirs = [sv["dir"] for sv in e.get("saves") or ()]
+            fixed = [d for d in dirs if not storage.movable(d, db)]
+            if e.get("kind") != "flatpak" or not fixed:
+                continue
+            what = (f"{e['name']}'s saves" if len(fixed) == len(dirs) else
+                    f"{e['name']}'s save states" if all("state" in d.lower() for d in fixed) else
+                    f"some of {e['name']}'s saves")
+            if what not in stays:
+                stays.append(what)
+        return {"storages": out, "new_games": conf["new_games"], "new_games_label": conf.get("new_games_label", ""),
+                "data": data_key, "data_missing": data_missing,
+                "moves": moves, "stays": stays}
+
+    async def storage_overview(self) -> dict:
+        """The Storage tab: every storage (internal first) with its space, its games ({id, title,
+        system, system_name, size}) and how much game data it holds, which one new games go to
+        and which one holds the game data (data_missing: the label of the data card that isn't
+        in), and what moves with the game data and which emulators keep theirs internal."""
+        return _shown_all(await asyncio.to_thread(self._storage_overview))
+
+    async def storage_set_new_games(self, key: str):
+        """Where new games go: "internal" or a set-up card's key."""
+        roots = await asyncio.to_thread(_roots)
+        r = storage.find(key, roots)
+        if r is None or not (r["internal"] or storage.is_set_up(r)):
+            raise ValueError("that card isn't in or isn't set up for games")
+        await asyncio.to_thread(storage.save_settings, new_games=storage.key(r),
+                                new_games_label="" if r["internal"] else r["label"])
+
+    def _game_paths(self, ids: list[str]) -> list[str]:
+        paths = [_unhex(i) for i in ids]
+        if not paths or not set(paths) <= self._storage_paths:
+            raise ValueError("not a game the Storage tab showed")
+        r = _read_json(os.path.join(keys.runtime_dir(), "running.json"), {})
+        try:
+            pid = int(r.get("pid") or 0)
+            if pid > 0:
+                os.kill(pid, 0)
+        except (OSError, ValueError, TypeError):
+            pid = 0
+        if pid > 0 and r.get("rom"):
+            playing = os.path.realpath(r["rom"])
+            for p in paths:
+                rp = os.path.realpath(p)
+                if rp == playing or playing.startswith(rp + "/"):
+                    raise ValueError(f"{roms.title(p)} is running: quit it first")
+        return paths
+
+    async def storage_transfer(self, ids: list[str], dest: str, mode: str = "move"):
+        """Moves or copies these games (their Storage tab ids) to another storage (`dest`: its
+        key), as a job: progress from import_status and "import" events."""
+        if mode not in ("copy", "move"):
+            raise ValueError("copy or move")
+        paths = self._game_paths(ids)
+        roots = await asyncio.to_thread(_roots)
+        r = storage.find(dest, roots)
+        if r is None:
+            raise ValueError("that card isn't in")
+        if not storage.is_set_up(r):
+            from kettle_emulation import seed
+            await asyncio.to_thread(seed.ensure_dirs, r["emulation"])
+        await self._run_job("transfer", [IMPORT, "transfer", r["emulation"], f"--{mode}", "--", *paths], "transfer")
+
+    async def storage_delete(self, ids: list[str]) -> int:
+        from kettle_emulation import transfer
+        paths = self._game_paths(ids)
+        if self._job.get("state") == "running":
+            raise ValueError("wait for the job that's running")
+        n = await asyncio.to_thread(transfer.delete, paths)
+        self._storage_paths -= set(paths)
+        await _emit("roms_changed")
+        return n
+
+    async def storage_move_data(self, dest: str):
+        """Moves the game data to another storage (`dest`: its key) and keeps it there, as a job.
+        Refused while a game runs: its emulator has the files open."""
+        if await self.running():
+            raise ValueError("quit the game first")
+        roots = await asyncio.to_thread(_roots)
+        r = storage.find(dest, roots)
+        if r is None:
+            raise ValueError("that card isn't in")
+        if not r["internal"] and not storage.is_set_up(r):
+            from kettle_emulation import seed
+            await asyncio.to_thread(seed.ensure_dirs, r["emulation"])
+        await self._run_job("data", [IMPORT, "data-move", "internal" if r["internal"] else r["path"]], "data")
+
     # --- saves ---------------------------------------------------------------------------------
     @staticmethod
     def _save_ids(games: list[dict]) -> list[dict]:
@@ -1131,10 +1295,10 @@ class Plugin:
                                            for f in g["files"]]} for g in games])
 
     async def saves(self) -> list[dict]:
-        return self._save_ids(await asyncio.to_thread(saves.listing, HOME, _state()["roms"], systems.load()))
+        return self._save_ids(await asyncio.to_thread(saves.listing, HOME, _state()["roms"], *_saves_db()))
 
     async def _save_paths(self, ids: list[str]) -> tuple[list[str], list[dict]]:
-        games = await asyncio.to_thread(saves.listing, HOME, _state()["roms"], systems.load())
+        games = await asyncio.to_thread(saves.listing, HOME, _state()["roms"], *_saves_db())
         paths = [_unhex(i) for i in ids]
         if not set(paths) <= saves.all_paths(games):
             raise ValueError("not a save")
@@ -1157,7 +1321,7 @@ class Plugin:
     async def backup(self, ids: list[str], dest: str = "internal") -> str:
         """Zips these saves (their ids; all of them when empty) into internal storage's or a
         card's (`dest`: its path as shown) Emulation/backups."""
-        games = await asyncio.to_thread(saves.listing, HOME, _state()["roms"], systems.load())
+        games = await asyncio.to_thread(saves.listing, HOME, _state()["roms"], *_saves_db())
         allowed = {f["path"] for g in games for f in g["files"]}
         paths = [_unhex(i) for i in ids] or sorted(allowed)
         if not set(paths) <= allowed:

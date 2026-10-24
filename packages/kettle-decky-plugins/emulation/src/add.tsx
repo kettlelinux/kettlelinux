@@ -33,6 +33,8 @@ const card = { background: "#23262e", borderRadius: "8px", padding: "14px 16px",
 const h = { margin: "0 0 6px", fontSize: "16px" };
 const mono = { fontFamily: "monospace", fontSize: "13px", wordBreak: "break-all" as const };
 
+const JOB_NAMES = { import: "Importing", inbox: "Sorting the inbox", transfer: "Moving games", data: "Moving the game data" };
+
 export function JobProgress() {
   const [job, setJob] = useState<Job | null>(null);
   useEffect(() => {
@@ -49,7 +51,7 @@ export function JobProgress() {
       {job.state === "running" ? (
         <>
           <div>
-            {job.kind === "inbox" ? "Sorting the inbox" : "Importing"}: {job.done ?? 0} of {plural(job.files ?? 0, "file")}
+            {JOB_NAMES[job.kind ?? "import"]}: {job.done ?? 0} of {plural(job.files ?? 0, job.kind === "transfer" ? "game" : "file")}
             {job.bytes ? ` · ${size(job.bytes_done ?? 0)} of ${size(job.bytes)} (${pct}%)` : ""}
           </div>
           <div style={{ height: "6px", background: "#1a1c22", borderRadius: "3px", margin: "8px 0" }}>
@@ -63,7 +65,22 @@ export function JobProgress() {
       ) : (
         <div>
           {job.state === "done" ? "Done" : job.state === "cancelled" ? "Cancelled" : "It failed"}
-          {s && (
+          {s && job.kind === "data" && (
+            <span style={dim}>
+              {" · "}
+              {s.switched ? "The game data is on its new storage" : `The game data stayed where it was: ${plural(s.errors, "file")} couldn't be copied`}
+              {s.kept ? `; ${plural(s.kept, "file")} newer there already kept (the old copy wasn't removed)` : ""}
+            </span>
+          )}
+          {s && job.kind === "transfer" && (
+            <span style={dim}>
+              {" · "}
+              {plural(Object.values(s.games).reduce((a, b) => a + b, 0), "game")} done
+              {s.identical ? `, ${s.identical} already there` : ""}
+              {s.errors ? `, ${s.errors} failed` : ""}
+            </span>
+          )}
+          {s && job.kind !== "data" && job.kind !== "transfer" && (
             <span style={dim}>
               {" · "}
               {plural(Object.values(s.games).reduce((a, b) => a + b, 0), "game")} sorted, {plural(s.bios.length, "BIOS file", "BIOS files")}
@@ -162,7 +179,7 @@ export function CardsSection() {
         >
           <Focusable style={{ display: "flex", gap: "6px" }} flow-children="horizontal">
             {!m.set_up && (m.games_total > 0 || m.bios > 0) && (
-              <DialogButton style={{ width: "auto", minWidth: 0 }} onClick={() => act(() => importStart(m.path, "copy", "internal"), "Importing failed")}>
+              <DialogButton style={{ width: "auto", minWidth: 0 }} onClick={() => act(() => importStart(m.path, "copy", "default"), "Importing failed")}>
                 Copy in
               </DialogButton>
             )}

@@ -3,7 +3,9 @@
 The emulators are Flathub's, so their configs live in ~/.var/app/<app id>/{config,data}/. Two
 kinds of settings:
 - **kept**: hotkeys (the keys mkvdf.py's layer sends, or the emulator's own where systems.json
-  gives it "keys"), folders under ~/Emulation, fullscreen, no confirm-on-quit, no updaters.
+  gives it "keys"), folders under ~/Emulation, fullscreen, no confirm-on-quit, no updaters, and
+  the game data folders on the storage the Storage tab picked (data_path(): a card's Emulation
+  tree, or where they've always been).
   Rewritten before every launch, so the standard controls can't drift. RetroArch reads them from
   an append-config; the others get them set in their own files.
 - **seeded**: everything else (video, per-device resolution, pad layouts). Written once, when the
@@ -52,8 +54,29 @@ def confirm_south():
     return device().get("FACE_BUTTONS", "xbox") != "nintendo"
 
 
+def data_path(rel):
+    """Where a path from the home folder (systems.json's) is with the game data where the
+    Storage tab put it: a saves, states or screenshots folder of the Emulation tree, or an
+    emulator's "data", is on the data card when that's where the data is (storage.locate);
+    everything else, and everything with the data internal, is where it's always been. Raises
+    storage.DataMissing when the data card isn't in (emu-run refuses the game first)."""
+    from . import storage, systems
+    rel = rel.strip("/")
+    try:
+        db = systems.load()
+    except OSError:
+        db = {}  # the Emulation tree's own data folders still move
+    if storage.movable(rel, db):
+        root = storage.data_root()
+        if not root["internal"]:
+            return storage.locate(rel, db, root)
+    if rel == "Emulation" or rel.startswith("Emulation/"):
+        return os.path.join(EMU, rel[len("Emulation/"):])
+    return os.path.join(HOME, rel)
+
+
 def ensure_dirs(root=EMU):
-    from . import systems
+    from . import storage, systems
     for d in FOLDERS:
         os.makedirs(os.path.join(root, d), exist_ok=True)
     db = systems.load()
@@ -62,11 +85,16 @@ def ensure_dirs(root=EMU):
     # the save, state and screenshot folders the emulators are pointed at: RetroArch quietly
     # falls back to its own when a configured one doesn't exist (the Portal's first saves did)
     if root == EMU:
-        wanted = [os.path.join(HOME, s["dir"]) for e in db["emulators"].values()
-                  for s in e.get("saves", ())]
-        wanted += [v for k, v in retroarch_kept().items() if k.endswith("_directory")]
+        try:
+            wanted = [data_path(s["dir"]) for e in db["emulators"].values()
+                      for s in e.get("saves", ())]
+            wanted += [v for k, v in retroarch_kept().items() if k.endswith("_directory")]
+            data = storage.data_root()
+        except storage.DataMissing:
+            return  # the data card isn't in: no game starts until it is
+        tops = [EMU] if data["internal"] else [EMU, storage.emulation_dir(data)]
         for d in wanted:
-            if os.path.realpath(d).startswith(os.path.realpath(EMU) + os.sep):
+            if any(os.path.realpath(d).startswith(os.path.realpath(t) + os.sep) for t in tops):
                 os.makedirs(d, exist_ok=True)
 
 
@@ -157,9 +185,9 @@ def retroarch_kept():
         "libretro_directory": os.path.join(RA_DIR, "cores"),
         "core_updater_buildbot_cores_url": "https://buildbot.libretro.com/nightly/linux/aarch64/latest/",
         "system_directory": os.path.join(EMU, "bios"),
-        "savefile_directory": os.path.join(EMU, "saves/retroarch"),
-        "savestate_directory": os.path.join(EMU, "states/retroarch"),
-        "screenshot_directory": os.path.join(EMU, "screenshots"),
+        "savefile_directory": data_path("Emulation/saves/retroarch"),
+        "savestate_directory": data_path("Emulation/states/retroarch"),
+        "screenshot_directory": data_path("Emulation/screenshots"),
         # <dir>/<ROM folder>/<game>.srm, where the Saves page looks: no core-name folder (an
         # older retroarch.cfg had sorting by core on), so a game's saves stay its own when the
         # system's core changes
@@ -464,8 +492,8 @@ def keep_melonds():
         # F9 is its load-state-from-file shortcut
         "HK_SwapScreens": QT_KEY["F10"], "HK_FullscreenToggle": -1,
     })
-    inst["SaveFilePath"] = os.path.join(EMU, "saves/melonds")
-    inst["SavestatePath"] = os.path.join(EMU, "states/melonds")
+    inst["SaveFilePath"] = data_path("Emulation/saves/melonds")
+    inst["SavestatePath"] = data_path("Emulation/states/melonds")
     for d in (inst["SaveFilePath"], inst["SavestatePath"]):
         os.makedirs(d, exist_ok=True)
     if new:
@@ -648,9 +676,66 @@ def _keep_rpcs3_pad():
     _replace(RPCS3_INPUT, "\n".join(lines) + "\n")
 
 
+# its virtual file system (vfs_config.h: vfs.yml beside config.yml on Linux): /dev_hdd0/, the PS3's
+# hard disk (installed games, updates, saves; often the biggest data of any emulator), is
+# "$(EmulatorDir)dev_hdd0/" by default, ~/.var/app/net.rpcs3.RPCS3/config/rpcs3/dev_hdd0
+RPCS3_VFS = os.path.join(RPCS3_DIR, "vfs.yml")
+RPCS3_HDD0 = ".var/app/net.rpcs3.RPCS3/config/rpcs3/dev_hdd0"
+RPCS3_HDD0_DEFAULT = "$(EmulatorDir)dev_hdd0/"
+
+
+def set_yaml_top(path, key, value):
+    """Sets one top-level `key: value` line of a block YAML file, keeping every other line."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    line = f"{key}: {value}"
+    for i, l in enumerate(lines):
+        if l.startswith(f"{key}:"):
+            if l == line:
+                return
+            lines[i] = line
+            break
+    else:
+        lines.append(line)
+    _replace(path, "\n".join(lines) + "\n")
+
+
+def _yaml_top(path, key):
+    try:
+        with open(path, encoding="utf-8") as f:
+            for l in f:
+                if l.startswith(f"{key}:"):
+                    v = l.split(":", 1)[1].strip()
+                    return json.loads(v) if v.startswith('"') else v
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _keep_rpcs3_hdd0():
+    """/dev_hdd0/ on the data card when the game data is there; back to RPCS3's own folder when
+    it's internal again, if it pointed at a card's Emulation tree (Kettle's: one the user set
+    stays)."""
+    want = data_path(RPCS3_HDD0)
+    if want == os.path.join(HOME, RPCS3_HDD0):
+        have = _yaml_top(RPCS3_VFS, "/dev_hdd0/")
+        if not have or "/Emulation/data/rpcs3/" not in have:
+            return
+        value = RPCS3_HDD0_DEFAULT
+    else:
+        os.makedirs(want, exist_ok=True)
+        # a double-quoted YAML string: a card's name can hold ": " or "#"
+        value = json.dumps(want.rstrip("/") + "/")
+    set_yaml_top(RPCS3_VFS, "/dev_hdd0/", value)
+
+
 def keep_rpcs3():
     _install_ps3_firmware()
     _keep_rpcs3_pad()
+    _keep_rpcs3_hdd0()
     set_ini(os.path.join(RPCS3_DIR, "GuiConfigs/CurrentSettings.ini"), {
         "Shortcuts": RPCS3_SHORTCUTS,
         "main_window": {"confirmationBoxExitGame": "false", "infoBoxEnabledWelcome": "false",
@@ -667,6 +752,8 @@ def keep_rpcs3():
 # --- xemu (app.xemu.xemu): Xbox ---------------------------------------------------------------
 XEMU_TOML = os.path.join(app_dir("app.xemu.xemu", "data"), "xemu/xemu/xemu.toml")
 XBOX = os.path.join(EMU, "bios/xbox")
+# its hard disk holds the saves: it moves with the game data (systems.json "data")
+XEMU_HDD = "Emulation/bios/xbox/xbox_hdd.qcow2"
 
 
 def keep_xemu():
@@ -683,7 +770,7 @@ def keep_xemu():
     files = conf.setdefault("sys", {}).setdefault("files", {})
     files.update({"bootrom_path": os.path.join(XBOX, "mcpx_1.0.bin"),
                   "flashrom_path": os.path.join(XBOX, "xbox_bios.bin"),
-                  "hdd_path": os.path.join(XBOX, "xbox_hdd.qcow2"),
+                  "hdd_path": data_path(XEMU_HDD),
                   "eeprom_path": os.path.join(XBOX, "eeprom.bin")})
     os.makedirs(XBOX, exist_ok=True)
     _replace(XEMU_TOML, toml_dump(conf) + "\n")
@@ -887,8 +974,42 @@ def keep_ryujinx():
 AZAHAR_INI = os.path.join(app_dir("org.azahar_emu.Azahar"), "azahar-emu/qt-config.ini")
 
 
+AZAHAR_DATA = ".var/app/org.azahar_emu.Azahar/data/azahar-emu"
+
+
+def azahar_storage():
+    """[Data Storage] keys for the 3DS's NAND and SD card on the data card (its "custom storage",
+    config.cpp ReadDataStorageValues), or None while they're in Azahar's own folder."""
+    sdmc, nand = data_path(f"{AZAHAR_DATA}/sdmc"), data_path(f"{AZAHAR_DATA}/nand")
+    if sdmc == os.path.join(HOME, AZAHAR_DATA, "sdmc"):
+        return None
+    for d in (sdmc, nand):
+        os.makedirs(d, exist_ok=True)
+    return qt_settings({"use_custom_storage": "true", "nand_directory": nand.rstrip("/") + "/",
+                        "sdmc_directory": sdmc.rstrip("/") + "/"})
+
+
+def _azahar_ours(path):
+    """Whether Azahar's custom storage is Kettle's (a card's Emulation/data/azahar)."""
+    cp = configparser.RawConfigParser(strict=False, interpolation=None, delimiters=("=",))
+    cp.optionxform = str
+    try:
+        cp.read(path, encoding="utf-8")
+        return "/Emulation/data/azahar/" in cp["Data%20Storage"].get("sdmc_directory", "")
+    except (KeyError, configparser.Error):
+        return False
+
+
 def keep_azahar():
-    set_ini(AZAHAR_INI, {"UI": dict(**qt_shortcuts("Main Window", {
+    sections = {}
+    store = azahar_storage()
+    if store:
+        sections["Data%20Storage"] = store
+    elif _azahar_ours(AZAHAR_INI):
+        # the data is internal again: Azahar's own folders
+        sections["Data%20Storage"] = qt_settings({"use_custom_storage": "false",
+                                                  "nand_directory": "", "sdmc_directory": ""})
+    set_ini(AZAHAR_INI, {**sections, "UI": dict(**qt_shortcuts("Main Window", {
         "Quick Save": "F2",
         "Quick Load": "F4",
         "Continue/Pause Emulation": "F1",

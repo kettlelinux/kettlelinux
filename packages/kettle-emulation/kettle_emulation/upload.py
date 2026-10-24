@@ -359,8 +359,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(port=0, idle_timeout=600, emit=print, pin=None, host="0.0.0.0", root=None):
-    """Run until idle (blocking). root: the Emulation folder (internal storage's by default)."""
-    emu = root or storage.home()
+    """Run until idle (blocking). root: the Emulation folder (by default the one new games go
+    to: the Storage tab's choice, storage.new_games_dir())."""
+    emu = root or storage.new_games_dir()
     inbox = os.path.join(emu, "inbox")
     os.makedirs(inbox, exist_ok=True)
     srv = Server((host, port), inbox, emu, emit, idle_timeout, pin)

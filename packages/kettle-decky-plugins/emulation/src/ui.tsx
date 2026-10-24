@@ -47,7 +47,7 @@ export function usePoll<T>(get: () => Promise<T>, ms: number, deps: unknown[] = 
   return [v, () => setN((x) => x + 1), error];
 }
 
-export type Tab = "library" | "add" | "bios" | "controls" | "saves" | "cores" | "settings";
+export type Tab = "library" | "add" | "bios" | "controls" | "saves" | "storage" | "cores" | "settings";
 
 export function openEmulation(tab: Tab = "library") {
   Navigation.CloseSideMenus();

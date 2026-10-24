@@ -87,7 +87,9 @@
 #              Switch games by their title ID (updates and DLC left out) with artwork from
 #              SteamGridDB (the user's free key, asked for with a QR code),
 #              BIOS status (the Switch's firmware too: where it is and which emulators have
-#              it), the emulator per system and per game, saves and backups, Get started
+#              it), the emulator per system and per game, saves and backups, the Storage tab
+#              (each storage's space and games; games moved, copied or deleted between internal
+#              storage and the cards; where new games go and where the game data lives), Get started
 #              for the first visit, and the running game's hotkeys as Quick Access buttons (those
 #              its emulator has). Kettle builds none of the emulators (up to 1.12.0-65 the image
 #              was to ship them)
@@ -98,7 +100,7 @@ pkgname=(kettle-decky-welcome kettle-decky-device-settings
          kettle-decky-stores kettle-decky-moonlight
          kettle-decky-emulation)
 # every plugin's package.json "version" is this pkgver (what the plugin loader shows): change them together
-pkgver=1.15.0
+pkgver=1.16.0
 pkgrel=1
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)

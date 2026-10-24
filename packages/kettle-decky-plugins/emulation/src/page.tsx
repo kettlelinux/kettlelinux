@@ -13,7 +13,7 @@ import {
   showModal,
 } from "@decky/ui";
 import { useEffect, useMemo, useState } from "react";
-import { FaBook, FaCog, FaDownload, FaGamepad, FaMicrochip, FaPlus, FaSave } from "react-icons/fa";
+import { FaBook, FaCog, FaDownload, FaGamepad, FaHdd, FaMicrochip, FaPlus, FaSave } from "react-icons/fa";
 import { HotkeyAction, controls } from "./api";
 import { EmulatorsTab, offerInstall } from "./emulators";
 import {
@@ -41,6 +41,7 @@ import {
   setSettings,
 } from "./api";
 import { AddTab, Qr } from "./add";
+import { StorageTab } from "./storage";
 import { applyArt, inLibrary, onSync, play, sync } from "./sync";
 import { toaster } from "@decky/api";
 import { ControlsTable, ROUTE, act, dim, good, openStart, plural, size, small, usePoll, warn } from "./ui";
@@ -511,7 +512,7 @@ export function Page() {
             { title: "BIOS", route: `${ROUTE}/bios`, icon: <FaMicrochip />, content: <BiosTab /> },
             { title: "Controls", route: `${ROUTE}/controls`, icon: <FaBook />, content: <ControlsTab ov={ov} /> },
             { title: "Saves", route: `${ROUTE}/saves`, icon: <FaSave />, content: <SavesTab ov={ov} /> },
-
+            { title: "Storage", route: `${ROUTE}/storage`, icon: <FaHdd />, content: <StorageTab /> },
             { title: "Settings", route: `${ROUTE}/settings`, icon: <FaCog />, content: <SettingsTab ov={ov} reload={reload} /> },
           ]
         : [],

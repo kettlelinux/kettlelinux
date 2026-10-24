@@ -6,7 +6,9 @@ Emulators tab (systems.json "flatpaks"); a libretro core runs in Flathub's Retro
 cores folder (the plugin downloads them from libretro's buildbot). emu-run:
 - picks the emulator: the game's choice, then the system's, then the first installed one in
   systems.json's list (~/.config/kettle/emulation/choices.json holds the choices);
-- refuses a missing ROM (a card that isn't in), a missing required BIOS, a setup step the
+- refuses a missing ROM (a card that isn't in), game data on a card that isn't in (the
+  Storage tab's choice: never a fresh internal folder that would look like lost saves), a
+  missing required BIOS, a setup step the
   emulator still needs ("needs") or a missing emulator by writing
   $XDG_RUNTIME_DIR/kettle-emulation/last-error.json, which the plugin shows as a toast;
 - gives the Flatpak its folders (systems.json "permissions", through `flatpak override --user`,
@@ -27,7 +29,7 @@ import sys
 import time
 import traceback
 
-from . import keys, seed, systems
+from . import keys, seed, storage, systems
 
 CHOICES = os.path.expanduser("~/.config/kettle/emulation/choices.json")
 FLATPAK = "flatpak"
@@ -109,8 +111,9 @@ def command(system, emu, rom):
 
 def met(check):
     """A "needs" check: a path under $HOME that exists, or a glob there matching anything (an
-    emulator's installed firmware: registered/*.nca)."""
-    path = os.path.join(seed.HOME, check)
+    emulator's installed firmware: registered/*.nca). One in the game data (xemu's hard disk)
+    is looked for where the data is."""
+    path = seed.data_path(check)
     if any(c in check for c in "*?["):
         import glob
         return bool(glob.glob(path))
@@ -155,6 +158,19 @@ def check_rom(rom):
         if not os.path.ismount(mount):
             raise Refused("storage", "This game is on a card that isn't in")
     raise Refused("rom", f"The game file is gone: {os.path.basename(rom)}")
+
+
+def check_data(emu):
+    """The game data on a card that isn't in, for an emulator that keeps some of it there
+    (RetroArch's saves, RPCS3's dev_hdd0...; Ryujinx's own folder is always internal)."""
+    db = systems.load()
+    if emu["kind"] != "libretro" and not any(
+            storage.movable(d["dir"], db) for d in list(emu.get("saves") or ()) + list(emu.get("data") or ())):
+        return
+    try:
+        storage.data_root()
+    except storage.DataMissing as err:
+        raise Refused("storage", str(err))
 
 
 def check_bios(system):
@@ -203,6 +219,7 @@ def prepare(system, rom):
     db = systems.load()
     check_rom(rom)
     eid, emu = choose(db, system, rom)
+    check_data(emu)
     check_system_dirs(db["systems"][system], emu)
     check_bios(system)
     seed.seed(eid)

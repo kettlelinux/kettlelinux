@@ -100,7 +100,7 @@ export type BiosSystem = { id: string; name: string; state: BiosState; entries: 
 export type Media = { path: string; label: string; set_up: boolean; games_total: number; games: Record<string, number>; bios: number; bytes: number };
 export type Job = {
   state: "idle" | "running" | "done" | "failed" | "cancelled";
-  kind?: "import" | "inbox";
+  kind?: "import" | "inbox" | "transfer" | "data";
   path?: string;
   files?: number;
   done?: number;
@@ -109,7 +109,35 @@ export type Job = {
   current?: string;
   error?: string;
   unsorted?: number;
-  stats?: { games: Record<string, number>; bios: unknown[]; unsorted: number; identical: number; errors: number } | null;
+  // a data move's: kept (newer files left where they were), switched (the data storage changed)
+  stats?: { games: Record<string, number>; bios: unknown[]; unsorted: number; identical: number; errors: number; kept?: number; switched?: boolean } | null;
+};
+// the Storage tab: id is what storage_transfer and storage_delete take (the path's bytes in hex)
+export type StoredGame = { id: string; title: string; system: string; system_name: string; size: number };
+export type StorageInfo = {
+  key: string;
+  path: string;
+  emulation: string;
+  label: string;
+  internal: boolean;
+  set_up: boolean;
+  fstype: string;
+  total: number;
+  free: number;
+  games: StoredGame[];
+  games_bytes: number;
+  data_bytes: number;
+  new_games: boolean;
+  data: boolean;
+};
+export type StorageOverview = {
+  storages: StorageInfo[];
+  new_games: string;
+  new_games_label: string;
+  data: string;
+  data_missing: string;
+  moves: string[];
+  stays: string[];
 };
 // id: what assign takes (the path's bytes in hex); path and name are for showing (a name that isn't UTF-8 has U+FFFD in it)
 export type Unsorted = { id: string; path: string; name: string; size: number; systems: string[]; storage: string };
@@ -197,6 +225,11 @@ export const biosInstall = callable<[system: string | null], string[]>("bios_ins
 export const media = callable<[], Media[]>("media");
 export const setUpCard = callable<[path: string], void>("set_up_card");
 export const importStart = callable<[path: string, mode: "copy" | "move", dest: string], void>("import_start");
+export const storageOverview = callable<[], StorageOverview>("storage_overview");
+export const storageSetNewGames = callable<[key: string], void>("storage_set_new_games");
+export const storageTransfer = callable<[ids: string[], dest: string, mode: "copy" | "move"], void>("storage_transfer");
+export const storageDelete = callable<[ids: string[]], number>("storage_delete");
+export const storageMoveData = callable<[dest: string], void>("storage_move_data");
 export const inboxNow = callable<[], void>("inbox_now");
 export const importStatus = callable<[], Job>("import_status");
 export const importCancel = callable<[], void>("import_cancel");

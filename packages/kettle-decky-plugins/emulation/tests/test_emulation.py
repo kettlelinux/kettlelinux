@@ -420,6 +420,71 @@ class Plugin(unittest.TestCase):
         self.assertEqual(t, {"games": {"snes": 5}, "bios": [{"f": 1}], "unsorted": 1, "identical": 2, "errors": 1})
 
 
+    def test_storage_tab(self):
+        import asyncio
+        import shutil
+        from kettle_emulation import storage
+        emu = os.environ["KETTLE_EMU_HOME"]
+        card = os.path.join(os.environ["KETTLE_EMU_MEDIA"], "SD")
+        from unittest import mock
+        real = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "kettle-emulation", "systems.json")
+        env = mock.patch.dict(os.environ, {"KETTLE_EMU_SYSTEMS": real})
+        env.start()
+        self.addCleanup(env.stop)
+        try:
+            touch(os.path.join(emu, "roms", "snes", "A.sfc"), b"rom")
+            os.makedirs(os.path.join(card, "Emulation", "roms"), exist_ok=True)
+            p = self.main.Plugin()
+            ov = asyncio.run(p.storage_overview())
+            internal, sd = ov["storages"]
+            self.assertTrue(internal["internal"] and internal["new_games"] and internal["data"])
+            self.assertEqual([g["title"] for g in internal["games"]], ["A"])
+            self.assertEqual(internal["games"][0]["size"], 3)
+            self.assertEqual((sd["label"], sd["set_up"], sd["games"]), ("SD", True, []))
+            self.assertIn("Ryujinx's saves", ov["stays"])
+            self.assertIn("RPCS3's save states", ov["stays"])
+            # only what the tab showed can be moved or deleted
+            with self.assertRaises(ValueError):
+                p._game_paths([self.main._hex(os.path.join(emu, "bios", "x.bin"))])
+            self.assertEqual(p._game_paths([internal["games"][0]["id"]]), [os.path.join(emu, "roms", "snes", "A.sfc")])
+            # the game that's running can't be moved
+            with tempfile.TemporaryDirectory() as rt, mock.patch.object(self.main.keys, "runtime_dir", return_value=rt):
+                with open(os.path.join(rt, "running.json"), "w") as f:
+                    json.dump({"pid": os.getpid(), "rom": os.path.join(emu, "roms", "snes", "A.sfc")}, f)
+                with self.assertRaises(ValueError):
+                    p._game_paths([internal["games"][0]["id"]])
+            asyncio.run(p.storage_set_new_games(sd["key"]))
+            self.assertEqual(storage.new_games_dir(), os.path.join(card, "Emulation"))
+            ov = asyncio.run(p.storage_overview())
+            self.assertTrue(ov["storages"][1]["new_games"])
+            async def emit(*a):
+                pass
+            with mock.patch.object(self.main, "_emit", emit):
+                n = asyncio.run(p.storage_delete([internal["games"][0]["id"]]))
+            self.assertEqual(n, 1)
+            self.assertFalse(os.path.exists(os.path.join(emu, "roms", "snes", "A.sfc")))
+        finally:
+            shutil.rmtree(card, ignore_errors=True)
+            try:
+                os.unlink(storage.conf_path())
+            except OSError:
+                pass
+
+    def test_saves_follow_the_game_data_to_a_card(self):
+        home = os.path.join(self.tmp.name, "saves-home")
+        card = os.path.join(self.tmp.name, "saves-card", "Emulation")
+        rom = {"system": "snes", "path": os.path.join(home, "Emulation", "roms", "snes", "A.sfc"), "title": "A"}
+        touch(os.path.join(card, "saves", "retroarch", "snes", "A.srm"), b"s")
+        touch(os.path.join(home, ".var/app/org.ppsspp.PPSSPP/config/ppsspp/PSP/SAVEDATA/ULUS1/DATA.BIN"), b"p")
+
+        def locate(rel):
+            return os.path.join(card, rel[len("Emulation/"):]) if rel.startswith("Emulation/") else os.path.join(home, rel)
+        games = saves.listing(home, {"r1": rom}, DB_V2, locate)
+        by = {g["title"]: g for g in games}
+        self.assertEqual([f["path"] for f in by["A"]["files"]], [os.path.join(card, "saves", "retroarch", "snes", "A.srm")])
+        # a standalone's id stays the one systems.json's dir gives
+        self.assertTrue(by["ULUS1"]["id"].startswith("ppsspp:.var/app/org.ppsspp.PPSSPP/config/ppsspp/PSP/SAVEDATA:"))
+
     def test_launch_hex_round_trips_a_name_not_utf8(self):
         from unittest import mock
         from kettle_emulation import run

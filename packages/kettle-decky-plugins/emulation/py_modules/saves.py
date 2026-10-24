@@ -1,5 +1,6 @@
 # Each game's saves and save states, wherever its emulator keeps them (systems.json: each
-# emulator's "saves", [{dir: from the home folder, glob}]), and backing them up.
+# emulator's "saves", [{dir: from the home folder, glob}]), and backing them up. With the game data
+# on a card (the Storage tab), `locate` gives where a saves dir is now (kettle_emulation.storage).
 #
 # RetroArch's (its cores' "saves", kettle-emulation's kept config) are sorted by the ROM's folder,
 # so they're matched to the ROM: <dir>/<ROM's folder>/<ROM name>.srm, .state[1-9|.auto] (each
@@ -39,12 +40,15 @@ def _rel_dir(d: str) -> str | None:
     return d
 
 
-def save_dirs(db: dict) -> tuple[list[str], list[dict]]:
-    """(the RetroArch cores' save dirs, [{emulator, name, dir, glob}] of the standalones)."""
+def save_dirs(db: dict, locate=None) -> tuple[list[str], list[dict]]:
+    """(the RetroArch cores' save dirs, [{emulator, name, dir, key, glob}] of the standalones).
+    With `locate` (a dir from the home folder -> where it is now, None to leave it out), a dir is
+    where that says, as an absolute path; "key" is always the one systems.json gives."""
     ra, other, seen = [], [], set()
     for eid, e in db.get("emulators", {}).items():
         for sv in e.get("saves") or ():
-            d = _rel_dir(sv.get("dir", ""))
+            key = _rel_dir(sv.get("dir", ""))
+            d = key if key and not locate else (locate(key) if key else None)
             if not d:
                 continue
             if e.get("kind") == "libretro":
@@ -52,7 +56,7 @@ def save_dirs(db: dict) -> tuple[list[str], list[dict]]:
                     ra.append(d)
             elif (d, sv.get("glob", "*")) not in seen:
                 seen.add((d, sv.get("glob", "*")))
-                other.append({"emulator": eid, "name": e.get("name", eid), "dir": d, "glob": sv.get("glob") or "*"})
+                other.append({"emulator": eid, "name": e.get("name", eid), "dir": d, "key": key, "glob": sv.get("glob") or "*"})
     return ra, other
 
 
@@ -138,14 +142,14 @@ def emulator_files(home: str, entries: list[dict]) -> list[dict]:
                 kind = "state" if STATE_WORDS.search(os.path.relpath(p, home)) else "save"
                 f = _file(p, kind)
                 if f:
-                    games.setdefault((e["emulator"], e["name"], e["dir"], name), []).append(f)
+                    games.setdefault((e["emulator"], e["name"], e.get("key") or e["dir"], name), []).append(f)
     return [{"id": f"{eid}:{d}:{name}", "title": name, "system": "", "emulator": ename, "files": files}
             for (eid, ename, d, name), files in games.items()]
 
 
-def listing(home: str, roms: dict, db: dict) -> list[dict]:
+def listing(home: str, roms: dict, db: dict, locate=None) -> list[dict]:
     """Every game with saves or states: [{id, title, system, files}], newest first."""
-    ra, other = save_dirs(db)
+    ra, other = save_dirs(db, locate)
     out = []
     for rid, r in roms.items():
         if r.get("deleted"):
