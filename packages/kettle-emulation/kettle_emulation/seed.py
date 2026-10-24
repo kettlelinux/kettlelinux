@@ -19,7 +19,6 @@ import os
 import shutil
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
 
 HOME = os.path.expanduser("~")
 EMU = os.path.join(HOME, "Emulation")
@@ -486,31 +485,6 @@ def keep_melonds():
     _replace(MELONDS_TOML, toml_dump(conf) + "\n")
 
 
-# --- Play! (org.purei.Play): PlayStation 2 ----------------------------------------------------
-PLAY_CONFIG = os.path.join(app_dir("org.purei.Play"), "Play Data Files/config.xml")
-
-
-def keep_play():
-    """Its keys are fixed (Ctrl+Shift+1 save, Ctrl+1 load, Ctrl+R pause: systems.json "keys"; its
-    Ctrl+Q lives in the menu bar fullscreen hides, so Steam's Exit game quits it); this turns off
-    the exit question and pausing in the background."""
-    try:
-        root = ET.parse(PLAY_CONFIG).getroot()
-    except (OSError, ET.ParseError):
-        root = ET.Element("Config")
-    prefs = {p.get("Name"): p for p in root.findall("Preference")}
-    for name, typ, value in (("ui.showexitconfirmation", "boolean", "false"),
-                             ("ui.pausewhenfocuslost", "boolean", "false")):
-        p = prefs.get(name)
-        if p is None:
-            p = ET.SubElement(root, "Preference", {"Name": name})
-        p.set("Type", typ)
-        p.set("Value", value)
-    # Play!'s parser takes only double-quoted attributes: ElementTree's declaration is single-quoted
-    _replace(PLAY_CONFIG, '<?xml version="1.0" encoding="UTF-8"?>\n'
-             + ET.tostring(root, encoding="unicode") + "\n")
-
-
 # --- RPCS3 (net.rpcs3.RPCS3): PlayStation 3 ---------------------------------------------------
 RPCS3_DIR = os.path.join(app_dir("net.rpcs3.RPCS3"), "rpcs3")
 RPCS3_SHORTCUTS = {  # GuiConfigs/CurrentSettings.ini [Shortcuts]; "" unbinds
@@ -932,7 +906,7 @@ def keep_azahar():
 SEEDERS = {"retroarch": seed_retroarch}
 # the kept settings of the emulator about to start (seed(eid))
 KEEPERS = {"ppsspp": keep_ppsspp, "dolphin": keep_dolphin, "melonds": keep_melonds,
-           "play": keep_play, "rpcs3": keep_rpcs3, "xemu": keep_xemu, "eden": keep_eden,
+           "rpcs3": keep_rpcs3, "xemu": keep_xemu, "eden": keep_eden,
            "ryujinx": keep_ryujinx, "azahar": keep_azahar}
 
 

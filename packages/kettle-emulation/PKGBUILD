@@ -1,10 +1,12 @@
 # Kettle Linux's emulation core, which Game Mode's Emulation plugin (kettle-decky-emulation) drives.
 # The emulators themselves aren't packaged: they're Flathub's (RetroArch, PPSSPP, Dolphin,
-# melonDS, Play!, RPCS3, xemu, Ryujinx, Eden, Azahar), installed per user from the plugin's
-# Emulators tab, and RetroArch's cores come from libretro's aarch64 buildbot.
+# melonDS, RPCS3, xemu, Ryujinx, Eden, Azahar), installed per user from the plugin's Emulators
+# tab, and RetroArch's cores come from libretro's aarch64 buildbot (PS2's ARMSX2 from that
+# project's nightly builds on GitHub).
 # - systems.json (/usr/share/kettle/emulation): every system, the emulators that run it (their
 #   Flatpaks, licenses, hotkeys, save folders and the setup they need), the Flatpaks' permissions,
-#   folders, file types and BIOS files (by md5; no BIOS is ever shipped).
+#   folders, file types and BIOS files (by md5, or by contents: a PS2 dump, ps2.py; no BIOS is
+#   ever shipped).
 # - the Switch's keys and firmware from Emulation/bios/switch put where Ryujinx and Eden read
 #   them (kettle_emulation/switch.py: a firmware laid out as each emulator's own Install
 #   Firmware does it), and a game newer than the keys refused with a toast.
@@ -16,13 +18,13 @@
 # - the standard controls' Steam Input layouts, emulation-xbox.vdf and emulation-nintendo.vdf
 #   (mkvdf.py; FACE_BUTTONS picks one): the gamepad by position, and Select held for the hotkeys,
 #   the same in every emulator; emulation-<face>-<emulator>.vdf for the emulators whose hotkeys
-#   have keys of their own (Play!, xemu, melonDS).
+#   have keys of their own (xemu, melonDS).
 # - getting games in: kettle-emu-import (sorts ROMs into their system's folder by file type and
 #   header, BIOS files by md5, from the inbox, a card or a USB stick), kettle-emu-upload (the
 #   phone/PC upload page behind the plugin's QR code) and kettle-emu-share (the Samba share of
 #   ~/Emulation, pkexec: 50-kettle-emulation-share.rules).
 pkgname=kettle-emulation
-pkgver=0.3.4
+pkgver=0.4.0
 pkgrel=1
 pkgdesc='Kettle Linux: emulator launcher, standard controls and ROM/BIOS import'
 arch=(any)

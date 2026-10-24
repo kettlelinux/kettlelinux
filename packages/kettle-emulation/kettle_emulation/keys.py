@@ -3,7 +3,7 @@ buttons send the very keys Select's hotkey layer sends (mkvdf.py), and emu-run c
 emulator the graceful way before signalling it.
 
 Most emulators get the standard keys bound in their config (seed.py). An emulator whose hotkeys
-can't be rebound (Play!, xemu, melonDS's state keys) has its own key map in systems.json
+can't be rebound (xemu, melonDS's state keys) has its own key map in systems.json
 ("keys": action -> "LEFT_CONTROL+1"): mkvdf.py writes it a layout of its own, and the bridge
 presses its chords. An action that emulator has no key for is "unsupported".
 

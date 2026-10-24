@@ -16,7 +16,10 @@ import json
 import os
 import shutil
 
-from . import storage, systems
+from . import ps2, storage, systems
+
+# BIOS entries recognised by their contents: every console's dump differs, so no md5s (a PS2's)
+CONTENT = {"ps2": ps2.is_bios}
 
 # nothing bigger is a BIOS (the biggest listed, dc_boot.bin, is 2 MiB)
 MAX_SIZE = 8 << 20
@@ -108,8 +111,11 @@ def _present(cache):
     return by_md5, by_name
 
 
-def dest_of(entry):
-    """Where an entry's file has to be: install_dir()/<dest or file>."""
+def dest_of(entry, path=None):
+    """Where an entry's file has to be: install_dir()/<dest or file>; for an entry with a
+    "dest_dir" (any file of its kind, ARMSX2's pcsx2/bios), that folder with the file's own name."""
+    if entry.get("dest_dir"):
+        return os.path.join(install_dir(), entry["dest_dir"], os.path.basename(path or entry["file"]))
     return os.path.join(install_dir(), entry.get("dest", entry["file"]))
 
 
@@ -125,6 +131,8 @@ def _has_magic(entry, path):
 
 
 def _right(entry, path, size, cache):
+    if entry.get("content"):
+        return CONTENT[entry["content"]](path)
     if entry.get("magic"):
         return _has_magic(entry, path)
     md5s = [m.lower() for m in entry.get("md5", ())]
@@ -140,6 +148,8 @@ def _right(entry, path, size, cache):
 def _lookup(entry, by_md5, by_name, cache):
     """(found path or None, elsewhere path or None, bad path or None): found is the installed
     file; elsewhere a right one that isn't there."""
+    if entry.get("content"):
+        return _lookup_content(entry, by_name, cache)
     dest = dest_of(entry)
     try:
         st = os.stat(dest)
@@ -159,6 +169,21 @@ def _lookup(entry, by_md5, by_name, cache):
         elsewhere = next((p for p, size in named if p != dest and _right(entry, p, size, cache)), None)
     bad = dest if here else next((p for p, _ in named if p != elsewhere), None)
     return None, elsewhere, bad
+
+
+def _lookup_content(entry, by_name, cache):
+    """A "content" entry: found when any right file is in its dest_dir, elsewhere when one is
+    somewhere else in the BIOS folders."""
+    folder = os.path.realpath(os.path.join(install_dir(), entry["dest_dir"]))
+    found = elsewhere = None
+    for path, size in (x for xs in by_name.values() for x in xs):
+        if not ps2.MIN_SIZE <= size <= ps2.MAX_SIZE or not _right(entry, path, size, cache):
+            continue
+        if os.path.dirname(os.path.realpath(path)) == folder:
+            found = found or path
+        else:
+            elsewhere = elsewhere or path
+    return found, (None if found else elsewhere), None
 
 
 def status(sid=None):
@@ -239,6 +264,9 @@ def recognise(path, md5=None, cache=None):
     if size == 0:
         return None
     entries = systems.bios_entries()
+    for sid, b in entries:  # by their contents (a PS2's: no md5s to list)
+        if b.get("content") and ps2.MIN_SIZE <= size <= ps2.MAX_SIZE and CONTENT[b["content"]](path):
+            return sid, b
     for sid, b in entries:  # by their first bytes, whatever their size or name
         if b.get("magic") and _has_magic(b, path):
             return sid, b
@@ -264,7 +292,7 @@ def install(path, entry, move=False):
     there is left alone; a different one is kept as <name>.old (<name> (2).old... when there is
     one already). Returns (action, dest path): action "installed" or "identical"."""
     from .importer import free_name  # importer imports this module
-    dest = dest_of(entry)
+    dest = dest_of(entry, path)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     if os.path.realpath(path) == os.path.realpath(dest):
         return "identical", dest

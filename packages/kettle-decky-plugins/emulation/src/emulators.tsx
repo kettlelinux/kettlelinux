@@ -197,13 +197,34 @@ export function EmulatorsTab({ reload: reloadAll }: { reload: () => void }) {
     <Field
       key={c.core}
       label={c.name}
-      description={`${c.systems.join(", ")}${c.free ? "" : ` · ${c.license}: ${c.terms}`}${c.missing.length ? ` · its ${c.missing.join(" and ")} folders are missing from Emulation/bios: download it again` : ""}`}
+      description={`${c.systems.join(", ")}${c.nightly ? ` · nightly build${c.version ? ` ${c.version}` : ""}` : ""}${c.free ? "" : ` · ${c.license}: ${c.terms}`}${c.missing.length ? ` · its ${c.missing.join(" and ")} folders are missing from Emulation/bios: download it again` : ""}`}
       childrenContainerWidth="max"
     >
       {c.installed ? (
-        <DialogButton style={{ width: "auto" }} onClick={() => act(async () => (setInfo({ ...info, cores: await coreRemove(c.core) }), reloadAll()), "Removing failed")}>
-          Remove
-        </DialogButton>
+        <Focusable style={{ display: "flex", gap: "6px" }} flow-children="horizontal">
+          {c.update && (
+            <DialogButton
+              style={{ width: "auto" }}
+              disabled={!!busyCore}
+              onClick={() =>
+                act(async () => {
+                  setBusyCore(c.core);
+                  try {
+                    setInfo({ ...info, cores: await coreDownload(c.core, !c.free) });
+                    reloadAll();
+                  } finally {
+                    setBusyCore("");
+                  }
+                }, "Updating failed")
+              }
+            >
+              {busyCore === c.core ? "Updating…" : `Update to ${c.latest}`}
+            </DialogButton>
+          )}
+          <DialogButton style={{ width: "auto" }} onClick={() => act(async () => (setInfo({ ...info, cores: await coreRemove(c.core) }), reloadAll()), "Removing failed")}>
+            Remove
+          </DialogButton>
+        </Focusable>
       ) : (
         <DialogButton
           style={{ width: "auto" }}

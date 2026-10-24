@@ -63,7 +63,14 @@ class Schema(unittest.TestCase):
 
     def test_new_systems(self):
         s = DB["systems"]
-        self.assertEqual(s["ps2"]["emulators"], ["play"])
+        self.assertEqual(s["ps2"]["emulators"], ["ra-armsx2"])
+        self.assertEqual(s["ps2"]["system_dirs"], ["pcsx2/resources"])
+        arm = DB["emulators"]["ra-armsx2"]
+        self.assertEqual((arm["kind"], arm["core"]), ("libretro", "armsx2"))
+        self.assertEqual(arm["source"]["kind"], "github-nightly")
+        self.assertIn("ra-armsx2", DB["flatpaks"]["org.libretro.RetroArch"]["for"])
+        self.assertNotIn("play", DB["emulators"])
+        self.assertNotIn("org.purei.Play", DB["flatpaks"])
         self.assertEqual(s["ps3"]["emulators"], ["rpcs3"])
         self.assertEqual(s["xbox"]["emulators"], ["xemu"])
         self.assertEqual(s["switch"]["emulators"], ["ryujinx", "eden"])
@@ -76,7 +83,7 @@ class Layouts(unittest.TestCase):
     def test_files(self):
         out = mkvdf.layouts(DB)
         keyed = {e for e, v in DB["emulators"].items() if "keys" in v}
-        self.assertEqual(keyed, {"melonds", "play", "xemu"})
+        self.assertEqual(keyed, {"melonds", "xemu"})
         want = {f"emulation-{f}.vdf" for f in ("xbox", "nintendo")} | {
             f"emulation-{f}-{e}.vdf" for f in ("xbox", "nintendo") for e in keyed}
         self.assertEqual(set(out), want)
@@ -90,9 +97,7 @@ class Layouts(unittest.TestCase):
         self.assertIn('"key_press F5, , "', xemu)
         self.assertNotIn("key_press F6", xemu)  # no state slots in xemu
         self.assertNotIn("key_press F2", xemu)  # F2 opens xemu's popup menu
-        play = out["emulation-xbox-play.vdf"]
-        self.assertIn('"key_press LEFT_CONTROL, , "', play)
-        self.assertNotIn("key_press ESCAPE", play)  # Esc only leaves fullscreen there
+        self.assertIn('"key_press LEFT_CONTROL, , "', xemu)  # quit: Ctrl+Q
         melonds = out["emulation-nintendo-melonds.vdf"]
         self.assertNotIn("key_press F9", melonds)  # its load-from-file shortcut
         self.assertIn("key_press F10", melonds)
@@ -113,9 +118,9 @@ class Layouts(unittest.TestCase):
 class KeyMaps(unittest.TestCase):
     def test_keymaps(self):
         self.assertEqual(keys.keymap()["quit"], ["ESCAPE"])
-        play = keys.keymap(DB["emulators"]["play"])
-        self.assertEqual(play["save_state"], ["LEFT_CONTROL", "LEFT_SHIFT", "1"])
-        self.assertNotIn("fast_forward", play)
+        xemu = keys.keymap(DB["emulators"]["xemu"])
+        self.assertEqual(xemu["save_state"], ["LEFT_SHIFT", "F5"])
+        self.assertNotIn("fast_forward", xemu)
         self.assertEqual(keys.evdev("LEFT_CONTROL"), "KEY_LEFTCTRL")
         self.assertEqual(keys.evdev("ESCAPE"), "KEY_ESC")
         self.assertEqual(keys.ACTIONS["quit"], "KEY_ESC")
@@ -162,7 +167,6 @@ class Keepers(unittest.TestCase):
         for p in ("org.ppsspp.PPSSPP/config/ppsspp/PSP/SYSTEM/controls.ini",
                   "org.DolphinEmu.dolphin-emu/config/dolphin-emu/Hotkeys.ini",
                   "net.kuribo64.melonDS/config/melonDS/melonDS.toml",
-                  "org.purei.Play/config/Play Data Files/config.xml",
                   "net.rpcs3.RPCS3/config/rpcs3/GuiConfigs/CurrentSettings.ini",
                   "net.rpcs3.RPCS3/config/rpcs3/config.yml",
                   "app.xemu.xemu/data/xemu/xemu/xemu.toml",
@@ -197,18 +201,13 @@ class Keepers(unittest.TestCase):
         self.assertNotIn("HK_SaveState", kb)
         self.assertTrue(conf["Instance0"]["SaveFilePath"].endswith("Emulation/saves/melonds"))
 
-    def test_xemu_and_play_and_rpcs3(self):
-        self.keep("xemu", "play", "rpcs3")
+    def test_xemu_and_rpcs3(self):
+        self.keep("xemu", "rpcs3")
         with open(self.app("app.xemu.xemu/data/xemu/xemu/xemu.toml"), "rb") as f:
             x = tomllib.load(f)
         self.assertEqual(x["general"]["snapshots"]["shortcuts"]["f5"], "kettle")
         self.assertTrue(x["display"]["window"]["fullscreen_on_startup"])
         self.assertTrue(x["sys"]["files"]["bootrom_path"].endswith("Emulation/bios/xbox/mcpx_1.0.bin"))
-        play = self.read("org.purei.Play/config/Play Data Files/config.xml")
-        self.assertIn('Name="ui.showexitconfirmation" Type="boolean" Value="false"', play)
-        # Play!'s parser takes double quotes only
-        self.assertTrue(play.startswith('<?xml version="1.0" encoding="UTF-8"?>\n<Config>'), play[:60])
-        self.assertNotIn("'", play.splitlines()[0])
         ini = self.read("net.rpcs3.RPCS3/config/rpcs3/GuiConfigs/CurrentSettings.ini")
         self.assertIn("game_window_stop=Esc", ini)
         self.assertIn("game_window_savestate=\n", ini)
@@ -377,15 +376,15 @@ class Launch(Env):
             self.write(".var/app/io.github.ryubing.Ryujinx/config/Ryujinx/bis/system/Contents/registered/"
                        "a.nca/00", "nca")
             run.check_needs(emu)
-        run.check_needs(DB["emulators"]["play"])  # nothing emu-run can check
+        run.check_needs(DB["emulators"]["azahar"])  # nothing emu-run can check
 
     def test_permissions_applied_every_launch(self):
         calls = []
         with mock.patch.object(seed.subprocess, "run", lambda argv, **kw: calls.append(argv)):
-            seed.permissions("org.purei.Play")
-            seed.permissions("org.purei.Play")
+            seed.permissions("app.xemu.xemu")
+            seed.permissions("app.xemu.xemu")
         argv = ["flatpak", "override", "--user", "--filesystem=~/Emulation",
-                "--filesystem=/run/media", "org.purei.Play"]
+                "--filesystem=/run/media", "app.xemu.xemu"]
         self.assertEqual(calls, [argv, argv])
 
     def test_installed_looks_in_retroarchs_cores(self):

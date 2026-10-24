@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Writes the Steam Input layouts of every emulation shortcut: emulation-xbox.vdf and
 emulation-nintendo.vdf (the device's FACE_BUTTONS picks one), run by the PKGBUILD. An emulator
-whose hotkeys can't be rebound to the standard keys (systems.json "keys": Play!, xemu, melonDS)
+whose hotkeys can't be rebound to the standard keys (systems.json "keys": xemu, melonDS)
 gets layouts of its own, emulation-<face>-<emulator id>.vdf, with the same buttons sending its
 own key chords (systems.layout() names the one a game needs); a hotkey it has no key for does
 nothing there.

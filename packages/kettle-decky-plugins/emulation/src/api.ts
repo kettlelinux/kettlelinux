@@ -133,6 +133,11 @@ export type Core = {
   systems: string[];
   system_dirs: string[]; // folders it needs in Emulation/bios, downloaded with it
   missing: string[]; // those of them that aren't there (it isn't installed until they are)
+  // a core from its project's GitHub nightlies (ARMSX2), not libretro's buildbot
+  nightly?: boolean;
+  version?: string; // the nightly installed ("" when it isn't)
+  latest?: string; // the newest nightly ("" when GitHub can't be reached)
+  update?: boolean; // a newer nightly than the installed one
 };
 
 // a setup note; met: whether what it asks for is there (null: Kettle can't tell)

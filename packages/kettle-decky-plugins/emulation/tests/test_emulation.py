@@ -31,7 +31,7 @@ DB_V2 = {
     "flatpaks": {
         "org.libretro.RetroArch": {"name": "RetroArch", "permissions": ["~/Emulation", "/run/media"]},
         "org.ppsspp.PPSSPP": {"name": "PPSSPP", "permissions": ["~/Emulation:ro", "--filesystem=/run/media"]},
-        "org.purei.Play": {"name": "Play!", "permissions": ["~/Emulation"]},
+        "org.example.Ps2Emu": {"name": "PS2 Emu", "permissions": ["~/Emulation"]},
         "net.rpcs3.RPCS3": {"name": "RPCS3", "permissions": ["~/Emulation"]},
         "io.github.ryubing.Ryujinx": {"name": "Ryujinx", "permissions": []},
         "dev.eden_emu.eden": {"name": "Eden", "permissions": []},
@@ -47,7 +47,7 @@ DB_V2 = {
                    "hotkeys": ["save_state", "load_state", "menu", "fast_forward", "slot_down", "slot_up", "screenshot", "quit"],
                    "saves": [{"dir": ".var/app/org.ppsspp.PPSSPP/config/ppsspp/PSP/SAVEDATA"},
                              {"dir": ".var/app/org.ppsspp.PPSSPP/config/ppsspp/PSP/PPSSPP_STATE", "glob": "*.ppst"}]},
-        "play": {"name": "Play!", "kind": "flatpak", "flatpak": "org.purei.Play", "license": "BSD-2-Clause", "free": True,
+        "ps2emu": {"name": "PS2 Emu", "kind": "flatpak", "flatpak": "org.example.Ps2Emu", "license": "BSD-2-Clause", "free": True,
                  "hotkeys": ["quit"], "saves": []},
         "rpcs3": {"name": "RPCS3", "kind": "flatpak", "flatpak": "net.rpcs3.RPCS3", "license": "GPL-2.0", "free": True,
                   "experimental": True, "hotkeys": ["quit"], "needs": ["Install the PS3 firmware in RPCS3 first."]},
@@ -61,7 +61,7 @@ DB_V2 = {
                  "thumbnails": "Nintendo_-_Super_Nintendo_Entertainment_System", "rewind": True},
         "msx": {"name": "MSX", "folders": ["msx"], "extensions": ["rom"], "emulators": ["ra-bluemsx"]},
         "psp": {"name": "PSP", "folders": ["psp"], "extensions": ["iso"], "emulators": ["ppsspp"]},
-        "ps2": {"name": "PlayStation 2", "folders": ["ps2"], "extensions": ["iso"], "emulators": ["play"]},
+        "ps2": {"name": "PlayStation 2", "folders": ["ps2"], "extensions": ["iso"], "emulators": ["ps2emu"]},
         "ps3": {"name": "PlayStation 3", "folders": ["ps3"], "extensions": ["pkg"], "emulators": ["rpcs3"]},
         "switch": {"name": "Switch", "folders": ["switch"], "extensions": ["nsp"], "emulators": ["ryujinx", "eden"]},
     },
@@ -968,12 +968,12 @@ class FlathubEmulators(unittest.TestCase):
     def test_what_the_games_need(self):
         need = self.main.needed(DB_V2, {"snes": 2, "ps2": 1, "switch": 1, "psp": 0}, {"systems": {"switch": "eden"}}, {},
                                 lambda c: False)
-        self.assertEqual(need["flatpaks"], ["org.libretro.RetroArch", "org.purei.Play", "dev.eden_emu.eden"])
+        self.assertEqual(need["flatpaks"], ["org.libretro.RetroArch", "org.example.Ps2Emu", "dev.eden_emu.eden"])
         self.assertEqual([c["core"] for c in need["cores"]], ["bsnes"])
         self.assertTrue(need["cores"][0]["free"])
         self.assertEqual(need["systems"], ["snes", "ps2", "switch"])
         inst = {a: {"version": "1", "origin": "flathub", "installation": "user"}
-                for a in ("org.libretro.RetroArch", "org.purei.Play")}
+                for a in ("org.libretro.RetroArch", "org.example.Ps2Emu")}
         need = self.main.needed(DB_V2, {"snes": 2, "ps2": 1, "switch": 1}, {"systems": {"switch": "eden"}}, inst,
                                 lambda c: c == "bsnes")
         self.assertEqual((need["flatpaks"], need["cores"], need["systems"]), (["dev.eden_emu.eden"], [], ["switch"]))
@@ -1033,7 +1033,7 @@ class FlathubEmulators(unittest.TestCase):
         self.assertEqual(rows[0]["name"], "RetroArch")
         ppsspp = next(r for r in rows if r["name"] == "PPSSPP")
         self.assertNotIn("rewind", ppsspp["hotkeys"])
-        self.assertEqual(next(r for r in rows if r["name"] == "Play!")["hotkeys"], ["quit"])
+        self.assertEqual(next(r for r in rows if r["name"] == "PS2 Emu")["hotkeys"], ["quit"])
         # blueMSX runs only MSX, which doesn't rewind: its row has no rewind; the SNES cores' has
         ra = [r for r in rows if r["name"] == "RetroArch"]
         self.assertEqual({tuple(sorted(r["emulators"])): "rewind" in r["hotkeys"] for r in ra},
@@ -1066,7 +1066,7 @@ class FlathubEmulators(unittest.TestCase):
                 f.write(f"Installing 2/2\u2026 100%\n{flatpaks.EXIT_MARK} 0\n")
 
         async def go(p):
-            await p.setup_start("install", ["org.purei.Play"], ["bsnes", "snes9x"], ["snes9x"])
+            await p.setup_start("install", ["org.example.Ps2Emu"], ["bsnes", "snes9x"], ["snes9x"])
             await asyncio.gather(*p._tasks)
             return p._setup
 
@@ -1078,8 +1078,8 @@ class FlathubEmulators(unittest.TestCase):
         self.assertEqual(got, [("bsnes", False), ("snes9x", True)])
         (cmds,) = started
         self.assertEqual(cmds[0][:5], [flatpaks.FLATPAK, "remote-add", "--user", "--if-not-exists", "flathub"])
-        self.assertEqual(cmds[1], [flatpaks.FLATPAK, "install", "--user", "-y", "flathub", "org.purei.Play"])
-        self.assertEqual(cmds[2], [flatpaks.FLATPAK, "override", "--user", "--filesystem=~/Emulation", "org.purei.Play"])
+        self.assertEqual(cmds[1], [flatpaks.FLATPAK, "install", "--user", "-y", "flathub", "org.example.Ps2Emu"])
+        self.assertEqual(cmds[2], [flatpaks.FLATPAK, "override", "--user", "--filesystem=~/Emulation", "org.example.Ps2Emu"])
         self.assertIn("setup", [e for e, _ in events])
         # a non-free core without a yes, or an app systems.json doesn't name: refused before anything runs
         with self.assertRaises(ValueError):
@@ -1097,10 +1097,10 @@ class FlathubEmulators(unittest.TestCase):
 
         def start(home, log, cmds):
             with open(log, "w") as f:
-                f.write(f"error: No remote refs found for 'org.purei.Play'\n{flatpaks.EXIT_MARK} 1\n")
+                f.write(f"error: No remote refs found for 'org.example.Ps2Emu'\n{flatpaks.EXIT_MARK} 1\n")
 
         async def go(p):
-            await p.setup_start("install", ["org.purei.Play"], ["bsnes"], [])
+            await p.setup_start("install", ["org.example.Ps2Emu"], ["bsnes"], [])
             await asyncio.gather(*p._tasks)
             return p._setup
 
@@ -1129,7 +1129,7 @@ class FlathubEmulators(unittest.TestCase):
                 self.mock.patch.object(m.Plugin, "setup_start", setup_start):
             asyncio.run(m.Plugin().install_needed([]))
             asyncio.run(m.Plugin().install_needed(["snes9x"]))
-        self.assertEqual(calls[0], ("install", ["org.libretro.RetroArch", "org.purei.Play"], [], []))
+        self.assertEqual(calls[0], ("install", ["org.libretro.RetroArch", "org.example.Ps2Emu"], [], []))
         self.assertEqual(calls[1][2], ["snes9x"])
 
 
@@ -1273,12 +1273,12 @@ class SetupJobs(unittest.TestCase):
     def test_installed_apps_are_left_out(self):
         import asyncio
         m = self.main
-        with self.mock.patch.object(m.flatpaks, "installed", return_value=self.inst("org.purei.Play", where="system")):
-            st = asyncio.run(m.Plugin().setup_start("install", ["org.purei.Play"], [], []))
+        with self.mock.patch.object(m.flatpaks, "installed", return_value=self.inst("org.example.Ps2Emu", where="system")):
+            st = asyncio.run(m.Plugin().setup_start("install", ["org.example.Ps2Emu"], [], []))
         self.assertEqual(st, {"state": "idle"})
         with self.mock.patch.object(m.flatpaks, "installed", return_value=None):
             with self.assertRaises(ValueError):
-                asyncio.run(m.Plugin().setup_start("install", ["org.purei.Play"], [], []))
+                asyncio.run(m.Plugin().setup_start("install", ["org.example.Ps2Emu"], [], []))
 
     def test_only_declined_cores_is_no_error(self):
         import asyncio
@@ -1306,7 +1306,7 @@ class SetupJobs(unittest.TestCase):
         m = self.main
         got = []
         with open(m.SETUP_JOB, "w") as f:
-            json.dump({"kind": "install", "apps": ["org.purei.Play"], "cores": ["bsnes", "snes9x"], "accepted": ["snes9x"],
+            json.dump({"kind": "install", "apps": ["org.example.Ps2Emu"], "cores": ["bsnes", "snes9x"], "accepted": ["snes9x"],
                        "flatpak": True, "done_cores": ["bsnes"]}, f)
         with open(m.SETUP_LOG, "w") as f:
             f.write(f"Installing\u2026 100%\n{m.flatpaks.EXIT_MARK} 0\n")
@@ -1356,14 +1356,14 @@ class SetupJobs(unittest.TestCase):
 
         async def go():
             p = m.Plugin()
-            await p.setup_start("install", ["org.purei.Play"], ["snes9x"], ["snes9x"])
+            await p.setup_start("install", ["org.example.Ps2Emu"], ["snes9x"], ["snes9x"])
             await asyncio.gather(*p._tasks)
 
         with self.mock.patch.object(m.flatpaks, "installed", return_value={}), self.mock.patch.object(m.flatpaks, "start", start), \
                 self.mock.patch.object(m.flatpaks, "running", return_value=False), \
                 self.mock.patch.object(m.cores, "download", lambda *a: None):
             asyncio.run(go())
-        self.assertEqual((seen["apps"], seen["cores"], seen["accepted"], seen["flatpak"]), (["org.purei.Play"], ["snes9x"], ["snes9x"], True))
+        self.assertEqual((seen["apps"], seen["cores"], seen["accepted"], seen["flatpak"]), (["org.example.Ps2Emu"], ["snes9x"], ["snes9x"], True))
         self.assertFalse(os.path.exists(m.SETUP_JOB))
 
     def test_core_remove_resyncs(self):
@@ -1654,6 +1654,124 @@ class GameFolders(unittest.TestCase):
             self.assertEqual(roms.sfo_title(p), "Ratchet & Clank")
             touch(p, b"\0PSF" + b"\xff" * 30)
             self.assertIsNone(roms.sfo_title(p))
+
+
+
+class Nightlies(unittest.TestCase):
+    """A core from its project's GitHub nightlies (ARMSX2): the core and its resources."""
+    SRC = {"kind": "github-nightly", "repo": "ARMSX2/ARMSX2", "tag_prefix": "nightly-",
+           "core_asset": "-Linux-arm64-libretro-core.tar.zst", "core_file": "armsx2_libretro.so",
+           "resources_asset": "-Linux-arm64-SDL-handheld.tar.zst", "resources_dir": "resources",
+           "resources_dest": "pcsx2/resources"}
+
+    def setUp(self):
+        import shutil
+        if not shutil.which("zstd"):
+            self.skipTest("no zstd tool")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = os.path.join(self.tmp.name, "home")
+        self.bios = os.path.join(self.home, "Emulation", "bios")
+        self.db = {"emulators": {"ra-armsx2": {"name": "ARMSX2", "kind": "libretro", "core": "armsx2",
+                                               "free": True, "license": "GPL-3.0", "source": self.SRC}},
+                   "systems": {"ps2": {"name": "PlayStation 2", "emulators": ["ra-armsx2"]}}}
+        cores._nightly_cache.clear()
+
+    def tarzst(self, name, members):
+        """members: [(path, bytes | None for a folder | ("link", target))]"""
+        import io
+        import subprocess
+        import tarfile
+        tar = os.path.join(self.tmp.name, name[:-4])
+        with tarfile.open(tar, "w") as t:
+            for path, data in members:
+                info = tarfile.TarInfo(path)
+                if data is None:
+                    info.type = tarfile.DIRTYPE
+                    t.addfile(info)
+                elif isinstance(data, tuple):
+                    info.type, info.linkname = tarfile.SYMTYPE, data[1]
+                    t.addfile(info)
+                else:
+                    info.size = len(data)
+                    t.addfile(info, io.BytesIO(data))
+        subprocess.run(["zstd", "-q", "-f", "-o", os.path.join(self.tmp.name, name), tar], check=True)
+        return os.path.join(self.tmp.name, name)
+
+    def so(self):
+        so = bytearray(64)
+        so[:5] = b"\x7fELF\x02"
+        so[18:20] = (0xB7).to_bytes(2, "little")
+        return bytes(so)
+
+    def release(self, tag, resources=None):
+        top = "armsx2-linux-arm64-sdl-sha[abc]"
+        core = self.tarzst(f"{tag}-core.tar.zst", [("armsx2-linux-arm64-libretro-sha[abc]/armsx2_libretro.so", self.so())])
+        res = self.tarzst(f"{tag}-res.tar.zst", resources if resources is not None else [
+            (f"{top}/armsx2", b"binary"), (f"{top}/resources", None), (f"{top}/resources/fonts", None),
+            (f"{top}/resources/fonts/Roboto-Regular.ttf", b"font"), (f"{top}/resources/GameIndex.yaml", b"games")])
+        return {"tag_name": tag, "assets": [
+            {"name": f"ARMSX2-{tag}-x-Linux-arm64-libretro-core.tar.zst", "browser_download_url": core},
+            {"name": f"ARMSX2-{tag}-x-Linux-arm64-SDL-handheld.tar.zst", "browser_download_url": res}]}
+
+    def patched(self, releases):
+        import shutil
+        from unittest import mock
+        return (mock.patch.object(cores, "_api", lambda url: releases),
+                mock.patch.object(cores, "_fetch_to", lambda url, dest, limit=0: shutil.copyfile(url, dest)))
+
+    def test_newest_nightly_with_both_assets_installed(self):
+        android_only = {"tag_name": "2.8.4", "assets": [{"name": "ARMSX2-2.8.4.apk", "browser_download_url": "x"}]}
+        rels = [android_only, self.release("nightly-20261023"), self.release("nightly-20261022")]
+        api, fetch = self.patched(rels)
+        with api, fetch:
+            cores.download(self.home, "armsx2", cores.known(self.db), self.bios)
+            row = cores.listing(self.home, self.db, self.bios)[0]
+        self.assertTrue(os.path.isfile(cores.path(self.home, "armsx2")))
+        res = os.path.join(self.bios, "pcsx2", "resources")
+        self.assertTrue(os.path.isfile(os.path.join(res, "fonts", "Roboto-Regular.ttf")))
+        self.assertFalse(os.path.exists(os.path.join(res, "armsx2")))  # only resources/ is taken
+        self.assertEqual((row["installed"], row["nightly"], row["version"], row["update"]),
+                         (True, True, "nightly-20261023", False))
+        # no work files left next to the cores
+        self.assertEqual(sorted(os.listdir(cores.core_dir(self.home))), [".kettle-armsx2.json", "armsx2_libretro.so"])
+
+    def test_a_newer_nightly_is_an_update(self):
+        api, fetch = self.patched([self.release("nightly-20261022")])
+        with api, fetch:
+            cores.download(self.home, "armsx2", cores.known(self.db), self.bios)
+        cores._nightly_cache.clear()
+        api, fetch = self.patched([self.release("nightly-20261024"), self.release("nightly-20261022")])
+        with api, fetch:
+            row = cores.listing(self.home, self.db, self.bios)[0]
+        self.assertEqual((row["version"], row["latest"], row["update"]), ("nightly-20261022", "nightly-20261024", True))
+
+    def test_bad_resources_leave_the_old_ones(self):
+        top = "armsx2-linux-arm64-sdl-sha[abc]"
+        api, fetch = self.patched([self.release("nightly-20261022")])
+        with api, fetch:
+            cores.download(self.home, "armsx2", cores.known(self.db), self.bios)
+        for bad in ([(f"{top}/resources/../../evil", b"x")], [(f"{top}/resources/link", ("link", "/etc/passwd"))],
+                    [(f"{top}/other/file", b"x")]):
+            api, fetch = self.patched([self.release("nightly-20261023", resources=bad)])
+            with api, fetch, self.assertRaises(ValueError):
+                cores.download(self.home, "armsx2", cores.known(self.db), self.bios)
+            self.assertTrue(os.path.isfile(os.path.join(self.bios, "pcsx2", "resources", "GameIndex.yaml")))
+        self.assertEqual(cores.installed_version(self.home, "armsx2"), "nightly-20261022")
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "evil")))
+
+    def test_offline_no_update_offered(self):
+        from unittest import mock
+        with mock.patch.object(cores, "_api", side_effect=OSError("offline")):
+            self.assertIsNone(cores.latest_nightly_tag(self.SRC))
+            with self.assertRaises(OSError):
+                cores.newest_nightly(self.SRC)
+
+    def test_real_systems_json_points_at_armsx2(self):
+        db = json.load(open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "kettle-emulation", "systems.json")))
+        src = db["emulators"]["ra-armsx2"]["source"]
+        self.assertEqual((src["repo"], src["core_file"], src["resources_dest"]), ("ARMSX2/ARMSX2", "armsx2_libretro.so", "pcsx2/resources"))
+        self.assertEqual(db["systems"]["ps2"]["emulators"], ["ra-armsx2"])
 
 
 if __name__ == "__main__":
