@@ -31,7 +31,8 @@ _ID = re.compile(r"\d{8}-\d{6}-[A-Za-z0-9._-]+")
 _NOISE = re.compile(r"gameoverlayrenderer\.so' from LD_PRELOAD cannot be preloaded")
 SERVER_CONF = "/usr/lib/kettle/crash.conf"  # KETTLE_CRASH_URL=https://...; none: no sharing
 SHARED = "shared.json"  # in a report's directory, once it's uploaded
-SHARE_FILES = ("backtrace.txt", "output.txt", "kernel.txt", "journal.txt", "environ.txt")
+SHARE_FILES = ("backtrace.txt", "output.txt", "kernel.txt", "journal.txt", "environ.txt",
+               "proton.txt")
 SHARE_FILE_MAX = 256 << 10  # the end of each file, in UTF-8 bytes (the server's limit)
 # environment variables worth sharing (graphics, Proton, Wine, FEX, Steam's ids for the game);
 # everything else stays on the device
@@ -39,6 +40,9 @@ _SHARE_ENV = re.compile(r"(PROTON_|DXVK_|VKD3D_|WINEDLLOVERRIDES|WINEDEBUG|WINE_
                         r"FEX_|VK_|ENABLE_|GAMESCOPE|SDL_|KETTLE_|LSFG|PRESSURE_VESSEL_|"
                         r"STEAM_COMPAT_APP_ID|SteamAppId|SteamGameId|LD_PRELOAD|LANG)")
 # journal lines that name networks, devices nearby or logins: left out of a shared report
+# a variable as a line of its own (in case a Proton log lists the environment): shared only when
+# _SHARE_ENV's
+_ENV_LINE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _PRIVATE_UNITS = re.compile(r"\b(NetworkManager|wpa_supplicant|iwd|bluetoothd|avahi-daemon|"
                             r"sshd|sudo|systemd-resolved|ModemManager|dhcpcd|systemd-logind)\[")
 
@@ -63,6 +67,16 @@ def _tail(path: str, lines: int) -> str:
             return "".join([l for l in f if not _NOISE.search(l)][-lines:])
     except OSError:
         return ""
+
+
+def _proton_game(r: dict) -> bool:
+    """The crash is a game's own that ran in Proton (Wine): one a Proton log can explain."""
+    if r.get("kind") == "game":
+        return r.get("reason") == "wine" and bool(r.get("app_id"))
+    engine = ((r.get("game") or {}).get("engine") or {})
+    return bool(r.get("game_process")) and bool(
+        r.get("compat_tool") or engine.get("platform") == "windows" or
+        re.search(r"/(wine|proton)", r.get("exe") or "", re.IGNORECASE))
 
 
 def _summary(rid: str, r: dict) -> dict:
@@ -90,6 +104,9 @@ def _summary(rid: str, r: dict) -> dict:
         # the game running at the time, when it isn't the game itself that crashed
         "during": game.get("name") if game and not r.get("game_process") else None,
         "noticed": noticed,
+        # a Proton game's crash: whether the report has its Proton log (else null)
+        "proton_log": os.path.exists(os.path.join(_path(rid), "proton.txt"))
+        if _proton_game(r) else None,
     }
 
 
@@ -192,6 +209,8 @@ def _bundle(rid: str, r: dict) -> dict:
             continue
         if name == "environ.txt":
             lines = [l for l in lines if _SHARE_ENV.match(l)]
+        elif name == "proton.txt":
+            lines = [l for l in lines if not _ENV_LINE.match(l) or _SHARE_ENV.match(l)]
         elif name == "journal.txt":
             lines = [l for l in lines if not _PRIVATE_UNITS.search(l)]
         # the last SHARE_FILE_MAX bytes of UTF-8, as the server counts (a cut character dropped)
@@ -242,6 +261,7 @@ class Plugin:
             "output": _tail(os.path.join(p, "output.txt"), 120),
             "journal": _tail(os.path.join(p, "journal.txt"), 80),
             "kernel": _tail(os.path.join(p, "kernel.txt"), 40),
+            "proton": _tail(os.path.join(p, "proton.txt"), 120),
             "shared": _shared(rid),
             "can_share": bool(_server()),
         }

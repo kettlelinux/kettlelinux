@@ -19,13 +19,22 @@ it on GitHub. Nothing leaves the device unless the player shares a report.
 Each also has `report.json` (what crashed; the game it belongs to or that was running, with the
 engine it's built on (`gameengine.py`, shared with Game Settings) and the Kettle features on for
 it; the Kettle build, slot, kernel and package versions), `journal.txt`
-and `kernel.txt`. Core files stay where systemd-coredump keeps them (`coredumpctl`), compressed
+and `kernel.txt`. A game that ran with Proton's log on (`PROTON_LOG` in its environment, or in that
+of another of its processes) also gets `proton.txt`: its `steam-<app id>.log` (in `PROTON_LOG_DIR`,
+else the home folder), the first 16 KB and the last 224 KB. Core files stay where systemd-coredump keeps them (`coredumpctl`), compressed
 and bounded (`/usr/lib/systemd/coredump.conf.d/60-kettle.conf`). A crash repeating within 30 s is
 counted in the same report.
 
 The Crash Reports plugin (`packages/kettle-decky-plugins/crash`) lists them, shows a toast for the
 crashes a player notices (a game, gamescope, Steam, the desktop, the GPU), and opens each one on
 its own page.
+
+Proton's log is off by default (it slows a game down a little), and without it a Windows game's
+crash rarely says why. So when a Proton game's report has no `proton.txt`, its toast and page
+offer **Turn on extra logging**: `PROTON_LOG=1` in the game's launch options (the same as Game
+Settings' "Proton log"). The player plays until it crashes again and shares that report. A report
+that has the log offers **Turn off extra logging** while it's still on. Which crashes count as a
+Proton game's: `_proton_game` in the plugin's `main.py`.
 
 ## Sharing
 
@@ -36,6 +45,7 @@ upload (`_bundle` in the plugin's `main.py`):
   device (`loginusers.vdf`), MAC and IP addresses, and the hostname when it isn't `kettle`
 - journal lines from NetworkManager, wpa_supplicant, iwd, bluetoothd, avahi, sshd, sudo,
   systemd-resolved, ModemManager and logind (network and device names, logins)
+- lines in the Proton log that set a variable, except those the environment keeps (below)
 - the environment, except Proton, Wine, DXVK, vkd3d, Mesa/Turnip, FEX, Vulkan, gamescope, SDL and
   Steam's ids for the game
 - core files and device dumps (never uploaded), and all but the last 256 KB (of UTF-8) of each log

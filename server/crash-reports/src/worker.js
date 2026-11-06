@@ -18,7 +18,7 @@ const KEEP_S = 90 * 86400;
 // uploads a day (UTC), per address and in all, counted in the COUNTS KV namespace
 const DAY_PER_ADDRESS = 30;
 const DAY_TOTAL = 400;
-const FILES = ["backtrace.txt", "output.txt", "kernel.txt", "journal.txt", "environ.txt"];
+const FILES = ["backtrace.txt", "output.txt", "proton.txt", "kernel.txt", "journal.txt", "environ.txt"];
 const KINDS = ["coredump", "devcoredump", "game"];
 const ISSUES = "https://github.com/kettlelinux/kettlelinux/issues/new";
 
@@ -325,6 +325,7 @@ function page(env, id, b) {
   const sections = [
     ["Stack trace", "backtrace.txt"],
     ["Game output", "output.txt"],
+    ["Proton log", "proton.txt"],
     ["Kernel log", "kernel.txt"],
     ["System log", "journal.txt"],
     ["Environment", "environ.txt"],

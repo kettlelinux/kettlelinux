@@ -17,6 +17,7 @@ import { useEffect, useState } from "react";
 import { FaBug } from "react-icons/fa";
 import qrcode from "qrcode-generator";
 import { Engine, engineText } from "../../shared/engines";
+import { editLaunchOptions, envValue, getLaunchOptions, withEnv } from "../../shared/launchOptions";
 
 type Summary = {
   id: string;
@@ -27,6 +28,7 @@ type Summary = {
   count: number;
   during: string | null;
   noticed: boolean;
+  proton_log: boolean | null; // a Proton game's crash: whether the report has its Proton log
 };
 type Report = {
   what?: string;
@@ -54,6 +56,7 @@ type Detail = {
   output: string;
   journal: string;
   kernel: string;
+  proton: string;
   shared: Shared | null;
   can_share: boolean;
 };
@@ -197,6 +200,38 @@ function confirmShare(id: string, onShared: (s: Shared) => void) {
   );
 }
 
+// Proton's log is what usually tells why a Windows game crashed, and it's off by default (it slows
+// the game a little): after a crash without it, the page offers to turn it on for the game
+// (PROTON_LOG=1 in its launch options, Game Settings' "Proton log") so that the next crash's report
+// has it; once a report has it, to turn it off again.
+function ExtraLogging({ appid, name, has }: { appid: number; name: string; has: boolean }) {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => {
+    getLaunchOptions(appid)
+      .then((o) => setOn(!["0", "", null].includes(envValue(o, "PROTON_LOG"))))
+      .catch(() => setOn(null));
+  }, [appid]);
+  const set = (v: boolean) =>
+    editLaunchOptions(appid, (o) => withEnv(o, "PROTON_LOG", v ? "1" : null))
+      .then(() => setOn(v))
+      .catch((e) => toaster.toast({ title: "Crash Reports", body: `Couldn't change ${name}'s launch options: ${e?.message ?? e}` }));
+  if (on === null || (has && !on)) return null;
+  const text = has
+    ? `Extra logging is on for ${name}. It slows the game down a little: turn it off once you've shared this report.`
+    : on
+      ? `Extra logging is on for ${name}. Play until it crashes again: that crash's report will include Proton's log. Share that one.`
+      : `This report doesn't have Proton's log, which is usually what shows why a Windows game crashed. ` +
+        `Turn on extra logging, play ${name} until it crashes again, then share that new report.`;
+  return (
+    <Focusable style={{ marginBottom: "16px" }}>
+      <Field label={has || on ? "Extra logging" : "Help find the cause"} description={text} bottomSeparator="none" />
+      <ButtonItem layout="below" onClick={() => set(!on)}>
+        {on ? "Turn off extra logging" : "Turn on extra logging"}
+      </ButtonItem>
+    </Focusable>
+  );
+}
+
 // A block the D-pad can stop on, so the page scrolls to it
 function Block({ title, text }: { title: string; text: string }) {
   if (!text.trim()) return null;
@@ -244,6 +279,9 @@ function Page() {
       {d && (
         <>
           <h2 style={{ margin: "0 0 12px" }}>{d.summary.title}</h2>
+          {d.summary.proton_log !== null && r?.game && (
+            <ExtraLogging appid={r.game.app_id} name={r.game.name ?? `App ${r.game.app_id}`} has={d.summary.proton_log} />
+          )}
           <Focusable style={{ marginBottom: "16px" }}>
             {rows
               .filter(([, v]) => v)
@@ -255,6 +293,7 @@ function Page() {
           </Focusable>
           <Block title="Stack trace" text={d.backtrace} />
           <Block title="Game output" text={d.output} />
+          <Block title="Proton log" text={d.proton} />
           <Block title="Kernel log" text={d.kernel} />
           <Block title="System log" text={d.journal} />
           <Focusable style={{ marginBottom: "24px" }}>
@@ -285,7 +324,10 @@ export default definePlugin(() => {
     if (!s.noticed) return;
     toaster.toast({
       title: s.kind === "devcoredump" ? s.title : `${s.title} crashed`,
-      body: "A crash report was saved. Select to view it.",
+      body:
+        s.proton_log === false
+          ? "A crash report was saved. Select it to turn on extra logging for the next try."
+          : "A crash report was saved. Select to view it.",
       icon: <FaBug />,
       onClick: () => open(s.id),
     });
