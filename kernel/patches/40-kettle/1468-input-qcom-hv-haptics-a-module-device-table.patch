@@ -1,0 +1,20 @@
+From: gennro <3684917+gennro@users.noreply.github.com>
+Subject: [PATCH] Input: qcom-hv-haptics: a module device table
+
+The SM8750 driver revision (20-sm8550/1000) depends on QCOM_RPROC_COMMON,
+a module here, so the driver is one too. Give it a device table so it
+loads for its devicetree node, not only when rsinput pulls in its
+symbols.
+---
+diff --git a/drivers/input/misc/qcom-hv-haptics.c b/drivers/input/misc/qcom-hv-haptics.c
+index 0fafffc27..3ea625d86 100644
+--- a/drivers/input/misc/qcom-hv-haptics.c
++++ b/drivers/input/misc/qcom-hv-haptics.c
+@@ -6980,6 +6980,7 @@ static const struct of_device_id haptics_match_table[] = {
+ 	},
+ 	{},
+ };
++MODULE_DEVICE_TABLE(of, haptics_match_table);
+ 
+ static struct platform_driver haptics_driver = {
+ 	.driver		= {

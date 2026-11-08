@@ -18,12 +18,15 @@ SPMI writes under the input event lock. Its upload and erase now take
 global_ff_lock and its playback goes through the playback work (a stop
 still leaves the effect loaded, as before). Remove cancels stop_work, so
 a pending stop cannot run on the freed chip.
+
+Rebased on the SM8750 driver revision (20-sm8550/1000): a failed load
+there goes to its restore label.
 ---
 diff --git a/drivers/input/misc/qcom-hv-haptics.c b/drivers/input/misc/qcom-hv-haptics.c
-index 78bf9e2..32c359d 100644
+index 4032df804..0fafffc27 100644
 --- a/drivers/input/misc/qcom-hv-haptics.c
 +++ b/drivers/input/misc/qcom-hv-haptics.c
-@@ -2698,6 +2698,18 @@ static void haptics_stop_constant_effect_play(struct work_struct *work)
+@@ -3134,6 +3134,18 @@ static void haptics_stop_constant_effect_play(struct work_struct *work)
  	struct haptics_chip *chip = container_of(work, struct haptics_chip, stop_work.work);
  	int rc = 0;
  
@@ -42,7 +45,7 @@ index 78bf9e2..32c359d 100644
  	rc = haptics_enable_play(chip, false);
  	if (rc < 0)
  		dev_err(chip->dev, "stop constant effect play failed\n");
-@@ -2705,6 +2717,8 @@ static void haptics_stop_constant_effect_play(struct work_struct *work)
+@@ -3141,6 +3153,8 @@ static void haptics_stop_constant_effect_play(struct work_struct *work)
  	rc = haptics_enable_hpwr_vreg(chip, false);
  	if (rc < 0)
  		dev_err(chip->dev, "disable hpwr_vreg failed\n");
@@ -50,18 +53,18 @@ index 78bf9e2..32c359d 100644
 +	mutex_unlock(&chip->global_ff_lock);
  }
  
- static int haptics_erase(struct input_dev *dev, int effect_id);
-@@ -2757,7 +2771,8 @@ static int haptics_upload_effect(struct input_dev *dev,
+ static inline bool is_haptics_runtime_pm_enabled(struct haptics_chip *chip)
+@@ -3273,7 +3287,8 @@ static int haptics_upload_effect(struct input_dev *dev,
  			dev->ff->set_gain(dev, gain);
  
  			//Also, reschedule the stop_work timer
 -			schedule_delayed_work(&chip->stop_work, msecs_to_jiffies(effect->replay.length));
-+			mod_delayed_work(system_wq, &chip->stop_work,
++			mod_delayed_work(system_percpu_wq, &chip->stop_work,
 +					 msecs_to_jiffies(effect->replay.length));
  		}
  
- 		return 0;
-@@ -2774,13 +2789,14 @@ static int haptics_upload_effect(struct input_dev *dev,
+ 		haptics_runtime_autosuspend_put(chip);
+@@ -3289,13 +3304,14 @@ static int haptics_upload_effect(struct input_dev *dev,
  		amplitude = tmp / 0x7fff;
  		dev_dbg(chip->dev, "upload constant effect, length = %dms, amplitude = %#x\n",
  				length_ms, amplitude);
@@ -71,15 +74,15 @@ index 78bf9e2..32c359d 100644
  		if (rc < 0) {
  			dev_err(chip->dev, "set direct play failed, rc=%d\n",
  					rc);
- 			return rc;
+ 			goto restore;
  		}
 +		/* This effect's length: a stop still pending from an earlier one is re-armed. */
-+		mod_delayed_work(system_wq, &chip->stop_work, msecs_to_jiffies(length_ms));
++		mod_delayed_work(system_percpu_wq, &chip->stop_work, msecs_to_jiffies(length_ms));
  
  		break;
  	case FF_PERIODIC:
-@@ -5956,6 +5972,62 @@ static int haptics_boost_notifier(struct notifier_block *nb, unsigned long event
- 	return 0;
+@@ -6376,6 +6392,62 @@ static int haptics_lpass_ssr_notifier(struct notifier_block *nb, unsigned long e
+ 	return NOTIFY_DONE;
  }
  
 +/* Queue a play (val != 0) or stop for the playback work; callable in atomic context. */
@@ -141,7 +144,7 @@ index 78bf9e2..32c359d 100644
  static int haptics_probe(struct platform_device *pdev)
  {
  	struct haptics_chip *chip;
-@@ -6064,9 +6136,9 @@ static int haptics_probe(struct platform_device *pdev)
+@@ -6488,9 +6560,9 @@ static int haptics_probe(struct platform_device *pdev)
  	}
  
  	ff_dev = input_dev->ff;
@@ -154,18 +157,18 @@ index 78bf9e2..32c359d 100644
  	ff_dev->set_gain = haptics_set_gain;
  	rc = input_register_device(input_dev);
  	if (rc < 0) {
-@@ -6142,6 +6214,8 @@ static void haptics_remove(struct platform_device *pdev)
- 	debugfs_remove_recursive(chip->debugfs_dir);
- #endif
+@@ -6597,6 +6669,8 @@ static void haptics_remove(struct platform_device *pdev)
+ 	class_unregister(&chip->hap_class);
+ 	//haptics_remove_debugfs(chip);
  	input_unregister_device(chip->input_dev);
 +	/* No uploads after the unregister: a pending stop must not outlive the chip. */
 +	cancel_delayed_work_sync(&chip->stop_work);
  	dev_set_drvdata(chip->dev, NULL);
  
  	return;
-@@ -6413,13 +6487,7 @@ int qcom_spmi_haptics_global_playback(int effect_id, int val)
- 	spin_lock_irqsave(&global_haptics_lock, flags);
- 	chip = global_haptics;
+@@ -6854,13 +6928,7 @@ int qcom_spmi_haptics_global_playback(int effect_id, int val)
+ 	spin_lock_irqsave(&phapchip_lock, flags);
+ 	chip = phapchip;
  	if (chip) {
 -		spin_lock(&chip->global_playback_lock);
 -		chip->global_effect_id = effect_id;
@@ -177,4 +180,4 @@ index 78bf9e2..32c359d 100644
 +		haptics_queue_playback(chip, effect_id, val);
  		ret = 0;
  	}
- 	spin_unlock_irqrestore(&global_haptics_lock, flags);
+ 	spin_unlock_irqrestore(&phapchip_lock, flags);

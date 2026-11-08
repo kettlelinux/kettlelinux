@@ -10,13 +10,16 @@ Erase the effect immediately instead, and ignore a playback request when
 no effect is loaded, so a client that sends play after a zero-amplitude
 update cannot restart the motor with stale state.
 
-Ported from Armada's 1004 (virtudude <virtudude@protonmail.com>); this
-driver revision has no runtime PM references to balance.
+Armada's 1004 (virtudude <virtudude@protonmail.com>), on the SM8750
+driver revision (20-sm8550/1000): both early returns drop the runtime PM
+reference haptics_upload_effect() took.
 ---
+diff --git a/drivers/input/misc/qcom-hv-haptics.c b/drivers/input/misc/qcom-hv-haptics.c
+index b382002d7..c20d333e9 100644
 --- a/drivers/input/misc/qcom-hv-haptics.c
 +++ b/drivers/input/misc/qcom-hv-haptics.c
-@@ -2699,6 +2699,8 @@
- 		dev_err(chip->dev, "disable hpwr_vreg failed\n");
+@@ -3194,6 +3194,8 @@ static void haptics_runtime_autosuspend(struct haptics_chip *chip)
+ 	pm_runtime_autosuspend(chip->dev);
  }
  
 +static int haptics_erase(struct input_dev *dev, int effect_id);
@@ -24,7 +27,7 @@ driver revision has no runtime PM references to balance.
  static int haptics_upload_effect(struct input_dev *dev,
  		struct ff_effect *effect, struct ff_effect *old);
  
-@@ -2740,16 +2742,7 @@
+@@ -3255,16 +3257,8 @@ static int haptics_upload_effect(struct input_dev *dev,
  		pr_debug("tried to upload an effect while the chip was busy playing, setting gain...\n");
  
  		if (gain == 0) {
@@ -38,13 +41,22 @@ driver revision has no runtime PM references to balance.
 -
 -			dev->ff->set_gain(dev, 1);
 -			schedule_delayed_work(&chip->stop_work, msecs_to_jiffies(5000));
++			haptics_runtime_autosuspend_put(chip);
 +			return haptics_erase(dev, effect->id);
  		} else {
  			dev_dbg(chip->dev, "Setting gain to %hu...\n", gain);
  
-@@ -2859,8 +2852,10 @@
- 	dev_dbg(chip->dev, "playback val = %d\n", val);
+@@ -3274,6 +3268,7 @@ static int haptics_upload_effect(struct input_dev *dev,
+ 			schedule_delayed_work(&chip->stop_work, msecs_to_jiffies(effect->replay.length));
+ 		}
  
++		haptics_runtime_autosuspend_put(chip);
+ 		return 0;
+ 	}
+ 
+@@ -3378,8 +3373,10 @@ static int haptics_playback(struct input_dev *dev, int effect_id, int val)
+ 
+ 	dev_dbg(chip->dev, "playback val = %d\n", val);
  	if (!!val && !chip->chip_is_playing) {
 -		if (!chip->chip_effect_loaded)
 -			dev_warn(chip->dev, "Trying to playback while no effect is loaded!\n");
@@ -53,5 +65,5 @@ driver revision has no runtime PM references to balance.
 +			return 0;
 +		}
  
- 		return haptics_enable_play(chip, true);
- 	}
+ 		if (chip->config.measure_lra_impedance && chip->visense_enabled)
+ 			chip->pattern_start_time = ktime_get_boottime();
