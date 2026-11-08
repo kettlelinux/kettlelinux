@@ -11,7 +11,7 @@ if [ -z "${QT_QPA_PLATFORM:-}" ]; then
 fi
 export QT_QPA_PLATFORM
 case "${1:-}" in
-  deploy|launch|restore|list-games|list-profiles|clear-credentials|export-filemap)
+  deploy|launch|restore|list-games|list-profiles|clear-credentials|export-filemap|headless|rpc)
     exec python3 "$APP/cli.py" "$@" ;;
   *)
     exec python3 "$APP/run_qt.py" "$@" ;;

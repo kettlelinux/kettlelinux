@@ -17,6 +17,8 @@ for the Qualcomm Sensor Core motion sensors on AYN handhelds), so its virtual
 device, "Kettle Motion Sensors", joins the virtual device whitelist. Only
 devices named in IMU_DEVICE_NAMES get this driver: other accelerometer nodes
 (a DualShock 4's motion node) keep the gamepad driver.
+Rebased onto InputPlumber 0.84.0.
+
 ---
  src/input/manager.rs          |   1 +
  src/input/source/evdev.rs     |  40 ++++++++++
@@ -25,7 +27,7 @@ devices named in IMU_DEVICE_NAMES get this driver: other accelerometer nodes
  create mode 100644 src/input/source/evdev/imu.rs
 
 diff --git a/src/input/manager.rs b/src/input/manager.rs
-index 2c55128..d5595d2 100644
+index 5003528..11f9bb7 100644
 --- a/src/input/manager.rs
 +++ b/src/input/manager.rs
 @@ -63,6 +63,7 @@ const VIRT_DEVICE_WHITELIST: &[&str] = &[
@@ -328,6 +330,3 @@ index 0000000..309098e
 +        f.debug_struct("ImuEventDevice").finish()
 +    }
 +}
--- 
-2.56.0
-

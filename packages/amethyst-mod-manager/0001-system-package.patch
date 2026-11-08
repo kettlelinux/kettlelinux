@@ -1,3 +1,5 @@
+Rebased onto Amethyst 2.6.2.
+
 diff --git a/src/app_bootstrap.py b/src/app_bootstrap.py
 index 99eabfa..a13de7c 100644
 --- a/src/app_bootstrap.py
@@ -15,16 +17,16 @@ index 99eabfa..a13de7c 100644
      # so we can find Pillow / other deps. The launcher used to do this via
      # PYTHONPATH, which leaked into child shells.
 diff --git a/src/gui_qt/app.py b/src/gui_qt/app.py
-index 51cfc45..cccbe3d 100644
+index 22fa696..ecf90be 100644
 --- a/src/gui_qt/app.py
 +++ b/src/gui_qt/app.py
-@@ -4207,6 +4207,9 @@ class MainWindow(QMainWindow):
-                     safe_emit(self._app_update_found,
+@@ -3920,6 +3920,9 @@ class MainWindow(QMainWindow, PluginPanelControls):
                                (__version__, latest, mode, is_pre, not newer,
                                 appimage_url))
+                     return "available"
 +            elif os.environ.get("AMETHYST_DISTRO_PACKAGE"):
 +                # updated with the distribution, not from GitHub or the AUR
-+                return
++                return "current"
              else:
                  aur_ver = _fetch_aur_version(force=force_fresh)
                  if aur_ver is None:

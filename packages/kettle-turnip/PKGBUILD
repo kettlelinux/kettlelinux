@@ -12,11 +12,11 @@
 # still shared. Native aarch64 only: Proton's ARM64EC games and native arm64 programs. x86 games
 # under FEX load the x86 Turnip from deckard-mesa-linux-x86_64 and keep Valve's.
 #
-# Pinned to Mesa main 68772a4e (2026-10-13); move to the 26.3 branch once it exists.
+# Pinned to Mesa 26.3.0-rc3 (the 26.3 branch); move to 26.3.0 once it is released.
 pkgname=kettle-turnip
-pkgver=26.3.0_devel.20261013.g68772a4
+pkgver=26.3.0rc3
 pkgrel=1
-_commit=68772a4e1c7b30119bb60469dbe274caf39bf17b
+_commit=90a959ebba9dbb36f2ea5176091c15d6ebdd0af0  # mesa-26.3.0-rc3
 pkgdesc='Turnip Vulkan driver from upstream Mesa, a per-game alternative to Valve'"'"'s'
 arch=(aarch64)
 url='https://www.mesa3d.org/'
@@ -26,12 +26,23 @@ depends=(glibc gcc-libs libdrm wayland libx11 libxcb libxshmfence libxrandr libd
          expat zstd zlib vulkan-icd-loader)
 makedepends=(meson ninja python-mako python-packaging python-yaml glslang wayland-protocols
              xorgproto libxext libxxf86vm)
+# Mesa 26.3 needs wayland-protocols 1.49; the base has 1.47. Its XML files are only read at build
+# time, so this build alone gets 1.49's source tree, through a wayland-protocols.pc of its own (not
+# built: 1.49's own build validates its headers with a newer wayland-scanner than the base's).
+_wlprotocols=1.49
 source=("https://gitlab.freedesktop.org/mesa/mesa/-/archive/$_commit/mesa-$_commit.tar.gz"
+        "https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/$_wlprotocols/downloads/wayland-protocols-$_wlprotocols.tar.xz"
         10-kettle-turnip.conf)
-sha256sums=('85bf0e3bc531a9e488619b952f9ecf71861264d2c6658483785ddab39d14472d'
+sha256sums=('457e72f9bbb2acddb6c952bd7326ad92ed37650e7c83a0e4ea51f0109a7dd7fb'
+            'ec4c8f74942d6dff7ace8b4ce4764f0ef9ff618a935d974ea77edee2ad240b14'
             'SKIP')
 
 build() {
+  mkdir -p wp
+  printf '%s\n' "pkgdatadir=$srcdir/wayland-protocols-$_wlprotocols" '' \
+    'Name: Wayland Protocols' 'Description: Wayland protocol files' "Version: $_wlprotocols" \
+    >wp/wayland-protocols.pc
+  export PKG_CONFIG_PATH="$srcdir/wp${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
   # the tarball has no .git: name the commit in driverInfo, as Valve's "(git-e07916b45f)"
   export MESA_GIT_SHA1_OVERRIDE=$_commit
   # plain meson, not arch-meson: its --auto-features enabled would pull in what Turnip doesn't use

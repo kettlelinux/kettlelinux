@@ -28,6 +28,3 @@ index 741d336..08f5ba3 100755
      if ! is_steamlaunch && ! is_app; then
          APP_WANTS_FLATSCREEN="true"
      fi
--- 
-2.55.0
-

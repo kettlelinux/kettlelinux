@@ -2,7 +2,7 @@
 # (packages/wine) as its Wine. Heroic publishes no Linux arm64 build, so it's built here,
 # with its store helpers built from source instead of the release binaries its build script
 # downloads:
-#   legendary  Epic Games       python, pinned to the version Heroic 2.22.3 expects
+#   legendary  Epic Games       python, pinned to the version Heroic 2.22.4 expects
 #   gogdl      GOG              python + the xdelta3 C extension (gogdl-setup.py: see there)
 #   nile       Amazon Games     python
 #   vulkan-helper               Rust; replaces the prebuilt binary committed to Heroic's tree
@@ -15,8 +15,8 @@
 # skel/config.json: new users' Heroic defaults (~/.config/heroic): the system Wine, and none
 # of Heroic's downloaded x86 DXVK/VKD3D/anti-cheat runtimes installed into prefixes.
 pkgname=heroic-games-launcher
-pkgver=2.22.3
-pkgrel=2
+pkgver=2.22.4
+pkgrel=1
 _electron=43.7.5
 _node=22.23.3
 _legendary=0.21.1
@@ -44,7 +44,7 @@ source=("HeroicGamesLauncher-$pkgver.tar.gz::https://github.com/Heroic-Games-Lau
         "vulkan-helper-rs::git+https://github.com/imLinguin/vulkan-helper-rs.git#commit=$_vkhelper"
         gogdl-setup.py)
 noextract=("electron-v$_electron-linux-arm64.zip")
-sha256sums=('f542b2f894288df6fc3992ccc135798110ab952889a7def0c7a203d7524c9923'
+sha256sums=('1ec1d2402608e74e367a1c958c2b2b83601c0d1c4504c3f87e4946647fb8ea66'
             '0e8017c56a243deed2510467e5de4be17a2c0634eb017429851ad026551e28ec'
             'a44aeb94849a299b22df10b9e622ec2f605c2183501bc40590705131de7c740f'
             'b78e6dc73d859a324b228ea28839d06fc0561c7143c3d0838e00cba992643f57'

@@ -2,7 +2,7 @@
 # packages/fna3d) instead of their x86-64 builds under FEX. SteamOS's ARM repos have no SDL 3.
 # Backends are loaded at run time (Wayland, X11, PipeWire, PulseAudio, ALSA), as in Arch's.
 pkgname=sdl3
-pkgver=3.4.18
+pkgver=3.4.20
 pkgrel=1
 pkgdesc='Simple DirectMedia Layer 3'
 arch=(aarch64)

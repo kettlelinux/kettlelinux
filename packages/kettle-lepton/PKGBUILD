@@ -22,10 +22,10 @@
 # Gamescope needs 0010 of packages/gamescope to bring the Android window to the front.
 #
 # Built with upstream Rust (build time only), as packages/inputplumber: the apk-info-extractor's
-# locked crates need a newer compiler than the snapshot's 1.78.
+# locked crates needed a newer compiler than the 2024 snapshot's 1.78.
 pkgname=kettle-lepton
-pkgver=3.0.5
-pkgrel=3
+pkgver=3.0.10
+pkgrel=1
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Android games in Steam through Valve Lepton (Kettle Linux compatibility tool)'
@@ -41,7 +41,7 @@ depends=(bash python libnotify podman passt crun conmon catatonit containers-com
          apkeep)
 makedepends=(git)
 options=(!lto)  # makepkg's GCC LTO objects in zstd-sys don't link into the Rust binary
-_commit=0d0924e69dedac90e8114fd6aa691d1eeb050685  # v3.0.5 + kill_container no longer loops forever
+_commit=deca2af5519c419a074f3d4de558ab438674c313  # v3.0.10
 source=("lepton::git+https://gitlab.steamos.cloud/frame-public/lepton.git#commit=$_commit"
         "https://static.rust-lang.org/dist/$_rustdate/rust-$_rust-aarch64-unknown-linux-gnu.tar.xz"
         0001-compat_tool-show-the-2D-window-by-default.patch
@@ -59,11 +59,11 @@ source=("lepton::git+https://gitlab.steamos.cloud/frame-public/lepton.git#commit
 noextract=("rust-$_rust-aarch64-unknown-linux-gnu.tar.xz")
 sha256sums=('SKIP'
             '0b514a8cc1cbcd939bff0f151661fe58b6ea5c7a7f645a5098c69e32e8c1e0a2'
-            'b73955c080723a1de72a0a88edd006cd68769d3fd2f20bc3b3db6d94e5529fc8'
-            'a7b2864c6f3c0199c17b329f26b45dcee8ec2dfe9320585e384084408de8f8ac'
-            '7e298cf00096c70e4de9aedb34e12df27bae5973e9211da0cf165f3232c45010'
-            '12b7c0aa5f323c02cc454e26ba5d668d6fa24118b90c1a69e2a147cc771d3984'
-            'fd0d3436d53ad550ebe46535eb088fba47bc181d574b81a08fd506aaa1689a16'
+            '86a375b5582ceafec2f82bb01424be39f6aada272f886b71878a30adcb8c8d14'
+            '863094bd373949a905876aeafb2e8569e13d2314673cad0ce192e4f13abe7fbe'
+            'fef138021ccff31916f503474b62fe156022eaf295aebd19c6efe8a72ba74830'
+            '0f70b36591e5da21f63a88107a66c054324e2d2e5de76c81121c1e29228f1224'
+            '29840372ecd23e4cc2365dcb16209f16c56d0675b2051357e0ea804a60684406'
             '5f8c2b8abf381d7e85b08f25f34531c201bedd0b4966d8409e65111a566aa58e'
             'e4c2e8bbcac361770f1d9479aacbe9e90bb9e13c0f2c91d694e0d1e72887e0e7'
             '9254fa985690b9e4b0cd11e511868a46e09acda2db434b616f0a552cce3afc5b'

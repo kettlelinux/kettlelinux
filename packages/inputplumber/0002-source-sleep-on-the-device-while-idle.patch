@@ -21,6 +21,8 @@ The wait ends after 1 s at most. The 2.5 ms interval still paces the
 reads while input keeps coming. A source with translator events scheduled
 for later (SourceInputDevice::has_pending) keeps polling at its interval
 until they are sent. Sources without a file descriptor poll as before.
+Rebased onto InputPlumber 0.84.0.
+
 ---
  Cargo.toml                          |  2 +-
  src/input/event/evdev/translator.rs |  5 +++
@@ -32,7 +34,7 @@ until they are sent. Sources without a file descriptor poll as before.
  7 files changed, 127 insertions(+), 7 deletions(-)
 
 diff --git a/Cargo.toml b/Cargo.toml
-index 9e41931..e182fa2 100644
+index 061ad89..88c525c 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -128,7 +128,7 @@ log = { version = "0.4.29", features = [
@@ -45,7 +47,7 @@ index 9e41931..e182fa2 100644
  procfs = "0.18.0"
  ratatui = "0.30.0"
 diff --git a/src/input/event/evdev/translator.rs b/src/input/event/evdev/translator.rs
-index dc70e6b..6b8599b 100644
+index d922d9a..2bd44c7 100644
 --- a/src/input/event/evdev/translator.rs
 +++ b/src/input/event/evdev/translator.rs
 @@ -154,6 +154,11 @@ impl EventTranslator {
@@ -167,7 +169,7 @@ index f75c31e..c2a86c0 100644
      }
  }
 diff --git a/src/input/source/evdev/gamepad.rs b/src/input/source/evdev/gamepad.rs
-index 5f5b0e6..56eb261 100644
+index ecb8c79..60dee2d 100644
 --- a/src/input/source/evdev/gamepad.rs
 +++ b/src/input/source/evdev/gamepad.rs
 @@ -1,5 +1,5 @@
@@ -177,7 +179,7 @@ index 5f5b0e6..56eb261 100644
  use std::{collections::HashMap, error::Error};
  
  use evdev::{
-@@ -488,6 +488,14 @@ impl GamepadEventDevice {
+@@ -490,6 +490,14 @@ impl GamepadEventDevice {
  }
  
  impl SourceInputDevice for GamepadEventDevice {
@@ -240,7 +242,7 @@ index abf9de5..ccedfb6 100644
      fn poll(&mut self) -> Result<Vec<NativeEvent>, InputError> {
          let mut native_events = vec![];
 diff --git a/src/input/source/mod.rs b/src/input/source/mod.rs
-index 5844fce..e9fd44f 100644
+index 9264752..9977281 100644
 --- a/src/input/source/mod.rs
 +++ b/src/input/source/mod.rs
 @@ -2,6 +2,7 @@ use std::{
@@ -259,10 +261,10 @@ index 5844fce..e9fd44f 100644
 +    poll::{PollFd, PollFlags, PollTimeout},
 +    sys::eventfd::{EfdFlags, EventFd},
 +};
+ use packed_struct::types::SizedInteger;
  use thiserror::Error;
  use tokio::sync::mpsc::{self, error::TryRecvError};
- 
-@@ -41,6 +46,8 @@ pub mod tty;
+@@ -47,6 +52,8 @@ pub mod tty;
  const BUFFER_SIZE: usize = 2048;
  /// Default poll rate (2.5ms/400Hz)
  const POLL_RATE: Duration = Duration::from_micros(2500);
@@ -271,7 +273,7 @@ index 5844fce..e9fd44f 100644
  
  /// Possible errors for a source device client
  #[derive(Error, Debug)]
-@@ -126,6 +133,19 @@ pub trait SourceInputDevice {
+@@ -132,6 +139,19 @@ pub trait SourceInputDevice {
      fn get_default_event_filter(&self) -> Result<HashSet<Capability>, InputError> {
          Ok(HashSet::new())
      }
@@ -291,7 +293,7 @@ index 5844fce..e9fd44f 100644
  }
  
  /// A [SourceOutputDevice] is a device implementation that can handle output events
-@@ -204,6 +224,8 @@ pub struct SourceDriver<T: SourceInputDevice + SourceOutputDevice> {
+@@ -210,6 +230,8 @@ pub struct SourceDriver<T: SourceInputDevice + SourceOutputDevice> {
      composite_device: CompositeDeviceClient,
      tx: mpsc::Sender<SourceCommand>,
      rx: mpsc::Receiver<SourceCommand>,
@@ -300,7 +302,7 @@ index 5844fce..e9fd44f 100644
  }
  
  impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T> {
-@@ -227,6 +249,13 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+@@ -233,6 +255,13 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
          config: Option<config::SourceDevice>,
      ) -> Self {
          let (tx, rx) = mpsc::channel(options.buffer_size);
@@ -314,7 +316,7 @@ index 5844fce..e9fd44f 100644
  
          // Check to see if the device configuration calls for event filtering
          let mut events_exclude_all = false;
-@@ -279,6 +308,7 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+@@ -285,6 +314,7 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
              composite_device,
              tx,
              rx,
@@ -322,7 +324,7 @@ index 5844fce..e9fd44f 100644
          }
      }
  
-@@ -354,7 +384,32 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+@@ -360,7 +390,32 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
  
      /// Returns a transmitter channel that can be used to send events to this device
      pub fn client(&self) -> SourceDeviceClient {
@@ -356,7 +358,7 @@ index 5844fce..e9fd44f 100644
      }
  
      /// Returns udev device information about the device as a reference
-@@ -376,7 +431,10 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+@@ -382,7 +437,10 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
          let task =
              tokio::task::spawn_blocking(move || -> Result<(), Box<dyn Error + Send + Sync>> {
                  let mut rx = self.rx;
@@ -367,7 +369,7 @@ index 5844fce..e9fd44f 100644
                  let mut event_filter = implementation
                      .get_default_event_filter()
                      .unwrap_or_default();
-@@ -465,6 +523,13 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+@@ -471,6 +529,13 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
                      } else {
                          log::trace!("{:?}: Total poll time: {poll_time:?} ", device_id);
                      }
@@ -381,6 +383,3 @@ index 5844fce..e9fd44f 100644
                  }
  
                  Ok(())
--- 
-2.56.0
-

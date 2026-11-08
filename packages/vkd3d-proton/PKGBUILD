@@ -7,15 +7,15 @@
 # own build-arm64x.txt builds ARM64X, not what Wine loads here). Submodules (dxil-spirv and
 # its own, recursively) are fetched at the commits the pinned commit records.
 #
-# Pinned to master (2026-10-13), 453 past v3.0.1 with no 3.1 release yet: Turnip/UE5 fixes,
-# the engine reported in applicationVersion (Valve's Turnip drirc matches on it), the Teardown
-# ExecuteIndirect fix, and since Proton Experimental's 44cf7c20 the Ace Combat 8, NBA 2K27 and
-# Tracing Decay workarounds and a sync fix around queued transfer ops. Its dxil-spirv and
-# dxbc-spirv include <new>/<exception> themselves, so our cross files no longer force them.
+# v3.1 (2026-10-27), which has everything the master pin before it (fdbaf51, 2026-10-13) had:
+# Turnip/UE5 fixes, the engine reported in applicationVersion (Valve's Turnip drirc matches on
+# it), the Teardown ExecuteIndirect fix and Proton Experimental's game workarounds. Its
+# dxil-spirv and dxbc-spirv include <new>/<exception> themselves, so our cross files don't
+# force them.
 pkgname=vkd3d-proton
-pkgver=3.0.1.r453.gfdbaf51
+pkgver=3.1
 pkgrel=1
-_commit=fdbaf51f8794e8d75ad8c43dc2d62fcc8a136af3
+_commit=4522cc1a8b1347f1ab1b0f7b14a23ed9444d95d1  # v3.1
 _llvm_mingw=20260908
 pkgdesc='Vulkan-based Direct3D 12 for Wine (ARM64EC and i686)'
 arch=(any)

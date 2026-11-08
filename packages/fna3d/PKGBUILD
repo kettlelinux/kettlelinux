@@ -3,7 +3,7 @@
 # than as its x86-64 build under FEX: the game's own .NET code is architecture-neutral, only these
 # native libraries aren't. MojoShader (zlib) is built in, at the commit the release tag records.
 pkgname=fna3d
-pkgver=26.10
+pkgver=26.11
 pkgrel=1
 pkgdesc='XNA graphics for FNA (SDL GPU)'
 arch=(aarch64)

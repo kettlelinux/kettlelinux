@@ -15,11 +15,11 @@
 # 0002 has the evdev sources sleep in poll(2) while idle instead of waking every 2.5 ms (about
 # 1,200 wakeups a second for the Portal's and Thor's three sources, on any core, in every game).
 #
-# Built with upstream Rust (build time only): InputPlumber's crates need a newer compiler than
-# the snapshot's 1.78.
+# Built with upstream Rust (build time only), at a version known to build it: InputPlumber's
+# crates needed a newer compiler than the 2024 snapshot's 1.78 (the base's 1.93 is untried).
 pkgname=inputplumber
-pkgver=0.82.0
-pkgrel=6
+pkgver=0.84.0
+pkgrel=1
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Input router and remapper daemon (Steam Deck controller emulation for AYN handhelds)'
@@ -43,7 +43,7 @@ source=("InputPlumber-$pkgver.tar.gz::https://github.com/ShadowBlip/InputPlumber
         0001-source-add-an-evdev-motion-sensor-source.patch
         0002-source-sleep-on-the-device-while-idle.patch)
 noextract=("rust-$_rust-aarch64-unknown-linux-gnu.tar.xz")
-sha256sums=('aaee9b65b47a21756169eb1c49eb258ecdd1896fb8dd4996c2b50d11af049d21'
+sha256sums=('64b25d90c3cbabbcfd52e574ff91f64a9bec5ce3b616e36c7179060f29b660bc'
             '0b514a8cc1cbcd939bff0f151661fe58b6ea5c7a7f645a5098c69e32e8c1e0a2'
             'e130eb2a293e1f7a9dc90e61a060aa7d36b63e58642d4cadc9b3b1cf881c984b'
             '64558755be19f505d3a072e3e5e4e62ce9a8ab0be19d9d8d4ee239dd0b6439bb'
@@ -54,8 +54,8 @@ sha256sums=('aaee9b65b47a21756169eb1c49eb258ecdd1896fb8dd4996c2b50d11af049d21'
             '769f8dfdb945985a3417ab2cbb988d43ef76bec81b6989251821a0200fbac69c'
             '7cad1e633b35a3d19b03d6ea9aa22845d807439844343c03e33f3958e0377560'
             'e90a24feb10a8dc271057dd21b2f792eaeb3098ed3a64943fd32632dce98dd62'
-            'f818673f665b2e17ca3d5857929399d368b92cf54d428f7eebed1430c1dde398'
-            '9d0fec0d3e1bb8974813de003b40bcec69e2f7a192f0b5f4afdbd67073a8f106')
+            '97b75ddb61ab415e0f8cf4c1a41a8d5c1cf29887958fd7e49534a4da6f12aef6'
+            'd7ef666027a47a98938266f08cf7010f842b5cf83f51d895aaa8e381d1434bca')
 
 prepare() {
   patch -d "InputPlumber-$pkgver" -Np1 -i ../0001-source-add-an-evdev-motion-sensor-source.patch

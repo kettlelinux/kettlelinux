@@ -30,6 +30,3 @@ index 4ca1b8c..afee982 100644
      let uses_sdk = only_child(manifest, "uses-sdk")?;
  
      // Get the minimum sdk version from the uses-sdk element
--- 
-2.55.0
-

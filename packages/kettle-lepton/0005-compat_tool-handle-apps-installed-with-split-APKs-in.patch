@@ -56,7 +56,7 @@ index a755ef1..f0f7948 100755
  local OBB_INNER_PATH="${APP_PATH}"
  
 diff --git a/compat_tool/liblepton/mounting.sh b/compat_tool/liblepton/mounting.sh
-index e13a73a..eabbe09 100755
+index a2904d5..ec1926a 100755
 --- a/compat_tool/liblepton/mounting.sh
 +++ b/compat_tool/liblepton/mounting.sh
 @@ -78,12 +78,20 @@ function setup_mounts()
@@ -81,6 +81,3 @@ index e13a73a..eabbe09 100755
              # Don't mount in `XrApiLayer_VALVE_fdm_injection.json` unless the FDM layer is enabled
              if [[ "$(lepton_basename "${DST}")" == "XrApiLayer_VALVE_fdm_injection.json" ]] && ! vulkan_layer_enabled "${FDM_INJECTION_LAYER_NAME}" ; then
                  continue
--- 
-2.56.0
-
