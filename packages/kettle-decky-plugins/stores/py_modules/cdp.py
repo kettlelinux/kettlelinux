@@ -1,4 +1,4 @@
-# Steam's browser (CEF) through its DevTools port, 127.0.0.1:8080, which Decky Loader turns on:
+# Steam's browser (CEF) through its DevTools port, 127.0.0.1:8080, which Remora turns on:
 # the list of open pages, and running JavaScript in one of them. Standard library only (a
 # minimal WebSocket client), called from a thread.
 import base64, json, os, socket, struct, urllib.parse, urllib.request

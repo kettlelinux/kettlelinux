@@ -100,7 +100,7 @@ pkgname=(kettle-decky-welcome kettle-decky-device-settings
          kettle-decky-stores kettle-decky-moonlight
          kettle-decky-emulation)
 # every plugin's package.json "version" is this pkgver (what the plugin loader shows): change them together
-pkgver=1.17.0
+pkgver=1.17.1
 pkgrel=1
 pkgdesc='Kettle Linux Decky plugins'
 arch=(any)
@@ -136,14 +136,14 @@ _install_plugin() {
 
 package_kettle-decky-welcome() {
   pkgdesc='Welcome Decky plugin (first-boot tour)'
-  depends=(decky-loader)
+  depends=(remora)
   optdepends=('kettle-desktop-art: the Desktop entry'"'"'s library artwork')
   _install_plugin kettle-welcome welcome
 }
 
 package_kettle-decky-device-settings() {
   pkgdesc='Device Settings Decky plugin (battery, refresh rate, lights, gyro, bottom screen, start-up, SSH, reset, diagnostics)'
-  depends=(decky-loader kettle-power python-gobject xorg-xprop coreutils polkit iproute2)
+  depends=(remora kettle-power python-gobject xorg-xprop coreutils polkit iproute2)
   optdepends=('kettle-leds: the Lights tab'
               'kettle-motion: the Gyro tab'
               'rocknix-abl: the System tab'"'"'s Bootloader section (install, update or remove the ROCKNIX ABL)')
@@ -155,13 +155,13 @@ package_kettle-decky-device-settings() {
 
 package_kettle-decky-crash() {
   pkgdesc='Crash Reports Decky plugin (the crash reports kettle-crashd keeps on the device)'
-  depends=(decky-loader kettle-crash)
+  depends=(remora kettle-crash)
   _install_plugin kettle-crash crash
 }
 
 package_kettle-decky-game-settings() {
   pkgdesc='Game Settings Decky plugin (per game: compatibility, performance, upscaling and frame generation; Protons and AMD FSR 3.1)'
-  depends=(decky-loader kettle-power python-gobject kettle-framegen optiscaler-arm64ec kettle-welcome)  # welcome-proton
+  depends=(remora kettle-power python-gobject kettle-framegen optiscaler-arm64ec kettle-welcome)  # welcome-proton
   # Frame Generation and Upscaling are tabs of Game Settings now
   replaces=(kettle-decky-framegen kettle-decky-upscaling)
   conflicts=(kettle-decky-framegen kettle-decky-upscaling)
@@ -172,7 +172,7 @@ package_kettle-decky-game-settings() {
 
 package_kettle-decky-stores() {
   pkgdesc='Game Stores Decky plugin (Epic Games, GOG, Amazon Games, Battle.net, Flathub, Android games and Amethyst Mod Manager in Game Mode)'
-  depends=(decky-loader heroic-games-launcher python flatpak kettle-welcome)  # legendary, gogdl, nile; welcome-battlenet
+  depends=(remora heroic-games-launcher python flatpak kettle-welcome)  # legendary, gogdl, nile; welcome-battlenet
   optdepends=('kettle-lepton: Android games'
               'amethyst-mod-manager: the Mod Manager tab')
   _install_plugin kettle-stores stores
@@ -181,12 +181,12 @@ package_kettle-decky-stores() {
 
 package_kettle-decky-moonlight() {
   pkgdesc='Moonlight Decky plugin (game streaming from Sunshine and Apollo: pairing, the PCs'"'"' games in the Steam library, stream settings)'
-  depends=(decky-loader kettle-moonlight moonlight-qt pyside6 python xorg-xprop)
+  depends=(remora kettle-moonlight moonlight-qt pyside6 python xorg-xprop)
   _install_plugin kettle-moonlight moonlight
 }
 
 package_kettle-decky-emulation() {
   pkgdesc='Emulation Decky plugin (retro games in the Steam library: ROMs and BIOS in, emulators from Flathub, artwork, collections, the standard controls, saves)'
-  depends=(decky-loader kettle-emulation python pyside6 flatpak systemd)  # flatpak --user jobs run as a systemd user unit
+  depends=(remora kettle-emulation python pyside6 flatpak systemd)  # flatpak --user jobs run as a systemd user unit
   _install_plugin kettle-emulation emulation
 }

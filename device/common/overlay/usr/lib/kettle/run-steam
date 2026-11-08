@@ -40,7 +40,7 @@ fi
 # Valve's steam-health-check (steam.service pre-start) treats a missing sentinel as a broken
 # install and re-unpacks the bootstrap over it; the client updates itself from there
 touch "$root/.install-complete"
-# Decky Loader and the Quick Access button fallback (qam-button) drive Steam's UI through its
+# Remora and the Quick Access button fallback (qam-button) drive Steam's UI through its
 # CEF devtools port (localhost only), opened only when this file exists at client start
 touch "$root/.cef-enable-remote-debugging"
 # The links RUNSTEAM.sh maintains; /usr/bin/steam finds the install through ~/.steam/steam

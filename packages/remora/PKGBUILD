@@ -1,14 +1,14 @@
-# Remora (Game Mode plugin loader, kettlelinux/remora), in Decky Loader's place: it runs the same
-# plugins with the same layout, so the image's plugin packages depend on decky-loader and get it.
+# Remora (Game Mode plugin loader, kettlelinux/remora): it runs Decky plugins with Decky's layout;
+# the image's plugin packages depend on it.
 # The backend runs on the system Python with its dependencies pinned and hash-checked
 # (packaging/requirements.txt in the source) in a private site dir, /usr/lib/remora. They are
 # wheels for the chroot's Python (compiled where there are some: yarl, multidict, aiohttp),
 # hence aarch64.
-# remora-start is decky-loader-start's layout: plugins/ and loader.json in root's
+# remora-start: plugins/ and loader.json in root's
 # /home/.kettle/decky, the image's plugins (/usr/share/decky/plugins) linked in.
 pkgname=remora
 pkgver=0.1.0
-pkgrel=7
+pkgrel=8
 _commit=0319017fd1d6faf347f43ced2be3350d156eaee6
 pkgdesc='Plugin loader for Steam Game Mode that runs Decky Loader plugins (Kettle Linux build)'
 arch=(aarch64)
@@ -19,14 +19,12 @@ license=(MIT LGPL-2.1-only)
 # site-packages next to /usr/lib/remora)
 depends=(python python-cryptography lsof util-linux)
 makedepends=(nodejs npm python-pip)
-provides=(decky-loader=3.3.0)
-conflicts=(decky-loader)
 source=("$pkgname-$_commit.tar.gz::$url/archive/$_commit.tar.gz"
         remora-start
         plugin_loader.service
         kettle-compat.json)
 sha256sums=('b5f0f15c9574e783cd67a1f3c06259fd3a64c52e020eeb34fae7ccbc18416121'
-            'bf70e3106975cbe9df3323cc01ece9616e51db9274f6d7ebd6eb1c4521fa02b3'
+            '5504c423691fb0caef3f51a5429a0116959465367a42321a91e265e36701e2c1'
             'd1b747dcf715a569904fbd1023331f97d5acf3d0bb3a2d77e72e294169623634'
             '76a07abd1d28bb3e75ba6007d28e55412579d44368ffe85ca52cfc8b02d2be3f')
 

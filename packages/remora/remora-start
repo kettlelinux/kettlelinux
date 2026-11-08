@@ -30,7 +30,7 @@ install -d -m 0755 -o 0 -g 0 /home/.kettle "$priv" "$priv"/{plugins,plugins-asid
 if [ ! -e "$priv/.moved" ]; then
   asuser mkdir -p "$hb/plugins-aside" 2>/dev/null || :
   stage=$(mktemp -d "$priv/.migrate.XXXXXX")
-  /usr/bin/python3 -I - "$home" "$priv" "$stage" <<'EOF' || echo "decky-loader-start: plugin migration failed" >&2
+  /usr/bin/python3 -I - "$home" "$priv" "$stage" <<'EOF' || echo "remora-start: plugin migration failed" >&2
 import os, stat, sys, time
 home, priv, stage = sys.argv[1:]
 D = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC

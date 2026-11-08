@@ -5,7 +5,7 @@
 // confirm-keys): any program running as the user gets this far too. fromDecky can't tell Kettle's
 // own plugins from a store one: all of Decky's backends run in the same service, as the same
 // user, and name themselves (proctitle), so the volume keys are what's trusted, not the caller.
-// fromDecky: one of Decky Loader's plugin backends. They run in its own system service, outside
+// fromDecky: one of the plugin backends Remora runs. They run in its own system service, outside
 // the user's login session, so polkit sees them as neither local nor active. (All rule files share
 // one scope: 50-kettle-*.rules define the same function.) Newer polkit says which unit a
 // process is in (subject.system_unit); polkit 124 doesn't, so a helper reads it from /proc.

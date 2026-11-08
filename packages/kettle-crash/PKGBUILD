@@ -6,7 +6,7 @@
 # features. Nothing is sent anywhere. Sources live next to this PKGBUILD; gameengine.py (the
 # engine a game is built on, for its reports) is Game Settings' (kettle-decky-plugins/shared).
 pkgname=kettle-crash
-pkgver=0.2.0
+pkgver=0.2.1
 pkgrel=1
 pkgdesc='Kettle Linux crash reports'
 arch=(any)

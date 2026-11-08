@@ -1,7 +1,7 @@
 // Game Mode's Device Settings (kettle-decky-device-settings, Buttons tab) sets what the Pocket FIT
 // Elite's rear buttons press through /usr/lib/kettle/kettle-rear-buttons (org.kettle.rear-buttons),
 // where no password prompt can be shown. It only writes those two buttons' remaps.
-// fromDecky: one of Decky Loader's plugin backends. They run in its own system service, outside
+// fromDecky: one of the plugin backends Remora runs. They run in its own system service, outside
 // the user's login session, so polkit sees them as neither local nor active. (All rule files share
 // one scope: 50-kettle-*.rules define the same function.) Newer polkit says which unit a
 // process is in (subject.system_unit); polkit 124 doesn't, so a helper reads it from /proc.
