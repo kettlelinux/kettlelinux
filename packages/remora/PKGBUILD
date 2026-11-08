@@ -8,8 +8,8 @@
 # /home/.kettle/decky, the image's plugins (/usr/share/decky/plugins) linked in.
 pkgname=remora
 pkgver=0.1.0
-pkgrel=8
-_commit=0319017fd1d6faf347f43ced2be3350d156eaee6
+pkgrel=9
+_commit=02b24cb5b61d20aa288fe08b4debe3464ffed6cd
 pkgdesc='Plugin loader for Steam Game Mode that runs Decky Loader plugins (Kettle Linux build)'
 arch=(aarch64)
 url='https://github.com/kettlelinux/remora'
@@ -23,7 +23,7 @@ source=("$pkgname-$_commit.tar.gz::$url/archive/$_commit.tar.gz"
         remora-start
         plugin_loader.service
         kettle-compat.json)
-sha256sums=('b5f0f15c9574e783cd67a1f3c06259fd3a64c52e020eeb34fae7ccbc18416121'
+sha256sums=('c23b7fa933945504f4ac836ea945af800ef6300b389d6c0773d2edc11b2f906c'
             '5504c423691fb0caef3f51a5429a0116959465367a42321a91e265e36701e2c1'
             'd1b747dcf715a569904fbd1023331f97d5acf3d0bb3a2d77e72e294169623634'
             '76a07abd1d28bb3e75ba6007d28e55412579d44368ffe85ca52cfc8b02d2be3f')

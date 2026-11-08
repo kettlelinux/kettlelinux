@@ -4,8 +4,8 @@
 # Proton ARM64 games (x86 code via FEX inside Wine) use the native aarch64 Vulkan loader, so
 # this one layer covers them and native arm64 games.
 pkgname=kettle-framegen
-pkgver=0.2.0.r55.g4e736d0
-pkgrel=2
+pkgver=0.2.0.r55.ged880c3
+pkgrel=1
 pkgdesc='Kettle Linux frame generation Vulkan layer'
 arch=(aarch64)
 url='https://github.com/kettlelinux/kettle-framegen'
@@ -17,7 +17,7 @@ makedepends=(git gcc make glslang vulkan-headers)
 # through it and sliding HUD content and compass markers following their own motion, latency=low
 # with VK_KHR_present_wait2, multiplier=auto from Steam's frame limit, and swapchain, present and
 # fence fixes. Pinned by commit
-_commit=4e736d007e188661e695ddf58693dea56d0f9e3c
+_commit=ed880c3df236d0db34cebb869c25f19c8e0875d9
 source=("$pkgname::git+$url.git#commit=$_commit")
 sha256sums=('SKIP')
 
