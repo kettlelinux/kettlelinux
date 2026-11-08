@@ -40,7 +40,7 @@ pkgbase=mesa-panfrost
 pkgname=(mesa-panfrost fex-mesa-panfrost)
 _commit=63bb18ab73a19ec8125f51515b16b3f40ce6ca04
 pkgver=26.3.0_devel.20260927
-pkgrel=1
+pkgrel=2
 arch=(aarch64)
 url='https://www.mesa3d.org/'
 license=(MIT)
@@ -60,17 +60,17 @@ makedepends=(meson ninja python-mako python-yaml python-packaging python-ply bis
              lib32-libelf lib32-spirv-tools lib32-libx11 lib32-libxext lib32-libxfixes
              lib32-libxshmfence lib32-libxxf86vm lib32-libxrandr lib32-libxcb lib32-wayland
              lib32-libglvnd lib32-systemd)
-# wayland: only its wayland-scanner, run on the build machine for the aarch64 build. Meson wants
-# one at least as new as the target's libwayland-client (Valve's 1.26), and the chroot's (1.23.1)
-# must stay: the FEX rootfs links against that version.
-_wayland=1.26.0
+# wayland: only its wayland-scanner, run on the build machine for the aarch64 build. Mesa's meson
+# wants the version of the target's libwayland-client (the base's 1.24.0), and the chroot's
+# (1.23.1) must stay: the FEX rootfs links against that version.
+_wayland=1.24.0
 source=("https://gitlab.freedesktop.org/mesa/mesa/-/archive/$_commit/mesa-$_commit.tar.gz"
         "https://gitlab.freedesktop.org/wayland/wayland/-/releases/$_wayland/downloads/wayland-$_wayland.tar.xz"
         graphics_provider.json
         aarch64.cross
         i686.cross)
 sha256sums=('cfa73acdfeed0d9997609a29fa1d44ecaff4f2cb9755dfb8dbfbda7c05de2a4d'
-            '64176eaa46e4969903e286f8e5ef8331affc17fdf03ac9b58381d2b23162b7a3'
+            '82892487a01ad67b334eca83b54317a7c86a03a89cfadacfef5211f11a5d0536'
             'SKIP'
             'SKIP'
             'SKIP')

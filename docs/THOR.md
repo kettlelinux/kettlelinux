@@ -9,8 +9,7 @@ are kept apart from the Portal's, and what both share: [PORTING.md](PORTING.md).
 ```sh
 scripts/build-kernel.sh                  # the same kernel; its Thor DTB was always built
 scripts/build-packages.sh kettle-firmware-ayn kettle-ucm-ayn kettle-power inputplumber gamescope
-scripts/build-packages.sh bluez-qt networkmanager-qt modemmanager-qt pulseaudio-qt plasma-pa \
-  plasma-nm kinfocenter plasma-systemmonitor plasma-nano kwin plasma-mobile
+scripts/build-packages.sh pulseaudio-qt plasma-nano kwin plasma-mobile
 KETTLE_DEVICE=thor scripts/build-image.sh   # -> out/kettle-<build>-thor.img (+ .raucb)
 ```
 `KETTLE_DEVICE` can also go in `local.env`. Without it the build is for the Portal, as before.
@@ -99,21 +98,21 @@ shell (`usr/lib/kettle/bottom-screen`, `bottom-shell`). The same mechanism as Ba
   60 Hz 1.55 W, 50 Hz 1.51 W, 40 Hz 1.47 W, 30 Hz 1.45 W.
 - `GAMESCOPE_BOTTOM_SCREEN=0` in `~/.config/kettle/gamescope.conf` leaves the bottom screen off
   too. So does any failure to lease it: the bottom gamescope then exits.
-- Plasma Mobile is built at deckard's Plasma version (6.2.5), which needed networkmanager-qt
-  and modemmanager-qt at deckard's KF6 version (6.14; deckard ships 6.1), bluez-qt (which
-  deckard lacks: the shell's QML module imports it, and without it none of the shell loads),
-  and plasma-pa 6.2.5 with pulseaudio-qt (deckard's plasma-pa is 6.0.4, whose QML API the
-  shell's volume controls outgrew). plasma-pa 6.2.5 is the desktop's volume applet too.
-  deckard's other Plasma apps left at 6.0.4 are built at 6.2.5 as well: plasma-nm (the shell's
-  Wi-Fi settings), kinfocenter and plasma-systemmonitor (neither started with deckard's 6.2.5
-  libraries, on the desktop too).
+- Plasma Mobile is built at the base's Plasma version (6.6.2, mash-20260305), with
+  plasma-nano. Everything else the shell uses comes from the base at matching versions:
+  bluez-qt (the shell's QML module imports it, and without it none of the shell loads),
+  networkmanager-qt and modemmanager-qt (KF6 6.23), plasma-nm (the shell's Wi-Fi settings)
+  and plasma-pa (its volume controls), on our pulseaudio-qt (the base's 1.8.1 plus two fixes).
+  Until the base moved, deckard's 2024 snapshot had these at 6.0.4/6.1 or not at all, and
+  Kettle built them at 6.2.5.
 - Power: the bottom screen costs about 0.7 W at idle (2.06 W with it on, 1.32 W off, Steam UI
   idle on battery). Plasma Mobile's pull-down drawer is a full-screen overlay window that stays
   shown, and while closed its contents were only transparent: they kept it drawing about 7
   full-screen frames a second, which KWin and the bottom gamescope composited each time, keeping
-  the GPU awake ~70% of the time. `packages/plasma-mobile` 0001 hides them while the drawer is
-  closed (GPU awake 16%, the rest being the Performance app's readings). 0002 stops the volume
-  OSD's audio applet while the OSD is hidden: its volume meters recorded from the speaker and
+  the GPU awake ~70% of the time. Hiding them while the drawer was closed (GPU awake 16%, the
+  rest being the Performance app's readings) was our patch on 6.2.5; 6.6 hides the drawer's
+  whole window while it's closed (not yet measured on the Thor). `packages/plasma-mobile` 0001
+  stops the volume OSD's audio applet while the OSD is hidden: its volume meters recorded from the speaker and
   the microphone all the time, which kept both PCMs and the audio DSP running (~0.15 W).
 
 ## The Performance app on the bottom screen

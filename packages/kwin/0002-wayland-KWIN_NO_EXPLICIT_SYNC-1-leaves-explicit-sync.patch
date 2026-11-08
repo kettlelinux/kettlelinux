@@ -11,15 +11,17 @@ surfaces there: Firefox froze, Plasma's panels stopped drawing
 libwayland ("Tried to add event to destroyed queue" after Mesa's Vulkan
 WSI destroyed a queue with syncobj timelines still attached). Without
 explicit sync all of that stopped. Let whoever starts KWin turn it off.
+Rebased onto KWin 6.6.2.
+
 ---
  src/wayland_server.cpp | 8 ++++++++
  1 file changed, 8 insertions(+)
 
 diff --git a/src/wayland_server.cpp b/src/wayland_server.cpp
-index 3dc503e..f4f8259 100644
+index 7aacb90..e1699e8 100644
 --- a/src/wayland_server.cpp
 +++ b/src/wayland_server.cpp
-@@ -856,6 +856,14 @@ ExternalBrightnessV1 *WaylandServer::externalBrightness() const
+@@ -857,6 +857,14 @@ PointerWarpV1 *WaylandServer::pointerWarp() const
  
  void WaylandServer::setRenderBackend(RenderBackend *backend)
  {

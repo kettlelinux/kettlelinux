@@ -1,43 +1,44 @@
-# deckard's KWin (Arch's 6.2.5-3, unpatched: deckard's 6.2.5-3.1 carries none of Valve's Steam
-# Deck patches) with four changes. 0001: KWin nested in an X server as a window (its X11 windowed
-# backend, as the Thor's bottom-screen shell runs in its gamescope's Xwayland) selected raw XI2
-# touch events but only handles the plain ones, so it never got a touch (Armada's patch).
+# The base's KWin (mash-20260305: Arch's 6.6.2-1, which deckard ships unpatched) with four
+# changes. 0001: KWin nested in an X server as a window (its X11 windowed backend, as the Thor's
+# bottom-screen shell runs in its gamescope's Xwayland) selected raw XI2 touch events but only
+# handles the plain ones, so it never got a touch (Armada's patch).
 # 0002 (ours): KWIN_NO_EXPLICIT_SYNC=1 leaves explicit sync (linux-drm-syncobj) off, which the
 # bottom-screen shell's nested KWin sets: its clients hung or lost their surfaces with it.
 # 0003 (ours): the on-screen keyboard leaves Plasma's applet popups where they are (moved out of
 # its way, Kickoff flickered between two places and couldn't be closed).
 # 0004 (ours): an input device's output defaults to its udev WL_OUTPUT (an unset OutputName
 # dropped it, and both of the Thor's touchscreens went to the bottom screen).
-# pkgrel 3.x replaces deckard's 3.1.
+# All four rebased onto 6.6.2 (0001's file moved to src/backends/x11/, 0003 uses KWin's RectF).
+# pkgrel 1.x replaces the base's 1.
 pkgname=kwin
-pkgver=6.2.5
-pkgrel=3.4
+pkgver=6.6.2
+pkgrel=1.1
 pkgdesc='An easy to use, but flexible, composited Window Manager'
 arch=(aarch64)
 url='https://kde.org/plasma-desktop/'
 license=(LGPL-2.0-or-later)
-depends=(breeze gcc-libs glibc plasma-activities kauth kcmutils kcolorscheme kconfig
-         kconfigwidgets kcoreaddons kcrash kdbusaddons kdeclarative kdecoration kglobalaccel
-         kglobalacceld kguiaddons ki18n kidletime kirigami kitemmodels knewstuff knotifications
-         kpackage kquickcharts kscreenlocker kservice ksvg kwayland kwidgetsaddons kwindowsystem
-         kxmlgui lcms2 libcanberra libdisplay-info libdrm libei libepoxy libinput libpipewire
-         libqaccessibilityclient-qt6 libx11 libxcb libxcvt libxi libxkbcommon libxkbcommon-x11
-         mesa pipewire-session-manager libplasma qt6-5compat qt6-base qt6-declarative
-         qt6-multimedia qt6-sensors qt6-svg qt6-tools qt6-wayland systemd-libs wayland
-         xcb-util-cursor xcb-util-keysyms xcb-util-wm)
-makedepends=(cmake ninja extra-cmake-modules krunner plasma-wayland-protocols python
+depends=(aurorae breeze gcc-libs glibc iio-sensor-proxy plasma-activities kauth kcmutils
+         kcolorscheme kconfig kcoreaddons kcrash kdbusaddons kdeclarative kdecoration
+         kglobalaccel kglobalacceld kguiaddons ki18n kidletime kirigami kitemmodels knewstuff
+         knighttime knotifications kpackage kquickcharts kscreenlocker kservice ksvg kwayland
+         kwidgetsaddons kwindowsystem kxmlgui lcms2 libcanberra libdisplay-info libdrm libei
+         libepoxy libevdev libinput libpipewire libqaccessibilityclient-qt6 libxcb libxcvt
+         libxkbcommon mesa milou pipewire-session-manager libplasma qt6-5compat qt6-base
+         qt6-declarative qt6-svg qt6-tools systemd-libs wayland xcb-util-keysyms xcb-util-wm)
+makedepends=(cmake ninja extra-cmake-modules kdoctools krunner plasma-wayland-protocols python
              wayland-protocols xorg-xwayland)
+optdepends=('plasma-keyboard: virtual keyboard')
 install=$pkgname.install
 source=(https://download.kde.org/stable/plasma/$pkgver/$pkgname-$pkgver.tar.xz
         0001-x11-windowed-select-the-touch-events-it-handles.patch
         0002-wayland-KWIN_NO_EXPLICIT_SYNC-1-leaves-explicit-sync.patch
         0003-window-leave-applet-popups-where-they-are-for-the-vi.patch
         0004-libinput-default-an-input-device-s-output-to-its-ude.patch)
-sha256sums=('5cc450a6e41105c8c49929b72550b331237f96aafb294690f4707bdc5f776848'
-            '8ed5b019fc2237af7f1643a5eee58ecaa6f02273bf3b12638a8ccc3413b95310'
-            '5ed2408827201511ae925deb54b24175b104f21befe9655b3ff30d83e5c622cf'
-            '84e6df88c9b0eb7b2ff1ecf175cbc75120b3046f2b562a7fe5a1ce6f04e3af3f'
-            '38949d08c19f7561e44b3134e0f0aebba3be0a0c282a828681d104442113c121')
+sha256sums=('89db742659f0c96140ba39b4053ade7e1c20660e7eb82c18b5a68c16f93356e8'
+            'b8b9dbd9312e41a6b8f6442fd49585e1dc08cee5234d0c190893e4863dd741fa'
+            '4e7733e2074b8ec275ea2ce08d9018805e79794407000544be7243a6b10d9523'
+            'e3634b102f3b87c4b3a33ae698be70434ff89082f66fbb3073e903b78e09b604'
+            'a1c2dc865433a738e052d3d88ac837708b4187568673a47c4234ca548d32af1d')
 
 prepare() {
   local p

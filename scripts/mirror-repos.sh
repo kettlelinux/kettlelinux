@@ -99,7 +99,11 @@ else
   theirs() { local p out=(); for p in "$@"; do [ -z "${OURS[${p%%[<>=]*}]:-}" ] && out+=("$p"); done; echo "${out[*]}"; }
   targets=("build-chroot:base base-devel" "bundle-tools:rauc casync squashfs-tools")
   for src in "$ROOT"/packages/*/PKGBUILD; do
-    deps="$(theirs $(bash -c ". '$src'; echo \${depends[@]} \${makedepends[@]}" 2>/dev/null))"
+    # a package built on the x86_64 side (scripts/build-x86-packages.sh) takes its build
+    # dependencies from the Arch archive; from Valve's repos it needs only its aarch64 sysroot
+    deps="$(theirs $(bash -c ". '$src'
+      if [ -n \"\${_kettle_buildhost:-}\" ]; then echo \${_kettle_sysroot[@]}
+      else echo \${depends[@]} \${makedepends[@]}; fi" 2>/dev/null))"
     [ -n "$deps" ] && targets+=("$(basename "$(dirname "$src")"):$deps")
   done
   targets+=("image:$(theirs $(sed -e 's/#.*//' -e '/^\s*$/d' "$ROOT/image/packages.txt"))")

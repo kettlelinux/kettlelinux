@@ -54,10 +54,10 @@ strace
 # DRM state dump (built by us, packages/drm_info); Decky Sunshine also needs it
 drm_info
 
-# KDE Plasma desktop (SteamOS desktop mode). Valve's hotfix repo supplies Plasma 6.2.5 /
-# KF6 6.14 / Qt 6.8; plasma-nm, plasma-pa, konsole, kinfocenter and plasma-systemmonitor
-# only exist as 6.0.4 in the base. Not in any deckard snapshot: kscreen, spectacle, ark,
-# an on-screen keyboard (kscreen and plasma-keyboard are built into our own repo).
+# KDE Plasma desktop (SteamOS desktop mode): Plasma 6.6.2 / KF6 6.23 / Qt 6.10.2 from the
+# base (mash-20260305) and Valve's hotfix repo. Not in any deckard snapshot: kscreen,
+# spectacle, ark, an on-screen keyboard (kscreen and plasma-keyboard are built into our own
+# repo); kwin is ours too, the base's with Kettle's patches (packages/kwin).
 plasma-desktop
 plasma-workspace
 kwin
@@ -164,7 +164,7 @@ kettle-wallpaper
 kettle-desktop-art
 
 # Game Mode plugins (built by us, packages/): Remora, our plugin loader that runs Decky plugins
-# (kettlelinux/remora; it provides decky-loader, so the plugin packages get it), with Welcome (first-boot tour, setup checklist, optional components downloaded from upstream
+# (kettlelinux/remora; the plugin packages depend on it), with Welcome (first-boot tour, setup checklist, optional components downloaded from upstream
 # on request) preinstalled. Frame generation (our own kettle-framegen layer) and upscaling
 # (per-game gamescope FSR 1, and SGSR 2 through our ARM64EC OptiScaler build) are tabs of the
 # Game Settings plugin, listed below with what else it needs
@@ -220,8 +220,7 @@ lutris
 heroic-games-launcher
 
 # Mods for games (packages/amethyst-mod-manager): Amethyst Mod Manager, a desktop app the Game
-# Stores plugin also opens in the desktop nested in Game Mode, on our PySide6 6.8 for the
-# snapshot's Qt (packages/pyside6)
+# Stores plugin also opens in the desktop nested in Game Mode, on the base's PySide6 6.10.2
 amethyst-mod-manager
 pyside6
 

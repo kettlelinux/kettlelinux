@@ -12,15 +12,17 @@ Select the same XI2 touch event types that the backend handles. Touch end and
 ownership already use the correct non-raw masks.
 
 Based-on: https://github.com/armada-os/armada/blob/main/packages/kwin/patches/0002-x11-windowed-select-touch-events.patch
+Rebased onto KWin 6.6.2.
+
 ---
  src/backends/x11/windowed/x11_windowed_output.cpp | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
 
-diff --git a/src/backends/x11/windowed/x11_windowed_output.cpp b/src/backends/x11/windowed/x11_windowed_output.cpp
-index 9469a6b..7bcaab3 100644
---- a/src/backends/x11/windowed/x11_windowed_output.cpp
-+++ b/src/backends/x11/windowed/x11_windowed_output.cpp
-@@ -289,7 +289,7 @@ void X11WindowedOutput::initXInputForWindow()
+diff --git a/src/backends/x11/x11_windowed_output.cpp b/src/backends/x11/x11_windowed_output.cpp
+index cde008a..c2b2217 100644
+--- a/src/backends/x11/x11_windowed_output.cpp
++++ b/src/backends/x11/x11_windowed_output.cpp
+@@ -293,7 +293,7 @@ void X11WindowedOutput::initXInputForWindow()
      } mask;
      mask.head.deviceid = XCB_INPUT_DEVICE_ALL_MASTER;
      mask.head.mask_len = 1;

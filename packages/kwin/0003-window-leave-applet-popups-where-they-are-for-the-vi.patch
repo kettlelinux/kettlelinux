@@ -12,17 +12,19 @@ the popup flickered between the two places, lost focus, the keyboard
 hid and came back, and the popup could no longer be closed.
 
 Leave applet popups where plasmashell puts them.
+Rebased onto KWin 6.6.2.
+
 ---
  src/window.cpp | 7 +++++++
  1 file changed, 7 insertions(+)
 
 diff --git a/src/window.cpp b/src/window.cpp
-index 7617468..24edf95 100644
+index d72837e..1e480d9 100644
 --- a/src/window.cpp
 +++ b/src/window.cpp
-@@ -2940,6 +2940,13 @@ QRectF Window::virtualKeyboardGeometry() const
+@@ -2950,6 +2950,13 @@ RectF Window::virtualKeyboardGeometry() const
  
- void Window::setVirtualKeyboardGeometry(const QRectF &geo)
+ void Window::setVirtualKeyboardGeometry(const RectF &geo)
  {
 +    // Plasma places its applet popups (the application menu, ...) itself: moved out of the
 +    // keyboard's way, plasmashell puts the popup back, it loses focus, the keyboard hides and the
@@ -33,4 +35,4 @@ index 7617468..24edf95 100644
 +    }
      // No keyboard anymore
      if (geo.isEmpty() && !m_keyboardGeometryRestore.isEmpty()) {
-         const QRectF availableArea = workspace()->clientArea(MaximizeArea, this);
+         const RectF availableArea = workspace()->clientArea(MaximizeArea, this);

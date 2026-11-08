@@ -1,13 +1,12 @@
-# Qt bindings for libpulse, which plasma-pa 6.2 (packages/plasma-pa) is built on; deckard's
-# plasma-pa 6.0.4 predates them. Arch's PKGBUILD (the version Arch had with Plasma 6.2),
-# without the API docs. 1.8.1 (needs Qt 6.7, ECM 6.0) is the last release deckard can build:
-# 1.9.0 needs ECM 6.27 (deckard has 6.20). Two fixes from 1.9.0 on top: 0001 makes reconnects retry
-# again, 0002 stops a device that is not the default from being reported as default (KDE bug
-# 500968). 1.7.0 changed the private d-pointers without a SOVERSION bump: plasma-pa is rebuilt
-# against it.
+# Qt bindings for libpulse, which Plasma's volume applet (plasma-pa) is built on: the base's
+# 1.8.1 (mash-20260305) with two fixes from 1.9.0 on top. 0001 makes reconnects retry again,
+# 0002 stops a device that is not the default from being reported as default (KDE bug 500968).
+# Neither changes the ABI (0002 touches server.h's comments only), so the base's plasma-pa runs
+# on it. 1.9.0 itself needs ECM 6.27 (the base has 6.23). Arch's PKGBUILD, without the API docs.
+# pkgrel 1.x replaces the base's 1.
 pkgname=pulseaudio-qt
 pkgver=1.8.1
-pkgrel=1
+pkgrel=1.1
 pkgdesc='Qt bindings for libpulse'
 arch=(aarch64)
 url='https://community.kde.org/Frameworks'

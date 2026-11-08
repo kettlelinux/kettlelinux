@@ -5,8 +5,8 @@ kettle-firmware-thor
 # ALSA UCM profile for the "AYN-Thor" card (packages/kettle-ucm-ayn)
 kettle-ucm-thor
 # the bottom screen's touch shell in Game Mode (usr/lib/kettle/bottom-shell): Plasma Mobile at
-# deckard's Plasma 6.2.5 (packages/plasma-mobile, plasma-nano; with packages/bluez-qt,
-# networkmanager-qt and modemmanager-qt at deckard's KF6 6.14, and packages/kwin's nested touch fix)
+# the base's Plasma 6.6.2 (packages/plasma-mobile, plasma-nano; with packages/kwin's nested
+# touch fix)
 plasma-mobile
 # AYN's U-Boot for the loader partition, put on the KETTLE partition too (docs/INSTALL.md)
 u-boot-ayn

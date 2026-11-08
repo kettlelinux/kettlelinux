@@ -167,7 +167,7 @@ for p in $(sed -n 's/^-\([^#[:space:]]*\).*/\1/p' "$DEVICE/packages.txt"); do
   grep -qx "$p" <(sed -e 's/#.*//' -e 's/\s*$//' "$ROOT/image/packages.txt") ||
     die "device/$VARIANT/packages.txt: -$p is not in image/packages.txt"
 done
-log "installing ${#PKGS[@]} packages for the $MODEL (kettle + deckard mash-20240428.1 + release-0.5 hotfixes)"
+log "installing ${#PKGS[@]} packages for the $MODEL (kettle + deckard mash-20260305 + release-0.5 hotfixes)"
 lock "$ROOT/out/repo.lock" -s   # not while build-packages.sh is adding to the repo
 pacman_root "$RFS" --logfile "$WORK/pacman.log" -Sy --needed "${PKGS[@]}"
 exec {LOCK_FD}>&-
@@ -302,7 +302,7 @@ systemctl enable kettle-crashd >/dev/null 2>&1
 # kettle-ledd: the stick lights (Device Settings' Lights tab), in Game Mode and Desktop Mode
 # (not where the device's packages.txt leaves kettle-leds out: no stick lights)
 [ ! -e /usr/lib/systemd/system/kettle-ledd.service ] || systemctl enable kettle-ledd >/dev/null 2>&1
-# Decky Loader (Game Mode plugins); its unit name is fixed by the loader itself
+# Remora (Game Mode plugins); its unit keeps Decky Loader's name, which plugins expect
 systemctl enable plugin_loader >/dev/null 2>&1
 systemctl --global enable steamos-manager.service kettle-steam-bootstrap.service \
   kettle-desktop-controller.service kettle-qam-button.service \

@@ -1,19 +1,22 @@
-# Plasma Mobile's shell, at deckard's Plasma version (6.2.5): the touch shell on the Thor's
+# Plasma Mobile's shell, at the base's Plasma version (6.6.2): the touch shell on the Thor's
 # bottom screen in Game Mode (device/thor: bottom-shell). It only runs there, so it is no login
 # session, and its kded modules go: kded loads them in the desktop too, where they'd run the
 # mobile first-start wizard and plasma-mobile-envmanager (which rewrites kwinrc/kdeglobals;
-# bottom-shell runs it itself, on the bottom screen's own config). bluez-qt (packages/bluez-qt;
-# deckard lacks it) is a hard dependency: the shell's QML module imports it, and without it none
-# of the shell's own types load. The rest of what the shell uses (plasma-nm, plasma-pa, milou,
-# kscreenlocker) is part of the desktop already.
+# bottom-shell runs it itself, on the bottom screen's own config). bluez-qt is a hard
+# dependency: the shell's QML module imports it, and without it none of the shell's own types
+# load. The rest of what the shell uses (plasma-nm, plasma-pa, milou, kscreenlocker) is part of
+# the desktop already.
+# 0001 (ours): the volume OSD's audio applet only while the OSD shows (its meters kept the
+# speaker, the mic and the audio DSP running). 6.6 hides the action drawer's window while it is
+# closed, which is what our earlier ActionDrawer patch did for its contents.
 pkgname=plasma-mobile
-pkgver=6.2.5
-pkgrel=4
+pkgver=6.6.2
+pkgrel=1
 pkgdesc='Phone shell for Plasma'
 arch=(aarch64)
 url='https://invent.kde.org/plasma/plasma-mobile'
 license=(GPL-2.0-or-later LGPL-2.0-or-later)
-depends=(bluez-qt gcc-libs glibc kcmutils kconfig kcoreaddons kdbusaddons kglobalaccel ki18n kio
+depends=(bluez-qt gcc-libs glibc kauth kcmutils kconfig kcoreaddons kdbusaddons kglobalaccel ki18n kio
          kirigami kirigami-addons kitemmodels kjobwidgets knotifications kpackage kpipewire
          kscreenlocker kservice ksvg kwayland kwin layer-shell-qt libepoxy libkscreen libplasma
          libxcb milou modemmanager-qt networkmanager-qt plasma-activities plasma-nano plasma-nm
@@ -21,11 +24,9 @@ depends=(bluez-qt gcc-libs glibc kcmutils kconfig kcoreaddons kdbusaddons kgloba
          systemd-libs)
 makedepends=(cmake ninja extra-cmake-modules plasma-wayland-protocols qt6-tools)
 source=(https://download.kde.org/stable/plasma/$pkgver/$pkgname-$pkgver.tar.xz
-        0001-actiondrawer-hide-the-closed-drawer-s-contents-not-o.patch
-        0002-volumeosd-keep-the-audio-applet-s-volume-meters-off-.patch)
-sha256sums=('aeceb9bab392fc3d9fdea5913c202a11078c4060794927722581bd88ec6518d2'
-            'e0cdba658709f4fda274d8a345fe4fe609872b527875dab092955b1199b745f9'
-            '81f9a67c4b3c60560b8e86a393534f72fb65050a4208ba56042684c321bd3af7')
+        0001-volumeosd-keep-the-audio-applet-s-volume-meters-off-.patch)
+sha256sums=('ed499ed91fdf02f2ba18ad5671e5794af73ac70f72fcb458f9c87acc3f713a2b'
+            '32233025d8c3e1cc4a06b2b142501a25064ec01aa16db92dbfec46c1e2793c77')
 
 prepare() {
   local p

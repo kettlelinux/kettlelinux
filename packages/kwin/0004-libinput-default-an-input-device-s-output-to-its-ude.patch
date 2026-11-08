@@ -13,29 +13,31 @@ On the AYN Thor both touchscreens landed on the bottom screen, whatever
 
 Make the udev output the default, so the tag holds until configured
 otherwise.
+Rebased onto KWin 6.6.2.
+
 ---
  src/backends/libinput/device.cpp | 1 +
  src/backends/libinput/device.h   | 4 +++-
  2 files changed, 4 insertions(+), 1 deletion(-)
 
 diff --git a/src/backends/libinput/device.cpp b/src/backends/libinput/device.cpp
-index 905d4d2..5374aa4 100644
+index dd198f2..d66f5f3 100644
 --- a/src/backends/libinput/device.cpp
 +++ b/src/backends/libinput/device.cpp
-@@ -283,6 +283,7 @@ Device::Device(libinput_device *device, QObject *parent)
-     , m_name(QString::fromLocal8Bit(libinput_device_get_name(m_device)))
+@@ -347,6 +347,7 @@ Device::Device(libinput_device *device, QObject *parent)
      , m_sysName(QString::fromLocal8Bit(libinput_device_get_sysname(m_device)))
+     , m_sysPath(QString::fromLocal8Bit(udev_device_get_syspath(libinput_device_get_udev_device(m_device))))
      , m_outputName(QString::fromLocal8Bit(libinput_device_get_output_name(m_device)))
 +    , m_udevOutputName(m_outputName)
      , m_product(libinput_device_get_id_product(m_device))
      , m_vendor(libinput_device_get_id_vendor(m_device))
-     , m_tapFingerCount(libinput_device_config_tap_get_finger_count(m_device))
+     , m_busType(libinput_device_get_id_bustype(m_device))
 diff --git a/src/backends/libinput/device.h b/src/backends/libinput/device.h
-index c5a3095..15e21b2 100644
+index 814d4b1..efc34e9 100644
 --- a/src/backends/libinput/device.h
 +++ b/src/backends/libinput/device.h
-@@ -595,7 +595,8 @@ public:
-     void setOutputName(const QString &uuid) override;
+@@ -682,7 +682,8 @@ public:
+     void setConfigOutputName(const QString &name);
      QString defaultOutputName() const
      {
 -        return {};
@@ -43,12 +45,12 @@ index c5a3095..15e21b2 100644
 +        return m_udevOutputName;
      }
  
-     /**
-@@ -706,6 +707,7 @@ private:
-     QString m_name;
+     void setOutputUuid(const QString &uuid);
+@@ -846,6 +847,7 @@ private:
      QString m_sysName;
+     QString m_sysPath;
      QString m_outputName;
 +    QString m_udevOutputName;
+     QString m_outputUuid;
      QSizeF m_size;
      quint32 m_product;
-     quint32 m_vendor;

@@ -1,7 +1,7 @@
-# The minimal Plasma shell Plasma Mobile builds on (the Thor's bottom screen), at deckard's
-# Plasma version (6.2.5).
+# The minimal Plasma shell Plasma Mobile builds on (the Thor's bottom screen), at the base's
+# Plasma version (6.6.2).
 pkgname=plasma-nano
-pkgver=6.2.5
+pkgver=6.6.2
 pkgrel=1
 pkgdesc='A minimal Plasma shell package'
 arch=(aarch64)
@@ -11,7 +11,7 @@ depends=(gcc-libs glibc ki18n kitemmodels kservice kwayland kwindowsystem libpla
          qt6-base qt6-declarative qt6-svg)
 makedepends=(cmake ninja extra-cmake-modules qt6-tools)
 source=(https://download.kde.org/stable/plasma/$pkgver/$pkgname-$pkgver.tar.xz)
-sha256sums=('733401ec743684f59dad219ad7eb9c156dd730b8e1726bf5580d879489df1ac9')
+sha256sums=('105379700a1a19464c704a3a782e95d705660eb5aae148a268f8d9675ba0b706')
 
 build() {
   cmake -B build -S $pkgname-$pkgver -G Ninja \

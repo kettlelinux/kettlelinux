@@ -2,16 +2,26 @@
 # carry it; Decky Sunshine waits for a display by running it, and it helps debug the display path.
 pkgname=drm_info
 pkgver=2.10.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Small utility to dump info about DRM devices'
 arch=(aarch64)
 url='https://gitlab.freedesktop.org/emersion/drm_info'
 license=(MIT)
-# libdrm 2.4.134 (Valve's hotfix repo) is new enough that the libdrm subproject isn't needed
-depends=('libdrm>=2.4.134' json-c pciutils)
+# Linked against the base's libdrm (2.4.131; drm_info needs 2.4.104), with drm_fourcc.h from
+# libdrm 2.4.134 for the newest format and modifier names, as drm_info's meson.build arranges
+# when the system libdrm is older: the libdrm tarball unpacked as its subproject, headers only.
+depends=(libdrm json-c pciutils)
 makedepends=(meson python scdoc)
-source=("$pkgname-$pkgver.tar.gz::https://gitlab.freedesktop.org/emersion/drm_info/-/archive/v$pkgver/drm_info-v$pkgver.tar.gz")
-sha256sums=('17bcca16920ecf22904b0af82c2d8c94545991b9840332833adfe8ae3e8f232d')
+_libdrm=2.4.134
+source=("$pkgname-$pkgver.tar.gz::https://gitlab.freedesktop.org/emersion/drm_info/-/archive/v$pkgver/drm_info-v$pkgver.tar.gz"
+        "https://dri.freedesktop.org/libdrm/libdrm-$_libdrm.tar.xz")
+sha256sums=('17bcca16920ecf22904b0af82c2d8c94545991b9840332833adfe8ae3e8f232d'
+            'ac5e74d157830eb8bee44c6a6bf3ad49774ef0dd2a72bdad74a8f20308b52a95')
+
+prepare() {
+  rm -rf $pkgname-v$pkgver/subprojects/libdrm
+  ln -s "$srcdir/libdrm-$_libdrm" $pkgname-v$pkgver/subprojects/libdrm
+}
 
 build() {
   # libdisplay-info only decodes EDIDs in the output, and Valve's 0.1.1 is old: left out

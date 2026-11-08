@@ -5,13 +5,13 @@
 # PR #1846). 1.15.2 fixes CVE-2026-34155 (plain bundles over 2 GiB; ours are verity).
 # 1.15 asks the bootloader backend for the booted slot first (get-current). Valve's custom backend
 # has no get-current, so RAUC logs "Failed to get bootname" and falls back to root=, as 1.14 did.
-# (glib2-devel: part of glib2 in the pinned snapshot)
+# glib2-devel: gdbus-codegen (the base, mash-20260305, splits glib2's build tools off, as Arch does)
 # Maintainer (Upstream): David Runge <dvzrv@archlinux.org>
 # Maintainer (Holo): Ludovico de Nittis <ludovico.denittis@collabora.com>
 
 pkgname=rauc
 pkgver=1.15.2
-pkgrel=1
+pkgrel=2
 pkgdesc="Safe and secure software updates for embedded Linux"
 arch=(aarch64)
 url="https://rauc.io"
@@ -27,6 +27,7 @@ makedepends=(
   curl
   dbus
   glib2
+  glib2-devel
   json-glib
   meson
   python
