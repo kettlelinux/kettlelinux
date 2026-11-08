@@ -8,7 +8,7 @@
 # panel shows the splash in landscape. Default theme: kettle (packages/kettle-plymouth-theme).
 pkgname=plymouth
 pkgver=26.134.222
-pkgrel=1
+pkgrel=2
 pkgdesc='Graphical boot splash screen'
 arch=(aarch64)
 url='https://www.freedesktop.org/wiki/Software/Plymouth/'

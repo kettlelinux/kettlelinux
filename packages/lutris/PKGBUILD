@@ -14,7 +14,7 @@
 # it, and 0.15 pulls in curl_cffi). gnome-desktop is optional too (falls back to xrandr).
 pkgname=lutris
 pkgver=0.5.22
-pkgrel=2
+pkgrel=3
 pkgdesc='Open Gaming Platform'
 arch=(any)
 url='https://lutris.net'

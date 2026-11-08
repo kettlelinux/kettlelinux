@@ -7,7 +7,7 @@
 # is aarch64). Submodules are fetched at the commits the release tag records.
 pkgname=dxvk
 pkgver=3.1.1
-pkgrel=1
+pkgrel=2
 _llvm_mingw=20260908
 pkgdesc='Vulkan-based Direct3D 8/9/10/11 for Wine (ARM64EC and i686)'
 arch=(any)

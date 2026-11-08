@@ -5,7 +5,7 @@
 # this one layer covers them and native arm64 games.
 pkgname=kettle-framegen
 pkgver=0.2.0.r55.g4e736d0
-pkgrel=1
+pkgrel=2
 pkgdesc='Kettle Linux frame generation Vulkan layer'
 arch=(aarch64)
 url='https://github.com/kettlelinux/kettle-framegen'

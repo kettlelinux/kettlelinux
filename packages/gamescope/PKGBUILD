@@ -57,7 +57,7 @@
 # names and drop whichever patches it already contains.
 pkgname=gamescope
 pkgver=3.16.30
-pkgrel=1.7
+pkgrel=1.8
 _commit=ad2763da1c48860f649abfe842a087188dcb6e20
 pkgdesc='gaming shell based on Xwayland, powered by Vulkan and DRM (deckard + Kettle Linux, SGSR 1)'
 arch=(aarch64)

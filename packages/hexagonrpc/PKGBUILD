@@ -10,7 +10,7 @@
 # Elite's sensors process asks for apps_std method 36, and unanswered it kept the ADSP awake.
 pkgname=hexagonrpc
 pkgver=0.5.0
-pkgrel=4
+pkgrel=5
 pkgdesc='FastRPC server for Qualcomm DSPs (starts the ADSP sensors process)'
 arch=(aarch64)
 url='https://github.com/linux-msm/hexagonrpc'

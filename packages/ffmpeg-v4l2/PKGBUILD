@@ -30,7 +30,7 @@
 # To follow the fork, move _commit to the head of its test/<version>/main branch.
 pkgname=ffmpeg-v4l2
 pkgver=8.1.2
-pkgrel=5
+pkgrel=6
 _commit=f60aae17021abae85b1ba9759e8b2da33f723902 # test/8.1.2/main
 pkgdesc="FFmpeg with DRM-PRIME V4L2 decoding (Raspberry Pi's fork), for Firefox's and Moonlight's hardware video decoding"
 arch=(aarch64)

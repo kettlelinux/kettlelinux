@@ -5,7 +5,7 @@
 # use the native aarch64 Vulkan loader, so this one layer covers them.
 pkgname=kettle-gpu-priority
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Kettle Linux: games run at low GPU priority, below the Steam UI'
 arch=(aarch64)
 license=(BSD-3-Clause)

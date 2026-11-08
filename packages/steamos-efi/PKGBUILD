@@ -7,7 +7,7 @@
 pkgname=steamos-efi
 _srctag=jupiter-20261012.1
 pkgver=${_srctag#jupiter-}
-pkgrel=1
+pkgrel=2
 pkgdesc='Stage 1 bootloader for SteamOS 3+ (A/B chainloader), Kettle Linux arm64 build'
 arch=(aarch64)
 url='https://gitlab.steamos.cloud/holo/steamos-efi'

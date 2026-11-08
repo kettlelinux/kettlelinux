@@ -9,7 +9,7 @@
 # library its DT_NEEDED entries (all three exist in old and new glibc alike).
 pkgname=kettle-affinity
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Kettle Linux: moves the threads a game pins to little cores onto the fast cores'
 arch=(aarch64)
 license=(BSD-3-Clause)

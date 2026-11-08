@@ -9,7 +9,7 @@
 # pins). Under qemu this takes well over an hour.
 pkgname=directx-shader-compiler
 pkgver=1.9.2609
-pkgrel=1
+pkgrel=2
 _commit=01b62ad47db7dee3dd33f90e7339cf9e860b3f93   # v1.9.2609
 pkgdesc='DirectX Shader Compiler (dxc), DXIL and SPIR-V; build dependency of optiscaler-arm64ec'
 arch=(aarch64)

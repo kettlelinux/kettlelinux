@@ -22,7 +22,7 @@
 # loaded by then.)
 pkgname=moonlight-qt
 pkgver=6.2.0
-pkgrel=4
+pkgrel=5
 pkgdesc='GameStream client for Sunshine and Apollo hosts, with V4L2 hardware decoding'
 arch=(aarch64)
 url='https://moonlight-stream.org'
