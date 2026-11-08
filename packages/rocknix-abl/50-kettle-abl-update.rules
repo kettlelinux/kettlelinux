@@ -4,7 +4,7 @@
 // release, never a file it's handed: --stock-image and --force are refused through pkexec), only
 // after the device's own volume keys confirm it, so the person holding the device may run it, as
 // they may reset it (50-kettle-reset.rules). In a terminal, sudo kettle-abl-update works as before.
-// fromDecky: one of Decky Loader's plugin backends. They run in its own system service, outside
+// fromDecky: one of the plugin backends Remora runs. They run in its own system service, outside
 // the user's login session, so polkit sees them as neither local nor active. (All rule files share
 // one scope: 50-kettle-*.rules define the same function.) Newer polkit says which unit a
 // process is in (subject.system_unit); polkit 124 doesn't, so a helper reads it from /proc.

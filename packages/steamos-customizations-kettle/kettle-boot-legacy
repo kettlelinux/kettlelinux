@@ -3,6 +3,9 @@
 # ABL boots \KERNEL (an Android boot.img v0) and U-Boot's standard boot reads
 # \extlinux\extlinux.conf, both from the esp; steamcl (\EFI\BOOT\BOOTAA64.EFI) does A/B itself.
 # These follow the newest installed slot, without fallback. See docs/UPDATES.md.
+# Next to extlinux goes a Boot Loader Spec entry for steamcl (\loader\entries\kettle.conf):
+# OpenABL tries a drive's BLS entries before its extlinux labels, so it starts steamcl, with its
+# fallback, rather than extlinux's newest slot. U-Boot doesn't read BLS entries.
 #
 #   kettle-boot-legacy SLOT
 #       after an update (the RAUC post-install hook, as .../post-install.d/50-kettle-boot-legacy):
@@ -76,7 +79,11 @@ printf '%s  KERNEL\n' "$(md5sum "$stage/KERNEL" | cut -d' ' -f1)" >"$stage/KERNE
 if [ "$extlinux" = 1 ]; then
 cp "$boot/Image" "$boot/initramfs-linux.img" "$stage/"
 mkdir -p "$stage/dtbs" && cp -r "$boot/dtbs/." "$stage/dtbs/"
-mkdir -p "$stage/extlinux"
+mkdir -p "$stage/extlinux" "$stage/loader/entries"
+cat >"$stage/loader/entries/kettle.conf" <<CFG
+title Kettle Linux
+efi /EFI/BOOT/BOOTAA64.EFI
+CFG
 cat >"$stage/extlinux/extlinux.conf" <<CFG
 default kettle
 timeout 3
@@ -101,7 +108,8 @@ CFG
 for f in Image initramfs-linux.img; do mv -f "$stage/$f" "$esp/$f"; done
 rm -rf "$esp/dtbs.old"; [ -d "$esp/dtbs" ] && mv "$esp/dtbs" "$esp/dtbs.old"
 mv "$stage/dtbs" "$esp/dtbs"; rm -rf "$esp/dtbs.old"
-mkdir -p "$esp/extlinux"
+mkdir -p "$esp/extlinux" "$esp/loader/entries"
+mv -f "$stage/loader/entries/kettle.conf" "$esp/loader/entries/kettle.conf"
 mv -f "$stage/extlinux/extlinux.conf" "$esp/extlinux/extlinux.conf"
 fi
 mv -f "$stage/KERNEL" "$esp/KERNEL"

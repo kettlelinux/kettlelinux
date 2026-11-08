@@ -24,7 +24,7 @@
 pkgname=steamos-customizations-kettle
 _srctag=jupiter-20260916.1
 pkgver=${_srctag#jupiter-}
-pkgrel=3
+pkgrel=4
 pkgdesc='SteamOS atomic A/B system (Valve steamos-customizations) for Kettle Linux'
 arch=(aarch64)
 url='https://gitlab.steamos.cloud/holo/steamos-customizations'
@@ -65,7 +65,7 @@ sha256sums=('5cec58098008822caf86aee0991421568df04a603cd0c1b9c80fe930749daaee'
             'a99f7889fff91cc3e11615e5a128acab636228dabcc0803b0b661f479ac685f2'
             '4e795fe93549b171628d9737ccbf6119c1cb39bf4e6f29687c593ed87ef64362'
             '3712366a46cc51abe85b71079151358146778aa9e3c0ab046f2fed41cabc5f60'
-            'f245b5c76e2bf47172b531c89cc5e2a35d2c834e07845d57c47864cff6e4c395'
+            '6c3a67d3994ee8d6515e3f1519398652386152dd02f4d9cb04d61c4c8344e8d0'
             'cb8c07b9dde2c1ab060433af0a6406020ec07774b208450a0210c7e848b5ae6a'
             'c5676c03913c976637d3a61ac93aa8d9e4d0e5dc6c78858161f030f0dc571062'
             '545638e85db9e487c1d03f3bad4206e5e4272c017daf5c29c726b319f2c87627'
@@ -148,10 +148,5 @@ package() {
   ln -s ../home.mount usr/lib/systemd/system/local-fs.target.wants/
   install -Dm644 "$srcdir/home-after-repart.conf" usr/lib/systemd/system/home.mount.d/kettle-repart.conf
   install -Dm644 "$srcdir/kettle-atomupd.tmpfiles" usr/lib/tmpfiles.d/kettle-atomupd.conf
-  # Valve's steamos-atomupd-client (release-0.4 and 0.5 hotfixes) is built for Python 3.12; the image's
-  # Python is 3.11 (the pinned snapshot's). Its code runs on 3.11 as is (checked by compiling
-  # and importing it there), so it is made visible to 3.11.
-  install -d usr/lib/python3.11/site-packages
-  ln -s ../../python3.12/site-packages/steamosatomupd usr/lib/python3.11/site-packages/steamosatomupd
   install -Dm644 "$srcdir/src-tree/COPYING.LGPL-2.1" -t usr/share/licenses/$pkgname
 }

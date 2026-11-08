@@ -4,8 +4,8 @@
 #
 # Kettle starts either through U-Boot (fastboot mode's default boot set to Loader) or, on devices
 # whose stock bootloader has no Loader choice, through an ABL that boots Linux: the ROCKNIX ABL
-# (docs/INSTALL.md) or OpenABL (github.com/kettlelinux/OpenABL, a fork of the Open Handheld
-# Collective's, with a graphical boot menu and standard Linux boot). The release to write is the
+# (docs/INSTALL.md) or OpenABL (github.com/OpenHandheldCollective/OpenABL, with a graphical boot
+# menu and standard Linux boot). The release to write is the
 # image's, in both abl slots: /usr/share/kettle/rocknix-abl (packages/rocknix-abl) or
 # /usr/share/kettle/openabl (packages/openabl), each with its releases.tsv.
 #
@@ -136,7 +136,7 @@ for s in a b; do
 done
 
 # What a slot (or a saved image) holds: "<kind>:<version>" for a release listed in a releases.tsv
-# (rocknix:1.2, openabl:1.0-kettle.1), "test-signed" or "other" (stock or unknown)
+# (rocknix:1.2, openabl:1.2), "test-signed" or "other" (stock or unknown)
 TEST_SIGNED_SPAN=1048576   # where the qtestsign CA's name is looked for: the ELF's signature
 identify() {
   local dev=$1 f cat z h v
