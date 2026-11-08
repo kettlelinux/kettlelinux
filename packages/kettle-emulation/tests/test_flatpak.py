@@ -176,6 +176,19 @@ class Keepers(unittest.TestCase):
         # Ryujinx: nothing until Ryujinx has written its own config
         self.assertFalse(os.path.exists(self.app("io.github.ryubing.Ryujinx/config/Ryujinx/Config.json")))
 
+    def test_armsx2_memory_cards_go_to_the_saves(self):
+        cards = os.path.join(self.home, "Emulation/bios/pcsx2/memcards")
+        saves = os.path.join(self.home, "Emulation/saves/pcsx2")
+        os.makedirs(cards)
+        with open(os.path.join(cards, "Mcd001.ps2"), "w") as f:
+            f.write("card")
+        self.keep("ra-armsx2")
+        self.assertEqual(os.readlink(cards), saves)
+        with open(os.path.join(saves, "Mcd001.ps2")) as f:
+            self.assertEqual(f.read(), "card")
+        self.keep("ra-armsx2")  # again: the link stays
+        self.assertEqual(os.readlink(cards), saves)
+
     def test_qt_hotkeys(self):
         self.keep("eden", "azahar")
         eden = self.read("dev.eden_emu.eden/config/eden/qt-config.ini")

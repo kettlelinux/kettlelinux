@@ -513,6 +513,29 @@ def keep_melonds():
     _replace(MELONDS_TOML, toml_dump(conf) + "\n")
 
 
+# --- ARMSX2 (libretro core "armsx2"): PlayStation 2 --------------------------------------------
+ARMSX2_MEMCARDS = os.path.join(EMU, "bios/pcsx2/memcards")  # where the core keeps them: the system folder
+ARMSX2_SAVES = os.path.join(EMU, "saves/pcsx2")
+
+
+def keep_armsx2():
+    """The core's memory cards live in RetroArch's system folder (Emulation/bios/pcsx2/memcards),
+    which isn't a folder Kettle backs up or lists saves from: they go to Emulation/saves/pcsx2
+    and the core's folder is a link to it. Cards a core run already made there are moved over."""
+    os.makedirs(ARMSX2_SAVES, exist_ok=True)
+    os.makedirs(os.path.dirname(ARMSX2_MEMCARDS), exist_ok=True)
+    if os.path.islink(ARMSX2_MEMCARDS):
+        if os.readlink(ARMSX2_MEMCARDS) == ARMSX2_SAVES:
+            return
+        os.unlink(ARMSX2_MEMCARDS)
+    elif os.path.isdir(ARMSX2_MEMCARDS):
+        for name in os.listdir(ARMSX2_MEMCARDS):
+            if not os.path.exists(os.path.join(ARMSX2_SAVES, name)):
+                shutil.move(os.path.join(ARMSX2_MEMCARDS, name), ARMSX2_SAVES)
+        shutil.rmtree(ARMSX2_MEMCARDS)  # what's left is a name that already exists in the saves
+    os.symlink(ARMSX2_SAVES, ARMSX2_MEMCARDS)
+
+
 # --- RPCS3 (net.rpcs3.RPCS3): PlayStation 3 ---------------------------------------------------
 RPCS3_DIR = os.path.join(app_dir("net.rpcs3.RPCS3"), "rpcs3")
 RPCS3_SHORTCUTS = {  # GuiConfigs/CurrentSettings.ini [Shortcuts]; "" unbinds
@@ -1026,7 +1049,7 @@ def keep_azahar():
 
 SEEDERS = {"retroarch": seed_retroarch}
 # the kept settings of the emulator about to start (seed(eid))
-KEEPERS = {"ppsspp": keep_ppsspp, "dolphin": keep_dolphin, "melonds": keep_melonds,
+KEEPERS = {"ra-armsx2": keep_armsx2, "ppsspp": keep_ppsspp, "dolphin": keep_dolphin, "melonds": keep_melonds,
            "rpcs3": keep_rpcs3, "xemu": keep_xemu, "eden": keep_eden,
            "ryujinx": keep_ryujinx, "azahar": keep_azahar}
 

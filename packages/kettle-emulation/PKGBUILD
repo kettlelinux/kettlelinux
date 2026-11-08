@@ -29,7 +29,7 @@
 #   or copied between storages) and data-move; emu-run points the emulators at the data and
 #   refuses a game whose data is on a card that isn't in.
 pkgname=kettle-emulation
-pkgver=0.5.0
+pkgver=0.5.1
 pkgrel=1
 pkgdesc='Kettle Linux: emulator launcher, standard controls and ROM/BIOS import'
 arch=(any)

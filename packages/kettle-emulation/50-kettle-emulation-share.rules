@@ -3,7 +3,7 @@
 // prompt can be shown: allowed for the person at the device (wheel, in the active local session)
 // and for Decky's plugin backends, where the plugin runs. The share itself needs the Samba
 // password the user sets in the plugin.
-// fromDecky: one of Decky Loader's plugin backends. They run in its own system service, outside
+// fromDecky: one of the plugin backends Remora runs. They run in its own system service, outside
 // the user's login session, so polkit sees them as neither local nor active. (All rule files share
 // one scope: 50-kettle-*.rules define the same function.) Newer polkit says which unit a
 // process is in (subject.system_unit); polkit 124 doesn't, so a helper reads it from /proc.
