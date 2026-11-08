@@ -8,14 +8,15 @@ download: "failed to flush transmit queue, data pkts pending 1", then
 every WPA 4-way handshake times out until the module reloads. A bisect
 of the 7.2..7.3-rc7 ath12k commits (5-minute download + scan stress per
 step) found this commit, and 7.3-rc7's ath12k with only this line
-reverted holds. Go back to 2048, the size 7.2 used.
+reverted holds. Go back to 2048, the size 7.2 used. (Rebased onto 7.3.2+, where
+DP_RXDMA_BUF_RING_SIZE became the per-memory-profile ath12k_dp_rxdma_buf_ring_size().)
 ---
 --- a/drivers/net/wireless/ath/ath12k/dp.h
 +++ b/drivers/net/wireless/ath/ath12k/dp.h
-@@ -206,7 +206,7 @@
+@@ -210,7 +210,7 @@
+ #define DP_REO_EXCEPTION_RING_SIZE	128
  #define DP_REO_CMD_RING_SIZE		256
  #define DP_REO_STATUS_RING_SIZE		2048
- #define DP_RXDMA_BUF_RING_SIZE		4096
 -#define DP_RX_MAC_BUF_RING_SIZE		4096
 +#define DP_RX_MAC_BUF_RING_SIZE		2048
  #define DP_RXDMA_REFILL_RING_SIZE	2048

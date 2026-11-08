@@ -1,7 +1,7 @@
 # Kernel patch stack
 
 Applied in directory order, then file order, with `patch -p1 --fuzz=0` by
-`scripts/build-kernel.sh`. Base: Linux 7.3 (pinned in `../kernel.conf`); see "Linux 7.3 rebase" below.
+`scripts/build-kernel.sh`. Base: Linux 7.3.3 (pinned in `../kernel.conf`); see "Linux 7.3 rebase" below. 7.3.3 needed only 40-kettle/1466 rebased (7.3.2 made ath12k's RXDMA ring size a per-memory-profile helper).
 
 | Dir | Source | Notes |
 |---|---|---|
