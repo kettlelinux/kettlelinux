@@ -1,0 +1,81 @@
+# kettle-powerd's description of the AYN Odin 3 (CQ8725S, AYN's SM8750 / Snapdragon 8 Elite).
+# The frequency tables were read from the unit's Android (2026-11-06); the paths, TDP range,
+# profiles and charging are the Pocket FIT Elite's (the same SoC, GPU and charger firmware family)
+# until measured on an Odin 3 under Linux. Caps between frequency steps round down.
+
+[cpu]
+# cpufreq policies (SCMI, the frequency table comes from the firmware), smallest cluster first:
+# six Oryon cores (384 MHz - 3.53 GHz) and two prime cores (1.02 - 4.32 GHz on this unit's bin, as
+# Android lists them; Linux may offer fewer boost steps, as on the Pocket FIT Elite). cpu0 can't
+# be taken offline. "prime" lets a game park both prime cores (Game Settings); the main cluster
+# is never parked.
+clusters = [
+  { name = "main", policy = 0, cpus = [0, 1, 2, 3, 4, 5] },
+  { name = "prime", policy = 6, cpus = [6, 7] },
+]
+
+[gpu]
+devfreq = "/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu"
+# busy percentage (kernel patch 40-kettle/1110). By device name, not dri/0: under an EFI boot
+# simpledrm can take minor 0 for the boot framebuffer (as on the RP5)
+load = "/sys/kernel/debug/dri/ae01000.display-controller/perf_now"
+# lowest clock offered for a fixed (manual) GPU clock, MHz (the A830 runs 160-1100 MHz; Android
+# lists all 14 steps of sm8750.dtsi's table on this unit)
+manual_min_mhz = 222
+
+[fan]
+hwmon = "pwmfan"
+cooling_device = "pwm-fan"
+# Custom curves always run the fan at full speed from here, whatever the curve says (C)
+full_speed_temp = 90
+# The device tree curve (cq8725s-ayn-odin3-fan.dtsi: cooling levels 0 30 45 60 70 90 120 150 of
+# 255, one level per 5 C from 50 C, as on the Portal), as percent: the starting point for a
+# custom curve
+default_curve = [[45, 0], [50, 12], [60, 24], [70, 35], [80, 59], [90, 100]]
+
+[power]
+battery = "battery"
+charger = "qcom-battmgr-usb"
+# Share of the charger's input power that reaches the system and battery
+charger_efficiency = 0.9
+# Steam's TDP slider: whole-device draw in watts (screen included); max means no limit.
+# The Pocket FIT Elite's range (measured there in Expedition 33: 15.4 W average, 20 W peak
+# uncapped); not yet measured on the Odin 3
+tdp_min = 4
+tdp_max = 22
+# Charging: Steam's charge limit is the charger firmware's end threshold, as on the Pocket FIT
+# Elite (Armada drives this board's limit the same way, with the same 55% floor), held by the
+# firmware even asleep or off; Steam's setting comes through remotes.d/kettle-power-charge.toml
+# (device overlay). AYN's Android uses the same threshold (its battery node read
+# charge_control_end_threshold=80 on 2026-11-06); not yet tested under Linux.
+charge_limit_min = 55
+# The firmware's own charge current, uA: what charging returns to when kettle-powerd stops.
+# Android's battery node read charge_control_limit=8600000 (of a 15950000 maximum) on the unit
+# (2026-11-06); to be checked against constant_charge_current_max under Linux.
+charge_current = 8600000
+# Device Settings' charge speeds, the first the default. These cap what goes into the
+# battery; a weaker charger gives it less than the cap.
+charge_speed = [
+  { name = "Fast", ua = 8600000 },
+  { name = "Balanced", ua = 3000000 },
+  { name = "Slow", ua = 1500000 },
+]
+
+# Steam's performance profiles (Quick Access > Performance). Caps in kHz / MHz; a cluster
+# left out runs up to its highest frequency. Steps of this unit's tables. The Pocket FIT Elite's
+# (whose games were GPU-bound: Balanced keeps 967 MHz, the highest step below the TURBO voltage
+# levels, and saves on the CPU), until measured here.
+[[profile]]
+name = "Performance"
+
+[[profile]]
+name = "Balanced"
+main = 2745600
+prime = 3283200
+gpu_mhz = 967
+
+[[profile]]
+name = "Powersave"
+main = 1996800
+prime = 2246400
+gpu_mhz = 734

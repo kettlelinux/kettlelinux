@@ -1,0 +1,16 @@
+# steamos-manager device config for the AYN Odin 3. The power controls themselves (TDP,
+# performance profiles, GPU clock, fan control) are kettle-powerd's, relayed through
+# remotes.d/kettle-power.toml: configuring them here would make steamos-manager write the same
+# cpufreq/devfreq files and fight it. Booted by the ABL there is no SMBIOS, so it matches on the
+# devicetree only.
+[[device]]
+dt.compatible = "ayn,odin3"
+device = "ayn_odin_3"
+variant = "Odin3"
+friendly_name = "AYN Odin 3"
+
+# Steam lowers the TDP to this while it downloads in sleep; the rest of TdpLimit1 comes
+# from kettle-powerd
+[tdp_limit]
+method = "remote_interface"
+download_mode_limit = 5

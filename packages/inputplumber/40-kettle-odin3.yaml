@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+# Kettle Linux: the Odin 3's pad as a Steam Deck controller, as the Portal's (40-kettle-odin2portal):
+# the same AYN MCU on a UART (rsinput, kernel 20-sm8550/0031). Its face buttons are labelled
+# Nintendo-style (A right, B bottom, X top, Y left), as on the Thor, so it uses the Thor's map
+# (kettle-thor-capability-map.yaml): upstream's rsinput1 with the face buttons mapped by their
+# labels (the button marked A is Steam's A) and the button below the right stick as Quick
+# Access. The Thor map's AYN key (KEY_F24) never fires here: the Odin 3's pad has none. The back
+# paddles (BTN_Z/BTN_C) are the left/right paddles. Motion comes from kettle-motiond.
+version: 1
+kind: CompositeDevice
+name: AYN Odin 3 (Kettle)
+
+options:
+  auto_manage: true
+
+matches:
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
+        - name: compatible
+          value: ayn,odin3*
+
+source_devices:
+  - group: gamepad
+    capability_map_id: kettle-thor
+    evdev:
+      name: AYN Odin3 Gamepad
+      phys_path: rsinput-gamepad/input0
+      vendor_id: "2020"
+      product_id: "3001"
+      handler: event*
+
+  # the back paddles (M1/M2), a gpio-keys device from ROCKNIX's dts emitting BTN_Z/BTN_C
+  - group: gamepad
+    capability_map_id: kettle-thor
+    evdev:
+      name: gpio-keys-paddles
+      handler: event*
+
+  # the gyro and accelerometer, from kettle-motiond (packages/kettle-motion; read by our 0001)
+  - group: imu
+    evdev:
+      name: Kettle Motion Sensors
+      handler: event*
+
+target_devices:
+  - deck

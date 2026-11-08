@@ -6,7 +6,8 @@
 # Elite's 40-kettle-pocketfitelite.yaml joins its MCU's two input devices into one Deck pad.
 # The Retroid Pocket Nova (the same rsinput MCU, Nintendo-labelled like the Thor) gets
 # 40-kettle-rpnova.yaml with its own map, in place of upstream's 50-retroid_pocket_nova.yaml
-# (not installed: see package()).
+# (not installed: see package()). The Odin 3 (the same rsinput MCU) gets 40-kettle-odin3.yaml,
+# the Portal's with its own names and the Thor's map (its face buttons are Nintendo-labelled too).
 # Runs with Game Mode only (kettle-inputplumber.service, device overlay): the desktop's own
 # controller (kettle-desktop-controller) needs the raw pad.
 # 0001 reads evdev motion sensors; the Portal's and Thor's configs take kettle-motiond's (packages/kettle-motion)
@@ -19,7 +20,7 @@
 # crates needed a newer compiler than the 2024 snapshot's 1.78 (the base's 1.93 is untried).
 pkgname=inputplumber
 pkgver=0.84.0
-pkgrel=1
+pkgrel=2
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Input router and remapper daemon (Steam Deck controller emulation for AYN handhelds)'
@@ -36,6 +37,7 @@ source=("InputPlumber-$pkgver.tar.gz::https://github.com/ShadowBlip/InputPlumber
         40-kettle-rp5.yaml
         40-kettle-pocketfitelite.yaml
         40-kettle-rpnova.yaml
+        40-kettle-odin3.yaml
         kettle-thor-capability-map.yaml
         kettle-rp5-capability-map.yaml
         kettle-pocketfitelite-capability-map.yaml
@@ -50,6 +52,7 @@ sha256sums=('64b25d90c3cbabbcfd52e574ff91f64a9bec5ce3b616e36c7179060f29b660bc'
             'c17970bf78ddab689d8b93acebd78fdf6fa03befde4377b04bd5f9b3e3b78e89'
             '5f5c9ff2e3350f2441e43014ec2727a14b22a94dc227b0c36dd55b9a8a4a994f'
             '6ddd0a0b852c03558a5b71c4ca5944bf0b46d7c80b6cb0d9645792354d6b52e1'
+            '967f2d77e943997f9b5fbcc3affabfce8636fd2376d51429bafc792b46553421'
             '2cb3955e5d30d85589ddce8cd260851e60367b18e8b44c0b09e9250cf5518ee8'
             '769f8dfdb945985a3417ab2cbb988d43ef76bec81b6989251821a0200fbac69c'
             '7cad1e633b35a3d19b03d6ea9aa22845d807439844343c03e33f3958e0377560'
@@ -76,7 +79,7 @@ package() {
   cd "InputPlumber-$pkgver"
   export PATH="$srcdir/rust/bin:$PATH" CARGO_HOME="$srcdir/cargo-home"
   make install PREFIX="$pkgdir/usr" NO_RELOAD=true TARGET_ARCH=aarch64-unknown-linux-gnu
-  install -Dm644 "$srcdir"/40-kettle-{odin2portal,thor,rp5,pocketfitelite,rpnova}.yaml -t "$pkgdir/usr/share/inputplumber/devices"
+  install -Dm644 "$srcdir"/40-kettle-{odin2portal,thor,rp5,pocketfitelite,rpnova,odin3}.yaml -t "$pkgdir/usr/share/inputplumber/devices"
   # Upstream's Nova config takes gpio-keys (Volume Up) besides the pad: ours leaves Volume Up to
   # the kernel and takes the paddles' own gpio-keys-paddles instead, so upstream's would still
   # find a free device and make a second controller, which then races ours for the pad (seen on

@@ -1,0 +1,4 @@
+# what kettle-stream-link changes while a Moonlight stream runs (packages/kettle-moonlight):
+# this card (17cb:110e, the Pocket FIT Elite's WCN7860) is slow out of PCIe L1.2, 22 ms vs 6 ms
+# stream network latency there
+wifi-l1ss

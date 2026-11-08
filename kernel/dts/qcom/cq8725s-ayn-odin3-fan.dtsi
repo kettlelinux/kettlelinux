@@ -1,0 +1,224 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Kettle Linux: the fan curve in the kernel for the AYN Odin 3 (included at the end of
+ * cq8725s-ayn-odin3.dts), as qcs8550-ayn-fan.dtsi does for the AYN SM8550 boards and
+ * sm8750-konkr-pf-elite-fan.dtsi for the Pocket FIT Elite. ROCKNIX's dts has the pwm-fan and its
+ * cooling levels but no thermal zone drives it (ROCKNIX runs a userspace fan daemon), so
+ * without this the fan sits at its boot duty cycle. Bound to active trips (step_wise) on the
+ * main and prime CPU clusters and the GPU: off below 50 C, then one of the dtsi's seven
+ * cooling levels per 5 C up to 80 C. kettle-powerd's custom curves take over these zones
+ * (packages/kettle-power/odin3.toml). Not yet checked on hardware.
+ */
+
+&{/thermal-zones/cpuss-0-0-thermal} {
+	trips {
+		cpuss00_fan0: trip-fan0 {
+			temperature = <50000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		cpuss00_fan1: trip-fan1 {
+			temperature = <55000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		cpuss00_fan2: trip-fan2 {
+			temperature = <60000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		cpuss00_fan3: trip-fan3 {
+			temperature = <65000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		cpuss00_fan4: trip-fan4 {
+			temperature = <70000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		cpuss00_fan5: trip-fan5 {
+			temperature = <75000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		cpuss00_fan6: trip-fan6 {
+			temperature = <80000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+	};
+
+	cooling-maps {
+		fan0 {
+			trip = <&cpuss00_fan0>;
+			cooling-device = <&pwm_fan 1 1>;
+		};
+		fan1 {
+			trip = <&cpuss00_fan1>;
+			cooling-device = <&pwm_fan 2 2>;
+		};
+		fan2 {
+			trip = <&cpuss00_fan2>;
+			cooling-device = <&pwm_fan 3 3>;
+		};
+		fan3 {
+			trip = <&cpuss00_fan3>;
+			cooling-device = <&pwm_fan 4 4>;
+		};
+		fan4 {
+			trip = <&cpuss00_fan4>;
+			cooling-device = <&pwm_fan 5 5>;
+		};
+		fan5 {
+			trip = <&cpuss00_fan5>;
+			cooling-device = <&pwm_fan 6 6>;
+		};
+		fan6 {
+			trip = <&cpuss00_fan6>;
+			cooling-device = <&pwm_fan 7 7>;
+		};
+	};
+};
+
+&{/thermal-zones/cpuss-1-0-thermal} {
+	trips {
+		cpuss10_fan0: trip-fan0 {
+			temperature = <50000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		cpuss10_fan1: trip-fan1 {
+			temperature = <55000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		cpuss10_fan2: trip-fan2 {
+			temperature = <60000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		cpuss10_fan3: trip-fan3 {
+			temperature = <65000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		cpuss10_fan4: trip-fan4 {
+			temperature = <70000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		cpuss10_fan5: trip-fan5 {
+			temperature = <75000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		cpuss10_fan6: trip-fan6 {
+			temperature = <80000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+	};
+
+	cooling-maps {
+		fan0 {
+			trip = <&cpuss10_fan0>;
+			cooling-device = <&pwm_fan 1 1>;
+		};
+		fan1 {
+			trip = <&cpuss10_fan1>;
+			cooling-device = <&pwm_fan 2 2>;
+		};
+		fan2 {
+			trip = <&cpuss10_fan2>;
+			cooling-device = <&pwm_fan 3 3>;
+		};
+		fan3 {
+			trip = <&cpuss10_fan3>;
+			cooling-device = <&pwm_fan 4 4>;
+		};
+		fan4 {
+			trip = <&cpuss10_fan4>;
+			cooling-device = <&pwm_fan 5 5>;
+		};
+		fan5 {
+			trip = <&cpuss10_fan5>;
+			cooling-device = <&pwm_fan 6 6>;
+		};
+		fan6 {
+			trip = <&cpuss10_fan6>;
+			cooling-device = <&pwm_fan 7 7>;
+		};
+	};
+};
+
+&{/thermal-zones/gpuss0-thermal} {
+	trips {
+		gpuss0_fan0: trip-fan0 {
+			temperature = <50000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		gpuss0_fan1: trip-fan1 {
+			temperature = <55000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		gpuss0_fan2: trip-fan2 {
+			temperature = <60000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		gpuss0_fan3: trip-fan3 {
+			temperature = <65000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		gpuss0_fan4: trip-fan4 {
+			temperature = <70000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		gpuss0_fan5: trip-fan5 {
+			temperature = <75000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+		gpuss0_fan6: trip-fan6 {
+			temperature = <80000>;
+			hysteresis = <3000>;
+			type = "active";
+		};
+	};
+
+	cooling-maps {
+		fan0 {
+			trip = <&gpuss0_fan0>;
+			cooling-device = <&pwm_fan 1 1>;
+		};
+		fan1 {
+			trip = <&gpuss0_fan1>;
+			cooling-device = <&pwm_fan 2 2>;
+		};
+		fan2 {
+			trip = <&gpuss0_fan2>;
+			cooling-device = <&pwm_fan 3 3>;
+		};
+		fan3 {
+			trip = <&gpuss0_fan3>;
+			cooling-device = <&pwm_fan 4 4>;
+		};
+		fan4 {
+			trip = <&gpuss0_fan4>;
+			cooling-device = <&pwm_fan 5 5>;
+		};
+		fan5 {
+			trip = <&gpuss0_fan5>;
+			cooling-device = <&pwm_fan 6 6>;
+		};
+		fan6 {
+			trip = <&gpuss0_fan6>;
+			cooling-device = <&pwm_fan 7 7>;
+		};
+	};
+};

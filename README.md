@@ -28,6 +28,9 @@ own *Check for updates*.
 > 20261016.25. It starts through ROCKNIX's ABL. See [docs/RPNOVA.md](docs/RPNOVA.md) for how it
 > boots and what has been tested.
 >
+> **AYN Odin 3** (Snapdragon 8 Elite, AYN's CQ8725S): being ported, no public build yet. See
+> [docs/ODIN3.md](docs/ODIN3.md) for where it stands.
+>
 > Each device gets its own image and its own updates;
 > [docs/PORTING.md](docs/PORTING.md) has how devices are kept apart and how to add one.
 

@@ -1,0 +1,26 @@
+# ALSA UCM profile for AYN's SM8750 handheld: card "SM8750-AYN" (the AW88166 speakers on MI2S,
+# the WCD9395 headphone jack with its HPH path in PCM mode, kernel 22-sm8750/0072-0074, the
+# internal DMIC and headset mics, and DisplayPort over USB-C, the dts's DP link). Armada's
+# version (armada-os/armada @ d5f0724e, system_files/usr/share/alsa/ucm2/AYN/Odin3) of ROCKNIX's
+# Odin 3 profile: it adds the DisplayPort device, disable sequences, the mics, and headphones
+# without the compander (it clipped loud peaks). Only new files: Valve's alsa-ucm-conf stays
+# untouched.
+pkgname=kettle-ucm-odin3
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='ALSA UCM profile for the AYN Odin 3'
+arch=(any)
+license=(BSD-3-Clause)
+depends=(alsa-ucm-conf)
+source=(AYN-Odin3.conf HiFi.conf)
+sha256sums=('1ec9d4730485256436438174cf35a0cf0046b62cff442d1ec336726dc13d0794'
+            '7c1f41c190805352759c1eeced12bc111ec77da95179553aebbecb055f185ca2')
+
+package() {
+  local ucm="$pkgdir/usr/share/alsa/ucm2"
+  install -Dm644 -t "$ucm/AYN/Odin3" AYN-Odin3.conf HiFi.conf
+  # alsa-lib looks up conf.d/<driver>/<card name>.conf; booted by the ABL there is no SMBIOS,
+  # so the card name is the devicetree's sound model
+  install -d "$ucm/conf.d/sm8750"
+  ln -s ../../AYN/Odin3/AYN-Odin3.conf "$ucm/conf.d/sm8750/SM8750-AYN.conf"
+}

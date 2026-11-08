@@ -1,0 +1,11 @@
+# The Odin 3's own packages, added to image/packages.txt (built by us, packages/)
+
+# firmware: DSPs, battery manager config, amplifier tuning, audio topology, SoCCP, GPU, video,
+# Wi-Fi, Bluetooth (packages/kettle-firmware-ayn)
+kettle-firmware-odin3
+# ALSA UCM profile for the "SM8750-AYN" card (packages/kettle-ucm-ayn)
+kettle-ucm-odin3
+# gyro and accelerometer for Steam Input: the ADSP's Sensor Core (hexagonrpc, libssc) as the Deck
+# controller's motion (packages/kettle-motion, packages/inputplumber 0001), as on the Portal,
+# Thor and Pocket FIT Elite; needs the non-secure ADSP fastrpc device the dts adds
+kettle-motion
