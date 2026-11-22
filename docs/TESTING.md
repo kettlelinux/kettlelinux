@@ -32,7 +32,7 @@ sudo dd if=out/kettle-YYYYMMDD.N-odin2portal.img of=/dev/sdX bs=4M conv=fsync st
 ```
 
 `build-packages.sh` compiles under qemu, which is slow for big packages. With an aarch64 machine
-on the network (a Kettle image will do, e.g. the Radxa O6N), put `KETTLE_BUILD_HOST=kettle@<ip>`
+on the network (a Kettle image will do), put `KETTLE_BUILD_HOST=kettle@<ip>`
 in `local.env` and the packages build there natively instead, then come back into `out/repo`
 ([build-packages-remote.sh](../scripts/build-packages-remote.sh));
 `KETTLE_BUILD_HOST= scripts/build-packages.sh ...` builds one run here anyway.

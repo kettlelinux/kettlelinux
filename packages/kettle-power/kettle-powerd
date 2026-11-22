@@ -103,7 +103,7 @@ def image_device():
 def config_path():
     """The device's description: KETTLE_POWER_CONFIG, else the file named after the device tree's
     first compatible that has one ("ayn,thor" -> thor.toml), else, on a machine without a device
-    tree (UEFI and ACPI), the one named after the image's device ("radxa-o6n.toml")."""
+    tree (UEFI and ACPI), the one named after the image's device ("<device>.toml")."""
     if os.environ.get("KETTLE_POWER_CONFIG"):
         return os.environ["KETTLE_POWER_CONFIG"]
     try:

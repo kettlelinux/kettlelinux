@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/build-packages.sh on a native aarch64 build host instead of under qemu: build-packages.sh
-# hands over to this when KETTLE_BUILD_HOST (user@host, e.g. kettle@192.168.12.102 for the Radxa
-# O6N) is set, in the environment or local.env. KETTLE_BUILD_HOST= on the command line builds here.
+# hands over to this when KETTLE_BUILD_HOST (user@host, e.g. kettle@<ip>)
+# is set, in the environment or local.env. KETTLE_BUILD_HOST= on the command line builds here.
 #
 # The host runs build-packages.sh itself, rootless as here, in its own copy of the tree:
 # KETTLE_BUILD_DIR (default kettle-build, under its home, so a Kettle A/B update keeps it), with
