@@ -11,7 +11,7 @@
 # for both scripts.
 # Sources live next to this PKGBUILD.
 pkgname=kettle-motion
-pkgver=0.3.0
+pkgver=0.3.1
 pkgrel=1
 pkgdesc='Kettle Linux motion sensors for Steam Input'
 arch=(aarch64)

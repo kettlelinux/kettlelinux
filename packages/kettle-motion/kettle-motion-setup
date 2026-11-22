@@ -10,7 +10,10 @@ hexagonrpcd. Android keeps them on the device's own partitions, which Kettle lea
                      sensors directory as a writable copy (sensors/persist, owned by fastrpc)
   dsp                adsp/ (the ADSP's shared objects)
 This copies them, mounted read-only, into /var/lib/kettle-motion/qcom in the layout hexagonrpcd
-serves (-R). It runs when that directory is missing; delete it to copy again.
+serves (-R). It copies when that directory is missing; delete it to copy again. It runs at every
+boot: an update can renumber the fastrpc user (Valve's new base did), which left the persist copy
+owned by another user, unreadable to hexagonrpcd, and the sensors process crashed the ADSP waiting
+on its answers (Retroid Pocket Nova, 0.1.0 -> 0.2.0). So it gives that copy back to fastrpc.
 """
 import os
 import pwd
@@ -26,9 +29,25 @@ def log(msg):
     print(msg, flush=True)
 
 
+def own_persist(top):
+    """Give the persist copy to fastrpc; returns how many entries it changed."""
+    fastrpc = pwd.getpwnam("fastrpc")
+    changed = 0
+    if not os.path.isdir(top):
+        return 0
+    for root, dirs, files in os.walk(top):
+        for n in [root] + [os.path.join(root, f) for f in files]:
+            st = os.lstat(n)
+            if (st.st_uid, st.st_gid) != (fastrpc.pw_uid, fastrpc.pw_gid):
+                os.lchown(n, fastrpc.pw_uid, fastrpc.pw_gid)
+                changed += 1
+    return changed
+
+
 def main():
     if os.path.isdir(DEST):
-        log(f"{DEST} is in place")
+        n = own_persist(f"{DEST}/sensors/persist")
+        log(f"{DEST} is in place" + (f"; gave {n} persist entries back to fastrpc" if n else ""))
         return 0
     for label in ("super", "persist"):
         if not os.path.exists(f"{PARTS}/{label}"):
@@ -67,10 +86,7 @@ def main():
             p = os.path.join(root, f)
             if not os.path.islink(p):
                 os.chmod(p, 0o644)
-    fastrpc = pwd.getpwnam("fastrpc")
-    for root, dirs, files in os.walk(f"{new}/sensors/persist"):
-        for n in [root] + [os.path.join(root, f) for f in files]:
-            os.lchown(n, fastrpc.pw_uid, fastrpc.pw_gid)
+    own_persist(f"{new}/sensors/persist")
     os.rename(new, DEST)
     log(f"copied the sensor files from vendor{slot}, persist and dsp{slot} to {DEST}")
     return 0
