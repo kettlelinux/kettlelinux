@@ -24,7 +24,7 @@
 # Built with upstream Rust (build time only), as packages/inputplumber: the apk-info-extractor's
 # locked crates needed a newer compiler than the 2024 snapshot's 1.78.
 pkgname=kettle-lepton
-pkgver=3.0.10
+pkgver=3.1.4
 pkgrel=1
 _rust=1.98.1
 _rustdate=2026-09-03
@@ -41,7 +41,7 @@ depends=(bash python libnotify podman passt crun conmon catatonit containers-com
          apkeep)
 makedepends=(git)
 options=(!lto)  # makepkg's GCC LTO objects in zstd-sys don't link into the Rust binary
-_commit=deca2af5519c419a074f3d4de558ab438674c313  # v3.0.10
+_commit=0430abee32bbf6b655499fd473f72b0b5919cfdd  # v3.1.4
 source=("lepton::git+https://gitlab.steamos.cloud/frame-public/lepton.git#commit=$_commit"
         "https://static.rust-lang.org/dist/$_rustdate/rust-$_rust-aarch64-unknown-linux-gnu.tar.xz"
         0001-compat_tool-show-the-2D-window-by-default.patch

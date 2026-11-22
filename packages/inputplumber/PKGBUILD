@@ -19,8 +19,8 @@
 # Built with upstream Rust (build time only), at a version known to build it: InputPlumber's
 # crates needed a newer compiler than the 2024 snapshot's 1.78 (the base's 1.93 is untried).
 pkgname=inputplumber
-pkgver=0.84.0
-pkgrel=2
+pkgver=0.85.0
+pkgrel=1
 _rust=1.98.1
 _rustdate=2026-09-03
 pkgdesc='Input router and remapper daemon (Steam Deck controller emulation for AYN handhelds)'
@@ -45,7 +45,7 @@ source=("InputPlumber-$pkgver.tar.gz::https://github.com/ShadowBlip/InputPlumber
         0001-source-add-an-evdev-motion-sensor-source.patch
         0002-source-sleep-on-the-device-while-idle.patch)
 noextract=("rust-$_rust-aarch64-unknown-linux-gnu.tar.xz")
-sha256sums=('64b25d90c3cbabbcfd52e574ff91f64a9bec5ce3b616e36c7179060f29b660bc'
+sha256sums=('2c5074f3c60f34221b53e2108aaf0cec32b10cfccd37aa97b6cc771134cd7d29'
             '0b514a8cc1cbcd939bff0f151661fe58b6ea5c7a7f645a5098c69e32e8c1e0a2'
             'e130eb2a293e1f7a9dc90e61a060aa7d36b63e58642d4cadc9b3b1cf881c984b'
             '64558755be19f505d3a072e3e5e4e62ce9a8ab0be19d9d8d4ee239dd0b6439bb'

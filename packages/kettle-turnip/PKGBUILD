@@ -14,9 +14,9 @@
 #
 # Pinned to Mesa 26.3.0-rc3 (the 26.3 branch); move to 26.3.0 once it is released.
 pkgname=kettle-turnip
-pkgver=26.3.0rc3
+pkgver=26.3.1
 pkgrel=1
-_commit=90a959ebba9dbb36f2ea5176091c15d6ebdd0af0  # mesa-26.3.0-rc3
+_commit=fec8830e9c94b1d67f3d8469467d5529fb2978cd  # mesa-26.3.1
 pkgdesc='Turnip Vulkan driver from upstream Mesa, a per-game alternative to Valve'"'"'s'
 arch=(aarch64)
 url='https://www.mesa3d.org/'
@@ -33,9 +33,9 @@ _wlprotocols=1.49
 source=("https://gitlab.freedesktop.org/mesa/mesa/-/archive/$_commit/mesa-$_commit.tar.gz"
         "https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/$_wlprotocols/downloads/wayland-protocols-$_wlprotocols.tar.xz"
         10-kettle-turnip.conf)
-sha256sums=('457e72f9bbb2acddb6c952bd7326ad92ed37650e7c83a0e4ea51f0109a7dd7fb'
+sha256sums=('19ecac77a0dab4b5f2326f5eb4af682f3ff41cfac154121878481c6e97269f84'
             'ec4c8f74942d6dff7ace8b4ce4764f0ef9ff618a935d974ea77edee2ad240b14'
-            'SKIP')
+            '98e2e9f69c8bb28fa3d7fb4c7441b27880065b7b575b7ca93200417fcf3cad50')
 
 build() {
   mkdir -p wp

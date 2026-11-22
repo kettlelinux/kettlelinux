@@ -14,9 +14,9 @@
 # steam-art/: library artwork from Amethyst's banner and icon (render-steam-art.py) for the Game
 # Stores plugin's Mod Manager entry, which opens it in the desktop nested in Game Mode.
 pkgname=amethyst-mod-manager
-pkgver=2.6.2
+pkgver=2.6.4
 pkgrel=1
-_commit=9ff854a00da3b971d955381a1b93e713acace8ad
+_commit=6c5d068b904dc0a33f691ab7c847653caff362ea
 _libloot=0.29.7
 pkgdesc='Linux-native mod manager for a variety of games'
 arch=(aarch64)
@@ -36,7 +36,7 @@ source=("Amethyst-Mod-Manager-$_commit.tar.gz::https://github.com/ChrisDKN/Ameth
         render-steam-art.py
         0001-system-package.patch
         0002-arm64-proton.patch)
-sha256sums=('60320a2bc401ec760263b8c01da9cea5aba0a776595fb99cf30e8e4fb4475d57'
+sha256sums=('7b7107dc8f0de411377636187847eb5ddd1393b66b1df0ff5d28bd687c9e44c5'
             'ed168a13ba42b353e6bb863f0b85f14295a951ec210b19ae8893b27c4681c7a6'
             'fdd57572041705bdd938d332fb86c609937e5102c05ae0fd7c5017e071095419'
             'c6efe23e7392c936fbd651abcddb2010e9e3fbb29d53646012fe2522b0737265'
