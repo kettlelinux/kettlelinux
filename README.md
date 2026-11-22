@@ -1,8 +1,8 @@
 # Kettle Linux
 
 A SteamOS-like Linux distro for the **AYN Odin 2 Portal**, the **AYN Thor** and the **Retroid
-Pocket Nova** (Snapdragon 8 Gen 2, SM8550/QCS8550), the **KONKR Pocket FIT Elite** (Snapdragon 8
-Elite, SM8750), and the **Retroid Pocket 5** (Snapdragon 865, SM8250).
+Pocket Nova** (Snapdragon 8 Gen 2, SM8550/QCS8550), the **KONKR Pocket FIT Elite** and the **AYN
+Odin 3** (Snapdragon 8 Elite, SM8750), and the **Retroid Pocket 5** (Snapdragon 865, SM8250).
 
 Kettle combines a patched mainline kernel with the aarch64 userspace from Valve's SteamOS
 "deckard" (Steam Frame). You get Valve's arm64 Steam client, a handheld Game Mode and a
@@ -28,8 +28,9 @@ own *Check for updates*.
 > 20261016.25. It starts through ROCKNIX's ABL. See [docs/RPNOVA.md](docs/RPNOVA.md) for how it
 > boots and what has been tested.
 >
-> **AYN Odin 3** (Snapdragon 8 Elite, AYN's CQ8725S): being ported, no public build yet. See
-> [docs/ODIN3.md](docs/ODIN3.md) for where it stands.
+> **AYN Odin 3** (Snapdragon 8 Elite, AYN's CQ8725S): first public test build, 20261122.12. It
+> starts through OpenABL. See [docs/ODIN3.md](docs/ODIN3.md) for how it boots and what has been
+> tested.
 >
 > Each device gets its own image and its own updates;
 > [docs/PORTING.md](docs/PORTING.md) has how devices are kept apart and how to add one.
