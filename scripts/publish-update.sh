@@ -119,7 +119,12 @@ cp /etc/resolv.conf "$TOOLS/etc/resolv.conf"
 PACMAN_CONF="$ROOT/build/pacman.pkgbuild.conf"
 build_pacman_conf "$PACMAN_CONF"
 # -u as in build-packages.sh: a partial upgrade of the chroot can break its installed packages
-pacman_root "$TOOLS" -Syu --needed steamos-atomupd-client python-pyinotify python-semantic-version >/dev/null
+pacman_root "$TOOLS" -Syu --needed steamos-atomupd-client python-semantic-version >/dev/null
+# staticserver imports pyinotify for its watch mode only, which we don't run; the base (Python
+# 3.14) has no pyinotify, and its asyncore is gone anyway: a stand-in satisfies the import
+mkdir -p "$TOOLS/tmp/kettle-pyinotify"
+printf 'class WatchManager:\n    pass\n\nclass ProcessEvent:\n    def __init__(self, *a, **k):\n        pass\n' \
+  >"$TOOLS/tmp/kettle-pyinotify/pyinotify.py"
 mkdir -p "$TOOLS/mnt/tree" "$TREE/meta"
 mount --bind "$TREE" "$TOOLS/mnt/tree"
 # every device with releases in the tree (images/<variant>/): a variant left out gets no meta
@@ -146,9 +151,8 @@ main = beta stable
 Variants = $variants
 Branches = stable beta main
 EOF
-# (Valve's steamos-atomupd is built for Python 3.12, the snapshot's Python is 3.11: see docs/UPDATES.md)
 chroot "$TOOLS" /bin/bash -euo pipefail -c \
-  'cd /mnt/tree/meta && PYTHONPATH=/usr/lib/python3.12/site-packages python3 -c "import sys; from steamosatomupd import staticserver; sys.exit(staticserver.main())" --config /mnt/tree/.server.conf'
+  'cd /mnt/tree/meta && PYTHONPATH=/tmp/kettle-pyinotify python3 -c "import sys; from steamosatomupd import staticserver; sys.exit(staticserver.main())" --config /mnt/tree/.server.conf'
 umount "$TOOLS/mnt/tree"; chroot_umount "$TOOLS"; trap - EXIT
 rm -f "$TREE/.server.conf" "$TREE/meta/.lockfile.lock"
 chown -R "$(stat -c %u:%g "$ROOT")" "$TREE" 2>/dev/null || true
