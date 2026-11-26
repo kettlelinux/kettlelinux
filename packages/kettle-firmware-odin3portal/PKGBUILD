@@ -1,0 +1,36 @@
+# Firmware for the AYN Odin 3 Portal: the Odin 3's board, so kettle-firmware-odin3 has nearly all
+# of it (GPU, video, Wi-Fi, Bluetooth, amp tuning, audio topology). This adds what is the
+# Portal's own, from Armada (pinned commit), which took it from the Portal's Android:
+#  - adsp.mbn and adsp_dtb.mbn: the ADSP (audio, sensors, battery manager) for this board
+# and links to the Odin 3's files the Portal shares, in the Portal's firmware directory (the dts's
+# firmware-name paths): the SoCCP image (Armada's Portal copy is byte-identical to the Odin 3's)
+# and the DSP service descriptions (*.jsn) the protection-domain mapper reads next to the ADSP
+# image.
+pkgname=kettle-firmware-odin3portal
+_armada_rev=384ac7c03194a839edcecc5cc55628217bac621b
+pkgver=20261125.${_armada_rev:0:8}
+pkgrel=1
+pkgdesc='Firmware for the AYN Odin 3 Portal (its own ADSP images)'
+arch=(any)
+url='https://github.com/armada-os/armada'
+license=(LicenseRef-proprietary)
+depends=(kettle-firmware-odin3)
+# firmware images, not ELF binaries: nothing to strip
+options=(!strip)
+_fw=https://raw.githubusercontent.com/armada-os/armada/$_armada_rev/system_files/usr/lib/firmware/qcom/sm8750/ayn/odin3portal
+source=("adsp-odin3portal-$_armada_rev.mbn::$_fw/adsp.mbn"
+        "adsp_dtb-odin3portal-$_armada_rev.mbn::$_fw/adsp_dtb.mbn"
+        LICENSE.armada-firmware)
+sha256sums=('67439236b296614ca64212a7a8d6d5bdffdd62cdb54a77877a7f695c8316b8af'
+            '72af3f7054c93b158381a37f91ef24689ffd5b505d2649770b58f4be272bb624'
+            'b5a58b35c6dc26c75a8866ca481df6cf9ea8f6411975f67290dadef666f35615')
+
+package() {
+  local dir="$pkgdir/usr/lib/firmware/qcom/sm8750/ayn/odin3portal" f
+  install -Dm644 "$srcdir/adsp-odin3portal-$_armada_rev.mbn" "$dir/adsp.mbn"
+  install -Dm644 "$srcdir/adsp_dtb-odin3portal-$_armada_rev.mbn" "$dir/adsp_dtb.mbn"
+  for f in soccp.mbn aw883xx_acf.bin adspr.jsn adsps.jsn adspua.jsn adspuo.jsn battmgr.jsn; do
+    ln -s ../odin3/$f "$dir/$f"
+  done
+  install -Dm644 "$srcdir/LICENSE.armada-firmware" -t "$pkgdir/usr/share/licenses/$pkgname"
+}

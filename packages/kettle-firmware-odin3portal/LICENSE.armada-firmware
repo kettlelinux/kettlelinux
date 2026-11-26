@@ -1,0 +1,15 @@
+Firmware from Armada
+Source: https://github.com/armada-os/armada, commit 384ac7c03194a839edcecc5cc55628217bac621b,
+system_files/usr/lib/firmware/qcom/sm8750/ayn/odin3portal/{adsp.mbn,adsp_dtb.mbn}
+
+Files in this package taken from it (under /usr/lib/firmware):
+  qcom/sm8750/ayn/odin3portal/adsp.mbn and adsp_dtb.mbn (ADSP firmware, out of the AYN Odin 3
+  Portal's Android)
+
+These are proprietary firmware images, not Kettle Linux's or Armada's own work: they come from
+the device's vendor (AYN) and its chip vendor (Qualcomm), as Armada collected them for its
+images. The repository states no licence for them, and the files carry no licence text of their
+own.
+
+Status: redistribution permission from the rights holders has NOT been recorded for Kettle
+Linux. They are shipped pending that permission; this file grants no rights of any kind.

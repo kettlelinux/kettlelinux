@@ -1,0 +1,777 @@
+Subject: [PATCH] drm/panel: visionox-vtdr6130-cog: add the AYN Odin 3 Portal
+
+The Odin 3 Portal's 7" 1080x1920 AMOLED is a VTDR6130 (compatible
+"vtdr6130,o3p"), 60/120 Hz picked with command 0x6c, DSC 12-line slices.
+
+Armada's three patches (armada-os/armada main, packages/kernel/patches),
+squashed onto our driver:
+ - 1111 (Pocket Duo panel): per-panel ordered supplies with voltages and
+   loads, vendor writes as DCS long packets, display-off delay and default
+   brightness from the descriptor. The RP5/RP6/Flip 2 descriptors set none
+   of these, so their sequences are unchanged; the Duo's compatible comes
+   along and is unused here.
+ - 1304: the Odin 3 Portal's modes, init sequence and supplies (vddio,
+   tvdd), its display-off kept in LPM.
+ - 1305: frame_len_120/frame_len_60 on the DSI device to calibrate the
+   DDIC frame lengths per unit.
+Not taken: Armada 0049 (the DPU's opt-in 8 bpc dither), which the
+Odin 3 Portal dts asks for with armada,dpu-8bpc-dither.
+
+diff --git a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c b/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
+index aab24ee..af79fc0 100644
+--- a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
++++ b/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
+@@ -9,6 +9,7 @@
+ #include <linux/delay.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
+ #include <linux/of.h>
+ #include <linux/of_graph.h>
+ #include <linux/regulator/consumer.h>
+@@ -33,6 +34,22 @@ struct panel_info {
+ 
+ 	struct gpio_desc *reset_gpio;
+ 	struct regulator_bulk_data *supplies;
++
++	/* A live frame-length write changes command page; keep other DCS out. */
++	struct mutex lock;
++	bool ready;
++
++	u16 frame_len_120;
++	u16 frame_len_60;
++};
++
++struct vtdr6130_supply_config {
++	int min_uv;
++	int max_uv;
++	int load_ua;
++	int idle_load_ua;
++	unsigned int on_delay_ms;
++	unsigned int off_delay_ms;
+ };
+ 
+ struct panel_desc {
+@@ -52,6 +69,18 @@ struct panel_desc {
+ 
+ 	const struct regulator_bulk_data *supplies;
+ 	unsigned int num_supplies;
++	const struct vtdr6130_supply_config *supply_config;
++	unsigned int display_off_delay_ms;
++	unsigned int default_brightness;
++	bool vendor_dcs_long;
++	bool needs_d0;
++	bool off_in_lpm;
++	unsigned int sleep_out_delay_ms;
++	unsigned int pps_delay_ms;
++	unsigned int display_on_delay_ms;
++	/* Stock DDIC frame lengths; nonzero exposes them for calibration. */
++	u16 frame_len_120;
++	u16 frame_len_60;
+ };
+ 
+ /* SM8250 regulators */
+@@ -98,6 +127,47 @@ static int vtdr6130_get_current_mode(struct panel_info *pinfo)
+ 	return 0;
+ }
+ 
++static void vtdr6130_write(struct panel_info *pinfo,
++			   struct mipi_dsi_multi_context *ctx,
++			   const u8 *data, size_t len)
++{
++	struct mipi_dsi_device *dsi = ctx->dsi;
++	const struct mipi_dsi_host_ops *ops = dsi->host->ops;
++	struct mipi_dsi_msg msg = {
++		.channel = dsi->channel,
++		.type = MIPI_DSI_DCS_LONG_WRITE,
++		.flags = MIPI_DSI_MSG_USE_LPM,
++		.tx_len = len,
++		.tx_buf = data,
++	};
++	ssize_t ret;
++
++	if (ctx->accum_err)
++		return;
++
++	if (!pinfo->desc->vendor_dcs_long) {
++		mipi_dsi_generic_write_multi(ctx, data, len);
++		return;
++	}
++
++	if (!ops || !ops->transfer) {
++		ctx->accum_err = -EOPNOTSUPP;
++		return;
++	}
++
++	ret = ops->transfer(dsi->host, &msg);
++	if (ret < 0) {
++		ctx->accum_err = ret;
++		dev_err(&dsi->dev, "Command %#x failed: %d\n",
++			data[0], ctx->accum_err);
++	}
++}
++
++#define vtdr6130_write_seq(pinfo, ctx, seq...) do { \
++	static const u8 data[] = { seq }; \
++	vtdr6130_write(pinfo, ctx, data, ARRAY_SIZE(data)); \
++} while (0)
++
+ static int vtdr6130_rp6_init_sequence(struct panel_info *pinfo)
+ {
+ 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
+@@ -108,25 +178,25 @@ static int vtdr6130_rp6_init_sequence(struct panel_info *pinfo)
+ 
+ 	pinfo->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+     
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x03, 0x01);
+-    mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x35, 0x00);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x53, 0x20);
+-    mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x51, 0x07, 0xFF);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x6F, 0x02);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x36, 0x02);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x59, 0x09);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0x03, 0x01);
++    vtdr6130_write_seq(pinfo, &dsi_ctx, 0x35, 0x00);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0x53, 0x20);
++    vtdr6130_write_seq(pinfo, &dsi_ctx, 0x51, 0x07, 0xFF);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0x6F, 0x02);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0x36, 0x02);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0x59, 0x09);
+ 
+ 	if (cur_vrefresh == 120) {
+-		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x6C, 0x00);
++		vtdr6130_write_seq(pinfo, &dsi_ctx, 0x6C, 0x00);
+ 	}
+ 	else {
+-		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x6C, 0x01);
++		vtdr6130_write_seq(pinfo, &dsi_ctx, 0x6C, 0x01);
+ 	}
+ 
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x6D, 0x00);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0x6D, 0x00);
+ 
+ 	if (cur_vrefresh == 120) {
+-		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x70,
++		vtdr6130_write_seq(pinfo, &dsi_ctx, 0x70,
+ 					0x11, 0x00, 0x00, 0x89, 0x30, 0x80, 0x07, 0x80,
+ 					0x04, 0x38, 0x00, 0x14, 0x02, 0x1C, 0x02, 0x1C,
+ 					0x02, 0x00, 0x02, 0x25, 0x00, 0x20, 0x01, 0xD5,
+@@ -141,7 +211,7 @@ static int vtdr6130_rp6_init_sequence(struct panel_info *pinfo)
+ 					0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
+ 	}
+ 	else {
+-		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x70,
++		vtdr6130_write_seq(pinfo, &dsi_ctx, 0x70,
+ 					0x11, 0x00, 0x00, 0x89, 0x30, 0x80, 0x07, 0x80,
+ 					0x04, 0x38, 0x00, 0x14, 0x02, 0x1C, 0x02, 0x1C,
+ 					0x02, 0x00, 0x02, 0x25, 0x00, 0x20, 0x01, 0xD5,
+@@ -156,61 +226,71 @@ static int vtdr6130_rp6_init_sequence(struct panel_info *pinfo)
+ 					0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
+ 	}
+ 
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xF0, 0xAA, 0x10);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xF0, 0xAA, 0x10);
+ 
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB1, 
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xB1,
+ 				0x02, 0x16, 0x00, 0x14, 0x00, 0x1C, 0x00, 0x02,
+ 				0x16, 0x00, 0x14, 0x07, 0xD0, 0x00, 0x02, 0x16,
+ 				0x00, 0x14, 0x00, 0x10, 0x00);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xF0, 0xAA, 0x13);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xC9, 
++	if (pinfo->desc->needs_d0) {
++		vtdr6130_write_seq(pinfo, &dsi_ctx, 0xF0, 0xAA, 0x10);
++		vtdr6130_write_seq(pinfo, &dsi_ctx, 0xD0,
++				0x80, 0x05, 0xA0, 0x14, 0x14, 0x00, 0x35,
++				0x2D, 0x17, 0x22, 0x00, 0x00, 0x2D, 0x17, 0x32,
++				0x00, 0x00, 0x00, 0x05, 0x05);
++	}
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xF0, 0xAA, 0x13);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xC9,
+ 				0x07, 0xA4, 0x06, 0xE0, 0x06, 0xE0, 0x06, 0xE0,
+ 				0x05, 0xE4, 0x04, 0xCC, 0x03, 0xE8, 0x00, 0xF0,
+ 				0x00, 0x0C, 0x00, 0x0C, 0x17, 0x00, 0xC5);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xCE, 
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xCE,
+ 				0x0F, 0x48, 0x0D, 0xC0, 0x0D, 0xC0, 0x0D, 0xC0,
+ 				0x0B, 0xBC, 0x09, 0x98, 0x07, 0xD0, 0x01, 0xE0,
+ 				0x00, 0x14, 0x00, 0x14, 0x17, 0x00, 0x20);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xF0, 0xAA, 0x14);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB2, 0x03, 0x33);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB4, 
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xF0, 0xAA, 0x14);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xB2, 0x03, 0x33);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xB4,
+  				0x0A, 0x72, 0x00, 0x00, 0x0A, 0x72, 0x00, 0x00,
+ 				0x0A, 0x72, 0x00, 0x00);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB5, 
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xB5,
+  				0x00, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x06,
+ 				0x01);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB9, 
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xB9,
+  				0x00, 0x00, 0x08, 0x1E, 0x1E, 0x1E);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xBC, 
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xBC,
+  				0x10, 0x00, 0x00, 0x08, 0x11, 0x1E, 0x7C, 0x1E,
+ 				0x7C, 0x1E, 0x7C);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xBE, 
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xBE,
+  				0x10, 0x10, 0x00, 0x0C, 0x22, 0x1E, 0x62, 0x1E,
+ 				0x62, 0x1E, 0x62);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xFF, 0x5A, 0x80);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x65, 0x13);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xFD, 0x01);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xFF, 0x5A, 0x81);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x65, 0x05);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xF3, 0x0F);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xFF, 0x5A, 0x82);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xF9, 0x00);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xFF, 0x5A, 0x83);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x65, 0x04);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xF8, 0x00);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xF0, 0xAA, 0x00);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xFF, 0x5A, 0x00);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xFF, 0x5A, 0x80);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0x65, 0x13);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xFD, 0x01);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xFF, 0x5A, 0x81);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0x65, 0x05);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xF3, 0x0F);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xFF, 0x5A, 0x82);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xF9, 0x00);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xFF, 0x5A, 0x83);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0x65, 0x04);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xF8, 0x00);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xF0, 0xAA, 0x00);
++	vtdr6130_write_seq(pinfo, &dsi_ctx, 0xFF, 0x5A, 0x00);
+ 
+ 	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
+ 
+-	mipi_dsi_msleep(&dsi_ctx, 120);
++	mipi_dsi_msleep(&dsi_ctx, pinfo->desc->sleep_out_delay_ms);
+ 
+ 	drm_dsc_pps_payload_pack(&pps, &pinfo->desc->dsc);
+ 	mipi_dsi_picture_parameter_set_multi(&dsi_ctx, &pps);
+ 	
+-	mipi_dsi_msleep(&dsi_ctx, 20);
++	if (pinfo->desc->pps_delay_ms)
++		mipi_dsi_msleep(&dsi_ctx, pinfo->desc->pps_delay_ms);
+ 
+ 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
++	if (pinfo->desc->display_on_delay_ms)
++		mipi_dsi_msleep(&dsi_ctx, pinfo->desc->display_on_delay_ms);
+ 
+ 	return dsi_ctx.accum_err;
+ }
+@@ -257,6 +337,8 @@ static struct panel_desc vtdr6130_rp6_desc = {
+ 	.format = MIPI_DSI_FMT_RGB888,
+ 	.mode_flags =  MIPI_DSI_MODE_NO_EOT_PACKET | MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
+ 	.init_sequence = vtdr6130_rp6_init_sequence,
++	.sleep_out_delay_ms = 120,
++	.pps_delay_ms = 20,
+ 	.dsc = {
+ 		.dsc_version_major = 0x1,
+ 		.dsc_version_minor = 0x1,
+@@ -298,6 +380,8 @@ static struct panel_desc vtdr6130_sm8250_desc = {
+ 	.format = MIPI_DSI_FMT_RGB888,
+ 	.mode_flags =  MIPI_DSI_MODE_NO_EOT_PACKET | MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
+ 	.init_sequence = vtdr6130_rp6_init_sequence,
++	.sleep_out_delay_ms = 120,
++	.pps_delay_ms = 20,
+ 	.dsc = {
+ 		.dsc_version_major = 0x1,
+ 		.dsc_version_minor = 0x1,
+@@ -312,6 +396,250 @@ static struct panel_desc vtdr6130_sm8250_desc = {
+ 	.num_supplies = ARRAY_SIZE(sm8250_panel_supplies),
+ };
+ 
++/* Pocket Duo: vddio, vci, then vdd, as ordered by the Android supply table. */
++static const struct regulator_bulk_data duo_panel_supplies[] = {
++	{ .supply = "vddio" },
++	{ .supply = "vci" },
++	{ .supply = "vdd" },
++};
++
++static const struct vtdr6130_supply_config duo_supply_config[] = {
++	{ 1800000, 1800000, 220000, 8000, 20, 0 },
++	{ 3000000, 3544000, 10000, 300, 1, 2 },
++	{ 1200000, 1250000, 200000, 0, 0, 2 },
++};
++
++static struct panel_desc vtdr6130_duo_desc = {
++	/* Physical dimensions have not been verified for this panel module. */
++	.modes = vtdr6130_rp6_modes,
++	.num_modes = ARRAY_SIZE(vtdr6130_rp6_modes),
++	.bpc = 8,
++	.lanes = 4,
++	.format = MIPI_DSI_FMT_RGB888,
++	.mode_flags = MIPI_DSI_MODE_NO_EOT_PACKET |
++		      MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
++	.init_sequence = vtdr6130_rp6_init_sequence,
++	.vendor_dcs_long = true,
++	.needs_d0 = true,
++	.sleep_out_delay_ms = 150,
++	.display_on_delay_ms = 50,
++	.dsc = {
++		.dsc_version_major = 1,
++		.dsc_version_minor = 1,
++		.slice_height = 12,
++		.slice_width = 540,
++		.slice_count = 2,
++		.bits_per_component = 8,
++		.bits_per_pixel = 8 << 4,
++		.block_pred_enable = true,
++	},
++	.supplies = duo_panel_supplies,
++	.num_supplies = ARRAY_SIZE(duo_panel_supplies),
++	.supply_config = duo_supply_config,
++	.display_off_delay_ms = 20,
++	.default_brightness = 2047,
++};
++
++static void vtdr6130_set_frame_len(struct panel_info *pinfo,
++				   struct mipi_dsi_multi_context *ctx)
++{
++	const u8 len_120[] = { 0xb1, pinfo->frame_len_120 >> 8, pinfo->frame_len_120 & 0xff };
++	const u8 len_60[] = { 0xb1, pinfo->frame_len_60 >> 8, pinfo->frame_len_60 & 0xff };
++
++	vtdr6130_write_seq(pinfo, ctx, 0xf0, 0xaa, 0x10);
++	vtdr6130_write_seq(pinfo, ctx, 0x65, 0x04);
++	vtdr6130_write(pinfo, ctx, len_120, sizeof(len_120));
++	vtdr6130_write_seq(pinfo, ctx, 0x65, 0x0b);
++	vtdr6130_write(pinfo, ctx, len_60, sizeof(len_60));
++}
++
++static int vtdr6130_odin3portal_init_sequence(struct panel_info *pinfo)
++{
++	struct mipi_dsi_multi_context ctx = { .dsi = pinfo->dsi };
++	struct drm_dsc_picture_parameter_set pps;
++	int mode = vtdr6130_get_current_mode(pinfo);
++	int refresh = drm_mode_vrefresh(&pinfo->desc->modes[mode]);
++
++	pinfo->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++	vtdr6130_write_seq(pinfo, &ctx, 0x03, 0x01);
++	vtdr6130_write_seq(pinfo, &ctx, 0x35, 0x00);
++	vtdr6130_write_seq(pinfo, &ctx, 0x53, 0x20);
++	vtdr6130_write_seq(pinfo, &ctx, 0x51, 0x04, 0x00);
++	vtdr6130_write_seq(pinfo, &ctx, 0x59, 0x09);
++	if (refresh == 120)
++		vtdr6130_write_seq(pinfo, &ctx, 0x6c, 0x00);
++	else
++		vtdr6130_write_seq(pinfo, &ctx, 0x6c, 0x01);
++	vtdr6130_write_seq(pinfo, &ctx, 0x6f, 0x02);
++	vtdr6130_write_seq(pinfo, &ctx,
++			   0x70, 0x11, 0x00, 0x00, 0x89, 0x30, 0x80, 0x07,
++			   0x80, 0x04, 0x38, 0x00, 0x08, 0x02, 0x1c, 0x02,
++			   0x1c, 0x02, 0x00, 0x02, 0x0e, 0x00, 0x20, 0x00,
++			   0xbb, 0x00, 0x07, 0x00, 0x0c, 0x0d, 0xb7, 0x0c,
++			   0xb7, 0x18, 0x00, 0x10, 0xf0, 0x03, 0x0c, 0x20,
++			   0x00, 0x06, 0x0b, 0x0b, 0x33, 0x0e, 0x1c, 0x2a,
++			   0x38, 0x46, 0x54, 0x62, 0x69, 0x70, 0x77, 0x79,
++			   0x7b, 0x7d, 0x7e, 0x01, 0x02, 0x01, 0x00, 0x09,
++			   0x40, 0x09, 0xbe, 0x19, 0xfc, 0x19, 0xfa, 0x19,
++			   0xf8, 0x1a, 0x38, 0x1a, 0x78, 0x1a, 0xb6, 0x2a,
++			   0xb6, 0x2a, 0xf4, 0x2a, 0xf4, 0x4b, 0x34, 0x63,
++			   0x74, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
++	vtdr6130_write_seq(pinfo, &ctx, 0x72, 0x00);
++	vtdr6130_set_frame_len(pinfo, &ctx);
++	vtdr6130_write_seq(pinfo, &ctx, 0xff, 0x5a, 0x80);
++	vtdr6130_write_seq(pinfo, &ctx, 0x65, 0x0a);
++	vtdr6130_write_seq(pinfo, &ctx, 0xf9, 0xa8);
++	vtdr6130_write_seq(pinfo, &ctx, 0xff, 0x5a, 0x81);
++	vtdr6130_write_seq(pinfo, &ctx, 0x65, 0x06);
++	vtdr6130_write_seq(pinfo, &ctx, 0xf3, 0x87);
++	vtdr6130_write_seq(pinfo, &ctx, 0x65, 0x09);
++	vtdr6130_write_seq(pinfo, &ctx, 0xf3, 0x00);
++	vtdr6130_write_seq(pinfo, &ctx, 0x65, 0x0a);
++	vtdr6130_write_seq(pinfo, &ctx, 0xf3, 0x10);
++	vtdr6130_write_seq(pinfo, &ctx, 0x65, 0x10);
++	vtdr6130_write_seq(pinfo, &ctx, 0xf3, 0x10);
++	vtdr6130_write_seq(pinfo, &ctx, 0xf0, 0xaa, 0x00);
++	vtdr6130_write_seq(pinfo, &ctx, 0xff, 0x5a, 0x00);
++	mipi_dsi_dcs_exit_sleep_mode_multi(&ctx);
++	mipi_dsi_msleep(&ctx, 120);
++	mipi_dsi_dcs_set_display_on_multi(&ctx);
++	mipi_dsi_msleep(&ctx, 20);
++
++	drm_dsc_pps_payload_pack(&pps, &pinfo->desc->dsc);
++	mipi_dsi_picture_parameter_set_multi(&ctx, &pps);
++
++	return ctx.accum_err;
++}
++
++static const struct drm_display_mode vtdr6130_odin3portal_modes[] = {
++	{
++		.clock = (1080 + 44 + 10 + 100) * (1920 + 18 + 4 + 14) * 120 / 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 44,
++		.hsync_end = 1080 + 44 + 10,
++		.htotal = 1080 + 44 + 10 + 100,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 18,
++		.vsync_end = 1920 + 18 + 4,
++		.vtotal = 1920 + 18 + 4 + 14,
++	},
++	{
++		.clock = (1080 + 44 + 10 + 100) * (1920 + 1974 + 4 + 14) * 60 / 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 44,
++		.hsync_end = 1080 + 44 + 10,
++		.htotal = 1080 + 44 + 10 + 100,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 1974,
++		.vsync_end = 1920 + 1974 + 4,
++		.vtotal = 1920 + 1974 + 4 + 14,
++	},
++};
++
++static const struct regulator_bulk_data odin3portal_panel_supplies[] = {
++	{ .supply = "vddio" },
++	{ .supply = "tvdd" },
++};
++
++static const struct vtdr6130_supply_config odin3portal_supply_config[] = {
++	{ 1800000, 1800000, 154000, 45000, 20, 0 },
++	{ 1800000, 1800000, 0, 0, 20, 0 },
++};
++
++static struct panel_desc vtdr6130_odin3portal_desc = {
++	.modes = vtdr6130_odin3portal_modes,
++	.num_modes = ARRAY_SIZE(vtdr6130_odin3portal_modes),
++	.bpc = 8,
++	.lanes = 4,
++	.format = MIPI_DSI_FMT_RGB888,
++	.mode_flags = MIPI_DSI_MODE_NO_EOT_PACKET |
++		      MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
++	.init_sequence = vtdr6130_odin3portal_init_sequence,
++	.vendor_dcs_long = true,
++	.off_in_lpm = true,
++	.dsc = {
++		.dsc_version_major = 1,
++		.dsc_version_minor = 1,
++		.slice_height = 12,
++		.slice_width = 540,
++		.slice_count = 2,
++		.bits_per_component = 8,
++		.bits_per_pixel = 8 << 4,
++		.block_pred_enable = true,
++	},
++	.supplies = odin3portal_panel_supplies,
++	.num_supplies = ARRAY_SIZE(odin3portal_panel_supplies),
++	.supply_config = odin3portal_supply_config,
++	.display_off_delay_ms = 20,
++	.default_brightness = 1024,
++	.frame_len_120 = 0x18,
++	.frame_len_60 = 0x7be,
++};
++
++static int vtdr6130_power_off(struct panel_info *pinfo, unsigned int count)
++{
++	const struct vtdr6130_supply_config *config = pinfo->desc->supply_config;
++	int ret, err = 0;
++
++	if (!config)
++		return regulator_bulk_disable(count, pinfo->supplies);
++
++	while (count--) {
++		struct regulator *reg = pinfo->supplies[count].consumer;
++
++		ret = regulator_disable(reg);
++		if (ret) {
++			if (!err)
++				err = ret;
++			continue;
++		}
++		if (config[count].off_delay_ms)
++			msleep(config[count].off_delay_ms);
++		ret = regulator_set_load(reg, config[count].idle_load_ua);
++		if (ret < 0 && !err)
++			err = ret;
++	}
++
++	return err;
++}
++
++static int vtdr6130_power_on(struct panel_info *pinfo)
++{
++	const struct vtdr6130_supply_config *config = pinfo->desc->supply_config;
++	unsigned int i;
++	int ret, err;
++
++	if (!config)
++		return regulator_bulk_enable(pinfo->desc->num_supplies, pinfo->supplies);
++
++	for (i = 0; i < pinfo->desc->num_supplies; i++) {
++		struct regulator *reg = pinfo->supplies[i].consumer;
++
++		ret = regulator_set_voltage(reg, config[i].min_uv, config[i].max_uv);
++		if (ret < 0)
++			goto unwind;
++		ret = regulator_set_load(reg, config[i].load_ua);
++		if (ret < 0)
++			goto unwind;
++		ret = regulator_enable(reg);
++		if (ret < 0) {
++			regulator_set_load(reg, config[i].idle_load_ua);
++			goto unwind;
++		}
++		if (config[i].on_delay_ms)
++			msleep(config[i].on_delay_ms);
++	}
++
++	return 0;
++
++unwind:
++	err = vtdr6130_power_off(pinfo, i);
++	if (err)
++		dev_err(pinfo->panel.dev, "Failed to unwind supplies: %d\n", err);
++	return ret;
++}
++
+ static void vtdr6130_reset(struct panel_info *pinfo)
+ {
+ 	gpiod_set_value_cansleep(pinfo->reset_gpio, 0);
+@@ -327,7 +655,10 @@ static int vtdr6130_prepare(struct drm_panel *panel)
+ 	struct panel_info *pinfo = to_panel_info(panel);
+ 	int ret;
+ 
+-	ret = regulator_bulk_enable(pinfo->desc->num_supplies, pinfo->supplies);
++	if (pinfo->desc->supply_config)
++		gpiod_set_value_cansleep(pinfo->reset_gpio, 1);
++
++	ret = vtdr6130_power_on(pinfo);
+ 	if (ret < 0) {
+ 		dev_err(panel->dev, "failed to enable regulators: %d\n", ret);
+ 		return ret;
+@@ -335,9 +666,14 @@ static int vtdr6130_prepare(struct drm_panel *panel)
+ 
+ 	vtdr6130_reset(pinfo);
+ 
+-	ret = pinfo->desc->init_sequence(pinfo);
++	scoped_guard(mutex, &pinfo->lock) {
++		ret = pinfo->desc->init_sequence(pinfo);
++		pinfo->ready = ret >= 0;
++	}
+ 	if (ret < 0) {
+-		regulator_bulk_disable(pinfo->desc->num_supplies, pinfo->supplies);
++		if (pinfo->desc->supply_config)
++			gpiod_set_value_cansleep(pinfo->reset_gpio, 1);
++		vtdr6130_power_off(pinfo, pinfo->desc->num_supplies);
+ 		dev_err(panel->dev, "failed to initialize panel: %d\n", ret);
+ 		return ret;
+ 	}
+@@ -350,10 +686,16 @@ static int vtdr6130_disable(struct drm_panel *panel)
+ 	struct panel_info *pinfo = to_panel_info(panel);
+ 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
+ 
+-	pinfo->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++	scoped_guard(mutex, &pinfo->lock)
++		pinfo->ready = false;
++
++	if (pinfo->desc->off_in_lpm)
++		pinfo->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++	else
++		pinfo->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+ 
+ 	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
+-	mipi_dsi_msleep(&dsi_ctx, 50);
++	mipi_dsi_msleep(&dsi_ctx, pinfo->desc->display_off_delay_ms ?: 50);
+ 	mipi_dsi_dcs_enter_sleep_mode_multi(&dsi_ctx);
+ 	mipi_dsi_msleep(&dsi_ctx, 120);
+ 
+@@ -365,9 +707,7 @@ static int vtdr6130_unprepare(struct drm_panel *panel)
+ 	struct panel_info *pinfo = to_panel_info(panel);
+ 
+ 	gpiod_set_value_cansleep(pinfo->reset_gpio, 1);
+-	regulator_bulk_disable(pinfo->desc->num_supplies, pinfo->supplies);
+-
+-	return 0;
++	return vtdr6130_power_off(pinfo, pinfo->desc->num_supplies);
+ }
+ 
+ static void vtdr6130_remove(struct mipi_dsi_device *dsi)
+@@ -433,9 +773,12 @@ static const struct drm_panel_funcs vtdr6130_panel_funcs = {
+ static int vtdr6130_bl_update_status(struct backlight_device *bl)
+ {
+ 	struct mipi_dsi_device *dsi = bl_get_data(bl);
++	struct panel_info *pinfo = mipi_dsi_get_drvdata(dsi);
+ 	u16 brightness = backlight_get_brightness(bl);
+ 	int ret;
+ 
++	guard(mutex)(&pinfo->lock);
++
+ 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+ 
+ 	ret = mipi_dsi_dcs_set_display_brightness_large(dsi, brightness);
+@@ -450,9 +793,12 @@ static int vtdr6130_bl_update_status(struct backlight_device *bl)
+ static int vtdr6130_bl_get_brightness(struct backlight_device *bl)
+ {
+ 	struct mipi_dsi_device *dsi = bl_get_data(bl);
++	struct panel_info *pinfo = mipi_dsi_get_drvdata(dsi);
+ 	u16 brightness;
+ 	int ret;
+ 
++	guard(mutex)(&pinfo->lock);
++
+ 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+ 
+ 	ret = mipi_dsi_dcs_get_display_brightness_large(dsi, &brightness);
+@@ -472,9 +818,10 @@ static const struct backlight_ops vtdr6130_bl_ops = {
+ static struct backlight_device *vtdr6130_create_backlight(struct mipi_dsi_device *dsi)
+ {
+ 	struct device *dev = &dsi->dev;
++	struct panel_info *pinfo = mipi_dsi_get_drvdata(dsi);
+ 	const struct backlight_properties props = {
+ 		.type = BACKLIGHT_RAW,
+-		.brightness = 4095,
++		.brightness = pinfo->desc->default_brightness ?: 4095,
+ 		.max_brightness = 4095,
+ 	};
+ 
+@@ -482,6 +829,99 @@ static struct backlight_device *vtdr6130_create_backlight(struct mipi_dsi_device
+ 					      &vtdr6130_bl_ops, &props);
+ }
+ 
++static ssize_t vtdr6130_frame_len_store(struct device *dev, u16 *frame_len,
++					u16 min, u16 max,
++					const char *buf, size_t count)
++{
++	struct panel_info *pinfo = dev_get_drvdata(dev);
++	struct mipi_dsi_multi_context ctx = { .dsi = pinfo->dsi };
++	u16 val;
++	int ret;
++
++	ret = kstrtou16(buf, 0, &val);
++	if (ret)
++		return ret;
++
++	if (val < min || val > max)
++		return -EINVAL;
++
++	guard(mutex)(&pinfo->lock);
++
++	*frame_len = val;
++	if (!pinfo->ready)
++		return count;
++
++	vtdr6130_set_frame_len(pinfo, &ctx);
++	ret = ctx.accum_err;
++	/* Later DCS commands assume page 0, so restore it even after a failure. */
++	ctx.accum_err = 0;
++	vtdr6130_write_seq(pinfo, &ctx, 0xf0, 0xaa, 0x00);
++
++	return ret ?: ctx.accum_err ?: count;
++}
++
++static ssize_t frame_len_120_show(struct device *dev,
++				  struct device_attribute *attr, char *buf)
++{
++	struct panel_info *pinfo = dev_get_drvdata(dev);
++
++	guard(mutex)(&pinfo->lock);
++
++	return sysfs_emit(buf, "%u\n", pinfo->frame_len_120);
++}
++
++static ssize_t frame_len_120_store(struct device *dev,
++				   struct device_attribute *attr,
++				   const char *buf, size_t count)
++{
++	struct panel_info *pinfo = dev_get_drvdata(dev);
++
++	return vtdr6130_frame_len_store(dev, &pinfo->frame_len_120,
++					0x10, 0x80, buf, count);
++}
++static DEVICE_ATTR_RW(frame_len_120);
++
++static ssize_t frame_len_60_show(struct device *dev,
++				 struct device_attribute *attr, char *buf)
++{
++	struct panel_info *pinfo = dev_get_drvdata(dev);
++
++	guard(mutex)(&pinfo->lock);
++
++	return sysfs_emit(buf, "%u\n", pinfo->frame_len_60);
++}
++
++static ssize_t frame_len_60_store(struct device *dev,
++				  struct device_attribute *attr,
++				  const char *buf, size_t count)
++{
++	struct panel_info *pinfo = dev_get_drvdata(dev);
++
++	return vtdr6130_frame_len_store(dev, &pinfo->frame_len_60,
++					0x76c, 0x834, buf, count);
++}
++static DEVICE_ATTR_RW(frame_len_60);
++
++static struct attribute *vtdr6130_attrs[] = {
++	&dev_attr_frame_len_120.attr,
++	&dev_attr_frame_len_60.attr,
++	NULL
++};
++
++static umode_t vtdr6130_attr_is_visible(struct kobject *kobj,
++					struct attribute *attr, int n)
++{
++	struct panel_info *pinfo = dev_get_drvdata(kobj_to_dev(kobj));
++
++	return pinfo->desc->frame_len_120 ? attr->mode : 0;
++}
++
++static const struct attribute_group vtdr6130_group = {
++	.attrs = vtdr6130_attrs,
++	.is_visible = vtdr6130_attr_is_visible,
++};
++__ATTRIBUTE_GROUPS(vtdr6130);
++
+ static int vtdr6130_probe(struct mipi_dsi_device *dsi)
+ {
+ 	struct device *dev = &dsi->dev;
+@@ -493,6 +933,10 @@ static int vtdr6130_probe(struct mipi_dsi_device *dsi)
+ 	if (IS_ERR(pinfo))
+ 		return PTR_ERR(pinfo);
+ 
++	ret = devm_mutex_init(dev, &pinfo->lock);
++	if (ret)
++		return ret;
++
+ 	pinfo->desc = (struct panel_desc *)of_device_get_match_data(dev);
+ 	if (!pinfo->desc)
+ 		return -ENODEV;
+@@ -502,11 +946,15 @@ static int vtdr6130_probe(struct mipi_dsi_device *dsi)
+ 	if (ret < 0)
+ 		return dev_err_probe(dev, ret, "Failed to get regulators\n");
+ 
+-	pinfo->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
++	pinfo->reset_gpio = devm_gpiod_get(dev, "reset",
++					pinfo->desc->supply_config ?
++					GPIOD_OUT_HIGH : GPIOD_OUT_LOW);
+ 	if (IS_ERR(pinfo->reset_gpio))
+ 		return dev_err_probe(dev, PTR_ERR(pinfo->reset_gpio), "failed to get reset gpio\n");
+ 
+ 	pinfo->dsi = dsi;
++	pinfo->frame_len_120 = pinfo->desc->frame_len_120;
++	pinfo->frame_len_60 = pinfo->desc->frame_len_60;
+ 	mipi_dsi_set_drvdata(dsi, pinfo);
+ 
+ 	ret = drm_of_get_panel_orientation(dev->of_node, &pinfo->orientation);
+@@ -540,6 +988,8 @@ static int vtdr6130_probe(struct mipi_dsi_device *dsi)
+ }
+ 
+ static const struct of_device_id vtdr6130_of_match[] = {
++	{ .compatible = "vtdr6130,o3p", .data = &vtdr6130_odin3portal_desc },
++	{ .compatible = "vtdr6130,rpduo", .data = &vtdr6130_duo_desc },
+ 	{ .compatible = "vtdr6130,rp6", .data = &vtdr6130_rp6_desc },
+ 	{ .compatible = "vtdr6130,rp5", .data = &vtdr6130_sm8250_desc },
+ 	{ .compatible = "vtdr6130,rpflip2", .data = &vtdr6130_sm8250_desc },
+@@ -553,6 +1003,7 @@ static struct mipi_dsi_driver vtdr6130_driver = {
+ 	.driver = {
+ 		.name = "panel-visionox-vtdr6130-cog",
+ 		.of_match_table = vtdr6130_of_match,
++		.dev_groups = vtdr6130_groups,
+ 	},
+ };
+ module_mipi_dsi_driver(vtdr6130_driver);

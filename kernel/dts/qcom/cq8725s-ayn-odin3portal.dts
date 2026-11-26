@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Copyright (c) 2026 Teguh Sobirin.
+ * Copyright (c) 2026 Armada contributors.
+ *
+ * Kettle Linux: the AYN Odin 3 Portal, the Odin 3's board (CQ8725S) in a Portal-style body with a
+ * 7" 1080x1920 VTDR6130 AMOLED. Built on our Odin 3 dts (its Kettle changes, fan curve, LEDs and
+ * paddles carry over) with the differences Armada's cq8725s-ayn-odin3portal.dts has from its
+ * Odin 3 dts (armada-os/armada main, packages/kernel/dts). Not yet run on hardware (docs/ODIN3PORTAL.md).
+ */
+
+#include "cq8725s-ayn-odin3.dts"
+
+/* the Odin 3's ICNA3520 panel rails (gpio 56, 97): nothing of the Portal's panel */
+/delete-node/ &vdd_bl_5v0;
+/delete-node/ &vdd_disp_2v8;
+
+/* Armada: AYN's Portal Android has no cpusys VM carve-out, and a larger Gunyah one (below) */
+/delete-node/ &cpusys_vm_mem;
+
+/* Armada: no ON Semi redriver on the Portal; USB-C SuperSpeed/DP goes from the QMP PHY straight
+ * to pmic_glink. A redriver declared but absent would hold back the SM8750 altmode
+ * (22-sm8750/0509 waits for every mode-switch). */
+/delete-node/ &typec_mux_redriver;
+
+/ {
+	model = "AYN Odin 3 Portal";
+	compatible = "ayn,odin3portal", "qcom,cq8725s", "qcom,sm8750";
+
+	aliases {
+		mmc0 = &sdhc_2;
+	};
+
+	pwm-fan {
+		pwms = <&pm8550_pwm 3 50000>;
+	};
+
+	reserved-memory {
+		reserved@9b09c000 {
+			reg = <0x0 0x9b09c000 0x0 0x4000>;
+			no-map;
+		};
+
+		reserved@9eb80000 {
+			reg = <0x0 0x9eb80000 0x0 0x80000>;
+			no-map;
+		};
+
+		splash_mem: framebuffer@fc800000 {
+			reg = <0x0 0xfc800000 0x0 0x2b00000>;
+			no-map;
+		};
+	};
+};
+
+&gunyah_hyp_mem {
+	reg = <0x0 0x80000000 0x0 0x1200000>;
+};
+
+&pmic_glink_ss_in {
+	remote-endpoint = <&usb_dp_qmpphy_out>;
+};
+
+&usb_dp_qmpphy_out {
+	remote-endpoint = <&pmic_glink_ss_in>;
+};
+
+/* Armada's Portal dts gives the USB-C audio switch no reset line (the Odin 3's is gpio 152) */
+&wcd_usbss {
+	/delete-property/ reset-gpios;
+};
+
+/* FT5452, driven with the FT5x06 family protocol (Armada) */
+&i2c4 {
+	touchscreen@38 {
+		compatible = "focaltech,ft5426";
+	};
+};
+
+/* The VTDR6130 AMOLED (40-kettle/1470), mounted like the Odin 2 Portal's panel (rotation 270) */
+&display_panel {
+	compatible = "vtdr6130,o3p";
+
+	/delete-property/ vci-supply;
+	/delete-property/ vdd-supply;
+	/delete-property/ disp-supply;
+	/delete-property/ blvdd-supply;
+
+	vddio-supply = <&vreg_l12b_1p8>;
+	tvdd-supply = <&vreg_l4b_1p8>;
+
+	rotation = <270>;
+};
+
+&remoteproc_adsp {
+	firmware-name = "qcom/sm8750/ayn/odin3portal/adsp.mbn",
+			"qcom/sm8750/ayn/odin3portal/adsp_dtb.mbn";
+};
+
+&remoteproc_cdsp {
+	firmware-name = "qcom/sm8750/ayn/odin3portal/cdsp.mbn",
+			"qcom/sm8750/ayn/odin3portal/cdsp_dtb.mbn";
+};
+
+&remoteproc_mpss {
+	status = "disabled";
+};
+
+&remoteproc_soccp {
+	firmware-name = "qcom/sm8750/ayn/odin3portal/soccp.mbn";
+};
+
+/* the same speaker tuning as the Odin 3 (Armada links it to the Odin 3's file) */
+&spk_amp_l {
+	firmware-name = "qcom/sm8750/ayn/odin3/aw883xx_acf.bin";
+};
+
+&spk_amp_r {
+	firmware-name = "qcom/sm8750/ayn/odin3/aw883xx_acf.bin";
+};
+
+&sdc2_default {
+	cmd-pins {
+		drive-strength = <16>;
+	};
+
+	data-pins {
+		drive-strength = <16>;
+	};
+};
+
+&uart15 {
+	gamepad {
+		gamepad-name = "AYN Odin3 Portal Gamepad";
+	};
+};

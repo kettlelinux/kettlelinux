@@ -1,0 +1,11 @@
+# The Odin 3 Portal's own packages, added to image/packages.txt (built by us, packages/)
+
+# firmware: the Odin 3's set (GPU, video, Wi-Fi, Bluetooth, amp tuning, audio topology) plus
+# the Portal's own ADSP and SoCCP images (packages/kettle-firmware-odin3portal)
+kettle-firmware-odin3
+kettle-firmware-odin3portal
+# ALSA UCM profile for the "SM8750-AYN" card: the dts keeps the Odin 3's card name, and the
+# Portal has the same amps and codec (Armada's Portal profile includes the Odin 3's HiFi verb)
+kettle-ucm-odin3
+# gyro and accelerometer for Steam Input (packages/kettle-motion), as on the Odin 3
+kettle-motion

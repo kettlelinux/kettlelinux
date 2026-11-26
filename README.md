@@ -32,6 +32,9 @@ own *Check for updates*.
 > starts through OpenABL. See [docs/ODIN3.md](docs/ODIN3.md) for how it boots and what has been
 > tested.
 >
+> **AYN Odin 3 Portal** (the Odin 3's CQ8725S in a 7" Portal body): being ported, no public build
+> yet. See [docs/ODIN3PORTAL.md](docs/ODIN3PORTAL.md) for where it stands.
+>
 > Each device gets its own image and its own updates;
 > [docs/PORTING.md](docs/PORTING.md) has how devices are kept apart and how to add one.
 
