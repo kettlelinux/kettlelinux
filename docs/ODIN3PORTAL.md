@@ -69,6 +69,25 @@ Portal.
   held upright in landscape, measured under Android on a unit).
 - Game Mode turns the panel `left` (as on the Odin 2 Portal) at 60 or 120 Hz, 120 by default.
 
+## The install-time reset (fixed by kernel 1471)
+
+The first internal install died during the /home copy: the unit reset or powered off with no
+kernel message, and the PMK8550 PON fault register showed UVLO or OVLO. A loop that copied /home
+from the SD card to UFS reproduced it every time, about 2:45 into the copy, when free memory ran
+out. It happened on battery or charger, with the CPU and GPU capped, and with the screen left on.
+Once the system survived and logged `synchronous external abort` in `clear_page`, `copy_page` and
+`__arch_copy_from_user`. Every faulting address was in 0xf2c00000-0xf37fffff, the ADSP fastrpc
+remote heap.
+
+Upstream's sm8750.dtsi makes that heap a `reusable` CMA pool. But mainline fastrpc assigns the
+whole region to the LPASS and ADSP heap VMs at probe, without allocating it first. So the page
+allocator still hands those pages out, and Linux faults on them. Kernel patch 1471 makes the region
+`no-map`, which costs 12 MiB.
+
+Tested on 2026-11-26 with only the dtb changed (loaded next to GRUB). The same copy loop ran 12
+cycles, about 45 minutes with free memory down to 118 MB, with no abort and no reset. The KONKR
+Pocket FIT Elite and the Odin 3 share sm8750.dtsi and get the fix too; they still need a retest.
+
 ## Still to check (first image)
 
 20261125.1 booted from microSD through OpenABL v1.2 in `abl_b` (`abl_a` still stock) on

@@ -1,0 +1,35 @@
+From: Kettle Linux
+Subject: [PATCH] arm64: dts: qcom: sm8750: keep the ADSP remote heap out of Linux
+
+The ADSP's fastrpc remote heap is a reusable shared-dma-pool, so its
+12 MiB stay in the page allocator as CMA. But fastrpc hands the whole
+region to the LPASS and ADSP heap VMs at probe (qcom,vmids ->
+fastrpc_init_reserved_mem() -> qcom_scm_assign_mem()), without
+allocating it from the pool first. Linux loses access to memory its own
+allocator still gives out.
+
+Under memory pressure, movable allocations (page cache) land in the
+pool, and the first touch of such a page faults. On the AYN Odin 3
+Portal a large copy (tar of /home from the SD card to UFS) brought
+that on every time free memory ran out, about 2:45 into the copy. Most
+times the whole SoC went down (a PMIC fault reset, sometimes powered
+off, no kernel message). Once it survived and logged "synchronous
+external abort" in clear_page/copy_page/__arch_copy_from_user, with
+every faulting address in 0xf2c00000-0xf37fffff, the heap.
+
+Make the region no-map, as hamoa, lemans and monaco describe theirs:
+it is never Linux's memory. It costs 12 MiB of RAM. Tested on the Odin 3
+Portal with the dtb alone: the same copy loop held (see
+docs/ODIN3PORTAL.md).
+---
+--- a/arch/arm64/boot/dts/qcom/sm8750.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+@@ -570,7 +570,7 @@
+ 			alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
+ 			alignment = <0x0 0x400000>;
+ 			size = <0x0 0xc00000>;
+-			reusable;
++			no-map;
+ 		};
+ 	};
+
