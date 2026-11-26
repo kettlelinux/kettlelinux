@@ -88,6 +88,11 @@ Tested on 2026-11-26 with only the dtb changed (loaded next to GRUB). The same c
 cycles, about 45 minutes with free memory down to 118 MB, with no abort and no reset. The KONKR
 Pocket FIT Elite and the Odin 3 share sm8750.dtsi and get the fix too; they still need a retest.
 
+With 1471 in the kernel, 20261126.1 installed to internal storage in 6.5 minutes on the same day
+(free memory down to 128 MB during the /home copy) and boots from UFS. That needs OpenABL in both
+`abl_a` and `abl_b`: with stock ABL left in `abl_a`, the unit dropped into stock fastboot whenever
+slot B was marked unbootable (`fastboot set_active b` got it back).
+
 ## Still to check (first image)
 
 20261125.1 booted from microSD through OpenABL v1.2 in `abl_b` (`abl_a` still stock) on
@@ -111,4 +116,4 @@ touch, buttons and paddles, speakers, stick LEDs and the power LED.
 - [ ] battery and charging (the Portal's ADSP), the charge limit
 - [ ] fan, TDP; s2idle deep sleep and wake work
 - [x] stick LEDs and the power LED
-- [ ] A/B update
+- [x] A/B update (20261125.1 -> 20261126.1 from a local bundle over HTTP, `rauc install`, 2026-11-26)
