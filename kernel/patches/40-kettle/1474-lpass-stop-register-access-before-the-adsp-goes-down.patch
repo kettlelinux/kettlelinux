@@ -1,0 +1,465 @@
+From: Kettle Linux
+Subject: [PATCH] soundwire: qcom, ASoC: lpass macros: stop register access before the ADSP goes down
+
+On SM8550/SM8750 the LPASS codec macros and the SoundWire controllers
+sit behind clocks the ADSP provides (q6prm). When the ADSP crashes and
+remoteproc recovers it, nothing tells these drivers: the SoundWire
+interrupt thread and the macros' DAPM/clock paths keep reading and
+writing LPASS registers after the ADSP has been shut down. That access
+stalls the bus and hangs the whole SoC; neither the watchdog nor the
+lockup detectors get it back. Forcing a recovery (debugfs
+remoteproc/<adsp>/crash = 2) froze the AYN Odin 3 Portal and the Odin 3
+every time; the last trace before the hang was the soundwire IRQ
+thread in qcom_swrm_cpu_reg_read() right after q6prm's clocks were
+unregistered.
+
+Listen to the "lpass" SSR notifications. The ssr subdevice is stopped
+first, so QCOM_SSR_BEFORE_SHUTDOWN arrives before glink and the audio
+card are torn down and while the hardware is still reachable. On it:
+
+- soundwire qcom (CPU-mapped controllers only): disable the controller
+  interrupt, fail every register access, skip runtime PM;
+- rx/tx/va/wsa macros: put the regmap cache-only and keep it so in
+  runtime resume.
+
+The clock handles the drivers took at probe stay dead after the ADSP
+comes back (q6prm registers new clocks), so this is one-way: audio is
+gone until the next boot, but the device keeps running.
+---
+--- a/drivers/soundwire/Kconfig
++++ b/drivers/soundwire/Kconfig
+@@ -51,6 +51,7 @@
+ 	tristate "Qualcomm SoundWire Master driver"
+ 	imply SLIMBUS
+ 	depends on SND_SOC
++	depends on QCOM_RPROC_COMMON || !QCOM_RPROC_COMMON
+ 	help
+ 	  SoundWire Qualcomm Master driver.
+ 	  If you have an Qualcomm platform which has a SoundWire Master then
+--- a/drivers/soundwire/qcom.c
++++ b/drivers/soundwire/qcom.c
+@@ -12,6 +12,7 @@
+ #include <linux/of_irq.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
++#include <linux/remoteproc/qcom_rproc.h>
+ #include <linux/reset.h>
+ #include <linux/slab.h>
+ #include <linux/pm_wakeirq.h>
+@@ -223,6 +224,10 @@
+ 	u32 slave_status;
+ 	u32 wr_fifo_depth;
+ 	bool clock_stop_not_supported;
++	/* LPASS is going down: the registers must not be touched */
++	bool lpass_down;
++	struct notifier_block ssr_nb;
++	void *ssr_notifier;
+ };
+ 
+ struct qcom_swrm_data {
+@@ -372,6 +377,11 @@
+ static int qcom_swrm_cpu_reg_read(struct qcom_swrm_ctrl *ctrl, int reg,
+ 				  u32 *val)
+ {
++	if (READ_ONCE(ctrl->lpass_down)) {
++		*val = 0;
++		return SDW_CMD_FAIL;
++	}
++
+ 	*val = readl(ctrl->mmio + reg);
+ 	return SDW_CMD_OK;
+ }
+@@ -379,10 +389,44 @@
+ static int qcom_swrm_cpu_reg_write(struct qcom_swrm_ctrl *ctrl, int reg,
+ 				   int val)
+ {
++	if (READ_ONCE(ctrl->lpass_down))
++		return SDW_CMD_FAIL;
++
+ 	writel(val, ctrl->mmio + reg);
+ 	return SDW_CMD_OK;
+ }
+ 
++/*
++ * The controller sits in LPASS, clocked through the ADSP. An access after
++ * the ADSP has gone down stalls the bus and hangs the SoC. Stop the
++ * interrupt and every register access before it shuts down; the clock
++ * handles stay dead after a restart, so the controller stays off until
++ * the next boot.
++ */
++static int qcom_swrm_ssr_notify(struct notifier_block *nb,
++				unsigned long action, void *data)
++{
++	struct qcom_swrm_ctrl *ctrl = container_of(nb, struct qcom_swrm_ctrl,
++						   ssr_nb);
++
++	if (action != QCOM_SSR_BEFORE_SHUTDOWN || READ_ONCE(ctrl->lpass_down))
++		return NOTIFY_OK;
++
++	WRITE_ONCE(ctrl->lpass_down, true);
++	/* Waits for a running interrupt thread to finish */
++	disable_irq(ctrl->irq);
++	dev_warn(ctrl->dev, "LPASS going down, no more register access\n");
++
++	return NOTIFY_OK;
++}
++
++static void qcom_swrm_ssr_exit(void *data)
++{
++	struct qcom_swrm_ctrl *ctrl = data;
++
++	qcom_unregister_ssr_notifier(ctrl->ssr_notifier, &ctrl->ssr_nb);
++}
++
+ static u32 swrm_get_packed_reg_val(u8 *cmd_id, u8 cmd_data,
+ 				   u8 dev_addr, u16 reg_addr)
+ {
+@@ -1680,6 +1724,20 @@
+ 		goto err_clk;
+ 	}
+ 
++	if (ctrl->reg_read == qcom_swrm_cpu_reg_read) {
++		void *notifier;
++
++		ctrl->ssr_nb.notifier_call = qcom_swrm_ssr_notify;
++		notifier = qcom_register_ssr_notifier("lpass", &ctrl->ssr_nb);
++		if (!IS_ERR_OR_NULL(notifier)) {
++			ctrl->ssr_notifier = notifier;
++			ret = devm_add_action_or_reset(dev, qcom_swrm_ssr_exit,
++						       ctrl);
++			if (ret)
++				goto err_clk;
++		}
++	}
++
+ 	ctrl->wake_irq = of_irq_get(dev->of_node, 1);
+ 	if (ctrl->wake_irq > 0) {
+ 		ret = devm_request_threaded_irq(dev, ctrl->wake_irq, NULL,
+@@ -1752,6 +1810,10 @@
+ 	struct qcom_swrm_ctrl *ctrl = dev_get_drvdata(dev);
+ 	int ret;
+ 
++	/* LPASS went down: leave the hardware alone */
++	if (READ_ONCE(ctrl->lpass_down))
++		return 0;
++
+ 	if (ctrl->wake_irq > 0) {
+ 		if (!irqd_irq_disabled(irq_get_irq_data(ctrl->wake_irq)))
+ 			disable_irq_nosync(ctrl->wake_irq);
+@@ -1817,6 +1879,10 @@
+ 	struct qcom_swrm_ctrl *ctrl = dev_get_drvdata(dev);
+ 	int ret;
+ 
++	/* LPASS went down: leave the hardware alone */
++	if (READ_ONCE(ctrl->lpass_down))
++		return 0;
++
+ 	swrm_wait_for_wr_fifo_done(ctrl);
+ 	if (!ctrl->clock_stop_not_supported) {
+ 		/* Mask bus clash interrupt */
+--- a/sound/soc/codecs/Kconfig
++++ b/sound/soc/codecs/Kconfig
+@@ -2923,6 +2923,7 @@
+ 
+ config SND_SOC_LPASS_WSA_MACRO
+ 	depends on COMMON_CLK
++	depends on QCOM_RPROC_COMMON || !QCOM_RPROC_COMMON
+ 	depends on PM_CLK
+ 	select REGMAP_MMIO
+ 	select SND_SOC_LPASS_MACRO_COMMON
+@@ -2930,6 +2931,7 @@
+ 
+ config SND_SOC_LPASS_VA_MACRO
+ 	depends on COMMON_CLK
++	depends on QCOM_RPROC_COMMON || !QCOM_RPROC_COMMON
+ 	depends on PM_CLK
+ 	select REGMAP_MMIO
+ 	select SND_SOC_LPASS_MACRO_COMMON
+@@ -2937,6 +2939,7 @@
+ 
+ config SND_SOC_LPASS_RX_MACRO
+ 	depends on COMMON_CLK
++	depends on QCOM_RPROC_COMMON || !QCOM_RPROC_COMMON
+ 	depends on PM_CLK
+ 	select REGMAP_MMIO
+ 	select SND_SOC_LPASS_MACRO_COMMON
+@@ -2944,6 +2947,7 @@
+ 
+ config SND_SOC_LPASS_TX_MACRO
+ 	depends on COMMON_CLK
++	depends on QCOM_RPROC_COMMON || !QCOM_RPROC_COMMON
+ 	depends on PM_CLK
+ 	select REGMAP_MMIO
+ 	select SND_SOC_LPASS_MACRO_COMMON
+--- a/sound/soc/codecs/lpass-macro-common.c
++++ b/sound/soc/codecs/lpass-macro-common.c
+@@ -9,9 +9,67 @@
+ #include <linux/platform_device.h>
+ #include <linux/pm_domain.h>
+ #include <linux/pm_runtime.h>
++#include <linux/regmap.h>
++#include <linux/remoteproc/qcom_rproc.h>
+ 
+ #include "lpass-macro-common.h"
+ 
++static int lpass_macro_ssr_notify(struct notifier_block *nb,
++				  unsigned long action, void *data)
++{
++	struct lpass_macro_ssr *ssr = container_of(nb, struct lpass_macro_ssr, nb);
++
++	if (action != QCOM_SSR_BEFORE_SHUTDOWN || READ_ONCE(ssr->down))
++		return NOTIFY_OK;
++
++	/*
++	 * The clocks behind these registers go away with the ADSP, and the
++	 * handles taken at probe stay dead after it restarts. Keep the
++	 * hardware untouched until the next boot: audio is lost, but the
++	 * SoC does not hang.
++	 */
++	WRITE_ONCE(ssr->down, true);
++	regcache_cache_only(ssr->regmap, true);
++	regcache_mark_dirty(ssr->regmap);
++	dev_warn(ssr->dev, "LPASS going down, no more register access\n");
++
++	return NOTIFY_OK;
++}
++
++static void lpass_macro_ssr_exit(void *data)
++{
++	struct lpass_macro_ssr *ssr = data;
++
++	qcom_unregister_ssr_notifier(ssr->notifier, &ssr->nb);
++}
++
++/* Not fatal: on failure the macro simply runs without the protection. */
++struct lpass_macro_ssr *lpass_macro_ssr_init(struct device *dev,
++					     struct regmap *regmap)
++{
++	struct lpass_macro_ssr *ssr;
++	void *notifier;
++
++	ssr = devm_kzalloc(dev, sizeof(*ssr), GFP_KERNEL);
++	if (!ssr)
++		return NULL;
++
++	ssr->dev = dev;
++	ssr->regmap = regmap;
++	ssr->nb.notifier_call = lpass_macro_ssr_notify;
++
++	notifier = qcom_register_ssr_notifier("lpass", &ssr->nb);
++	if (IS_ERR_OR_NULL(notifier))
++		return ssr;
++	ssr->notifier = notifier;
++
++	if (devm_add_action_or_reset(dev, lpass_macro_ssr_exit, ssr))
++		return NULL;
++
++	return ssr;
++}
++EXPORT_SYMBOL_GPL(lpass_macro_ssr_init);
++
+ static DEFINE_MUTEX(lpass_codec_mutex);
+ static enum lpass_codec_version lpass_codec_version;
+ 
+--- a/sound/soc/codecs/lpass-macro-common.h
++++ b/sound/soc/codecs/lpass-macro-common.h
+@@ -6,6 +6,9 @@
+ #ifndef __LPASS_MACRO_COMMON_H__
+ #define __LPASS_MACRO_COMMON_H__
+ 
++#include <linux/compiler.h>
++#include <linux/notifier.h>
++
+ /* NPL clock is expected */
+ #define LPASS_MACRO_FLAG_HAS_NPL_CLOCK		BIT(0)
+ /* The soundwire block should be internally reset at probe */
+@@ -37,6 +40,29 @@
+ 	struct device *dcodec_pd;
+ };
+ 
++struct regmap;
++
++/*
++ * The macros' clocks come from the ADSP (q6prm). Once the ADSP goes down,
++ * touching their registers stalls the bus and hangs the SoC, so the
++ * macros run cache-only from then on. See lpass_macro_ssr_init().
++ */
++struct lpass_macro_ssr {
++	struct notifier_block nb;
++	void *notifier;
++	struct device *dev;
++	struct regmap *regmap;
++	bool down;
++};
++
++struct lpass_macro_ssr *lpass_macro_ssr_init(struct device *dev,
++					     struct regmap *regmap);
++
++static inline bool lpass_macro_ssr_down(struct lpass_macro_ssr *ssr)
++{
++	return ssr && READ_ONCE(ssr->down);
++}
++
+ struct lpass_macro *lpass_macro_pds_init(struct device *dev);
+ void lpass_macro_pds_exit(struct lpass_macro *pds);
+ void lpass_macro_set_codec_version(enum lpass_codec_version version);
+--- a/sound/soc/codecs/lpass-rx-macro.c
++++ b/sound/soc/codecs/lpass-rx-macro.c
+@@ -663,6 +663,7 @@
+ 	int softclip_clk_users;
+ 	struct lpass_macro *pds;
+ 	struct regmap *regmap;
++	struct lpass_macro_ssr *ssr;
+ 	struct clk *mclk;
+ 	struct clk *npl;
+ 	struct clk *macro;
+@@ -3918,6 +3919,8 @@
+ 	if (IS_ERR(rx->regmap))
+ 		return PTR_ERR(rx->regmap);
+ 
++	rx->ssr = lpass_macro_ssr_init(dev, rx->regmap);
++
+ 	dev_set_drvdata(dev, rx);
+ 
+ 	rx->dev = dev;
+@@ -4016,7 +4019,8 @@
+ 
+ 	ret = pm_clk_suspend(dev);
+ 	if (ret) {
+-		regcache_cache_only(rx->regmap, false);
++		if (!lpass_macro_ssr_down(rx->ssr))
++			regcache_cache_only(rx->regmap, false);
+ 		return ret;
+ 	}
+ 
+@@ -4037,6 +4041,10 @@
+ 		return ret;
+ 	}
+ 
++	/* The ADSP went down: the registers stay cache-only. */
++	if (lpass_macro_ssr_down(rx->ssr))
++		return 0;
++
+ 	regcache_cache_only(rx->regmap, false);
+ 	ret = regcache_sync(rx->regmap);
+ 	if (ret) {
+--- a/sound/soc/codecs/lpass-tx-macro.c
++++ b/sound/soc/codecs/lpass-tx-macro.c
+@@ -274,6 +274,7 @@
+ 	unsigned long active_ch_cnt[TX_MACRO_MAX_DAIS];
+ 	int active_decimator[TX_MACRO_MAX_DAIS];
+ 	struct regmap *regmap;
++	struct lpass_macro_ssr *ssr;
+ 	struct clk *mclk;
+ 	struct clk *npl;
+ 	struct clk *macro;
+@@ -2310,6 +2311,8 @@
+ 		goto err;
+ 	}
+ 
++	tx->ssr = lpass_macro_ssr_init(dev, tx->regmap);
++
+ 	dev_set_drvdata(dev, tx);
+ 
+ 	tx->dev = dev;
+@@ -2401,7 +2404,8 @@
+ 
+ 	ret = pm_clk_suspend(dev);
+ 	if (ret) {
+-		regcache_cache_only(tx->regmap, false);
++		if (!lpass_macro_ssr_down(tx->ssr))
++			regcache_cache_only(tx->regmap, false);
+ 		return ret;
+ 	}
+ 
+@@ -2422,6 +2426,10 @@
+ 		return ret;
+ 	}
+ 
++	/* The ADSP went down: the registers stay cache-only. */
++	if (lpass_macro_ssr_down(tx->ssr))
++		return 0;
++
+ 	regcache_cache_only(tx->regmap, false);
+ 	ret = regcache_sync(tx->regmap);
+ 	if (ret) {
+--- a/sound/soc/codecs/lpass-va-macro.c
++++ b/sound/soc/codecs/lpass-va-macro.c
+@@ -213,6 +213,7 @@
+ 
+ 	int dec_mode[VA_MACRO_NUM_DECIMATORS];
+ 	struct regmap *regmap;
++	struct lpass_macro_ssr *ssr;
+ 	struct clk *mclk;
+ 	struct clk *npl;
+ 	struct clk *macro;
+@@ -1598,6 +1599,8 @@
+ 		goto err;
+ 	}
+ 
++	va->ssr = lpass_macro_ssr_init(dev, va->regmap);
++
+ 	dev_set_drvdata(dev, va);
+ 
+ 	data = of_device_get_match_data(dev);
+@@ -1725,7 +1728,8 @@
+ 
+ 	ret = pm_clk_suspend(dev);
+ 	if (ret) {
+-		regcache_cache_only(va->regmap, false);
++		if (!lpass_macro_ssr_down(va->ssr))
++			regcache_cache_only(va->regmap, false);
+ 		return ret;
+ 	}
+ 
+@@ -1746,6 +1750,10 @@
+ 		return ret;
+ 	}
+ 
++	/* The ADSP went down: the registers stay cache-only. */
++	if (lpass_macro_ssr_down(va->ssr))
++		return 0;
++
+ 	regcache_cache_only(va->regmap, false);
+ 
+ 	ret = regcache_sync(va->regmap);
+--- a/sound/soc/codecs/lpass-wsa-macro.c
++++ b/sound/soc/codecs/lpass-wsa-macro.c
+@@ -415,6 +415,7 @@
+ 	int is_softclip_on[WSA_MACRO_SOFTCLIP_MAX];
+ 	int softclip_clk_users[WSA_MACRO_SOFTCLIP_MAX];
+ 	struct regmap *regmap;
++	struct lpass_macro_ssr *ssr;
+ 	struct clk *mclk;
+ 	struct clk *npl;
+ 	struct clk *macro;
+@@ -2779,6 +2780,8 @@
+ 	if (IS_ERR(wsa->regmap))
+ 		return PTR_ERR(wsa->regmap);
+ 
++	wsa->ssr = lpass_macro_ssr_init(dev, wsa->regmap);
++
+ 	dev_set_drvdata(dev, wsa);
+ 
+ 	wsa->dev = dev;
+@@ -2851,7 +2854,8 @@
+ 
+ 	ret = pm_clk_suspend(dev);
+ 	if (ret) {
+-		regcache_cache_only(wsa->regmap, false);
++		if (!lpass_macro_ssr_down(wsa->ssr))
++			regcache_cache_only(wsa->regmap, false);
+ 		return ret;
+ 	}
+ 
+@@ -2871,6 +2875,10 @@
+ 		regcache_mark_dirty(wsa->regmap);
+ 		return ret;
+ 	}
++	/* The ADSP went down: the registers stay cache-only. */
++	if (lpass_macro_ssr_down(wsa->ssr))
++		return 0;
++
+ 	regcache_cache_only(wsa->regmap, false);
+ 
+ 	ret = regcache_sync(wsa->regmap);
