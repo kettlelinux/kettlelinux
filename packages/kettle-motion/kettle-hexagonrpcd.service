@@ -13,7 +13,9 @@ ExecCondition=/usr/bin/test -d /var/lib/kettle-motion/qcom
 ExecStart=/usr/bin/hexagonrpcd -f /dev/fastrpc-adsp -d adsp -s -R /var/lib/kettle-motion/qcom
 User=fastrpc
 Group=fastrpc
-Restart=on-failure
+# always: when the ADSP restarts (after a crash) hexagonrpcd exits cleanly on the broken
+# FastRPC channel, and the new ADSP needs it to start the sensors process again
+Restart=always
 RestartSec=3
 ProtectSystem=strict
 # the sensors process may rebuild its registry in the copy of persist's sensors directory

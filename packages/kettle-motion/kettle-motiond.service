@@ -14,6 +14,9 @@ ExecStart=/usr/lib/kettle-motion/kettle-motiond
 Restart=on-failure
 RestartSec=3
 StateDirectory=kettle-motion
+# GAME_FILE: kept across the restarts that follow kettle-hexagonrpcd's
+RuntimeDirectory=kettle-motion
+RuntimeDirectoryPreserve=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes

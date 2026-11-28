@@ -49,6 +49,10 @@
 #define BUS_NAME "org.kettlelinux.Motion1"
 #define OBJ_PATH "/org/kettlelinux/Motion1"
 #define SETTINGS "/var/lib/kettle-motion/settings.ini"
+// Present while a game runs. systemd restarts the daemon with kettle-hexagonrpcd (after an ADSP
+// restart), and the game must still be running for the new one: the plugin only says so at the
+// start. In /run (RuntimeDirectoryPreserve), so a reboot forgets it.
+#define GAME_FILE "/run/kettle-motion/game"
 #define DEVICES "/usr/share/kettle-motion/devices.conf"
 #define ACCEL_RES_PER_G 16384
 #define GYRO_RES_PER_DPS 16
@@ -89,7 +93,7 @@ static gchar *mode;		// "games", "always" or "off"
 static gboolean game_running;
 static gboolean sleeping;
 static int sleep_lock = -1;
-static guint start_retry;	// a timeout to try starting the sensors again
+static guint start_retry;	// a timeout to look for the sensors again after a failed start
 static guint start_backoff;	// its seconds, 0 after a start that worked
 static guint find_backoff;	// the same for finding them
 
@@ -168,11 +172,12 @@ err:
 
 static void update_streaming(void);
 
+static gboolean find_sensors(gpointer data);
+
 static gboolean start_retry_cb(gpointer data)
 {
 	start_retry = 0;
-	update_streaming();
-	return G_SOURCE_REMOVE;
+	return find_sensors(NULL);
 }
 
 static guint backoff_next(guint s)
@@ -188,8 +193,14 @@ static void sensors_start(void)
 	if (!ssc_sensor_accelerometer_open_sync(accel, NULL, &err) ||
 	    !ssc_sensor_gyroscope_open_sync(gyro, NULL, &err)) {
 		start_backoff = backoff_next(start_backoff);
-		g_printerr("Can't start the sensors (trying again in %u s): %s\n", start_backoff, err->message);
+		g_printerr("Can't start the sensors (looking for them again in %u s): %s\n",
+			   start_backoff, err->message);
 		ssc_sensor_accelerometer_close_sync(accel, NULL, NULL);
+		// When the ADSP restarts (after a crash), its Sensor Core comes back with new
+		// sensors and these objects stay dead: drop them and find the sensors again
+		available = FALSE;
+		g_clear_object(&gyro);
+		g_clear_object(&accel);
 		start_retry = g_timeout_add_seconds(start_backoff, start_retry_cb, NULL);
 		return;
 	}
@@ -216,12 +227,7 @@ static void update_streaming(void)
 	gboolean want = available && !sleeping &&
 			(g_str_equal(mode, "always") || (g_str_equal(mode, "games") && game_running));
 
-	if (!want && start_retry) {
-		g_source_remove(start_retry);
-		start_retry = 0;
-		start_backoff = 0;
-	}
-	if (want && !streaming && !start_retry)
+	if (want && !streaming)
 		sensors_start();
 	else if (!want && streaming)
 		sensors_stop();
@@ -233,7 +239,8 @@ static gboolean find_sensors(gpointer data);
 
 static void sensors_found(void)
 {
-	uinput_fd = uinput_create();
+	if (uinput_fd < 0)
+		uinput_fd = uinput_create();
 	if (uinput_fd < 0) {
 		g_printerr("Can't create the uinput device: %s\n", g_strerror(errno));
 		exit_status = 1;
@@ -396,6 +403,10 @@ static void on_method_call(GDBusConnection *conn, const gchar *sender, const gch
 		if (running != game_running) {
 			game_running = running;
 			g_print("Game %s\n", running ? "started" : "stopped");
+			if (running)
+				g_file_set_contents(GAME_FILE, "", 0, NULL);
+			else
+				unlink(GAME_FILE);
 			update_streaming();
 		}
 		g_dbus_method_invocation_return_value(inv, NULL);
@@ -478,6 +489,9 @@ int main(int argc, char **argv)
 	}
 	settings_load();
 	g_print("Mode: %s\n", mode);
+	game_running = g_file_test(GAME_FILE, G_FILE_TEST_EXISTS);
+	if (game_running)
+		g_print("A game is running\n");
 
 	loop = g_main_loop_new(NULL, FALSE);
 	system_bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &err);

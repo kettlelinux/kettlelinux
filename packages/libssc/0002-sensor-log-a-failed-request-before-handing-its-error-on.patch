@@ -1,0 +1,37 @@
+From: Kettle Linux
+Subject: [PATCH] sensor: log a failed request before handing its error on
+
+sensor_open_ready() and sensor_close_ready() give the GError to the
+task, drop their task reference (completing it frees the error), and
+then print error->message: a use-after-free. Any failed enable or
+disable request crashes the client in g_log(). It shows after an ADSP
+restart, when the next enable goes to the Sensor Core that went away:
+kettle-motiond segfaulted in vasprintf under g_log from
+sensor_open_ready. Log first.
+---
+diff --git a/src/libssc-sensor.c b/src/libssc-sensor.c
+index 59d587b..70e879e 100644
+--- a/src/libssc-sensor.c
++++ b/src/libssc-sensor.c
+@@ -106,9 +106,9 @@ sensor_close_ready (SSCClient *self, GAsyncResult *result, gpointer user_data)
+ 	GError *error = NULL;
+ 
+ 	if (!ssc_client_send_finish (self, result, &error)) {
++		g_debug ("Sensor disable request failed: %s", error->message);
+ 		g_task_return_error (task, error);
+ 		g_clear_object (&task);
+-		g_debug ("Sensor disable request failed: %s", error->message);
+ 		return;
+ 	}
+ 
+@@ -168,9 +168,9 @@ sensor_open_ready (SSCClient *self, GAsyncResult *result, gpointer user_data)
+ 	GError *error = NULL;
+ 
+ 	if (!ssc_client_send_finish (self, result, &error)) {
++		g_debug ("Sensor enable request failed: %s", error->message);
+ 		g_task_return_error (task, error);
+ 		g_clear_object (&task);
+-		g_debug ("Sensor enable request failed: %s", error->message);
+ 		return;
+ 	}
+ 
