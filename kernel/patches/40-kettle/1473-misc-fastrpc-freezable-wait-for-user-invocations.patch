@@ -1,0 +1,42 @@
+From: Kettle Linux
+Subject: [PATCH] misc: fastrpc: a freezable wait for user invocations
+
+A user invocation waits for the DSP's answer in an interruptible sleep.
+Every suspend interrupts it: the freezer's fake signal ends the wait
+with -ERESTARTSYS, the context stays on the pending list, and after
+resume the system call is restarted and sends the same message to the
+DSP again.
+
+hexagonrpcd (the sensors' reverse-RPC listener) waits in such a call
+nearly all the time, and its message carries the reply to the DSP's
+previous request. After a suspend the DSP gets that reply twice, and
+its listener asserts on the next request: on the AYN Odin 3 Portal,
+with a game starting the sensors a while after a few suspends, the
+ADSP's qsh_process died with "listener_hexagon.c:326: Assertion
+prevCtx == notify failed", and the ADSP restart that followed hung
+the SoC.
+
+Sleep TASK_INTERRUPTIBLE | TASK_FREEZABLE: the freezer freezes the
+caller in place and nothing is sent again. A real signal still ends
+the wait as before.
+---
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -1328,7 +1328,16 @@
+ 		if (!wait_for_completion_timeout(&ctx->work, 10 * HZ))
+ 			err = -ETIMEDOUT;
+ 	} else {
+-		err = wait_for_completion_interruptible(&ctx->work);
++		/*
++		 * Freezable: a suspend freezes the caller here instead of
++		 * interrupting it. An interrupted call returns -ERESTARTSYS
++		 * and is restarted, which sends the message again: for
++		 * hexagonrpcd's listener, a second reply to the same request,
++		 * which the DSP's listener asserts on (qsh_process
++		 * "listener_hexagon.c: Assertion prevCtx == notify failed").
++		 */
++		err = wait_for_completion_state(&ctx->work,
++						TASK_INTERRUPTIBLE | TASK_FREEZABLE);
+ 	}
+ 
+ 	return err;
